@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -19,7 +20,14 @@ from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.host_client import HostCommandError
+from gobby.terminals.host_client import (
+    CommitTransportError,
+    HostClient,
+    HostCommandError,
+    HostEpochChangedError,
+    HostManagerStopped,
+    HostUnavailableError,
+)
 from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.host_protocol import HostListRow
 from gobby.terminals.host_reconcile import reconcile_host_inventory
@@ -49,6 +57,7 @@ class RecordingFrameClient:
 
     attaches: list[str | None] = field(default_factory=list)
     fail_attach: bool = False
+    attached: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def attach_terminal(
         self,
@@ -60,6 +69,7 @@ class RecordingFrameClient:
         if self.fail_attach:
             raise HostCommandError("attach_failed")
         self.attaches.append(reservation_id)
+        self.attached.set()
 
 
 @dataclass
@@ -151,6 +161,63 @@ class ObservingHost(FakeHostClient):
 
     def fill_user_attachments(self, count: int) -> None:
         self.user_attachments = count
+
+
+class _PausedWriter:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+        self.drain_started = asyncio.Event()
+        self.release_drain = asyncio.Event()
+
+    def write(self, data: bytes) -> object:
+        self.writes.append(data)
+        return None
+
+    async def drain(self) -> object:
+        self.drain_started.set()
+        await self.release_drain.wait()
+        return None
+
+    def close(self) -> object:
+        return None
+
+    async def wait_closed(self) -> object:
+        return None
+
+
+class _PausedCommitHost(HostClient):
+    def __init__(self, writer: _PausedWriter) -> None:
+        super().__init__(asyncio.StreamReader(), writer)
+        self.host_epoch = "epoch-1"
+        self.kills: list[str] = []
+
+    async def ensure_connected(self) -> None:
+        return None
+
+    async def subscribe_events(self) -> dict[str, Any]:
+        return {"ok": True, "subscribed": True}
+
+    async def reserve_observer(self, terminal_id: str, reserve_key: str) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "reservation_id": f"rsv-{terminal_id}",
+            "reserve_key": reserve_key,
+        }
+
+    async def spawn(self, **fields: Any) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "method": "spawn_prepared",
+            "terminal_id": fields["terminal_id"],
+            "spawn_key": fields["spawn_key"],
+            "host_terminal_id": "ht-1",
+            "pgid": 99,
+            "start_time": 1.0,
+        }
+
+    async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
+        del grace_ms
+        self.kills.append(host_terminal_id)
 
 
 def _list_row(
@@ -664,3 +731,138 @@ async def test_spawn_carries_reservation_identity() -> None:
     host.reservation_error = "stale_reservation"
     with pytest.raises(HostCommandError):
         await runtime.prepare_spawn(stale)
+
+
+async def _execute_native_failure(request: SpawnRequest) -> Any:
+    with patch(
+        "gobby.agents.spawn_executor.prepare_claude_spawn",
+        new=AsyncMock(return_value=_plan()),
+    ):
+        return await execute_spawn(request)
+
+
+async def _cancel_commit(
+    *, after_write: bool
+) -> tuple[Any, MemoryTerminalStore, _PausedCommitHost]:
+    writer = _PausedWriter()
+    host = _PausedCommitHost(writer)
+    frame = RecordingFrameClient()
+    request, _runtime, manager = _native_request(
+        host=cast(Any, host),
+        frame=frame,
+    )
+    if not after_write:
+        await host._lock.acquire()
+    with patch(
+        "gobby.agents.spawn_executor.prepare_claude_spawn",
+        new=AsyncMock(return_value=_plan()),
+    ):
+        task = asyncio.create_task(execute_spawn(request))
+        await frame.attached.wait()
+        if after_write:
+            await writer.drain_started.wait()
+        task.cancel()
+        if not after_write:
+            host._lock.release()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    row = manager.get(next(iter(manager.rows)))
+    assert row is not None
+    return row, manager, host
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("reserve_refused", id="reserve_refused"),
+        pytest.param("prepare_unreachable", id="prepare_unreachable"),
+        pytest.param("host_epoch_changed", id="host_epoch_changed"),
+        pytest.param("cancelled_before_write", id="cancelled_before_write"),
+        pytest.param("cancelled_after_write", id="cancelled_after_write"),
+        pytest.param("commit_not_sent", id="commit_not_sent"),
+        pytest.param("commit_indeterminate", id="commit_indeterminate"),
+        pytest.param("commit_refused", id="commit_refused"),
+        pytest.param("exec_failed", id="exec_failed"),
+        pytest.param("host_stopped", id="host_stopped"),
+        pytest.param("exec_timeout", id="exec_timeout"),
+        pytest.param("malformed_status", id="malformed_status"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_native_spawn_failure_outcome_table(case: str) -> None:
+    if case == "cancelled_before_write":
+        row, _manager, cancelled_host = await _cancel_commit(after_write=False)
+        assert row.state == "exited"
+        assert cancelled_host.kills == ["ht-1"]
+        assert getattr(cancelled_host, "_commit_write_states", {}) == {}
+        return
+    if case == "cancelled_after_write":
+        row, _manager, cancelled_host = await _cancel_commit(after_write=True)
+        assert row.state == "pending"
+        assert cancelled_host.kills == []
+        assert getattr(cancelled_host, "_commit_write_states", {}) == {}
+        return
+    if case == "reserve_refused":
+        for reason in ("host_draining", "capacity", "stale", "not_native"):
+            host = ObservingHost()
+            request, _runtime, manager = _native_request(
+                host=host,
+                frame=RecordingFrameClient(),
+            )
+            with patch.object(
+                host,
+                "reserve_observer",
+                new=AsyncMock(side_effect=HostCommandError(reason)),
+            ):
+                result = await _execute_native_failure(request)
+            assert result.error == f"host_refused:{reason}"
+            refused_row = manager.get(result.terminal_id or "")
+            assert refused_row is not None
+            assert refused_row.state == "exited"
+        return
+
+    host = ObservingHost()
+    request, _runtime, manager = _native_request(host=host, frame=RecordingFrameClient())
+    expected = case
+    error: BaseException
+    target = "spawn_commit"
+    if case == "prepare_unreachable":
+        error = HostUnavailableError("control closed before prepare")
+        target = "spawn"
+        expected = "host_unreachable"
+    elif case == "host_epoch_changed":
+        error = HostEpochChangedError("host epoch changed")
+        expected = "host_epoch_changed"
+        host.list_rows = [
+            _list_row(terminal_id="old-terminal", spawn_key="old-key", observer_bind="bound")
+        ]
+    elif case in {"commit_not_sent", "commit_indeterminate"}:
+        written = case == "commit_indeterminate"
+        error = CommitTransportError("commit transport failed", request_written=written)
+    elif case == "commit_refused":
+        error = HostCommandError("unknown_terminal")
+        expected = "commit_refused:unknown_terminal"
+    elif case == "exec_failed":
+        error = HostCommandError(
+            "exec_failed",
+            code="ENOENT",
+            detail="No such file or directory",
+            stage="exec",
+        )
+        expected = "exec_failed:ENOENT"
+    elif case == "host_stopped":
+        error = HostManagerStopped("gterm host manager stopped")
+        expected = "host_stopped"
+    else:
+        error = HostCommandError(case)
+
+    with patch.object(host, target, new=AsyncMock(side_effect=error)):
+        result = await _execute_native_failure(request)
+
+    assert result.error == expected
+    row = manager.get(result.terminal_id or "")
+    assert row is not None
+    assert row.state == ("pending" if case == "commit_indeterminate" else "exited")
+    assert host.kills == (["ht-1"] if case == "commit_not_sent" else [])
+    if case == "exec_failed":
+        assert result.error_detail == "exec: No such file or directory"

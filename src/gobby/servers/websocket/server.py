@@ -33,6 +33,7 @@ from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
@@ -388,8 +389,8 @@ class WebSocketServer(
                 "terminal_list": self._handle_terminal_list,
                 "terminal_attach": self._handle_terminal_attach,
                 "terminal_detach": self._handle_terminal_detach,
-                "terminal_create": self._handle_terminal_create,
-                "terminal_kill": self._handle_terminal_kill,
+                "terminal_create": TerminalCreateMixin._handle_terminal_create.__get__(self),
+                "terminal_kill": TerminalCreateMixin._handle_terminal_kill.__get__(self),
                 "terminal_resize": self._handle_terminal_resize,
                 "terminal_take_control": self._handle_terminal_take_control,
                 "terminal_release_control": self._handle_terminal_release_control,

@@ -10,6 +10,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux_activation import (
     STATE_ACTIVATING,
     STATE_RESERVED,
@@ -19,7 +20,6 @@ from gobby.servers.websocket.tmux_activation import (
     cancel_pending_for_owner,
     cancel_stale_reservations,
     teardown_bridge,
-    teardown_terminal_bridges,
 )
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry
@@ -31,7 +31,7 @@ _DEFAULT_CONFIG = TmuxConfig(socket_name="")
 _GOBBY_CONFIG = TmuxConfig(socket_name="gobby")
 
 
-class TmuxMixin(TerminalSizingMixin, TerminalWsMixin):
+class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalWsMixin):
     """Mixin providing tmux session management handlers for WebSocketServer.
 
     Requires on the host class:
@@ -300,9 +300,3 @@ class TmuxMixin(TerminalSizingMixin, TerminalWsMixin):
                 await TmuxSessionManager(bridge.config).refresh_client(bridge.session_name)
             except Exception as exc:
                 logger.debug("refresh-client failed: %s", exc)
-
-    async def _handle_terminal_kill(self, websocket: Any, data: dict[str, Any]) -> None:
-        terminal_id = data.get("terminal_id")
-        if isinstance(terminal_id, str):
-            await teardown_terminal_bridges(self, terminal_id)
-        await super()._handle_terminal_kill(websocket, data)

@@ -18,6 +18,7 @@ from gobby.servers.websocket.proxy_relay import _map_host_frame
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals import web_spawn
 from gobby.terminals.leases import TerminalLeaseRegistry
@@ -326,18 +327,18 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
 
     server, _, _ = _server()
     websocket = MockWebSocket()
-    await TerminalWsMixin._handle_terminal_create(server, websocket, _message("create.json"))
+    await TerminalCreateMixin._handle_terminal_create(server, websocket, _message("create.json"))
     _assert_golden("create_result.json", _sent(websocket, 0))
     await server.lease_registry.shutdown_lifecycle_publication()
 
     server, _, _ = _server(refuse_spawn=True)
     websocket = MockWebSocket()
-    await TerminalWsMixin._handle_terminal_create(server, websocket, _message("create.json"))
+    await TerminalCreateMixin._handle_terminal_create(server, websocket, _message("create.json"))
     _assert_golden("create_result_refused.json", _sent(websocket))
 
     server, _, _ = _server()
     websocket = MockWebSocket()
-    await TerminalWsMixin._handle_terminal_kill(server, websocket, _message("kill.json"))
+    await TerminalCreateMixin._handle_terminal_kill(server, websocket, _message("kill.json"))
     _assert_golden("kill_result.json", _sent(websocket))
     await server.lease_registry.shutdown_lifecycle_publication()
 

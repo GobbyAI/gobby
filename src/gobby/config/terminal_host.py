@@ -27,6 +27,16 @@ class TerminalHostConfig(BaseModel):
         gt=0,
         description="Seconds between control ping health checks.",
     )
+    restart_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="Consecutive host restart failures before native launch is disabled.",
+    )
+    restart_backoff_ceiling_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Maximum delay between host restart attempts.",
+    )
     shutdown_grace_seconds: float = Field(
         default=10.0,
         ge=0,

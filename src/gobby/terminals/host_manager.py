@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import signal
+import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from pathlib import Path
@@ -16,7 +17,7 @@ from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import TerminalManager
-from gobby.terminals.host_client import HostClient, HostCommandError
+from gobby.terminals.host_client import HostClient, HostCommandError, HostManagerStopped
 from gobby.terminals.host_control import HostControlError
 from gobby.terminals.host_identity import PidIdentity, is_live_gterm, pid_matches_ping
 from gobby.terminals.host_protocol import (
@@ -78,6 +79,13 @@ class TerminalHostManager:
         self._reconnect_task: asyncio.Task[None] | None = None
         self._process: Any | None = None
         self._health_task: asyncio.Task[None] | None = None
+        self._restart_task: asyncio.Task[str] | None = None
+        self._restart_lock = asyncio.Lock()
+        self._restart_generation = 0
+        self._restart_failures = 0
+        self._healthy_since: float | None = None
+        self._sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+        self._monotonic: Callable[[], float] = time.monotonic
         self.enabled = config.enabled
         self.running = False
         self.adopted = False
@@ -148,6 +156,9 @@ class TerminalHostManager:
         atomic_replace_text(control_token_path(self.socket_dir), token, 0o600)
 
     async def start(self) -> None:
+        async with self._restart_lock:
+            self._stop_requested = False
+            self.host_drained = False
         try:
             await self._start_host()
         finally:
@@ -165,7 +176,6 @@ class TerminalHostManager:
         if not self.enabled:
             self.native_available = False
             return
-        self._stop_requested = False
         try:
             outcome = await self._try_adopt()
             if outcome is _Adopt.ADOPTED:
@@ -173,6 +183,7 @@ class TerminalHostManager:
                 self.running = True
                 self.last_error = None
                 await self.reconcile()
+                self._healthy_since = self._monotonic()
                 self._arm_health()
                 return
             if outcome is _Adopt.MISMATCH:
@@ -199,7 +210,18 @@ class TerminalHostManager:
         the next daemon adopts them. ``drain_host`` (or the
         ``terminals.stop_host_on_shutdown`` config) takes the host down too.
         """
-        self._stop_requested = True
+        async with self._restart_lock:
+            self._stop_requested = True
+            self._restart_generation += 1
+            restart_task = self._restart_task
+            self._restart_task = None
+            if restart_task is not None:
+                restart_task.cancel()
+        if restart_task is not None:
+            try:
+                await restart_task
+            except (asyncio.CancelledError, HostManagerStopped):
+                pass
         await self.stop_producers()
         if not (drain_host or self.terminal_config.stop_host_on_shutdown):
             await self.close_clients()
@@ -209,6 +231,82 @@ class TerminalHostManager:
         await self.close_clients()
         self.running = False
         self.host_pid = None
+
+    async def ensure_restart(self) -> str:
+        """Return one shared restart epoch, fenced against teardown and drain."""
+        async with self._restart_lock:
+            if self._stop_requested or self.host_drained or not self.enabled:
+                raise HostManagerStopped("gterm host manager stopped")
+            task = self._restart_task
+            if task is None or task.done():
+                self._restart_generation += 1
+                generation = self._restart_generation
+                task = asyncio.create_task(
+                    self._restart_host(generation),
+                    name="gterm-host-restart",
+                )
+                self._restart_task = task
+        return await asyncio.shield(task)
+
+    async def _restart_host(self, generation: int) -> str:
+        current = asyncio.current_task()
+        try:
+            while self._restart_failures < self.config.restart_max_attempts:
+                delay = self.backoff_seconds or 1.0
+                await self._sleep(delay)
+                async with self._restart_lock:
+                    if (
+                        self._stop_requested
+                        or self.host_drained
+                        or self._restart_task is not current
+                        or self._restart_generation != generation
+                    ):
+                        raise HostManagerStopped("gterm host manager stopped")
+                try:
+                    candidate = await self._spawn_candidate()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._restart_failures += 1
+                    self.backoff_seconds = min(
+                        delay * 2,
+                        self.config.restart_backoff_ceiling_seconds,
+                    )
+                    self.last_error = str(exc)
+                    continue
+
+                client, hello, ping = candidate
+                async with self._restart_lock:
+                    publish = (
+                        not self._stop_requested
+                        and not self.host_drained
+                        and self._restart_task is current
+                        and self._restart_generation == generation
+                    )
+                    if publish:
+                        self._publish_spawned_client(client, hello, ping)
+                        self.backoff_seconds = delay
+                        self._healthy_since = self._monotonic()
+                if not publish:
+                    await self._close_client(client)
+                    raise HostManagerStopped("gterm host manager stopped")
+                self.native_available = True
+                self.running = True
+                self.last_error = None
+                await self.reconcile()
+                return str(self.host_epoch or "")
+
+            self.running = False
+            self.native_available = False
+            raise HostManagerStopped("gterm host restart attempts exhausted")
+        except asyncio.CancelledError as exc:
+            if self._stop_requested or self.host_drained:
+                raise HostManagerStopped("gterm host manager stopped") from exc
+            raise
+        finally:
+            async with self._restart_lock:
+                if self._restart_task is current and self._restart_generation == generation:
+                    self._restart_task = None
 
     def preserved_host_pid(self) -> int | None:
         """Identity-checked host pid the shutdown reaper must leave alone."""
@@ -258,22 +356,27 @@ class TerminalHostManager:
         manager = self.terminal_manager
         self.running = False
         self.native_available = False
-        if manager is None:
-            return
-        machine_id = require_machine_id()
-        rows = [row for row in manager.list_live_by_machine(machine_id) if row.backend == "native"]
-        for row in rows:
-            if epoch is not None and row.host_epoch not in {None, epoch}:
-                manager.mark_orphaned(row.id)
-                self._interrupt(row.agent_run_id)
+        self._healthy_since = None
+        if manager is not None:
+            machine_id = require_machine_id()
+            rows = [
+                row for row in manager.list_live_by_machine(machine_id) if row.backend == "native"
+            ]
+            for row in rows:
+                if epoch is not None and row.host_epoch not in {None, epoch}:
+                    manager.mark_orphaned(row.id)
+                    self._interrupt(row.agent_run_id)
+                    if row.process:
+                        self.reap_recorded_process(row.process)
+                    continue
+                if row.state == "live":
+                    manager.mark_orphaned(row.id)
+                    self._interrupt(row.agent_run_id)
                 if row.process:
                     self.reap_recorded_process(row.process)
-                continue
-            if row.state == "live":
-                manager.mark_orphaned(row.id)
-                self._interrupt(row.agent_run_id)
-            if row.process:
-                self.reap_recorded_process(row.process)
+        if self._stop_requested or self.host_drained:
+            return
+        await self.ensure_restart()
 
     def reap_recorded_process(self, process: Any) -> None:
         if not isinstance(process, dict):
@@ -415,6 +518,10 @@ class TerminalHostManager:
         return _Adopt.ADOPTED
 
     async def _spawn_and_connect(self) -> None:
+        client, hello, ping = await self._spawn_candidate()
+        self._publish_spawned_client(client, hello, ping)
+
+    async def _spawn_candidate(self) -> tuple[Any, Any, Any]:
         # Only reached when nothing answered the control socket, so a fresh
         # token cannot lock out a live host.
         self.rotate_control_token() if control_token_path(self.socket_dir).exists() else (
@@ -429,6 +536,9 @@ class TerminalHostManager:
         client = await self._wait_for_client()
         hello = await client.hello(CONTROL_PROTOCOL_VERSION, token)
         ping = await client.ping()
+        return client, hello, ping
+
+    def _publish_spawned_client(self, client: Any, hello: Any, ping: Any) -> None:
         self._client = client
         self.host_epoch = ping.host_epoch or hello.host_epoch
         self.host_pid = ping.host_pid
@@ -436,6 +546,7 @@ class TerminalHostManager:
         self.adopted = False
         self.spawned_this_construction = True
         self.restart_count += 1
+        self._healthy_since = self._monotonic()
 
     def _spawn_host_process(self) -> Any:
         if self._spawner is not None:
@@ -632,10 +743,19 @@ class TerminalHostManager:
             return
         self._health_task = loop.create_task(self._health_loop(), name="gterm-host-health")
 
+    def _record_healthy_ping(self) -> None:
+        now = self._monotonic()
+        if self._healthy_since is None:
+            self._healthy_since = now
+            return
+        if now - self._healthy_since >= 60.0:
+            self.backoff_seconds = 0.0
+            self._restart_failures = 0
+
     async def _health_loop(self) -> None:
         interval = self.config.health_interval_seconds
         while not self._stop_requested:
-            await asyncio.sleep(interval)
+            await self._sleep(interval)
             client = self._client
             if client is None:
                 continue
@@ -644,6 +764,7 @@ class TerminalHostManager:
                 self.host_pid = ping.host_pid
                 self.host_epoch = ping.host_epoch
                 await self.reconcile()
+                self._record_healthy_ping()
             except Exception as exc:
                 self.last_error = str(exc)
                 pid = self.host_pid
@@ -666,10 +787,20 @@ class TerminalHostManager:
                         self.host_pid = ping.host_pid
                     except Exception as reconnect_exc:
                         self.last_error = str(reconnect_exc)
-                        await self.handle_host_death()
+                        try:
+                            await self.handle_host_death()
+                        except HostManagerStopped:
+                            return
+                        if self.running:
+                            continue
                         return
                     continue
-                await self.handle_host_death()
+                try:
+                    await self.handle_host_death()
+                except HostManagerStopped:
+                    return
+                if self.running:
+                    continue
                 return
 
 

@@ -9,7 +9,7 @@ from uuid import UUID
 from gobby.agents.spawn_executor import derive_spawn_key, kill_spawn_key
 from gobby.storage.terminals import TerminalManager, mint_terminal_id
 from gobby.terminals.dimensions import validate_dimensions
-from gobby.terminals.host_client import HostCommandError
+from gobby.terminals.native_runtime import classify_native_spawn_failure
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -26,6 +26,33 @@ class WebSpawnResult:
     success: bool
     terminal_id: str
     error: str | None = None
+    error_detail: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.error is not None:
+            self.error = self.error[:128]
+
+
+async def _settle_native_failure(
+    *,
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    terminal_id: str,
+    spawn_key: str,
+    exc: BaseException,
+    host_terminal_id: str | None = None,
+) -> WebSpawnResult:
+    code, detail, settlement = classify_native_spawn_failure(exc)
+    if settlement == "fail_pending_kill":
+        await kill_spawn_key(
+            runtime,
+            spawn_key,
+            pending=manager.get(terminal_id),
+            host_terminal_id=host_terminal_id,
+        )
+    if settlement != "pending":
+        manager.fail_pending(terminal_id)
+    return WebSpawnResult(False, terminal_id, code, detail)
 
 
 async def spawn_web_terminal(
@@ -72,9 +99,14 @@ async def spawn_web_terminal(
             return WebSpawnResult(False, terminal_id, "native_reserve_unavailable")
         try:
             reservation = await runtime.reserve_observer(UUID(terminal_id))
-        except HostCommandError as exc:
-            manager.fail_pending(terminal_id)
-            return WebSpawnResult(False, terminal_id, str(exc))
+        except Exception as exc:
+            return await _settle_native_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+            )
         request.reservation_id = reservation.get("reservation_id")
         request.reserve_key = reservation.get("reserve_key")
     prepare_task = asyncio.create_task(runtime.prepare_spawn(request))
@@ -86,16 +118,32 @@ async def spawn_web_terminal(
     except TimeoutError:
         await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
         manager.fail_pending(terminal_id)
-        return WebSpawnResult(False, terminal_id, "spawn timed out")
+        return WebSpawnResult(False, terminal_id, "spawn_timeout", "spawn timed out")
     except asyncio.CancelledError:
         manager.fail_pending(terminal_id)
         return WebSpawnResult(False, terminal_id, "cancelled")
     except TerminalSpawnFailed as exc:
+        if runtime.backend == "native":
+            return await _settle_native_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+            )
         manager.fail_pending(terminal_id)
-        return WebSpawnResult(False, terminal_id, str(exc))
+        return WebSpawnResult(False, terminal_id, str(exc), str(exc))
     except Exception as exc:
+        if runtime.backend == "native":
+            return await _settle_native_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+            )
         manager.fail_pending(terminal_id)
-        return WebSpawnResult(False, terminal_id, str(exc))
+        return WebSpawnResult(False, terminal_id, str(exc), str(exc))
 
     stored = prepared.stored_locator or {}
     locator_key = prepared.locator_key or ""
@@ -110,12 +158,44 @@ async def spawn_web_terminal(
         except Exception as exc:
             await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
             manager.fail_pending(terminal_id)
-            return WebSpawnResult(False, terminal_id, str(exc))
+            code, detail, _settlement = classify_native_spawn_failure(exc)
+            return WebSpawnResult(False, terminal_id, code, detail)
     try:
         handle = await runtime.commit_spawn(prepared)
+    except asyncio.CancelledError as exc:
+        if runtime.backend == "native":
+            await _settle_native_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+                host_terminal_id=prepared.host_terminal_id,
+            )
+        raise
     except CommitSpawnRefusedError as exc:
+        if runtime.backend == "native":
+            return await _settle_native_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+                host_terminal_id=prepared.host_terminal_id,
+            )
         manager.fail_pending(terminal_id)
-        return WebSpawnResult(False, terminal_id, str(exc))
+        return WebSpawnResult(False, terminal_id, str(exc), str(exc))
+    except Exception as exc:
+        if runtime.backend != "native":
+            raise
+        return await _settle_native_failure(
+            manager=manager,
+            runtime=runtime,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            exc=exc,
+            host_terminal_id=prepared.host_terminal_id,
+        )
     promoted = manager.promote_to_live(
         terminal_id,
         locator=stored,

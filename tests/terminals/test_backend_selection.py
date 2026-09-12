@@ -28,7 +28,7 @@ pytestmark = pytest.mark.unit
 _REPO = Path(__file__).resolve().parents[2]
 _CONFIG_YAML = _REPO / "src" / "gobby" / "install" / "shared" / "config" / "config.yaml"
 _GUIDE = _REPO / "docs" / "guides" / "gterminal-development-guide.md"
-_TERMINAL_WS = _REPO / "src" / "gobby" / "servers" / "websocket" / "terminal_ws.py"
+_TERMINAL_CREATE_WS = _REPO / "src" / "gobby" / "servers" / "websocket" / "terminal_ws_create.py"
 
 
 @pytest.mark.asyncio
@@ -82,7 +82,7 @@ async def test_explicit_and_external_selection_under_tmux_default(
     assert external.backend == "tmux"
 
     # An explicit native request with no gterm host is refused before fork with the
-    # typed host_unavailable code; the pending row fails and no tmux row appears.
+    # typed host_unreachable code; the pending row fails and no tmux row appears.
     assert issubclass(HostUnavailableError, HostCommandError)
     no_host = NativeTerminalRuntime(HostManagerControl(SimpleNamespace(_client=None)))
     refused = await spawn_web_terminal(
@@ -96,7 +96,7 @@ async def test_explicit_and_external_selection_under_tmux_default(
         command=["zsh"],
     )
     assert refused.success is False
-    assert refused.error == "host_unavailable"
+    assert refused.error == "host_unreachable"
     refused_row = manager.get(refused.terminal_id)
     assert refused_row is not None
     assert refused_row.backend == "native"
@@ -176,7 +176,7 @@ async def test_explicit_and_external_selection_under_tmux_default(
     assert "capacity" in (overflow.error or "")
     assert str(overflow.terminal_id) not in prepares
 
-    tree = ast.parse(_TERMINAL_WS.read_text(encoding="utf-8"))
+    tree = ast.parse(_TERMINAL_CREATE_WS.read_text(encoding="utf-8"))
     create_fn = None
     for node in tree.body:
         if isinstance(node, ast.ClassDef):

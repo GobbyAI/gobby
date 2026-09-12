@@ -40,7 +40,7 @@ from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
-from gobby.terminals.host_client import HostCommandError
+from gobby.terminals.native_runtime import classify_native_spawn_failure
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -120,6 +120,29 @@ def _default_backend(request: SpawnRequest) -> str:
     if isinstance(config, TerminalConfig):
         return config.default_backend
     return TerminalConfig().default_backend
+
+
+async def _settle_native_spawn_failure(
+    *,
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    terminal_id: str,
+    spawn_key: str,
+    exc: BaseException,
+    host_terminal_id: str | None = None,
+) -> tuple[str, str | None]:
+    code, detail, settlement = classify_native_spawn_failure(exc)
+    if settlement == "fail_pending_kill":
+        pending = await asyncio.to_thread(manager.get, terminal_id)
+        await kill_spawn_key(
+            runtime,
+            spawn_key,
+            pending=pending,
+            host_terminal_id=host_terminal_id,
+        )
+    if settlement != "pending":
+        await asyncio.to_thread(manager.fail_pending, terminal_id)
+    return code, detail
 
 
 def _spawn_in_doubt_seconds(request: SpawnRequest) -> float:
@@ -412,14 +435,21 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             )
         try:
             reservation = await runtime.reserve_observer(UUID(terminal_id))
-        except HostCommandError as exc:
-            await asyncio.to_thread(manager.fail_pending, terminal_id)
+        except Exception as exc:
+            code, detail = await _settle_native_spawn_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+            )
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
                 child_session_id=plan.child_session_id,
                 status="failed",
-                error=str(exc),
+                error=code,
+                error_detail=detail,
                 terminal_id=terminal_id,
             )
         spawn_request.reservation_id = reservation.get("reservation_id")
@@ -436,12 +466,15 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
     except TimeoutError:
         pending = await asyncio.to_thread(manager.get, terminal_id)
         await kill_spawn_key(runtime, spawn_key, pending=pending)
+        if backend == "native":
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
             child_session_id=plan.child_session_id,
             status="failed",
-            error="spawn timed out",
+            error="spawn_timeout" if backend == "native" else "spawn timed out",
+            error_detail="spawn timed out" if backend == "native" else None,
             terminal_id=terminal_id,
         )
     except asyncio.CancelledError:
@@ -459,23 +492,45 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             terminal_id=terminal_id,
         )
     except TerminalSpawnFailed as exc:
-        await asyncio.to_thread(manager.fail_pending, terminal_id)
+        if backend == "native":
+            code, detail = await _settle_native_spawn_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+            )
+        else:
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
+            code, detail = str(exc), None
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
             child_session_id=plan.child_session_id,
             status="failed",
-            error=str(exc),
+            error=code,
+            error_detail=detail,
             terminal_id=terminal_id,
         )
     except Exception as exc:
         logger.exception("Backend spawn raised for terminal %s", terminal_id)
+        if backend == "native":
+            code, detail = await _settle_native_spawn_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+            )
+        else:
+            code, detail = str(exc), None
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
             child_session_id=plan.child_session_id,
             status="failed",
-            error=str(exc),
+            error=code,
+            error_detail=detail,
             terminal_id=terminal_id,
         )
     finally:
@@ -535,23 +590,69 @@ async def _promote_prepared(
                 host_terminal_id=prepared.host_terminal_id,
             )
             await asyncio.to_thread(manager.fail_pending, terminal_id)
+            code, detail, _settlement = classify_native_spawn_failure(exc)
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
                 child_session_id=plan.child_session_id,
                 status="failed",
-                error=str(exc),
+                error=code,
+                error_detail=detail,
                 terminal_id=terminal_id,
             )
     try:
         handle = await runtime.commit_spawn(prepared)
+    except asyncio.CancelledError as exc:
+        if backend == "native":
+            await _settle_native_spawn_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+                host_terminal_id=prepared.host_terminal_id,
+            )
+        raise
     except CommitSpawnRefusedError as exc:
+        if backend == "native":
+            code, detail = await _settle_native_spawn_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+                host_terminal_id=prepared.host_terminal_id,
+            )
+        else:
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
+            code, detail = str(exc), None
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
             child_session_id=plan.child_session_id,
             status="failed",
-            error=str(exc),
+            error=code,
+            error_detail=detail,
+            terminal_id=terminal_id,
+        )
+    except Exception as exc:
+        if backend != "native":
+            raise
+        code, detail = await _settle_native_spawn_failure(
+            manager=manager,
+            runtime=runtime,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            exc=exc,
+            host_terminal_id=prepared.host_terminal_id,
+        )
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=code,
+            error_detail=detail,
             terminal_id=terminal_id,
         )
 

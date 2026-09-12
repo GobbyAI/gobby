@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.terminals.runtime import TerminalRuntime
@@ -251,6 +252,7 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
         "success": False,
         "terminal_id": "t-1",
         "backend": "tmux",
+        "code": "backend boom",
         "reason": "backend boom",
     }
     assert (created["success"], created["terminal_id"], created["reason"]) == (
@@ -261,4 +263,114 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
     assert lifecycle["type"] == "terminal_event"
     assert lifecycle["event"] == "created"
     assert lifecycle["terminal"]["terminal_id"] == created_id
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+def _create_server(temp_db: HubDatabase) -> tuple[WebSocketServer, MagicMock]:
+    config = MagicMock(
+        host="localhost",
+        port=60888,
+        ping_interval=30,
+        ping_timeout=10,
+        max_message_size=1024,
+    )
+    server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server.terminal_manager = _manager(temp_db)
+    runtime = MagicMock(backend="native")
+    server.terminal_runtime_registry = MagicMock(resolve=MagicMock(return_value=runtime))
+    server.terminal_config = MagicMock(default_backend="native")
+    return server, runtime
+
+
+@pytest.mark.asyncio
+async def test_create_result_code_is_bounded(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert "_handle_terminal_create" in TerminalCreateMixin.__dict__
+    assert "_handle_terminal_kill" in TerminalCreateMixin.__dict__
+    server, _runtime = _create_server(temp_db)
+    monkeypatch.setattr(
+        "gobby.terminals.web_spawn.spawn_web_terminal",
+        AsyncMock(return_value=WebSpawnResult(False, "terminal-1", "x" * 200, "detail")),
+    )
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+
+    await server._handle_terminal_create(
+        websocket,
+        {"request_id": "bounded", "rows": 24, "cols": 80, "command": ["zsh"]},
+    )
+
+    message = json.loads(websocket.sent_messages[0])
+    assert message["code"] == "x" * 128
+    assert message["reason"] == "detail"
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+@pytest.mark.asyncio
+async def test_create_and_kill_dispatch_bind_terminal_create_mixin(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, _runtime = _create_server(temp_db)
+    teardown = AsyncMock()
+    monkeypatch.setattr(
+        "gobby.servers.websocket.terminal_ws_create.teardown_terminal_bridges",
+        teardown,
+        raising=False,
+    )
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+    missing_terminal_id = str(uuid.uuid4())
+
+    await server._handle_message(
+        websocket,
+        json.dumps(
+            {
+                "type": "terminal_kill",
+                "request_id": "kill",
+                "terminal_id": missing_terminal_id,
+            }
+        ),
+    )
+
+    assert getattr(server._dispatch_table["terminal_create"], "__func__", None) is (
+        TerminalCreateMixin._handle_terminal_create
+    )
+    assert getattr(server._dispatch_table["terminal_kill"], "__func__", None) is (
+        TerminalCreateMixin._handle_terminal_kill
+    )
+    teardown.assert_awaited_once_with(server, missing_terminal_id)
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+@pytest.mark.asyncio
+async def test_create_result_carries_host_code_and_detail(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, _runtime = _create_server(temp_db)
+    monkeypatch.setattr(
+        "gobby.terminals.web_spawn.spawn_web_terminal",
+        AsyncMock(
+            return_value=WebSpawnResult(
+                False,
+                "terminal-1",
+                "exec_failed:ENOENT",
+                "exec: No such file or directory",
+            )
+        ),
+    )
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+
+    await server._handle_terminal_create(
+        websocket,
+        {"request_id": "exec", "rows": 24, "cols": 80, "command": ["missing"]},
+    )
+
+    message = json.loads(websocket.sent_messages[0])
+    assert message["code"] == "exec_failed:ENOENT"
+    assert message["reason"] == "exec: No such file or directory"
     await server.lease_registry.shutdown_lifecycle_publication()
