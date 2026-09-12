@@ -20,6 +20,7 @@ from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.server_resolution import resolve_server
 from gobby.servers.routes.dependencies import get_server
 from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
+from gobby.servers.routes.mcp.endpoints.templates import list_mcp_templates
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 if TYPE_CHECKING:
@@ -151,6 +152,7 @@ async def list_mcp_servers(
         return {
             "success": True,
             "servers": server_list,
+            "templates": (await list_mcp_templates(request, server))["templates"],
             "total": len(server_list),
             "connected": connected_count,
         }

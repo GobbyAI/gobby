@@ -1,0 +1,854 @@
+{
+  "version": 1,
+  "capability": "mcp-servers",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "mcp-servers"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/mcp-tools.md",
+      "anchors": [
+        "gobby-mcp-tools",
+        "tool-surfaces",
+        "progressive-discovery-pattern",
+        "templates-and-instances",
+        "manage-instances",
+        "authentication",
+        "openapi-instances",
+        "diagnostics",
+        "oversized-results",
+        "internal-registries",
+        "error-handling",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/mcp-oauth.md",
+      "anchors": [
+        "oauth-mcp-servers"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "mcp-proxy"
+      ],
+      "scope": "MCP Proxy section only",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "mcp-proxy",
+        "preferred-tool-calls"
+      ],
+      "scope": "MCP Proxy section only",
+      "evidence": [
+        "source-audit"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "list_mcp_servers",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.list_mcp_servers"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "list_tools",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.list_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "get_tool_schema",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.get_tool_schema"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "call_tool",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.call_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "recommend_tools",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.recommend_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "search_tools",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.search_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "add_mcp_server",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.add_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "remove_mcp_server",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.remove_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "import_mcp_server",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.import_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "status",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "read_mcp_resource",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.read_mcp_resource"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby",
+      "tool": "init_project",
+      "native": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/stdio_tools.py",
+        "symbol": "register_proxy_tools.init_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-results",
+      "tool": "get_tool_result",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/results.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/results.py",
+        "symbol": "create_results_registry.get_tool_result"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-results",
+      "tool": "search_tool_result",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/results.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/results.py",
+        "symbol": "create_results_registry.search_tool_result"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy add-server",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "add_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy auth",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/oauth.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_oauth.py",
+        "symbol": "auth_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy call-tool",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "call_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy get-schema",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "get_schema"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy import-server",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "import_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy list-servers",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "list_servers"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy list-templates",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/templates.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy_templates.py",
+        "symbol": "list_templates"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy list-tools",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "list_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy recommend-tools",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "recommend_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy refresh",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "refresh_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy remove-server",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "remove_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy search-tools",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "search_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy show-template",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/templates.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy_templates.py",
+        "symbol": "show_template"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-proxy status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp_proxy.py",
+        "symbol": "proxy_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/mcp/{server_name}/tools",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/execution.py",
+        "symbol": "list_mcp_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/tools/schema",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/execution.py",
+        "symbol": "get_tool_schema"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/tools/call",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/execution.py",
+        "symbol": "call_mcp_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/{server_name}/tools/{tool_name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/execution.py",
+        "symbol": "mcp_proxy"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/mcp/servers",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/server.py",
+        "symbol": "list_mcp_servers"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/servers",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/server.py",
+        "symbol": "add_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/servers/import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/server.py",
+        "symbol": "import_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "route": "/api/mcp/servers/{name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/server.py",
+        "symbol": "update_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "PATCH",
+      "route": "/api/mcp/servers/{name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/server.py",
+        "symbol": "patch_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "route": "/api/mcp/servers/{name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/instances.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/server.py",
+        "symbol": "remove_mcp_server"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/mcp/templates",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/templates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/templates.py",
+        "symbol": "list_mcp_templates"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/mcp/tools",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/discovery.py",
+        "symbol": "list_all_mcp_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/tools/recommend",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/discovery.py",
+        "symbol": "recommend_mcp_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/tools/search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/discovery.py",
+        "symbol": "search_mcp_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/tools/embed",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/registry.py",
+        "symbol": "embed_mcp_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/mcp/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/registry.py",
+        "symbol": "get_mcp_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/mcp/refresh",
+      "reference": "src/gobby/install/shared/skills/gobby/references/mcp-servers/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/endpoints/registry.py",
+        "symbol": "refresh_mcp_tools"
+      },
+      "verification": [
+        "source-audit",
+        "focused-mcp",
+        "endpoint-carriers"
+      ],
+      "audience": "integration-client"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-registry",
+      "command": "gcode outline/symbol-at for native/stdio carriers, server lifecycle, templates/sync/storage, OAuth transport/callback, schema guidance and offload/retrieval; live list_mcp_servers/list_tools(gobby-results), get_tool_schema(gobby-results get/search); AST compose create_mcp_router; CliRunner --help for all 14 MCP command leaves",
+      "result": "45 operations mapped: 12 native tools (carrier-specific), 2 gobby-results tools, 14 CLI leaves, and 17 HTTP routes. All Python implementation symbols verified by AST. Live inventory: 22 internal registries, 8 external instances (7 global and project gobby-annotate); external instances were pending/enabled, not asserted connected. No template enabled claim inferred from YAML. Installed native metadata distinguishes stdio-only init_project from daemon-only status/read_mcp_resource. Shared gobby init/sync/secrets procedures remain operator operations, not new native MCP tools."
+    },
+    {
+      "id": "template-catalog-regression",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/mcp_endpoints/test_registry_routes.py -k stdio_server_listing_preserves -q; then both test_registry_routes.py and test_template_routes.py",
+      "result": "First red: KeyError templates proved stdio-backed HTTP listing omitted catalog. Reuse existing scoped list_mcp_templates in server listing. Both files then passed: 46 tests in 2.68s. Actual isolated storage rows establish project shadow/global scope and disabled-template discovery through real HTTP response plus stdio compaction."
+    },
+    {
+      "id": "focused-mcp",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/mcp_endpoints/test_registry_routes.py tests/servers/routes/mcp_endpoints/test_template_routes.py tests/mcp_proxy/test_mcp_templates.py tests/mcp_proxy/test_sync_templates.py tests/mcp_proxy/test_sync_servers.py tests/mcp_proxy/test_oauth.py tests/mcp_proxy/test_oauth_callback.py tests/mcp_proxy/test_oauth_registry.py tests/mcp_proxy/test_oauth_setup.py tests/cli/test_mcp_oauth.py tests/cli/test_cli_mcp_proxy.py tests/mcp_proxy/services/test_scope_resolution_matrix.py tests/mcp_proxy/services/test_scope_resolution_consumers.py tests/mcp_proxy/services/test_tool_proxy_invalid_arguments_schema.py tests/mcp_proxy/services/test_result_offload.py tests/mcp_proxy/test_results_tools.py tests/storage/test_tool_results.py tests/mcp_proxy/services/test_output_repair.py tests/skills/test_capability_catalog.py -q",
+      "result": "310 passed in 10.14s. Isolated template, connection, OAuth, scope, schema-error, output repair and retained-result fixtures; no live upstream OAuth or server mutation."
+    },
+    {
+      "id": "quality",
+      "kind": "lint-and-types",
+      "command": "uv run ruff check/format --check src/gobby/servers/routes/mcp/endpoints/server.py tests/servers/routes/mcp_endpoints/test_registry_routes.py; uv run mypy src/gobby/servers/routes/mcp/endpoints/server.py; uv run gobby test-quality audit and test-types audit on touched test with repository baselines; uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "Ruff lint/format and source mypy passed. Test quality: 43 tests, zero issues. Test types: two known baseline errors, zero new. Suppression ratchet: 4263 files, 217 baseline, zero new/stale."
+    },
+    {
+      "id": "endpoint-carriers",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/mcp_endpoints/ tests/mcp_proxy/test_stdio_proxy.py tests/mcp_proxy/test_proxy_server.py -q",
+      "result": "210 passed in 4.83s, including HTTP scope/context/auth discovery, execution offload and both proxy carriers."
+    },
+    {
+      "id": "library-validation",
+      "kind": "validation",
+      "command": "uv run python: load_capability_catalog, fence-aware Markdown links/anchors, Python AST identity and route composition; expand documented YAML through load_template_file and expand_template with missing-secret callback",
+      "result": "10 catalog entries; 12 scoped Markdown files, 45 source identities, all audit anchors and 6 tracked inbound links passed. Documented GitHub instance expands without persistence/connection and retains the required missing secret reference. Initial audit-generation heading scan included a YAML comment; corrected to ignore fenced blocks before the passing rerun."
+    },
+    {
+      "id": "live-cutover-receipt",
+      "kind": "read-only-verification",
+      "command": "gobby#12858 restart receipt after a62bb37b3d; list_mcp_servers(session_id=#12910)",
+      "result": "Owner coordinated restart from main for its Ask runtime update. Read-only call after restart confirms the repaired templates field with eight Gobby-owned global templates; 22 internal registries and eight external pending/enabled instances. No live server, credential, template or result mutation invoked by this audit. This does not complete P5 router retirement/cutover."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Stdio tool promised templates but GET /api/mcp/servers omitted them.",
+      "resolution": "Server listing reuses the existing template-list endpoint; isolated storage/API/stdio composition regression verifies catalog survives with correct project/global precedence.",
+      "evidence": [
+        "template-catalog-regression"
+      ]
+    },
+    {
+      "finding": "Guide combined different native carrier signatures, omitted template/auth CLI commands, and omitted HTTP PUT instance update.",
+      "resolution": "Document carrier-specific native surface and all 14 CLI/17 HTTP operations; keep CLI-only procedures distinct.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Guide asserted all proxy successes lacked a result wrapper and every call needed the whole discovery chain.",
+      "resolution": "Distinguish stdio REST envelopes from direct daemon MCP normalization, and document leases with reset/validation-error semantics.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Standalone MCP skill nested native list/add calls through call_tool and described servers as an independent import source.",
+      "resolution": "References require direct native calls; import servers is a project-source filter. No compatibility wrapper introduced.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Human MCP guide duplicated stale internal tool lists and counts, omitted results/feedback/Ask registries and oversized retrieval.",
+      "resolution": "Replace duplicate operation tables with the live 22-registry directory; owning guides/reference library retain detailed capability procedures. Add full oversized-result retrieval and failure instructions.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Secret prose asserted only prefixed names accepted; OAuth guide included unverified vendor-specific account advice.",
+      "resolution": "Document verified normalization of existing bare secret names, recommend explicit forward references, and use a clearly replaceable generic endpoint. Preserve callback, refresh, identity and saved-but-not-adopted recovery behavior.",
+      "evidence": [
+        "source-audit"
+      ]
+    }
+  ]
+}

@@ -256,13 +256,14 @@ Returns `{ "session": null }` when no matching session exists.
 
 ## MCP Proxy
 
-The REST MCP proxy is under `/api/mcp`. The raw FastMCP protocol endpoint remains
+The REST MCP proxy is under `/api/mcp`. The direct MCP protocol endpoint remains
 available at `/mcp`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/mcp/servers` | List servers visible to the resolved project. Each row includes `id`, `scope`, `template`, `template_values`, and `missing_secrets`. |
+| `GET` | `/api/mcp/servers` | List visible instances and the `templates` catalog. External instance rows include `id`, `scope`, `template`, `template_values`, and `missing_secrets`; internal registry rows are lighter. |
 | `POST` | `/api/mcp/servers` | Add a server. Accepts a manual payload (`name`, `transport`, `command`, `args`, `url`, `env`, `enabled`) or `template`/`values`/`scope`. |
+| `PUT` | `/api/mcp/servers/{name}` | Update the exact scoped instance; names cannot change and template-owned runtime fields are protected. |
 | `PATCH` | `/api/mcp/servers/{name}` | Patch the exact `(name, resolved project)` row. Templated instances reject template-owned runtime fields with `400 template_owned_fields`. |
 | `POST` | `/api/mcp/servers/import` | Import MCP server config from a project, GitHub repo, or search query. Honors `scope`/`project_id`. |
 | `DELETE` | `/api/mcp/servers/{name}` | Remove the exact `(name, resolved project)` row. |
@@ -276,7 +277,7 @@ available at `/mcp`.
 | `POST` | `/api/mcp/tools/schema` | Get one tool schema. Accepts `server_name` or `server_id`. |
 | `POST` | `/api/mcp/tools/call` | Call a tool through the progressive-discovery REST endpoint. Accepts `server_name` or `server_id`. |
 | `GET` | `/api/mcp/{server_name}/tools` | List tools for one MCP server. |
-| `POST` | `/api/mcp/{server_name}/tools/{tool_name}` | Backward-compatible direct tool call endpoint. |
+| `POST` | `/api/mcp/{server_name}/tools/{tool_name}` | Direct tool call endpoint used by the stdio carrier for non-wait tools. |
 
 Scope resolution is the shared `resolve_request_scope` table: `scope: "global"` wins, a session-bound request uses its project, an explicit registered `project_id` is used when no session is bound, `scope: "project"` without a project returns `400 project_scope_unresolved`, and the sessionless web-tab payload (`project_id: ""`, no `scope`) lands in the global scope.
 
@@ -318,8 +319,10 @@ POST /api/mcp/tools/schema
 POST /api/mcp/tools/call
 ```
 
-The discovery sequence is: list servers, list tools for the selected server,
-fetch the schema for the selected tool, then call the tool.
+Start at the missing discovery level: known leased tools can be called directly;
+known unleased tools need their schema; unknown tool names need a server tool
+listing; unknown servers need the server listing. These endpoints are separate
+calls, not tools nested through `call_tool`.
 
 `POST /api/mcp/tools/schema` body:
 
@@ -347,9 +350,9 @@ Send the caller context in `X-Gobby-Session-Id` or `X-Gobby-Project-Id`
 headers. Keep any `session_id` field inside `arguments` for the target MCP tool
 itself.
 
-The legacy `POST /api/mcp/{server_name}/tools/{tool_name}` route still exists,
-but new automation should prefer the schema/call endpoints so discovery and
-context tracking are consistent.
+The stdio carrier uses `POST /api/mcp/{server_name}/tools/{tool_name}` for
+ordinary calls and `/api/mcp/tools/call` for waits. Both paths retain wrapper
+context and enforcement; the direct path is not a workflow bypass.
 
 ## Hooks And Webhooks
 

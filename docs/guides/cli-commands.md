@@ -599,30 +599,41 @@ are operator-only.
 
 ## MCP Proxy
 
-The MCP proxy CLI calls the daemon HTTP API. Use it for inspection and manual
-tool calls; automated agents should use MCP progressive discovery directly.
+The MCP proxy CLI is the operator interface to daemon HTTP endpoints. Agents
+use native MCP progressive discovery and task lifecycle tools. CLI-only login
+and connection maintenance remain operator procedures.
 
 ```bash
 gobby mcp-proxy status [--json]
 gobby mcp-proxy list-servers [--json]
+gobby mcp-proxy list-templates [--global] [--json]
+gobby mcp-proxy show-template NAME [--global]
 gobby mcp-proxy list-tools [--server NAME] [--json]
 gobby mcp-proxy get-schema SERVER TOOL
 gobby mcp-proxy call-tool SERVER TOOL [--arg KEY=VALUE ...] [--json-args JSON] [--raw]
-gobby mcp-proxy add-server NAME --transport http|stdio|websocket [OPTIONS]
-gobby mcp-proxy remove-server NAME
+gobby mcp-proxy add-server NAME --template TEMPLATE [--set KEY=VALUE ...] [--global]
+gobby mcp-proxy add-server NAME --transport http|sse|stdio|websocket [OPTIONS]
+gobby mcp-proxy auth NAME [--global] [--timeout SECONDS]
+gobby mcp-proxy remove-server NAME [--global] [--yes]
 gobby mcp-proxy import-server [OPTIONS]
 gobby mcp-proxy recommend-tools TASK_DESCRIPTION [OPTIONS]
 gobby mcp-proxy search-tools QUERY [OPTIONS]
-gobby mcp-proxy refresh [OPTIONS]
+gobby mcp-proxy refresh [--server NAME] [--force] [--json]
 ```
 
-| Command | Key options |
+| Command | Additional options and behavior |
 | --- | --- |
-| `add-server` | `--transport`, `--url`, `--command`, `--args`, `--env`, `--headers`, `--disabled` |
-| `import-server` | `--from-project`, `--github`, `--query`, `--server`, `--json` |
-| `recommend-tools` | `--agent`, `--mode`, `--top-k`, `--json` |
+| `add-server` | `--url`, `--command`, `--args`, `--env`, `--headers`, `--disabled`, `--oauth`, `--description`; JSON arrays/objects for runtime args/env/headers |
+| `auth` | HTTP/SSE browser login; default 300-second consent timeout |
+| `import-server` | `--from-project`, `--github`, `--query`, repeatable `--server`, `--global`, `--json` |
+| `recommend-tools` | `--agent`, `--mode llm|semantic|hybrid`, `--top-k`, `--json` |
 | `search-tools` | `--top-k`, `--min-similarity`, `--server`, `--json` |
-| `refresh` | `--force`, `--server`, `--json` |
+| `refresh` | Refresh visible connections, hashes, and embeddings; inspect per-server errors even on top-level success |
+
+A successful add can still report `needs_configuration`. TTY add may prompt for
+missing secrets; noninteractive add prints recovery commands. Project instances
+shadow global names for reads/refresh; exact scoped removal does not fall back.
+See [MCP tools](mcp-tools.md) for templates, credentials, and oversized output.
 
 ## Sessions And Agents
 

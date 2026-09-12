@@ -5,17 +5,17 @@ MCP servers. The MCP SDK discovers the authorization server, registers a public
 client, and uses the authorization-code flow with PKCE. Credentials are encrypted
 in Gobby's secret store and isolated by project, server instance, and endpoint URL.
 
-For [Fieldy](https://fieldyai.github.io/docs/#/mcp):
+For a remote endpoint (replace the example URL with the service's MCP URL):
 
 ```bash
-gobby mcp-proxy add-server fieldy --transport http --url https://api.fieldy.ai/mcp --oauth
-gobby mcp-proxy auth fieldy
+gobby mcp-proxy add-server remote --transport http --url https://mcp.example.test/mcp --oauth
+gobby mcp-proxy auth remote
 ```
 
-Sign in in the browser with the same email used in the Fieldy app (including your
-Apple Private Relay email, when applicable). The command verifies the authorized
-MCP connection and updates the daemon's server configuration. Use `--global` on
-both commands for a machine-wide server.
+The command verifies the authorized MCP connection and updates the daemon's
+server configuration. Use `--global` on both commands for a machine-wide server.
+Native MCP add does not expose an OAuth flag; use the operator login command or
+the authenticated HTTP configuration interface.
 
 For an existing HTTP/SSE server, run `gobby mcp-proxy auth NAME`; successful login
 enables OAuth for that instance. Login opens a temporary `127.0.0.1` callback
@@ -36,3 +36,15 @@ Servers must support dynamic client registration and the authorization-code flow
 for this login command. Provider-specific API keys remain configurable through
 headers. OAuth is supported on HTTP/SSE transports; stdio and WebSocket servers do
 not use this authorization flow.
+
+If login reports that credentials were saved but updating the daemon failed,
+repair the daemon connection and rerun login. Saved tokens alone do not prove
+the running connection adopted authorization. Instance removal/recreation also
+changes OAuth identity; rotate or reauthorize the existing row when possible.
+
+Implementation: `src/gobby/cli/mcp_oauth.py::auth_server`,
+`src/gobby/mcp_proxy/oauth.py::authorize_server`, and the client manager's
+`_authorize_oauth_once` path. Verification uses isolated callback/transport
+fixtures; no live account sign-in is needed to audit these procedures.
+
+_Last verified: 2026-09-12_

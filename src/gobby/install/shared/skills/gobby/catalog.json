@@ -474,6 +474,56 @@
           "when": "Investigating missing rules or management errors"
         }
       ]
+    },
+    {
+      "name": "mcp-servers",
+      "description": "Discover proxy tools and manage downstream server connections",
+      "overview": "references/mcp-servers/overview.md",
+      "when": "Operating MCP discovery, connections or oversized results",
+      "topics": [
+        {
+          "name": "discovery",
+          "description": "Discover tools and schema leases",
+          "path": "references/mcp-servers/discovery.md",
+          "when": "Selecting or invoking proxy tools"
+        },
+        {
+          "name": "templates",
+          "description": "Inspect and author server templates",
+          "path": "references/mcp-servers/templates.md",
+          "when": "Selecting or authoring parameterized server definitions"
+        },
+        {
+          "name": "instances",
+          "description": "Manage scoped server instances",
+          "path": "references/mcp-servers/instances.md",
+          "when": "Adding, importing, updating or removing downstream connections"
+        },
+        {
+          "name": "authentication",
+          "description": "Configure and rotate secret references",
+          "path": "references/mcp-servers/authentication.md",
+          "when": "Configuring or rotating instance credentials"
+        },
+        {
+          "name": "oauth",
+          "description": "Authorize browser-based connections",
+          "path": "references/mcp-servers/oauth.md",
+          "when": "Signing in to remote HTTP/SSE MCP servers"
+        },
+        {
+          "name": "diagnostics",
+          "description": "Diagnose and refresh MCP state",
+          "path": "references/mcp-servers/diagnostics.md",
+          "when": "Investigating unavailable connections, schemas or searches"
+        },
+        {
+          "name": "results",
+          "description": "Retrieve oversized tool output",
+          "path": "references/mcp-servers/results.md",
+          "when": "Reading stored output envelopes or handling retrieval failures"
+        }
+      ]
     }
   ]
 }
