@@ -10,6 +10,10 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.skills.instruction_requirements import (
+    instruction_fetch_call,
+    instruction_fetch_directive,
+)
 from gobby.skills.metadata import get_skill_category, get_skill_tags
 
 if TYPE_CHECKING:
@@ -17,27 +21,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SKILL_FETCH_CALL_TEMPLATE = 'call_tool("gobby-skills", "get_skill", {{"name":{name_json}}})'
-
-SKILL_FETCH_PROXY_PATH_TEMPLATE = SKILL_FETCH_CALL_TEMPLATE
-
-
 def skill_fetch_proxy_path(name: str) -> str:
     """Return the direct proxy call for fetching an enforcement-exempt skill."""
-    return SKILL_FETCH_PROXY_PATH_TEMPLATE.format(name_json=json.dumps(name))
+    return instruction_fetch_call(name)
 
 
 def skill_fetch_call_path(name: str) -> str:
     """Return the direct get_skill call path."""
-    return SKILL_FETCH_CALL_TEMPLATE.format(name_json=json.dumps(name))
+    return instruction_fetch_call(name)
 
 
 def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
-    return (
-        "Load and fully read the skill in its own outer tool result: "
-        f"{skill_fetch_proxy_path(name)}. Then continue."
-    )
+    return instruction_fetch_directive(name)
 
 
 def skill_fetch_batch_directive(names: Sequence[str]) -> str:
@@ -47,6 +43,15 @@ def skill_fetch_batch_directive(names: Sequence[str]) -> str:
         return ""
     if len(skills) == 1:
         return skill_fetch_directive(skills[0])
+
+    if any(":" in skill for skill in skills):
+        return "\n".join(
+            [
+                "Load these instructions in order, one page per separate outer tool result; "
+                "do not use Promise.all or aggregate responses.",
+                *(skill_fetch_directive(skill) for skill in skills),
+            ]
+        )
 
     return "\n".join(
         [

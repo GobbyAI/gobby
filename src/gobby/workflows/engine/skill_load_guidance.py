@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
+from gobby.skills.instruction_requirements import instruction_is_loaded
 from gobby.workflows.definitions import WorkflowStep
 
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
+_REFERENCE_PATH_PATTERN = re.compile(r"tool_input\.path\s*==\s*['\"]([^'\"]+)['\"]")
 _SKILL_LIST_VARIABLE_PATTERN = re.compile(
     r"vars(?:\.([A-Za-z_][A-Za-z0-9_]*)|\.get\(\s*['\"]([^'\"]+)['\"]\s*[,\)])"
 )
@@ -39,7 +41,9 @@ def _is_skill_load_step(step: WorkflowStep) -> bool:
         and "skill" in step.name
     )
     allows_get_skill = (
-        step.allowed_mcp_tools == "all" or "gobby-skills:get_skill" in step.allowed_mcp_tools
+        step.allowed_mcp_tools == "all"
+        or "gobby-skills:get_skill" in step.allowed_mcp_tools
+        or "gobby-skills:get_skill_file" in step.allowed_mcp_tools
     )
     return name_is_skill_step and allows_get_skill
 
@@ -51,11 +55,17 @@ def _skill_load_targets(
     targets: list[str] = []
     declares_targets = False
     for handler in step.on_mcp_success:
-        if handler.get("server") != "gobby-skills" or handler.get("tool") != "get_skill":
+        if handler.get("server") != "gobby-skills" or handler.get("tool") not in {
+            "get_skill",
+            "get_skill_file",
+        }:
             continue
         condition = handler.get("when")
         if isinstance(condition, str):
             matches = _SKILL_LOAD_TARGET_PATTERN.findall(condition)
+            if handler.get("tool") == "get_skill_file":
+                paths = _REFERENCE_PATH_PATTERN.findall(condition)
+                matches = [f"{name}:{path}" for name in matches for path in paths]
             targets.extend(matches)
             declares_targets = declares_targets or bool(matches)
 
@@ -71,11 +81,7 @@ def _skill_load_targets(
                 if isinstance(value, list):
                     targets.extend(item for item in value if isinstance(item, str))
 
-    loaded = variables.get("loaded_skills")
-    loaded_skills = (
-        {item for item in loaded if isinstance(item, str)} if isinstance(loaded, list) else set()
-    )
     ordered_unloaded = list(
-        dict.fromkeys(target for target in targets if target not in loaded_skills)
+        dict.fromkeys(target for target in targets if not instruction_is_loaded(target, variables))
     )
     return ordered_unloaded, declares_targets

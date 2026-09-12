@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import psycopg
 
+from gobby.skills.instruction_requirements import instruction_is_loaded
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import extract_artifact_references, parse_test_reference
 from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
@@ -80,12 +81,11 @@ def refresh_claimed_task_extra_skills(
 
 def missing_claimed_task_extra_skills(variables: dict[str, Any]) -> list[str]:
     """Return unloaded, resolvable extras in their declared order."""
-    loaded = set(_string_list(variables.get("loaded_skills")))
     unresolved = set(_string_list(variables.get(UNRESOLVABLE_EXTRA_SKILLS_VARIABLE)))
     return [
         skill
         for skill in _string_list(variables.get(EXTRA_SKILLS_VARIABLE))
-        if skill not in loaded and skill not in unresolved
+        if not instruction_is_loaded(skill, variables) and skill not in unresolved
     ]
 
 

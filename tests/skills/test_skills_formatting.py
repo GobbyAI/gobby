@@ -17,6 +17,20 @@ from gobby.skills.formatting import (
 pytestmark = pytest.mark.unit
 
 
+def test_reference_contract_1_1_3() -> None:
+    reference = "gobby:references/tasks/closing.md"
+    directive = skill_fetch_batch_directive(["brevity", reference, reference])
+    assert directive.count('call_tool("gobby-skills", "get_skill_file"') == 1
+    assert directive.count('call_tool("gobby-skills", "get_skill", {"name":"brevity"})') == 1
+    assert directive.index('"name":"brevity"') < directive.index("get_tool_schema")
+    assert directive.index("get_tool_schema") < directive.index(
+        'call_tool("gobby-skills", "get_skill_file"'
+    )
+    assert '"name":"gobby","path":"references/tasks/closing.md"' in directive
+    assert "page.next_cursor" in directive
+    assert "only cursor until null" in directive
+
+
 class TestSkillFetchDirectives:
     def test_skill_fetch_directive_is_canonical(self) -> None:
         rendered = skill_fetch_directive("plan")

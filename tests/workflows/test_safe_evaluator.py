@@ -453,6 +453,14 @@ class TestMcpResultHas:
 
 
 class TestSkillLoaded:
+    def test_reference_load_is_independent_of_router(self) -> None:
+        reference = "gobby:references/tasks/closing.md"
+        variables: dict[str, Any] = {"loaded_skills": ["gobby", reference]}
+        evaluator = _build_evaluator({"variables": variables})
+        assert evaluator.evaluate(f"skill_loaded('{reference}')") is False
+        variables["loaded_skill_references"] = [reference]
+        assert evaluator.evaluate(f"skill_loaded('{reference}')") is True
+
     def test_returns_true_when_loaded_skill_present(self) -> None:
         ctx: dict[str, Any] = {"variables": {"loaded_skills": ["python"]}}
         ev = _build_evaluator(ctx)

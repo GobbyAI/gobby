@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Any
 
+from gobby.skills.instruction_requirements import instruction_is_loaded
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -37,6 +39,7 @@ def _transition_condition_met(condition: str | None, variables: dict[str, Any]) 
                 "dict": dict,
                 "any": any,
                 "all": all,
+                "skill_loaded": partial(instruction_is_loaded, variables=variables),
             },
         )
         return evaluator.evaluate(condition)
@@ -139,8 +142,7 @@ def initial_step_state_for_spawn(
     additional_skills = _normalize_string_list(step_variables.get("additional_skills"))
     step_variables["additional_skills"] = additional_skills
     step_variables["additional_skills_loaded"] = not additional_skills or all(
-        skill in _normalize_string_list(step_variables.get("loaded_skills"))
-        for skill in additional_skills
+        instruction_is_loaded(skill, step_variables) for skill in additional_skills
     )
 
     first_step = snapshot.steps[0]

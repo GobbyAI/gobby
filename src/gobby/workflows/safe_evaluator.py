@@ -17,6 +17,7 @@ from typing import Any
 
 from psycopg.errors import QueryCanceled
 
+from gobby.skills.instruction_requirements import instruction_is_loaded
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 
 __all__ = [
@@ -664,8 +665,7 @@ def build_condition_helpers(
     def _skill_loaded(name: str) -> bool:
         """Check the canonical skill ledger."""
         variables = _get_variables(ctx)
-        loaded_skills = variables.get("loaded_skills", [])
-        return isinstance(loaded_skills, list) and name in loaded_skills
+        return instruction_is_loaded(name, variables)
 
     def _projected_monolith_paths(
         tool_input: Any = None,

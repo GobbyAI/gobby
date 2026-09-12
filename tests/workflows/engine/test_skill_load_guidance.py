@@ -60,6 +60,39 @@ def test_guidance_names_unloaded_additional_skills() -> None:
     assert "<skill-name>" not in guidance
 
 
+def test_reference_guidance_uses_exact_completion_ledger() -> None:
+    reference = "gobby:references/tasks/closing.md"
+    step = _skill_step(variable_name="required_skills")
+    variables: dict[str, object] = {
+        "required_skills": [reference],
+        "loaded_skills": ["gobby", reference],
+    }
+    assert "references/tasks/closing.md" in skill_load_block_guidance(step, variables)
+    variables["loaded_skill_references"] = [reference]
+    assert "All skills declared for this step are loaded" in skill_load_block_guidance(
+        step, variables
+    )
+
+
+def test_reference_guidance_extracts_explicit_file_target() -> None:
+    step = WorkflowStep.model_validate(
+        {
+            "name": "load_skill",
+            "allowed_mcp_tools": ["gobby-skills:get_skill_file"],
+            "on_mcp_success": [
+                {
+                    "server": "gobby-skills",
+                    "tool": "get_skill_file",
+                    "when": "tool_input.name == 'gobby' and tool_input.path == 'references/tasks/closing.md'",
+                }
+            ],
+        }
+    )
+    guidance = skill_load_block_guidance(step, {"loaded_skills": ["gobby"]})
+    assert '"path":"references/tasks/closing.md"' in guidance
+    assert "get_tool_schema" in guidance
+
+
 def test_guidance_keeps_explicit_handler_target() -> None:
     step = WorkflowStep.model_validate(
         {
