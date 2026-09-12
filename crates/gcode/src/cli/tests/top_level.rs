@@ -263,10 +263,10 @@ fn test_parse_blast_radius_token_budget() {
 fn top_level_help_includes_agent_task_examples() {
     let help = Cli::command().render_help().to_string();
 
-    assert!(help.contains("gcode grep \"spawn_ui_server(\" [PATH...] -m 50"));
+    assert!(help.contains("gcode grep -F \"spawn_ui_server(\" [PATH...] -m 50"));
     assert!(help.contains("gcode search-symbol \"spawn_ui_server\" --kind function"));
     assert!(help.contains("gcode symbol <id>"));
-    assert!(help.contains("gcode grep \"config.ui.mode\" -F [PATH...] -m 50"));
+    assert!(help.contains("gcode grep -F \"config.ui.mode\" [PATH...] -m 50"));
 }
 
 #[test]
