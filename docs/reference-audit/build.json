@@ -1,0 +1,1073 @@
+{
+  "version": 1,
+  "capability": "build",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "build",
+    "build-coordinator"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/dispatch.md",
+      "anchors": [
+        "entry-points",
+        "stage-registry",
+        "manifest-rows",
+        "rule-chain",
+        "build-state",
+        "isolation",
+        "reviews",
+        "lifecycle-events",
+        "readiness"
+      ],
+      "evidence": [
+        "dispatch-source",
+        "build-focused",
+        "installed-rows"
+      ]
+    },
+    {
+      "path": "docs/guides/orchestration.md",
+      "anchors": [
+        "build-lifecycle",
+        "active-surfaces",
+        "build-state",
+        "dispatch-actions",
+        "agent-work",
+        "stage-reviews",
+        "runtime-tables",
+        "lifecycle-events",
+        "agent-slot-cap",
+        "related-guides"
+      ],
+      "evidence": [
+        "dispatch-source",
+        "build-focused",
+        "installed-rows"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "build-automation",
+        "profiles-and-stage-defaults"
+      ],
+      "scope": "Build launch/control and profile/stage CLI operations only",
+      "evidence": [
+        "cli-help",
+        "build-focused"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "tasks-and-stages",
+        "agents-and-build-automation"
+      ],
+      "scope": "Build/profile and stage registry routes only; agent/task lifecycle belongs to their capability audit",
+      "evidence": [
+        "http-source",
+        "build-focused"
+      ]
+    },
+    {
+      "path": "docs/guides/gterminal-development-guide.md",
+      "anchors": [
+        "sandboxed-validation-by-operating-system"
+      ],
+      "scope": "Coordinator evidence contract only; no native implementation or policy change",
+      "evidence": [
+        "terminal-source"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/starting.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/build.py",
+        "symbol": "create_build_registry.build_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks-ops",
+      "tool": "build_task"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/build.py",
+        "symbol": "create_build_registry.build_stop_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks-ops",
+      "tool": "build_stop"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/build.py",
+        "symbol": "create_build_registry.build_resume_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks-ops",
+      "tool": "build_resume"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/build.py",
+        "symbol": "create_build_registry.build_clean_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks-ops",
+      "tool": "build_clean"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/build.py",
+        "symbol": "create_build_registry.build_restart_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks-ops",
+      "tool": "build_restart"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/monitoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_build_observability.py",
+        "symbol": "create_build_observability_registry.get_build_status_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks",
+      "tool": "get_build_status"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/monitoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_build_observability.py",
+        "symbol": "create_build_observability_registry.explain_dispatch_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks",
+      "tool": "explain_dispatch"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/monitoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_build_observability.py",
+        "symbol": "create_build_observability_registry.list_build_history_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-tasks",
+      "tool": "list_build_history"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.list_profiles"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "list_profiles"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.show_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "show_profile"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.create_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "create_profile"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.update_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "update_profile"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.restore_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "restore_profile"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.delete_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "delete_profile"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.enable_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "enable_profile"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/profiles.py",
+        "symbol": "create_profiles_registry.disable_profile"
+      },
+      "verification": [
+        "registered-inventory",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-profiles",
+      "tool": "disable_profile"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/starting.md",
+      "implementation": {
+        "path": "src/gobby/cli/build.py",
+        "symbol": "build_command"
+      },
+      "verification": [
+        "cli-help",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby build"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/build.py",
+        "symbol": "_run_build_stop"
+      },
+      "verification": [
+        "cli-help",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby build stop"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/build.py",
+        "symbol": "_run_build_resume"
+      },
+      "verification": [
+        "cli-help",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby build resume"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/build.py",
+        "symbol": "_run_build_clean"
+      },
+      "verification": [
+        "cli-help",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby build clean"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/build.py",
+        "symbol": "_run_build_restart"
+      },
+      "verification": [
+        "cli-help",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby build restart"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "list_profiles"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "show_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "create_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles create"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "update_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles update"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "enable_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles enable"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "disable_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles disable"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "restore_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles restore"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/cli/profiles.py",
+        "symbol": "delete_profile"
+      },
+      "verification": [
+        "cli-help",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby profiles delete"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/stages.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "list_stages"
+      },
+      "verification": [
+        "cli-help",
+        "stage-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/stages.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "show_stage"
+      },
+      "verification": [
+        "cli-help",
+        "stage-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/stages.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "update_stage"
+      },
+      "verification": [
+        "cli-help",
+        "stage-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages update"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/stages.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "restore_stage"
+      },
+      "verification": [
+        "cli-help",
+        "stage-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages restore"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/stages.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "delete_stage"
+      },
+      "verification": [
+        "cli-help",
+        "stage-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages delete"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/stages.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "defaults"
+      },
+      "verification": [
+        "cli-help",
+        "stage-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages defaults"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/starting.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.post_build"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/build"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.post_build_stop"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/build/stop"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.post_build_resume"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/build/resume"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.post_build_clean"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/build/clean"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/recovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.post_build_restart"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/build/restart"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/monitoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.get_status"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/build/status"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/monitoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.get_dispatch_explain"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/build/dispatch/explain"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/monitoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/build.py",
+        "symbol": "create_build_router.get_history"
+      },
+      "verification": [
+        "http-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/build/history"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.list_profiles"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/profiles"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.create_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/profiles"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.show_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/profiles/{name}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.update_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "PUT /api/profiles/{name}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.delete_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "DELETE /api/profiles/{name}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.restore_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/profiles/{name}/restore"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.enable_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/profiles/{name}/enable"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/build/profiles.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/profiles.py",
+        "symbol": "create_profiles_router.disable_profile"
+      },
+      "verification": [
+        "http-source",
+        "profile-source",
+        "build-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/profiles/{name}/disable"
+    }
+  ],
+  "delegated_operations": {
+    "tasks": [
+      "gobby-tasks:get_task_stages",
+      "gobby-tasks:list_stages_registry",
+      "gobby-tasks:get_task_type_defaults",
+      "gobby-tasks-ops:initialize_task_manifest",
+      "gobby-tasks-ops:start_stage",
+      "gobby-tasks-ops:complete_stage",
+      "gobby-tasks-ops:fail_stage",
+      "gobby-tasks-ops:submit_for_review",
+      "gobby-tasks-ops:approve_review",
+      "gobby-tasks-ops:reject_review",
+      "gobby-tasks-ops:add_stage",
+      "gobby-tasks-ops:remove_stage",
+      "gobby-tasks-ops:update_stage",
+      "gobby-tasks-ops:restore_stage",
+      "gobby-tasks-ops:delete_stage",
+      "gobby-tasks-ops:set_task_type_defaults"
+    ],
+    "plan": [
+      "gobby-tasks-ops:record_plan_enhancement",
+      "gobby-tasks-ops:run_expansion_qa_coverage"
+    ],
+    "source-control": [
+      "gobby-tasks-ops:open_delivery_pr",
+      "gobby-tasks-ops:record_merge_result"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "registered-inventory",
+      "kind": "live-tool-discovery",
+      "command": "list_tools(gobby-profiles), list_tools(gobby-tasks), list_tools(gobby-tasks-ops); get_tool_schema(build_task, get_build_status, list_stages_registry, list_profiles, show_profile)",
+      "result": "8 profile, 39 task and 50 task-ops public tools inventoried; launch/status examples match registered schemas."
+    },
+    {
+      "id": "installed-rows",
+      "kind": "live-read-only",
+      "command": "gobby-profiles:list_profiles(); gobby-tasks:list_stages_registry()",
+      "result": "2026-09-12 session #12910: installed/global enabled profiles default (9184ad60-8ed5-4661-8983-d09ebc7a1882), autopilot, fix, fix-merge, submit; all enhancement defaults 0. Ten nondeleted stages; development selector doc-reviewer for docs/default qa-reviewer; expansion pipeline expand-task. Dated observation, not a permanent activation guarantee."
+    },
+    {
+      "id": "cli-help",
+      "kind": "runtime-help",
+      "command": "uv run gobby build --help; uv run gobby profiles --help; uv run gobby stages --help; uv run gobby stages defaults --help",
+      "result": "Published commands/flags verified without launching automation or mutating registry rows."
+    },
+    {
+      "id": "profile-source",
+      "kind": "source-review",
+      "paths": [
+        "src/gobby/storage/build_profiles.py",
+        "src/gobby/build/profiles.py",
+        "src/gobby/build/resume_lifecycle.py",
+        "src/gobby/mcp_proxy/tools/profiles.py",
+        "src/gobby/cli/profiles.py"
+      ],
+      "result": "Resolution order, disabled shadow failure, explicit precedence, operation scope defaults, immutable names, restore/purge restrictions inspected."
+    },
+    {
+      "id": "stage-source",
+      "kind": "source-review",
+      "paths": [
+        "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
+        "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "src/gobby/build/resume_lifecycle.py",
+        "src/gobby/cli/stages.py"
+      ],
+      "result": "Registry/default operations and expanded-epic PR-skip/pristine repair inspected; task lifecycle operation coverage delegated to tasks audit."
+    },
+    {
+      "id": "dispatch-source",
+      "kind": "source-review",
+      "paths": [
+        "src/gobby/dispatch/constants.py",
+        "src/gobby/dispatch/dispatcher.py",
+        "src/gobby/dispatch/rules.py",
+        "src/gobby/dispatch/spawn_artifacts.py",
+        "src/gobby/dispatch/workspace_merge.py",
+        "src/gobby/build/lifecycle.py",
+        "src/gobby/build/controls.py",
+        "src/gobby/build/project_controls.py",
+        "src/gobby/build/observability.py"
+      ],
+      "result": "20 compiled slots, lease-backed actions, dry-run rollback, project-vs-target stop, lazy integration provisioning, and recovery semantics inspected."
+    },
+    {
+      "id": "http-source",
+      "kind": "source-review",
+      "paths": [
+        "src/gobby/servers/routes/build.py",
+        "src/gobby/servers/routes/profiles.py"
+      ],
+      "result": "Route decorators and request models verified. Shared service does not imply identical CLI/MCP/HTTP restart option sets."
+    },
+    {
+      "id": "resume-provenance",
+      "kind": "git-and-task-review",
+      "command": "git show 48f16d8bc3 -- src/gobby/build/lifecycle.py; get_task(#14546, brief=false)",
+      "result": "Completed fix explicitly changed resumed build lifecycle to resolved backend; task validation feedback names this behavior. Preserve pure build_resume semantics while correcting reissued build_task guidance."
+    },
+    {
+      "id": "terminal-source",
+      "kind": "source-review",
+      "paths": [
+        "src/gobby/agents/srt_runtime.py",
+        "src/gobby/agents/sandbox_resolvers.py",
+        "tests/agents/test_srt_runtime.py"
+      ],
+      "result": "Sandboxed-validation guide section and policy renderer inspected: allowAllUnixSockets remains false. Preserved coordinator proof requirements; no new platform socket E2E claimed."
+    },
+    {
+      "id": "build-focused",
+      "kind": "focused-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/build tests/build_pipeline tests/mcp_proxy/tools/test_mcp_proxy_tools_build.py tests/mcp_proxy/tools/test_build_observability.py tests/storage/test_storage_build_profiles.py tests/storage/test_stage_registry_loader.py tests/servers/routes/test_stage_routes.py tests/servers/routes/test_servers_routes_build.py tests/cli/test_cli_build.py tests/cli/test_build_output.py tests/docs/test_cross_repo_submit_profile_docs.py tests/skills/test_capability_catalog.py -q",
+      "result": "435 passed in 74.54s. Isolated test hub and fixtures; representative service/registry/surface tests, not individual live mutation probes for every mapped operation."
+    },
+    {
+      "id": "library-validation",
+      "kind": "executed-validation",
+      "command": "uv run python (inline catalog loader, AST symbol/evidence and Markdown path/anchor validation)",
+      "result": "3 capabilities, 51 operation implementation symbols, 11 Markdown files and audit guide anchors valid."
+    },
+    {
+      "id": "diagram-render",
+      "kind": "executed-render",
+      "command": "Node inline Playwright/Chromium local Mermaid render of docs/guides/orchestration.md",
+      "result": "Parsed and rendered the lifecycle diagram; inspected /tmp/gobby-build-lifecycle.png. No clipped/missing labels."
+    },
+    {
+      "id": "bounded-review",
+      "kind": "agent-review",
+      "result": "review_reference_identity reviewed 15/15 final staged files, 100% coverage, no remaining material findings. Prior plan/approval.md dual-class proof wording corrected against loaded review-learning; recall found no relevant contradiction."
+    },
+    {
+      "id": "final-focused",
+      "kind": "focused-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_capability_catalog.py tests/plans/test_review_coverage.py -q",
+      "result": "36 passed in 0.09s after proof-bundle correction. Repeated after audit finalization."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Guides stated cap 10; runtime default is 20.",
+      "evidence": [
+        "dispatch-source"
+      ],
+      "resolution": "Correct both guides; distinguish active configuration and immediate cap."
+    },
+    {
+      "finding": "Bundled stage YAML described as active truth; registry mutation tools assigned to wrong service.",
+      "evidence": [
+        "registered-inventory"
+      ],
+      "resolution": "Name installed DB authority and gobby-tasks-ops mutations."
+    },
+    {
+      "finding": "Guides conflated build_resume and reissued build_task isolation.",
+      "evidence": [
+        "resume-provenance"
+      ],
+      "resolution": "Document profile re-resolution/artifact checks on build_task; pure resume preserves state."
+    },
+    {
+      "finding": "Existing manifests were said to reject all skip reshaping.",
+      "evidence": [
+        "stage-source"
+      ],
+      "resolution": "Document narrow expanded-epic PR skip/pristine repair exception without loosening gates."
+    },
+    {
+      "finding": "Guide described eager integration provisioning at launch.",
+      "evidence": [
+        "dispatch-source"
+      ],
+      "resolution": "Describe lazy spawn/merge provisioning and atomic recorded pairs."
+    },
+    {
+      "finding": "CLI guide said stop only pauses future target work and omitted supported flags.",
+      "evidence": [
+        "cli-help"
+      ],
+      "resolution": "Document target cancellation/reset versus project pause, previews, profile/delivery, dirty cleanup."
+    },
+    {
+      "finding": "HTTP guide omitted profile routes and control scope/confirmation.",
+      "evidence": [
+        "http-source"
+      ],
+      "resolution": "Add exact profile routes and control semantics."
+    },
+    {
+      "finding": "Dispatch AGENTS.md claimed PR creation remained future work #13552.",
+      "evidence": [
+        "registered-inventory"
+      ],
+      "resolution": "Replace superseded boundary claim with open_delivery_pr behavior; source-control owns detailed delivery audit."
+    },
+    {
+      "finding": "Legacy coordinator demands a task for every finding; current repo mandates tracker-first found work.",
+      "evidence": [
+        "dispatch-source"
+      ],
+      "resolution": "Preserve coordination/completion obligations under current AGENTS.md ladder; legacy source retires at P5."
+    },
+    {
+      "finding": "Legacy launcher demands repeated confirmation and CLI agent lifecycle.",
+      "evidence": [
+        "registered-inventory"
+      ],
+      "resolution": "Use MCP, concrete reviewable options, and persistent user authorization per current instructions."
+    },
+    {
+      "finding": "Prior plan approval reference implied every class needs both proof bundles.",
+      "evidence": [
+        "bounded-review"
+      ],
+      "resolution": "Corrected to require both bundles only for dual-class lessons, preserving independently proven classes; sibling exact-text sweep found only one occurrence."
+    }
+  ],
+  "cutover_dependencies": [
+    "P4 migrates legacy build/build-coordinator consumers after references exist.",
+    "P5 retires old entrypoints without wrappers."
+  ],
+  "planned_checks": [
+    "P3 cross-capability coverage checker is not yet implemented; execute at integration."
+  ]
+}

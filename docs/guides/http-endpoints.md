@@ -446,11 +446,12 @@ exist.
 | `GET` | `/api/build/dispatch/explain` | Explain dispatcher eligibility without mutation. |
 | `GET` | `/api/build/history` | List recent build run and event history. |
 
-`POST /api/build` accepts `input_ref`, `quick`, `skip_stages`, `stage`,
+`POST /api/build` accepts `input_ref`, `profile`, `project_id`, `coordinator`,
+`dry_run`, `unattended`, delivery fields, `quick`, `skip_stages`, `stage`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
 `max_retries`, the planning-seed fields, and build isolation fields. `isolation`
 accepts `none`, `worktree`, or `clone`; `workspace_backend` (`worktree` or
-`clone`) and `clone` remain backward-compatible aliases. Contradictory isolation
+`clone`) and `clone` are supported aliases. Contradictory isolation
 inputs return `400` instead of silently choosing one value.
 
 The planning-seed fields are `planning_seed_state` (`drafted`, `needs_review`,
@@ -459,6 +460,26 @@ rounds, `>= 0`), and `plan_enhancement_rounds` (target constructive
 `plan-enhancer` rounds before the adversary gate, `>= 0`, default `0`). Presence
 in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 `0` overrides the build profile default.
+
+Build control requests accept `project_id`; stop/resume omit `input_ref` for
+project-wide control. A task stop also cancels agents and resets stoppable work;
+it is broader than project tick pause. Clean/restart require a target and
+`yes=true` unless previewing with `dry_run=true`. Clean accepts
+`delete_dirty_worktrees`; restart accepts `no_resume`. Control previews may
+record history. Use the current request model for restart-specific overrides.
+
+Build profile operator/client routes are:
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/profiles` | List scoped profiles. |
+| `POST` | `/api/profiles` | Create a profile. |
+| `GET` | `/api/profiles/{name}` | Show a profile in the selected source/project scope. |
+| `PUT` | `/api/profiles/{name}` | Update mutable profile fields. |
+| `POST` | `/api/profiles/{name}/restore` | Restore an installed bundled profile. |
+| `DELETE` | `/api/profiles/{name}` | Soft-delete, or purge a project profile. |
+| `POST` | `/api/profiles/{name}/enable` | Enable a profile. |
+| `POST` | `/api/profiles/{name}/disable` | Disable a profile. |
 
 ## Memory, Skills, Workflows, And Rules
 

@@ -76,7 +76,11 @@ UUID; project-local `#N` refs resolve in the build project.
 `gobby build restart` map to `POST /api/build/stop`,
 `POST /api/build/resume`, `POST /api/build/clean`, and
 `POST /api/build/restart`. The task-scoped forms accept an `input_ref`; the
-project-wide stop and resume forms omit it. Build control requests also accept
+project-wide stop and resume forms omit it. Task stop cancels active agents,
+releases stale agent claims, clears mutexes, and resets stoppable stages while
+retaining history/artifacts. Project stop only pauses future dispatcher ticks.
+Clean/restart require a target and confirmation for actual destructive work;
+inspect a dry-run preview first. Build control requests also accept
 `project_id` to route control actions to a specific project.
 
 Read-only build observability is exposed through `gobby-tasks` and HTTP:
@@ -107,9 +111,12 @@ Build profiles are DB-backed presets over `skip_stages`, `isolation`,
 `owner/repo` form. Bundled `submit` uses `pull_request`; other bundled profiles
 use `auto`. Omitted profile input resolves to `default`; explicit request fields
 override profile values. Disabled profiles fail immediately instead of falling
-through to a lower-priority row. Existing manifests keep their current stage rows
-and task isolation on resume; profile `skip_stages` and profile isolation only
-shape new or rebuilt manifests. Profile rows are editable through `gobby
+through to a lower-priority row. Task-scoped `build_resume` preserves isolation and manifest rows. Reissuing
+`build_task` resolves profile isolation again and checks existing artifacts for
+conflicts. Existing manifests normally ignore profile `skip_stages` with a
+warning; explicit skips are rejected. Expanded epics with existing expansion
+output have a bounded PR-skip/pristine-manifest repair path; arbitrary lifecycle
+reshaping requires restart. Profile enhancement-round defaults also feed the planning sub-loop. Profile rows are editable through `gobby
 profiles`, `gobby-profiles`, `/api/profiles`, and the Workflows Profiles tab.
 
 Explicit build isolation is available at every dispatch boundary. CLI uses
@@ -122,11 +129,12 @@ instead of silently choosing one value.
 
 ## Stage Registry
 
-The bundled registry in `src/gobby/install/shared/registry/stages.yaml` defines
-the active stage vocabulary. Build resolves profile options and explicit stage
+The installed DB registry defines the active stage vocabulary.
+`src/gobby/install/shared/registry/stages.yaml` supplies bundled templates;
+inspect `gobby-tasks:list_stages_registry` before describing installed state. Build resolves profile options and explicit stage
 caps against this vocabulary before a task becomes dispatchable.
 
-Active stages, in order:
+Bundled stages, in order (installed rows may differ):
 
 1. `ideation`
 2. `research`
@@ -146,7 +154,7 @@ pipeline` and `dispatch_target: expand-task`.
 
 Stage names are immutable in the editable registry. Operators can update
 metadata, restore bundled rows, soft-delete unused rows, and reorder task-type
-default manifests through `gobby stages`, `gobby-tasks` stage registry tools,
+default manifests through operator `gobby stages`, `gobby-tasks-ops` registry mutation tools,
 `/api/stages`, and the Workflows Stages tab. Deleted stages are hidden from
 default manifest validation and normal registry listing.
 
@@ -244,7 +252,7 @@ escalation, no open blocking dependency, and a current stage in `ready`,
 short-lived task dispatch mutex so another heartbeat cannot perform competing
 side effects for the same task.
 
-The default active-agent cap is 10. When the cap is reached, the heartbeat stops
+The compiled default active-agent cap is 20; configured daemon capacity may differ. When the cap is reached, the heartbeat stops
 early and the next heartbeat re-evaluates the same manifest state. There is no
 separate persistent queue for skipped work.
 
@@ -254,10 +262,11 @@ diagnosis and resumption, but they do not block build execution.
 
 ## Isolation
 
-Build owns integration workspace setup. For epic builds with `worktree` or
-`clone` isolation, Gobby ensures each open epic in the subtree has a reusable
-integration workspace or clone, records the workspace ID pair in artifacts, and
-cascades the nearest integration branch to descendants as `target_branch`.
+Build/dispatch owns integration workspace setup. Launch writes manifest and
+isolation intent; spawn/merge provision needed ancestor integration workspaces
+lazily for `worktree` or `clone` isolation. Provisioning records the workspace
+ID/path pair atomically and cascades the nearest integration branch as
+`target_branch`. A workspace that has not yet been needed is not itself a stall.
 
 Leaf docs work can therefore run inside the parent epic's isolation context. A
 docs leaf may have its own worktree branch while its `target_branch` points at
@@ -270,9 +279,8 @@ reuses or opens the GitHub PR, and persists `task_delivery_units.pr_url`, `repo`
 `source_branch`, `target_branch`, `github_pr_number`, and `pr_state`.
 
 For `development.ready` leaves, the current rule starts the stage when isolation
-is `none`, `worktree`, or `clone`; invalid isolation values escalate. Missing or
-stale integration workspace metadata is treated as unsafe build state and should
-be repaired with task-scoped build clean or restart.
+is `none`, `worktree`, or `clone`; invalid isolation values escalate. Inconsistent or stale recorded integration workspace metadata is unsafe build
+state; diagnose the artifact pair and use task-scoped recovery when needed.
 
 ## Reviews
 
@@ -312,4 +320,4 @@ Blocked and escalated state is orthogonal to the manifest. A task can have
 `development.in_progress` stored in `task_stage_states` while escalation or
 dependency projection keeps it out of ready queues and dispatcher candidates.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-09-12_

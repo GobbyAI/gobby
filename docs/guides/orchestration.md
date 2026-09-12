@@ -15,7 +15,7 @@ flowchart LR
     Input[Plan file / task ref] --> Build[gobby build]
     Build --> State[Build state]
     State --> Manifest[Stage manifest]
-    Manifest --> Queue[Dependency-ready queue]
+    Manifest --> Queue[Eligible task scan]
     Queue --> Tick[Dispatcher heartbeat]
     Tick --> Action[One selected action]
     Action --> Work[Agent / pipeline / transition]
@@ -31,7 +31,7 @@ flowchart LR
 ```
 
 `gobby build` is the opt-in boundary. Backlog tasks are inert until build state
-is written onto a plan file, epic, or leaf task. Task refs that begin with `#`
+is written onto the task tree resolved from a plan file, epic, or leaf task. Task refs that begin with `#`
 should be quoted in shells, for example `gobby build '#14168'`.
 
 After build state exists, the dispatcher heartbeat scans opted-in tasks, filters
@@ -42,10 +42,9 @@ action for that heartbeat.
 The dispatcher does not prompt models or repair artifacts inline. Prompting and
 implementation happen inside the agent selected for the current stage.
 
-During the 0.4.0 docs audit, `#14168` shows the intended shape: the epic is in
-`development.in_progress`, ordinary guide leaves can run independently, and the
-final guide-index task stays `development.ready` but dependency-blocked until
-its sibling guide tasks close.
+For example, an epic can remain in `development.in_progress` while ordinary
+guide leaves run independently. A final guide-index task stays dependency-blocked
+until its sibling guides close; its stored stage alone does not make it eligible.
 
 ## Active Surfaces
 
@@ -56,7 +55,7 @@ its sibling guide tasks close.
 | `POST /api/build` | HTTP entry point for the same shared build service; accepts `project_id` and `coordinator` |
 | `POST /api/build/{stop,resume,clean,restart}` | HTTP control actions for project-wide ticks or task-scoped automation; accepts `project_id` for routing |
 | `gobby profiles` / `gobby-profiles` / `/api/profiles` | Build profile registry editing for reusable build presets |
-| `gobby stages` / `gobby-tasks` stage tools / `/api/stages` | Stage registry metadata and task-type default manifest editing |
+| `gobby stages` / `gobby-tasks` reads and `gobby-tasks-ops` mutations / `/api/stages` | Stage registry metadata and task-type default manifest editing |
 | `src/gobby/dispatch/dispatcher.py` | Heartbeat scanner, mutex handling, and action executor |
 | `src/gobby/dispatch/rules.py` | Ordered deterministic rules that map task state to actions |
 | `gobby-tasks` | Task lifecycle, dependencies, claims, close, review state, and escalation |
@@ -92,11 +91,18 @@ The current stage is the first manifest row whose state is not `done`. Blocked
 and escalated are projections around that row: they change queue visibility and
 human handoff behavior, but they do not replace the manifest state.
 
-On resume, existing manifest rows stay authoritative. Profile `skip_stages` is
-ignored with a warning and profile isolation does not replace the task's current
-isolation; explicit build isolation still applies. CLI uses
+Task-scoped `build_resume` preserves isolation and stage shape. Reissuing
+`build_task` on an existing tree resolves profile isolation again; incompatible
+recorded workspaces fail validation. Existing manifests normally ignore profile
+`skip_stages` with a warning and reject explicit skips. Expanded-epic PR-skip
+repair is the narrow exception described in [Dispatch](./dispatch.md#entry-points). CLI uses
 `--isolation none|worktree|clone`, MCP `build_task` uses `isolation`, and HTTP
 `POST /api/build` accepts the same values.
+
+Inspect `gobby-profiles:list_profiles` and explicit-scope `show_profile` to
+verify effective rows. Project-specific presets precede global project presets,
+then installed profiles; a disabled matching row fails rather than falling
+through. Explicit request fields override the matching profile values.
 
 The bundled `submit` profile sets `delivery_mode=pull_request`. If a project
 override sets `delivery_target_repo`, submit builds open PRs against that
@@ -132,7 +138,8 @@ edits. A typical leaf agent:
 4. Commits changes before lifecycle handoff.
 5. Calls `close_task` when no review gate exists, or `submit_for_review` when
    the current stage requires review.
-6. Calls `end_agent_run` to terminate the agent run.
+6. Calls `end_agent_run` with structured current state and next steps to
+   terminate the agent run; ending a provider turn does not replace it.
 
 Ending a chat turn is separate from ending the agent run. Agent definitions make
 that separation explicit so task ownership and runtime resources are released in
@@ -174,7 +181,7 @@ session behavior, while dispatch rules route task state on heartbeat ticks.
 ## Agent Slot Cap
 
 The dispatcher enforces the configured `max_active_agents` cap, which defaults
-to 10. When all slots are occupied, no persistent queue is needed. The next
+to 20; the active configuration may override that default. When all slots are occupied, no persistent queue is needed. The next
 heartbeat scans the same task state and tries again.
 
 ## Related Guides
@@ -189,4 +196,4 @@ heartbeat scans the same task state and tries again.
   tools
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

@@ -112,6 +112,50 @@
           "when": "Changing plan registry state or coverage artifacts"
         }
       ]
+    },
+    {
+      "name": "build",
+      "description": "Start, coordinate, monitor, and recover stage automation",
+      "overview": "references/build/overview.md",
+      "when": "Operating or diagnosing Gobby build automation",
+      "topics": [
+        {
+          "name": "starting",
+          "description": "Launch an authorized plan or task build",
+          "path": "references/build/starting.md",
+          "when": "Starting automation or changing launch options"
+        },
+        {
+          "name": "profiles",
+          "description": "Resolve and manage scoped build presets",
+          "path": "references/build/profiles.md",
+          "when": "Selecting, authoring, or recovering build profiles"
+        },
+        {
+          "name": "stages",
+          "description": "Inspect lifecycle shape, caps, and registry defaults",
+          "path": "references/build/stages.md",
+          "when": "Inspecting or changing build stage configuration"
+        },
+        {
+          "name": "coordination",
+          "description": "Coordinate and verify unattended automation",
+          "path": "references/build/coordination.md",
+          "when": "Assigned coordinator work or unattended build validation"
+        },
+        {
+          "name": "monitoring",
+          "description": "Diagnose progress, eligibility, and history",
+          "path": "references/build/monitoring.md",
+          "when": "Inspecting a running or stalled build"
+        },
+        {
+          "name": "recovery",
+          "description": "Stop, resume, clean, and restart safely",
+          "path": "references/build/recovery.md",
+          "when": "Cancelling automation or recovering failed builds"
+        }
+      ]
     }
   ]
 }

@@ -357,14 +357,17 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 
 | Option | Purpose |
 | --- | --- |
-| `--quick` | Use quick build defaults. |
+| `--profile NAME` | Resolve an installed/project build preset (default name `default`). |
+| `--quick` | Run one bounded lifecycle action, then leave target automation disabled. |
 | `--project PROJECT` | Build or control automation in a target project by name or UUID. |
 | `--coordinator [current\|SESSION_UUID]` | Wake a coordinator session when build-spawned agents complete. `current` resolves from `GOBBY_SESSION_ID`; with `--project`, use `current` or a full session UUID. |
 | `--skip-stage STAGE` | Skip one lifecycle stage; repeat for multiple stages. |
 | `--stage STAGE:KEY=VALUE` | Override stage settings such as review caps. |
-| `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation defaults to `worktree`. |
+| `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation comes from the resolved profile. |
 | `--clone` | Shorthand for `--isolation clone`; conflicts with `--isolation none` and `--isolation worktree`. |
-| `--no-merge` | Skip merge stage setup. |
+| `--delivery-mode MODE` | Override `auto` or `pull_request` delivery intent. |
+| `--delivery-target-repo OWNER/REPO` | Override the PR target repository. |
+| `--no-merge` | Skip final promotion; requires worktree or clone isolation. |
 | `--pr VALUE` | Configure PR delivery behavior. |
 | `--target-branch BRANCH` | Override the target branch. |
 | `--agent NAME` | Assign a specific agent definition. |
@@ -374,12 +377,18 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 | `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
 | `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
 | `--plan-enhancement-rounds N` | Target constructive `plan-enhancer` rounds before the adversary gate (`0` disables; overrides the build profile default). |
-| `--dry-run` | Preview `clean` or `restart` effects. |
+| `--dry-run` | Preview launch, `clean`, or `restart`; control previews may record history. |
+| `--delete-dirty-worktrees` | For `clean`, explicitly permit dirty descendant worktree deletion. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
 | `--yes` | Confirm destructive `clean` or `restart` prompts. |
 | `--no-resume` | For `restart`, reset state and leave automation paused. |
 
-Use `gobby build stop [REF]` to pause future dispatch work for a target.
+Without a ref, `gobby build stop` pauses future project ticks. With a ref it
+disables the subtree, cancels active agents, clears mutexes/stale agent claims,
+and resets stoppable stage work while retaining task history and artifacts.
+Task-scoped resume preserves isolation; a new build request resolves profile
+options again. Use a clean/restart preview before destructive recovery.
+These are operator controls; agents use the corresponding `gobby-tasks-ops` tools.
 Explicit `--project` rejects project-local coordinator refs such as `#N` or
 bare numbers because they would resolve in the target project.
 
@@ -401,10 +410,21 @@ applied. `drafted` starts from planning.
 
 `--plan-enhancement-rounds N` seeds the target number of constructive
 `plan-enhancer` rounds that run as a pre-adversary sub-loop inside the planning
-stage. Autonomous builds default to `0` (no enhancement); pass `N > 0` to enable
-it. The explicit value wins over the build profile default, including an
+stage. Bundled profiles default to `0` (no enhancement); inspect the installed row
+before relying on that default. Pass `N > 0` to enable it when authorized. The explicit value wins over the build profile default, including an
 explicit `0`. Enhancement rounds are counted independently of the adversary
 review budget.
+
+### Profiles And Stage Defaults
+
+Operators use `gobby profiles list|show|create|update|enable|disable|restore|delete`
+and `gobby stages list|show|update|restore|delete|defaults`. These are command
+families, not literal pipe-separated commands; use each command's `--help` for
+required fields. Profiles distinguish installed and project scope.
+`gobby stages defaults TASK_TYPE` reads the default manifest; repeated
+`--set STAGE:POSITION` values replace it. Agents use `gobby-profiles`,
+`gobby-tasks` reads, and `gobby-tasks-ops` stage mutations.
+See [Dispatch](./dispatch.md#stage-registry) for registry constraints.
 
 ## Task Lifecycle
 

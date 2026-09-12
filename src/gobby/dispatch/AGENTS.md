@@ -76,6 +76,6 @@ all three soft-delete Gobby-owned installed rows for definitions missing from di
 `orchestrator.yaml`, `front-half-orchestrator.yaml`, `dev-orchestrator.yaml`,
 `delivery-orchestrator.yaml`, the conductor pipeline, retired `conductor`, `developer`, and
 `pipeline-worker` agents, and retired `dev` and `qa` launcher skills must stay out of bundled
-install roots. Real PR creation and richer merge/conflict handling are tracked in task
-\#13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
-where they are already available.
+install roots. PR/merge stages use the merge-orchestrator and delivery services.
+`gobby-tasks-ops:open_delivery_pr` pushes/reuses/opens the real PR and persists
+delivery metadata; merge results remain evidence-backed lifecycle transitions.
