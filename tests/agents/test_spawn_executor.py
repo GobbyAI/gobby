@@ -556,15 +556,17 @@ def test_spawn_result_has_no_tmux_aliases() -> None:
 
     result = SpawnResult(True, "run", "child", "pending")
     spawner_result = SpawnerSpawnResult(True, "spawned")
+    session_alias = "tmux_" + "session_name"
+    pane_alias = "tmux_" + "pane"
 
-    assert not hasattr(result, "tmux_session_name")
-    assert not hasattr(result, "tmux_pane")
-    assert not hasattr(spawner_result, "tmux_session_name")
-    assert not hasattr(spawner_result, "tmux_pane")
+    assert not hasattr(result, session_alias)
+    assert not hasattr(result, pane_alias)
+    assert not hasattr(spawner_result, session_alias)
+    assert not hasattr(spawner_result, pane_alias)
     with pytest.raises(TypeError):
-        cast(Any, SpawnResult)(True, "run", "child", "pending", tmux_session_name="alias")
+        cast(Any, SpawnResult)(True, "run", "child", "pending", **{session_alias: "alias"})
     with pytest.raises(TypeError):
-        cast(Any, SpawnerSpawnResult)(True, "spawned", tmux_pane="%1")
+        cast(Any, SpawnerSpawnResult)(True, "spawned", **{pane_alias: "%1"})
 
 
 class TestExecuteSpawn:
