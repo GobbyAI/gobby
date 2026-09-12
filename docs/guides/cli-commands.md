@@ -760,6 +760,15 @@ gobby variables set NAME VALUE [--session SESSION] [--json]
 
 ### Rules And Pipelines
 
+Rule commands are operator tooling. Enable/disable call the running daemon;
+list/show/import/export/audit use CLI database access. Import accepts grouped
+`.yaml`/`.yml`, scopes to the registered current project (otherwise global), and
+can partially succeed: inspect errors and counts. Export writes one YAML document to stdout, preserving each rule's group, body,
+priority, enabled state, description, tags and sources. Ambiguous duplicate
+names fail instead of silently dropping a row. Imports adopt the destination
+project scope; this is not a database/identity backup. Audit is bounded history, not a complete log of allowed/skipped rules.
+See [rule activation](./rules.md#activation-model) before changing installed state.
+
 ```bash
 gobby rules list
 gobby rules show NAME

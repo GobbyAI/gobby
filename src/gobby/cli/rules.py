@@ -300,32 +300,25 @@ def export_rules(group: str | None) -> None:
         click.echo("No rules to export.")
         return
 
-    # Group rules by group field
-    groups: dict[str, dict[str, Any]] = {}
+    # One document preserves all groups through the single-document importer.
+    entries: dict[str, dict[str, Any]] = {}
     for row in rows:
+        if row.name in entries:
+            raise click.ClickException(
+                f"Multiple scoped rules named '{row.name}'; export an unambiguous selection."
+            )
         body = _parse_rule_body(row)
-        rule_group = body.get("group", "ungrouped")
-        if rule_group not in groups:
-            groups[rule_group] = {}
-        # Build rule entry
-        rule_entry: dict[str, Any] = {}
-        if row.description:
-            rule_entry["description"] = row.description
-        rule_entry["event"] = body.get("event")
-        if body.get("when"):
-            rule_entry["when"] = body["when"]
-        if body.get("match"):
-            rule_entry["match"] = body["match"]
-        if body.get("effects"):
-            rule_entry["effects"] = body["effects"]
-        elif body.get("effect"):
-            rule_entry["effects"] = [body["effect"]]
-        groups[rule_group][row.name] = rule_entry
-
-    # Output each group as a YAML document
-    for grp_name, grp_rules in sorted(groups.items()):
-        doc = {"group": grp_name, "rules": grp_rules}
-        click.echo(yaml.dump(doc, default_flow_style=False, sort_keys=False))
+        if "effect" in body:
+            body.setdefault("effects", [body.pop("effect")])
+        entries[row.name] = {
+            **body,
+            "description": row.description,
+            "enabled": row.enabled,
+            "priority": row.priority,
+            "tags": row.tags or [],
+            "sources": row.sources,
+        }
+    click.echo(yaml.safe_dump({"rules": entries}, default_flow_style=False, sort_keys=False))
 
 
 @rules.command("audit")

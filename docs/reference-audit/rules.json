@@ -1,0 +1,556 @@
+{
+  "version": 1,
+  "capability": "rules",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "build-rule"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/rules.md",
+      "anchors": [
+        "rules",
+        "what-rules-are-good-for",
+        "bundled-memory-gates",
+        "yaml-format",
+        "rule-shape",
+        "file-level-fields",
+        "rule-level-fields",
+        "condition-expressions",
+        "events",
+        "common-events",
+        "raw-escape-hatch-events",
+        "additional-accepted-events",
+        "about-turn_start",
+        "about-turn_end",
+        "effects",
+        "effect-notes",
+        "block",
+        "set_variable",
+        "inject_context",
+        "mcp_call",
+        "rewrite_input",
+        "response-metadata-effects",
+        "load_skill",
+        "executable-and-delivery-effects",
+        "example-multi-effect-rule",
+        "evaluation-rules",
+        "activation-model",
+        "export-and-import",
+        "customization-and-scope",
+        "public-tooling"
+      ]
+    },
+    {
+      "path": "docs/guides/workflow-rules.md",
+      "anchors": [
+        "rule-authoring-guide",
+        "variable-safety-in-when",
+        "risky-pattern",
+        "safe-pattern",
+        "when-to-seed-a-default",
+        "installed-rules-are-the-source-of-truth",
+        "author-against-semantic-turn-events",
+        "prefer-turn_end-for-end-of-turn-policy",
+        "prefer-turn_start-for-start-of-turn-policy",
+        "keep-agent-termination-separate",
+        "hard-coded-engine-behaviors",
+        "consecutive-tool-block-escalation",
+        "tool-block-stop-gate",
+        "catastrophic-failure-escape-hatch",
+        "stop-attempt-counting",
+        "turn-start-reset",
+        "multi-effect-ordering",
+        "override-precedence-and-acknowledge-variables",
+        "practical-advice"
+      ]
+    },
+    {
+      "path": "docs/guides/workflows-overview.md",
+      "anchors": [
+        "workflows-overview",
+        "mental-model",
+        "how-the-pieces-fit",
+        "rules",
+        "agents",
+        "pipelines",
+        "dispatch",
+        "current-public-surface",
+        "decision-guide",
+        "event-flow",
+        "definitions-vs-runtime-state",
+        "recommended-reading"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "rules-and-pipelines"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "memory-skills-workflows-and-rules"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "list_rules",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+        "symbol": "list_rules"
+      },
+      "verification": [
+        "registered-schemas",
+        "source-audit",
+        "mcp-and-boundaries"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "get_rule",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+        "symbol": "get_rule"
+      },
+      "verification": [
+        "registered-schemas",
+        "source-audit",
+        "mcp-and-boundaries"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "create_rule",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+        "symbol": "create_rule"
+      },
+      "verification": [
+        "registered-schemas",
+        "source-audit",
+        "mcp-and-boundaries"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "update_rule",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+        "symbol": "update_rule"
+      },
+      "verification": [
+        "registered-schemas",
+        "source-audit",
+        "mcp-and-boundaries"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "toggle_rule",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+        "symbol": "toggle_rule"
+      },
+      "verification": [
+        "registered-schemas",
+        "source-audit",
+        "mcp-and-boundaries"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "delete_rule",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_rules.py",
+        "symbol": "delete_rule"
+      },
+      "verification": [
+        "registered-schemas",
+        "source-audit",
+        "mcp-and-boundaries"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "list_rules"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "show_rule"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules enable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "enable_rule"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules disable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "disable_rule"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "import_rules"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules export",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "export_rules"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rules audit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/cli/rules.py",
+        "symbol": "audit_rules"
+      },
+      "verification": [
+        "source-audit",
+        "export-roundtrip"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/rules/groups",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "list_groups"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/rules/tags",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "list_tags"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/rules",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "list_rules_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/rules",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "create_rule_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "path": "/api/rules/bulk-toggle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "bulk_toggle_rules"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/rules/{name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "get_rule_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "path": "/api/rules/{name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "update_rule_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "path": "/api/rules/{name}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "delete_rule_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "path": "/api/rules/{name}/toggle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/rules/overrides.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/rules.py",
+        "symbol": "toggle_rule_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "engine-and-management"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "registered-schemas",
+      "kind": "registered-tools",
+      "command": "list_tools(gobby-workflows); get_tool_schema for each of the six rule tools",
+      "result": "Six public rule tools. No per-session override or evaluate_rule tool. group belongs in definition; project_path is export location; update body replaces rather than merges. Shared agent selectors are mapped by agents; pipeline cache reload belongs to pipelines."
+    },
+    {
+      "id": "source-audit",
+      "kind": "implementation",
+      "command": "gcode outline/symbol-at: rule tools, definitions RuleEffect/RuleDefinitionBody, engine core/evaluation/effects/templating/event_utils, sync_rules, storage RuleDefinitionManager, CLI and HTTP rules; Click CliRunner --help for all seven leaves; AST route decorators",
+      "result": "Seven CLI leaves, nine HTTP routes, fifteen effects, 36 events. Verified scoped enabled loading, selector precedence, aggregate lookahead, condition defaults, directive-only load_skill, receipts, manual-compact/interrupt/wait boundaries. Distinct-name customization preserves bundled ownership; generic override conventions are not evidence of implemented same-name rule YAML support."
+    },
+    {
+      "id": "installed-state",
+      "kind": "installed-configuration",
+      "command": "list_rules(group=\"memory-lifecycle\",brief=true); get_rule(\"review-gobby-session-feedback-on-stop\") in session #12910",
+      "result": "Ten memory-lifecycle rows returned enabled, including review-closed-task-memories-before-handoff and review-closed-task-memories-on-stop. Feedback row 28d059f0-94fd-43bf-9893-7e173d32be2d installed/global/enabled priority3; block has on_receipt without acknowledge_variable. Effective session selectors/config not inferred. No live row mutations; integrated cutover remains P5."
+    },
+    {
+      "id": "engine-and-management",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_rule_models.py tests/workflows/test_rule_engine.py tests/workflows/test_rule_engine_aggregate_blocks.py tests/workflows/test_rule_engine_block_audit.py tests/workflows/test_rule_engine_call_tool_context.py tests/workflows/test_rule_yaml_sync.py tests/workflows/test_rule_disable_propagation.py tests/workflows/test_rule_audience_scoping.py tests/workflows/test_agent_scope_rules.py tests/workflows/test_run_command_effect.py tests/workflows/engine/test_skill_load_guidance.py tests/cli/test_cli_rules.py tests/servers/routes/test_rules_routes.py -q",
+      "result": "430 passed in 50.06s before export fix. Isolated fixtures cover model/event/effect/condition/scopes/aggregation/CLI/HTTP and executable failure boundaries. No live mutation probes."
+    },
+    {
+      "id": "export-roundtrip",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_rules.py tests/workflows/test_rule_yaml_sync.py -q",
+      "result": "Regression first failed: safe_load returned only export-b from two groups. After fix: 58 passed in 5.11s. Actual isolated storage deletion/import restores both bodies, enabled states, priorities, descriptions, tags and sources. Additional metadata/duplicate rejection tests included in final validation."
+    },
+    {
+      "id": "mcp-and-boundaries",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_rules.py tests/workflows/test_rule_yaml_sync.py tests/mcp_proxy/tools/test_rule_tools.py tests/mcp_proxy/tools/test_make_template.py tests/workflows/test_proxy_hooks.py tests/workflows/test_delivery_disposition.py tests/workflows/test_delivery_pipeline.py tests/servers/test_mcp_programmatic_boundary.py tests/skills/test_capability_catalog.py -q",
+      "result": "Initial run: 191 passed, one classifier mismatch in session-feedback YAML. Fixed stale on_receipt declaration with no acknowledgment write; passing rerun recorded separately."
+    },
+    {
+      "id": "final-recovery",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_delivery_disposition.py tests/workflows/test_session_feedback_rules.py tests/cli/test_cli_rules.py tests/workflows/test_rule_yaml_sync.py -q",
+      "result": "88 passed in 13.64s after export, metadata/duplicate rejection and feedback-template fixes. No live mutation."
+    },
+    {
+      "id": "library-integrity",
+      "kind": "isolated-check",
+      "command": "uv run python: catalog validation; fence-aware Markdown links/anchors; AST operation identities and YAML/Python example body validation",
+      "result": "Nine catalog capabilities; 13 Markdown files and all guide anchors/links valid; 22 operation identities resolve; eight references below 15000 characters and UTF-8 bytes. Three documented full rule bodies validate without execution."
+    },
+    {
+      "id": "independent-review",
+      "kind": "review",
+      "command": "OCR staged review by review_reference_identity; subsequent scoped fix review",
+      "result": "19/19 reviewed, zero skipped, 100% coverage. One medium raw-file-tag validation gap corrected: keep raw defaults until list-shape validation, before adding ownership tag. Added file/rule metadata cases for strings, false and zero. Existing malformed-metadata lesson 5e0ebfbc-0b57-5847-ae37-70217ca0558f supports fix. Final three-file delta cleared; no remaining findings."
+    },
+    {
+      "id": "review-fix-tests",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_rules.py tests/workflows/test_rule_yaml_sync.py tests/workflows/test_delivery_disposition.py tests/workflows/test_session_feedback_rules.py -q",
+      "result": "98 passed in 14.89s after raw-default fix. Complete roundtrip, malformed metadata at both file/rule levels, duplicate-name refusal, sync ownership, and feedback/delivery consumers verified."
+    },
+    {
+      "id": "quality",
+      "kind": "static-analysis",
+      "command": "uv run ruff check and format --check on three Python files; uv run mypy on two source files; gobby test-types audit tests/; test-quality audit tests/cli/test_cli_rules.py; test-types suppressions .",
+      "result": "Ruff and source mypy clean; all three Python files formatted. Test types: 2180 files, 8463 baseline errors and zero new; test quality: 30 functions, zero issues; suppression ratchet: 4205 files, 217 baseline, zero new/stale. Type, mypy and test-quality checks rerun after review correction and passed."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "load_skill described as automatic loading; source skill listed only five effects.",
+      "resolution": "Document all 15 effects and complete explicit-fetch requirements.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "First-block-only claims ignored default aggregation; inline failure claimed to stop siblings; generic session overrides implied.",
+      "resolution": "Correct read-only lookahead, explicit sibling dependencies, selector precedence and delivered acknowledgment semantics.",
+      "evidence": [
+        "engine-and-management"
+      ]
+    },
+    {
+      "finding": "Condition-error scope, flattened alias timing, raw-event timing and durable waits were incomplete.",
+      "resolution": "Document actual condition and boundary behavior without promising universal or once-only provider events.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Retired before-compact memory gate and nonexistent PUT /api/rules collection route.",
+      "resolution": "Use installed before-handoff name and remove unsupported route.",
+      "evidence": [
+        "installed-state"
+      ]
+    },
+    {
+      "finding": "create_rule example placed group outside definition; export location confused with row scope.",
+      "resolution": "Use schema-valid body example; separate scope, pinned enabled intent, installed provenance and selectors.",
+      "evidence": [
+        "registered-schemas"
+      ]
+    },
+    {
+      "finding": "Export silently lost earlier groups and policy metadata.",
+      "resolution": "Emit a single document with complete per-rule body/metadata; import validates per-rule metadata and preserves ownership tag. Ambiguous duplicate names fail. Definition export does not preserve row IDs/scope.",
+      "evidence": [
+        "export-roundtrip"
+      ]
+    },
+    {
+      "finding": "Feedback template retained on_receipt after acknowledgment variable removal.",
+      "resolution": "Remove stale field; successful feedback still satisfies epoch gate. P5 publishes corrected bundled template.",
+      "evidence": [
+        "mcp-and-boundaries"
+      ]
+    },
+    {
+      "finding": "Review found raw file-level string tags expanded to character tags before shape validation; falsey invalid defaults were replaced with empty lists.",
+      "resolution": "Keep raw defaults until effective file/rule metadata validation before ownership-tag expansion; add malformed values at both levels.",
+      "evidence": [
+        "independent-review",
+        "review-fix-tests"
+      ]
+    }
+  ]
+}

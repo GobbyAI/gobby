@@ -42,7 +42,6 @@ rules:
       and not variables.get('_gobby_feedback_epoch_submitted')
     effects:
       - type: block
-        delivery: on_receipt
         reason: |
           Perform one bounded Gobby-experience survey using only first-hand
           evidence from this session. Submit through `gobby-sessions:feedback` before

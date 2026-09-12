@@ -568,10 +568,9 @@ Build profile operator/client routes are:
 | `POST` | `/api/variables/{ref}/restore-from-template` | Restore a variable definition from its template. |
 | `GET` | `/api/rules` | List rules. |
 | `POST` | `/api/rules` | Create a rule. |
-| `PUT` | `/api/rules` | Replace/update the rules collection. |
 | `GET` | `/api/rules/groups` | List rule groups. |
 | `GET` | `/api/rules/tags` | List rule tags. |
-| `PUT` | `/api/rules/bulk-toggle` | Toggle multiple rules. |
+| `PUT` | `/api/rules/bulk-toggle` | Toggle source `installed` or `project`; inspect partial failures. |
 | `GET` | `/api/rules/{name}` | Get a rule. |
 | `PUT` | `/api/rules/{name}` | Update a rule. |
 | `DELETE` | `/api/rules/{name}` | Delete a rule. |

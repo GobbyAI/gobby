@@ -418,6 +418,56 @@
           "when": "Changing scope, metadata, visibility, deletion or restoration"
         }
       ]
+    },
+    {
+      "name": "rules",
+      "description": "Author, inspect and diagnose reactive hook policy",
+      "overview": "references/rules/overview.md",
+      "when": "Working with rule definitions or enforcement",
+      "topics": [
+        {
+          "name": "authoring",
+          "description": "Author and install custom rules",
+          "path": "references/rules/authoring.md",
+          "when": "Creating or changing a rule definition"
+        },
+        {
+          "name": "events",
+          "description": "Choose normalized trigger events",
+          "path": "references/rules/events.md",
+          "when": "Selecting trigger timing or diagnosing missing events"
+        },
+        {
+          "name": "conditions",
+          "description": "Write safe condition expressions",
+          "path": "references/rules/conditions.md",
+          "when": "Writing or debugging rule and effect conditions"
+        },
+        {
+          "name": "effects",
+          "description": "Select and configure rule effects",
+          "path": "references/rules/effects.md",
+          "when": "Choosing side effects, delivery, or input transformations"
+        },
+        {
+          "name": "enforcement",
+          "description": "Understand blocks and recovery",
+          "path": "references/rules/enforcement.md",
+          "when": "Diagnosing gates, effect order, or blocked actions"
+        },
+        {
+          "name": "overrides",
+          "description": "Manage enabled state and selectors",
+          "path": "references/rules/overrides.md",
+          "when": "Changing installed state, scope, or customization"
+        },
+        {
+          "name": "diagnostics",
+          "description": "Inspect rule behavior and failures",
+          "path": "references/rules/diagnostics.md",
+          "when": "Investigating missing rules or management errors"
+        }
+      ]
     }
   ]
 }

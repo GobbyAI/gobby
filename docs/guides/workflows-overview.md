@@ -10,7 +10,7 @@ a rule, an agent definition, a pipeline, or stage-driven dispatch.
 
 ## Mental Model
 
-Gobby has four layers that compose together:
+Gobby has five layers that compose together:
 
 | Layer | Purpose | Where it lives | Runtime surface |
 | --- | --- | --- | --- |
@@ -20,7 +20,7 @@ Gobby has four layers that compose together:
 | Pipelines | Run deterministic multi-step automation | `pipeline_definitions` / bundled YAML | `gobby-workflows` pipeline tools |
 | Dispatch | Coordinate task stages, agents, isolation, and completion | Stage manifests + task/agent tooling | `gobby-tasks`, `gobby-tasks-ops`, `gobby-agents`, `gobby-worktrees`, `gobby-clones`, `gobby-merge` |
 
-The shared state across all four layers is:
+The shared state across all five layers is:
 
 - Session variables, which rules and step workflows read and mutate.
 - Domain definitions, which live in the typed tables above and are synced from
@@ -82,8 +82,8 @@ Pipelines are the right tool when you need explicit sequencing, resumability,
 approval gates, or non-interactive orchestration.
 
 Pipeline `wait` steps block on completion IDs such as agent run IDs or nested
-pipeline execution IDs. Public completion waiting now happens through persisted
-IDs plus the relevant task, agent, or pipeline status tool.
+pipeline execution IDs. Agent sessions use the applicable durable `wait_for_*`
+primitive and yield; status inspection is diagnostic, not a polling wait loop.
 
 ### Dispatch
 
@@ -130,7 +130,7 @@ behavior today:
 | You need to... | Put it in... | Why |
 | --- | --- | --- |
 | Block `git push`, destructive shell, or invalid task lifecycle actions | Rule | Reactive enforcement belongs at hook time |
-| Inject reminders or dynamic context into the next agent turn | Rule | `inject_context` and `load_skill` are event-driven |
+| Inject reminders or dynamic context into the next agent turn | Rule | `inject_context` delivers text; `load_skill` emits an explicit fetch directive |
 | Guide a worker through claim → implement → terminate | Agent | Inline step workflows model phased behavior |
 | Spawn child workers for ready tasks | Dispatch rule | Task lifecycle dispatch owns autonomous worker routing |
 | Wait for a spawned worker or nested run to finish | Pipeline | `wait` steps block on completion IDs and survive daemon restarts |
@@ -140,6 +140,12 @@ behavior today:
 ## Event Flow
 
 At runtime, the control flow looks like this:
+
+Rule definition acceptance does not prove activation: inspect installed enabled
+state, event-project scope, active enforcement configuration, and current agent
+selectors. There is no general per-session rule-override API. Bundled bodies
+remain Gobby-owned; use distinct custom rules and intentional selector changes.
+`load_skill` does not itself satisfy an instruction-loading gate.
 
 1. A CLI session starts or a child session is spawned.
 2. Gobby resolves the session's persona, active rules, variables, and skills.
@@ -189,4 +195,4 @@ waiting for approval", that is runtime state.
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-09-12_
