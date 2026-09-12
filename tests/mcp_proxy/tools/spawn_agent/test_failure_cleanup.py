@@ -146,7 +146,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         success=False,
         error="provider boot failed",
         child_session_id="child-123",
-        terminal_type="none",
+        backend="none",
         pid=None,
     )
     isolation_context = SimpleNamespace(
@@ -212,9 +212,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         task_manager=None,
         child_session_id="child-123",
         pid=None,
-        tmux_session_name=None,
-        tmux_socket_name=None,
-        tmux_socket_path=None,
+        terminal_id=None,
     )
 
 
@@ -308,9 +306,7 @@ async def _start_run_or_cleanup(runner: SimpleNamespace) -> dict[str, object] | 
         task_manager=None,
         child_session_id="child-1",
         pid=4242,
-        tmux_session_name="spawn-session",
-        tmux_socket_name="gobby",
-        tmux_socket_path=None,
+        terminal_id="terminal-1",
     )
 
 
@@ -361,9 +357,7 @@ async def test_lost_cas_with_non_running_run_cleans_up_and_reports_error() -> No
         "task_manager": None,
         "child_session_id": "child-1",
         "pid": 4242,
-        "tmux_session_name": "spawn-session",
-        "tmux_socket_name": "gobby",
-        "tmux_socket_path": None,
+        "terminal_id": "terminal-1",
     }
 
 
@@ -384,7 +378,7 @@ async def test_start_raising_cleans_up_and_reports_error() -> None:
     runner.run_storage.get.assert_not_called()
     assert cleanup.await_args is not None
     assert cleanup.await_args.kwargs["pid"] == 4242
-    assert cleanup.await_args.kwargs["tmux_session_name"] == "spawn-session"
+    assert cleanup.await_args.kwargs["terminal_id"] == "terminal-1"
 
 
 @pytest.mark.asyncio
@@ -406,9 +400,9 @@ async def test_terminate_does_not_sigkill_after_process_exits() -> None:
         await _failure_cleanup._terminate_spawn_process(
             pid=4242,
             expected_starttime="stamp",
-            tmux_session_name=None,
-            tmux_socket_name=None,
-            tmux_socket_path=None,
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+            terminal=None,
         )
 
     assert sent == [signal.SIGTERM]
@@ -433,9 +427,9 @@ async def test_terminate_sigkills_only_when_pid_still_alive() -> None:
         await _failure_cleanup._terminate_spawn_process(
             pid=4242,
             expected_starttime="Mon Jan  1 00:00:00 2026",
-            tmux_session_name=None,
-            tmux_socket_name=None,
-            tmux_socket_path=None,
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+            terminal=None,
         )
 
     assert sent == [signal.SIGTERM, signal.SIGKILL]
@@ -528,11 +522,18 @@ async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -
         resume_metadata_json=None,
     )
     storage = _HealthCaptureStorage(run)
-    runner = SimpleNamespace(run_storage=storage)
+    terminal = SimpleNamespace(id="terminal-1", backend="tmux")
+    terminal_manager = MagicMock()
+    terminal_manager.get.return_value = terminal
+    runner = SimpleNamespace(
+        run_storage=storage,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=MagicMock(),
+    )
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            "gobby.mcp_proxy.tools.spawn_agent._health._terminal_is_live",
             new_callable=AsyncMock,
             return_value=(False, pane),
         ),
@@ -544,9 +545,7 @@ async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -
         await _deferred_tmux_health_check(
             runner,
             run_id=run.id,
-            tmux_session_name="tmux-run",
-            socket_name=None,
-            socket_path=None,
+            terminal_id=terminal.id,
             delay=0,
         )
 
@@ -603,71 +602,131 @@ def _rollback_run() -> SimpleNamespace:
         capture_revision=0,
         child_session_id=None,
         pid=None,
-        tmux_session_name="gobby-rollback",
         terminal_reason=None,
     )
 
 
+class _RecordingTerminalRuntime:
+    def __init__(self) -> None:
+        self.terminations: list[tuple[object, float]] = []
+
+    async def terminate(self, row: object, grace_seconds: float) -> None:
+        self.terminations.append((row, grace_seconds))
+
+
+class _RecordingRuntimeRegistry:
+    def __init__(self, runtime: _RecordingTerminalRuntime) -> None:
+        self.runtime = runtime
+        self.resolved_backends: list[str] = []
+
+    def resolve(self, backend: str) -> _RecordingTerminalRuntime:
+        self.resolved_backends.append(backend)
+        return self.runtime
+
+
+class _RecordingTerminalManager:
+    def __init__(self) -> None:
+        self.transitions: list[tuple[str, str]] = []
+
+    def fail_pending(self, terminal_id: str) -> None:
+        self.transitions.append(("fail_pending", terminal_id))
+
+    def mark_exited(self, terminal_id: str) -> None:
+        self.transitions.append(("mark_exited", terminal_id))
+
+
 @pytest.mark.asyncio
-async def test_spawn_rollback_captures_pane_before_killing_tmux() -> None:
+async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
     run = _rollback_run()
     storage = _RollbackCaptureStorage(run)
     events: list[str] = []
-    tmux = MagicMock()
-    tmux.has_session = AsyncMock(return_value=True)
+    terminal = SimpleNamespace(
+        id="terminal-1",
+        backend="tmux",
+        state="pending",
+        spawn_key="gobby-rollback",
+    )
+    runtime = MagicMock()
+    runtime.is_live = AsyncMock(return_value=True)
 
-    async def capture(_name: str) -> str:
+    async def capture(_row: object) -> SimpleNamespace:
         events.append("capture")
-        return "spawn stderr: provider refused the lease"
+        return SimpleNamespace(text="spawn stderr: provider refused the lease")
 
-    async def kill(_name: str, *, missing_ok: bool = False) -> bool:
-        events.append("kill")
-        return True
+    async def terminate(_row: object, _grace_seconds: float) -> None:
+        events.append("terminate")
 
-    tmux.capture_full_pane = capture
-    tmux.kill_session = kill
+    runtime.snapshot_full = capture
+    runtime.terminate = terminate
+    runtime_registry = MagicMock()
+    runtime_registry.resolve.return_value = runtime
+    terminal_manager = MagicMock()
 
-    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
-        await _failure_cleanup._terminate_spawn_process(
-            run_storage=storage,
-            run_id=run.id,
-            pid=None,
-            tmux_session_name=run.tmux_session_name,
-            tmux_socket_name=None,
-            tmux_socket_path=None,
-        )
+    await _failure_cleanup._terminate_spawn_process(
+        run_storage=storage,
+        run_id=run.id,
+        pid=None,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=runtime_registry,
+        terminal=terminal,
+    )
 
-    assert events == ["capture", "kill"]
+    assert events == ["capture", "terminate"]
     assert storage.intents == [("cancel", "spawn_rollback")]
     assert run.capture_id is not None
     assert "provider refused the lease" in (run.result or "")
     assert run.status == "pending"
+    terminal_manager.fail_pending.assert_called_once_with(terminal.id)
 
 
 @pytest.mark.asyncio
-async def test_spawn_rollback_without_run_row_still_kills_tmux() -> None:
-    events: list[str] = []
-    tmux = MagicMock()
+async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None:
+    terminal = SimpleNamespace(
+        id="terminal-1",
+        backend="native",
+        state="live",
+        spawn_key="native-orphan",
+    )
+    runtime = _RecordingTerminalRuntime()
+    runtime_registry = _RecordingRuntimeRegistry(runtime)
+    terminal_manager = _RecordingTerminalManager()
 
-    async def capture(_name: str) -> str:
-        events.append("capture")
-        return ""
+    await _failure_cleanup._terminate_spawn_process(
+        run_storage=None,
+        run_id="run-missing",
+        pid=None,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=runtime_registry,
+        terminal=terminal,
+    )
 
-    async def kill(name: str, *, missing_ok: bool = False) -> bool:
-        events.append(f"kill:{name}:{missing_ok}")
-        return True
+    assert runtime_registry.resolved_backends == ["native"]
+    assert runtime.terminations == [(terminal, 0.2)]
+    assert terminal_manager.transitions == [("mark_exited", terminal.id)]
 
-    tmux.capture_full_pane = capture
-    tmux.kill_session = kill
 
-    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+@pytest.mark.asyncio
+async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
+    for state, transition in (("pending", "fail_pending"), ("live", "mark_exited")):
+        terminal = SimpleNamespace(
+            id=f"terminal-{state}",
+            backend="native",
+            state=state,
+            spawn_key=f"spawn-{state}",
+        )
+        runtime = _RecordingTerminalRuntime()
+        runtime_registry = _RecordingRuntimeRegistry(runtime)
+        terminal_manager = _RecordingTerminalManager()
+
         await _failure_cleanup._terminate_spawn_process(
             run_storage=None,
-            run_id="run-missing",
+            run_id=f"run-{state}",
             pid=None,
-            tmux_session_name="gobby-orphan",
-            tmux_socket_name=None,
-            tmux_socket_path=None,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=runtime_registry,
+            terminal=terminal,
         )
 
-    assert events == ["kill:gobby-orphan:True"]
+        assert runtime_registry.resolved_backends == ["native"]
+        assert runtime.terminations == [(terminal, 0.2)]
+        assert terminal_manager.transitions == [(transition, terminal.id)]

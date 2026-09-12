@@ -244,7 +244,7 @@ async def test_srt_wrapped_native_launch() -> None:
     ):
         result = await execute_spawn(request)
     assert result.success is True
-    assert result.terminal_type == "native"
+    assert result.backend == "native"
     row = manager.get(result.terminal_id or "")
     assert row is not None
     assert row.backend == "native"

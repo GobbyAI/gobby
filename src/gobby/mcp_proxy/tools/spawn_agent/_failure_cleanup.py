@@ -9,6 +9,9 @@ import signal
 import subprocess
 from typing import Any
 
+from gobby.storage.terminals import Terminal
+from gobby.terminals.runtime import TerminalRuntime
+
 _SPAWN_TERM_GRACE_SECONDS = 0.2
 _RUN_STARTTIMES: dict[str, str] = {}
 
@@ -75,9 +78,7 @@ async def cleanup_failed_spawn(
     task_manager: Any | None,
     child_session_id: str | None = None,
     pid: int | None = None,
-    tmux_session_name: str | None = None,
-    tmux_socket_name: str | None = None,
-    tmux_socket_path: str | None = None,
+    terminal_id: str | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
     if run_storage is not None:
@@ -88,16 +89,23 @@ async def cleanup_failed_spawn(
     if pid is None:
         raw_pid = getattr(run, "pid", None)
         pid = raw_pid if isinstance(raw_pid, int) else None
-    if tmux_session_name is None:
-        tmux_session_name = _string_attr(run, "tmux_session_name")
+    if terminal_id is None:
+        terminal_id = _string_attr(run, "terminal_id")
+    terminal_manager = getattr(runner, "terminal_manager", None)
+    terminal_runtime_registry = getattr(runner, "terminal_runtime_registry", None)
+    terminal = None
+    if terminal_id is not None and terminal_manager is not None:
+        candidate = await asyncio.to_thread(terminal_manager.get, terminal_id)
+        if isinstance(getattr(candidate, "backend", None), str):
+            terminal = candidate
     await _terminate_spawn_process(
         run_storage=run_storage if run is not None else None,
         run_id=run_id,
         pid=pid,
         expected_starttime=_RUN_STARTTIMES.get(run_id),
-        tmux_session_name=tmux_session_name,
-        tmux_socket_name=tmux_socket_name,
-        tmux_socket_path=tmux_socket_path,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+        terminal=terminal,
     )
     _forget_spawn_run(run_id)
     if run_storage is not None:
@@ -140,9 +148,7 @@ async def start_run_or_cleanup(
     task_manager: Any | None,
     child_session_id: str | None,
     pid: int | None,
-    tmux_session_name: str | None,
-    tmux_socket_name: str | None,
-    tmux_socket_path: str | None,
+    terminal_id: str | None,
 ) -> dict[str, Any] | None:
     try:
         start_skipped = await asyncio.to_thread(runner.run_storage.start, run_id) is None
@@ -160,9 +166,7 @@ async def start_run_or_cleanup(
             task_manager=task_manager,
             child_session_id=child_session_id,
             pid=pid,
-            tmux_session_name=tmux_session_name,
-            tmux_socket_name=tmux_socket_name,
-            tmux_socket_path=tmux_socket_path,
+            terminal_id=terminal_id,
         )
         return {
             "success": False,
@@ -189,9 +193,7 @@ async def start_run_or_cleanup(
             task_manager=task_manager,
             child_session_id=child_session_id,
             pid=pid,
-            tmux_session_name=tmux_session_name,
-            tmux_socket_name=tmux_socket_name,
-            tmux_socket_path=tmux_socket_path,
+            terminal_id=terminal_id,
         )
         return {
             "success": False,
@@ -214,9 +216,7 @@ async def start_run_or_cleanup(
         task_manager=task_manager,
         child_session_id=child_session_id,
         pid=pid,
-        tmux_session_name=tmux_session_name,
-        tmux_socket_name=tmux_socket_name,
-        tmux_socket_path=tmux_socket_path,
+        terminal_id=terminal_id,
     )
     return {
         "success": False,
@@ -260,29 +260,31 @@ async def _terminate_spawn_process(
     run_id: str | None = None,
     pid: int | None,
     expected_starttime: str | None = None,
-    tmux_session_name: str | None,
-    tmux_socket_name: str | None,
-    tmux_socket_path: str | None,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+    terminal: Any | None,
 ) -> None:
-    if tmux_session_name:
-        session_name = tmux_session_name
+    if terminal is not None and terminal_runtime_registry is not None:
         try:
-            from gobby.agents.tmux import get_tmux_session_manager
-
+            runtime = terminal_runtime_registry.resolve(terminal.backend)
             await _capture_then_kill_spawn_session(
                 run_storage,
                 run_id,
-                get_tmux_session_manager(),
-                session_name,
+                runtime,
+                terminal,
             )
         except Exception as exc:
             logging.getLogger(__name__).warning(
-                "Failed to kill tmux session %s (socket=%s path=%s): %s",
-                tmux_session_name,
-                tmux_socket_name,
-                tmux_socket_path,
+                "Failed to terminate %s terminal %s: %s",
+                terminal.backend,
+                terminal.id,
                 exc,
             )
+        if terminal_manager is not None:
+            if terminal.state == "pending":
+                await asyncio.to_thread(terminal_manager.fail_pending, terminal.id)
+            elif terminal.state in {"live", "orphaned"}:
+                await asyncio.to_thread(terminal_manager.mark_exited, terminal.id)
     if pid is not None:
         if expected_starttime is None or not await asyncio.to_thread(
             _pid_matches_remembered, pid, expected_starttime
@@ -317,15 +319,24 @@ async def _terminate_spawn_process(
 async def _capture_then_kill_spawn_session(
     run_storage: Any | None,
     run_id: str | None,
-    manager: Any,
-    session_name: str,
+    runtime: TerminalRuntime,
+    terminal: Terminal,
 ) -> None:
-    """Capture the failed spawn's pane into its run row, then kill the session.
+    """Capture a failed spawn into its run row, then terminate through its runtime.
 
     The caller terminalizes the run afterwards, so the policy's terminal step only
-    re-reads the row. Without a run row, or when the policy cannot complete, fall
-    back to a plain kill so the session never leaks.
+    re-reads the row. Without a run row, or when the policy cannot complete, terminate
+    the backend resource directly.
     """
+    resource_name = terminal.spawn_key or terminal.id
+
+    async def capture() -> str:
+        return (await runtime.snapshot_full(terminal)).text
+
+    async def terminate() -> bool:
+        await runtime.terminate(terminal, _SPAWN_TERM_GRACE_SECONDS)
+        return True
+
     if run_storage is not None and run_id is not None:
         from gobby.agents.capture import capture_then_kill_async
 
@@ -336,25 +347,25 @@ async def _capture_then_kill_spawn_session(
             termination = await capture_then_kill_async(
                 storage=run_storage,
                 run_id=run_id,
-                session_name=session_name,
+                session_name=resource_name,
                 action="cancel",
                 reason="spawn_rollback",
-                session_alive=lambda: manager.has_session(session_name),
-                capture=lambda: manager.capture_full_pane(session_name),
-                kill=lambda: manager.kill_session(session_name, missing_ok=True),
+                session_alive=lambda: runtime.is_live(terminal),
+                capture=capture,
+                kill=terminate,
                 terminalize=keep_run,
             )
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Capture policy failed for spawn rollback of %s (%s): %s",
                 run_id,
-                session_name,
+                resource_name,
                 exc,
             )
         else:
             if termination.success:
                 return
-    await manager.kill_session(session_name, missing_ok=True)
+    await runtime.terminate(terminal, _SPAWN_TERM_GRACE_SECONDS)
 
 
 def _string_attr(obj: Any, name: str) -> str | None:

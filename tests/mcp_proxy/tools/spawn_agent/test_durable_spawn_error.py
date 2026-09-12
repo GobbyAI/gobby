@@ -31,7 +31,7 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
     run = storage.create(parent_session_id=session.id, provider="codex", prompt="test launch")
     origin = "tmux launch rejected 40960-byte command: message too long"
 
-    async def capture(_name: str) -> str:
+    async def capture(_row: object) -> SimpleNamespace:
         recorded = storage.get(run.id)
         assert recorded is not None and recorded.error == origin
         raise OSError("capture unavailable after launch failure")
@@ -42,11 +42,20 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
         assert terminal_reason == "spawn_rollback"
         return storage.cancel(run_id, terminal_reason="spawn_rollback") is not None
 
-    tmux = Mock()
-    tmux.has_session = AsyncMock(return_value=True)
-    tmux.capture_full_pane = capture
-    tmux.kill_session = AsyncMock(return_value=True)
-    monkeypatch.setattr("gobby.agents.tmux.get_tmux_session_manager", lambda **_kwargs: tmux)
+    terminal = SimpleNamespace(
+        id="terminal-1",
+        backend="native",
+        state="pending",
+        spawn_key="isolated-spawn-test",
+    )
+    runtime = Mock()
+    runtime.is_live = AsyncMock(return_value=True)
+    runtime.snapshot_full = AsyncMock(side_effect=capture)
+    runtime.terminate = AsyncMock()
+    terminal_runtime_registry = Mock()
+    terminal_runtime_registry.resolve.return_value = runtime
+    terminal_manager = Mock()
+    terminal_manager.get.return_value = terminal
     monitor = (
         SimpleNamespace(terminalize_cancelled_run=AsyncMock(side_effect=terminalize))
         if with_monitor
@@ -58,6 +67,8 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
         cancel_run=storage.cancel,
         get_run=storage.get,
         agent_lifecycle_monitor=monitor,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
     )
     await cleanup_failed_spawn(
         runner,
@@ -68,11 +79,12 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
         completion_registry=None,
         cleanup_isolation=False,
         task_manager=None,
-        tmux_session_name="isolated-spawn-test",
+        terminal_id=terminal.id,
     )
     recorded = storage.get(run.id)
     assert recorded is not None and recorded.status == "cancelled"
     assert recorded.error == origin
-    tmux.kill_session.assert_awaited_once()
+    runtime.terminate.assert_awaited()
+    terminal_manager.fail_pending.assert_called_once_with(terminal.id)
     if monitor is not None:
         monitor.terminalize_cancelled_run.assert_awaited_once()

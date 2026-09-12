@@ -96,8 +96,7 @@ class TmuxSpawner(TerminalSpawnerBase):
 
     * Uses ``-L gobby`` by default (configurable via :class:`TmuxConfig`).
     * Delegates to :class:`TmuxSessionManager` for session lifecycle.
-    * Stores ``tmux_session_name`` on :class:`SpawnResult` so the caller
-      can start output streaming and register the name on the agent.
+    * Returns backend-neutral terminal metadata on :class:`SpawnResult`.
     """
 
     def __init__(
@@ -207,14 +206,12 @@ class TmuxSpawner(TerminalSpawnerBase):
             success=True,
             message=(f"Spawned tmux session '{verified_info.name}' (attach: {attach_cmd})"),
             pid=verified_info.pane_pid,
-            terminal_type=self.terminal_type,
+            backend=self.terminal_type,
             locator=AttachLocator(
                 backend="tmux",
                 frame_host_epoch="",
                 pane_id=verified_info.pane_id,
             ),
-            tmux_socket_name=self._config.socket_name,
-            tmux_socket_path=self._config.socket_path,
         )
         return result
 

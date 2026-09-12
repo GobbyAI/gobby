@@ -1676,8 +1676,9 @@ class TestTmuxSpawner:
 
             assert result.success is True
             assert result.pid == 456
-            assert result.tmux_socket_name == "gobby"
-            assert result.tmux_socket_path is None
+            assert result.backend == "tmux"
+            assert result.locator is not None
+            assert result.locator.backend == "tmux"
 
     @pytest.mark.asyncio
     async def test_spawn_fails_when_verified_pane_is_dead(self) -> None:

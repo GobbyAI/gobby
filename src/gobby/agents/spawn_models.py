@@ -152,12 +152,9 @@ class SpawnResult:
     child_session_id: str | None
     status: str
     pid: int | None = None
-    terminal_type: str | None = None
+    backend: str | None = None
     error: str | None = None
     message: str | None = None
     codex_session_id: str | None = None
-    tmux_session_name: str | None = None
-    tmux_socket_name: str | None = None
-    tmux_socket_path: str | None = None
     terminal_id: str | None = None
     locator: AttachLocator | None = None

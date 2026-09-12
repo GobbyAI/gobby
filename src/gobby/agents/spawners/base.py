@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.agents.spawn_cache_policy import merge_spawn_path
+from gobby.storage.terminals import AttachLocator
 
 
 @dataclass
@@ -17,16 +18,11 @@ class SpawnResult:
     success: bool
     message: str
     pid: int | None = None
-    terminal_type: str | None = None
+    backend: str | None = None
+    terminal_id: str | None = None
     error: str | None = None
-    tmux_session_name: str | None = None
-    """Tmux session name (set when terminal_type is tmux)."""
-    tmux_socket_name: str | None = None
-    """Tmux socket name used for the session."""
-    tmux_socket_path: str | None = None
-    """Explicit tmux socket path used for the session, if configured."""
-    locator: object | None = None
-    """Backend attach locator returned instead of a minted session name."""
+    locator: AttachLocator | None = None
+    """Backend attach locator returned by the runtime."""
 
 
 def make_spawn_env(env: dict[str, str] | None = None) -> dict[str, str]:

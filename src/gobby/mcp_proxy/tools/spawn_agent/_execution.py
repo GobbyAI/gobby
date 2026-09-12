@@ -11,14 +11,14 @@ from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
     start_run_or_cleanup,
 )
 from gobby.mcp_proxy.tools.spawn_agent._health import (
-    _check_tmux_session_alive,
+    _terminal_is_live,
     schedule_tmux_health_check,
 )
-from gobby.mcp_proxy.tools.spawn_agent._runtime import (
-    _build_spawn_success_response,
-    _persist_spawn_runtime,
+from gobby.mcp_proxy.tools.spawn_agent._response import (
     _tmux_runtime_metadata,
+    build_spawn_response,
 )
+from gobby.mcp_proxy.tools.spawn_agent._runtime import _persist_spawn_runtime
 from gobby.mcp_proxy.tools.spawn_agent._step_state import apply_claimed_step_update
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 
@@ -105,30 +105,32 @@ async def finalize_executed_spawn(
         "worktree_id": isolation_ctx.worktree_id,
         "branch_name": isolation_ctx.branch_name,
     }
-    tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
+    terminal_id = getattr(spawn_result, "terminal_id", None)
+    manager = getattr(spawn_request, "terminal_manager", None)
+    registry = getattr(spawn_request, "terminal_runtime_registry", None)
+    terminal = None
+    if isinstance(terminal_id, str) and manager is not None:
+        candidate = await asyncio.to_thread(manager.get, terminal_id)
+        if isinstance(getattr(candidate, "backend", None), str):
+            terminal = candidate
+    tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(terminal)
     await asyncio.to_thread(
         _persist_spawn_runtime,
         runner,
         run_id,
         spawn_result,
-        tmux_session_name=tmux_session_name,
         worktree_id=isolation_ctx.worktree_id,
         clone_id=isolation_ctx.clone_id,
-        terminal_id=getattr(spawn_result, "terminal_id", None),
+        terminal_id=terminal_id,
     )
-    tmux_spawn = bool(
-        spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
-    )
-    if tmux_spawn and tmux_session_name:
-        alive, pane_output = await _check_tmux_session_alive(
-            tmux_session_name,
-            socket_name=tmux_socket_name,
-            socket_path=tmux_socket_path,
-        )
+    if spawn_result.success and terminal is not None and registry is not None:
+        alive, pane_output = await _terminal_is_live(terminal, registry)
         if not alive:
             spawn_result.success = False
             spawn_result.status = "failed"
-            spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
+            spawn_result.error = (
+                f"{terminal.backend} terminal '{terminal.id}' failed liveness verification"
+            )
             if pane_output:
                 spawn_result.error = f"{spawn_result.error}\nPane output:\n{pane_output}"
             await cleanup_failed_spawn(
@@ -142,9 +144,7 @@ async def finalize_executed_spawn(
                 task_manager=task_manager,
                 child_session_id=spawn_result.child_session_id,
                 pid=spawn_result.pid,
-                tmux_session_name=tmux_session_name,
-                tmux_socket_name=tmux_socket_name,
-                tmux_socket_path=tmux_socket_path,
+                terminal_id=terminal_id,
             )
             return {
                 "success": False,
@@ -163,9 +163,7 @@ async def finalize_executed_spawn(
             task_manager=task_manager,
             child_session_id=spawn_result.child_session_id,
             pid=spawn_result.pid,
-            tmux_session_name=tmux_session_name,
-            tmux_socket_name=tmux_socket_name,
-            tmux_socket_path=tmux_socket_path,
+            terminal_id=terminal_id,
         )
         if start_error is not None:
             return {**start_error, **failure_identity}
@@ -185,10 +183,10 @@ async def finalize_executed_spawn(
                     "parent_session_id": parent_session_id,
                     "provider": effective_provider,
                     "pid": spawn_result.pid,
-                    "tmux_session_name": tmux_session_name,
                     "tmux_socket_name": tmux_socket_name,
                     "tmux_socket_path": tmux_socket_path,
-                    "terminal_id": getattr(spawn_result, "terminal_id", None),
+                    "terminal_id": terminal_id,
+                    "backend": getattr(terminal, "backend", None),
                 },
             )
         except Exception as e:
@@ -291,9 +289,7 @@ async def finalize_executed_spawn(
                     task_manager=task_manager,
                     child_session_id=spawn_result.child_session_id,
                     pid=spawn_result.pid,
-                    tmux_session_name=tmux_session_name,
-                    tmux_socket_name=tmux_socket_name,
-                    tmux_socket_path=tmux_socket_path,
+                    terminal_id=terminal_id,
                 )
                 return {
                     "success": False,
@@ -301,13 +297,11 @@ async def finalize_executed_spawn(
                     **failure_identity,
                 }
 
-        if spawn_result.terminal_type == "tmux" and tmux_session_name:
+        if terminal is not None:
             schedule_tmux_health_check(
                 runner,
                 run_id,
-                tmux_session_name,
-                tmux_socket_name,
-                tmux_socket_path,
+                terminal.id,
                 completion_registry,
             )
     else:
@@ -322,9 +316,7 @@ async def finalize_executed_spawn(
             task_manager=task_manager,
             child_session_id=spawn_result.child_session_id,
             pid=spawn_result.pid,
-            tmux_session_name=tmux_session_name,
-            tmux_socket_name=tmux_socket_name,
-            tmux_socket_path=tmux_socket_path,
+            terminal_id=terminal_id,
         )
 
     if not spawn_result.success:
@@ -335,18 +327,16 @@ async def finalize_executed_spawn(
             "reasoning": reasoning.to_dict(),
         }
 
-    response = _build_spawn_success_response(
+    response = build_spawn_response(
         run_id=run_id,
         spawn_result=spawn_result,
         effective_isolation=effective_isolation,
         isolation_ctx=isolation_ctx,
         base_commit_sha=base_commit_sha,
-        tmux_session_name=tmux_session_name,
-        tmux_socket_name=tmux_socket_name,
-        tmux_socket_path=tmux_socket_path,
         code_index_preflight_warning=(
             spawn_request.code_index_preflight_warning if spawn_request is not None else None
         ),
         reasoning=reasoning,
+        terminal=terminal,
     )
     return response

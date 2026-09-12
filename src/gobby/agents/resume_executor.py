@@ -54,6 +54,7 @@ from gobby.ask.permissions import (
 from gobby.providers.version_gate import ensure_agy_support
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
+from gobby.storage.terminals import Terminal
 
 logger = logging.getLogger(__name__)
 
@@ -624,11 +625,15 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
-    if provider == "codex" and terminal_result.terminal_id:
-        coordinator = getattr(runner, "write_coordinator", None)
+    terminal: Terminal | None = None
+    if terminal_result.terminal_id:
         manager = getattr(runner, "terminal_manager", None)
-        terminal = manager.get(terminal_result.terminal_id) if manager is not None else None
-        if coordinator is not None and terminal is not None:
+        if manager is not None:
+            terminal = await asyncio.to_thread(manager.get, terminal_result.terminal_id)
+
+    if provider == "codex" and terminal is not None:
+        coordinator = getattr(runner, "write_coordinator", None)
+        if coordinator is not None:
             schedule_codex_prompt_delivery(
                 coordinator,
                 terminal,
@@ -640,7 +645,7 @@ async def resume_agent_run(
         run_id,
         {
             daemon_resume_keys.TERMINAL_ID_KEY: terminal_result.terminal_id,
-            daemon_resume_keys.SPAWN_KEY_KEY: terminal_result.tmux_session_name,
+            daemon_resume_keys.SPAWN_KEY_KEY: terminal.spawn_key if terminal is not None else None,
         },
     )
     try:
@@ -706,7 +711,14 @@ async def resume_agent_run(
             run_id=run_id,
             child_session_id=spawn_context.session_id,
         )
-    _fire_resume_started(original_run, run_id, provider, terminal_result, parent_session_id)
+    _fire_resume_started(
+        original_run,
+        run_id,
+        provider,
+        terminal_result,
+        terminal,
+        parent_session_id,
+    )
     await asyncio.to_thread(
         notify_parent_of_recovery,
         runner.run_storage.db,
@@ -861,6 +873,7 @@ def _fire_resume_started(
     run_id: str,
     provider: str,
     terminal_result: Any,
+    terminal: Terminal | None,
     parent_session_id: str,
 ) -> None:
     try:
@@ -874,9 +887,8 @@ def _fire_resume_started(
                 "parent_session_id": parent_session_id,
                 "provider": provider,
                 "pid": terminal_result.pid,
-                "tmux_session_name": getattr(terminal_result, "tmux_session_name", None),
-                "tmux_socket_name": getattr(terminal_result, "tmux_socket_name", None),
-                "tmux_socket_path": getattr(terminal_result, "tmux_socket_path", None),
+                "terminal_id": terminal.id if terminal is not None else None,
+                "backend": terminal.backend if terminal is not None else None,
             },
         )
     except Exception as exc:

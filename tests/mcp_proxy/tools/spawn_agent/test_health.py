@@ -4,196 +4,163 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.agents.tmux.session_manager import TmuxSessionInfo
-from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.spawn_agent._health import (
     _bounded_redacted_pane_output,
-    _check_tmux_session_alive,
     _deferred_tmux_health_check,
+    _terminal_is_live,
     cancel_health_checks,
     schedule_tmux_health_check,
 )
+from gobby.storage.terminals import Terminal
+from gobby.terminals.runtime import TerminalRuntimeRegistry
 from tests.completion_delivery_helpers import record_removals
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.asyncio
-async def test_check_tmux_session_alive_uses_configured_manager() -> None:
-    manager = MagicMock()
-    manager.is_available.return_value = True
-    manager.get_session = AsyncMock(return_value=TmuxSessionInfo(name="sess", pane_pid=123))
+def _runner_with_terminal(run_storage: object) -> SimpleNamespace:
+    terminal_manager = MagicMock()
+    terminal_manager.get.return_value = cast(
+        Terminal,
+        SimpleNamespace(id="terminal-1", backend="tmux"),
+    )
+    return SimpleNamespace(
+        run_storage=run_storage,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=MagicMock(spec=TerminalRuntimeRegistry),
+    )
 
-    with (
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager_for",
-            return_value=manager,
-        ) as manager_cls,
-        patch(
-            "gobby.agents.tmux.get_configured_tmux_config",
-            return_value=TmuxConfig(),
-        ),
-    ):
-        result = await _check_tmux_session_alive(
-            "sess",
-            socket_name="custom",
-            socket_path="/tmp/tmux-1000/custom",
-        )
+
+@pytest.mark.asyncio
+async def test_terminal_is_live_uses_registered_runtime() -> None:
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
+    runtime = MagicMock()
+    runtime.is_live = AsyncMock(return_value=True)
+    registry = MagicMock(spec=TerminalRuntimeRegistry)
+    registry.resolve.return_value = runtime
+
+    result = await _terminal_is_live(row, registry)
 
     assert result == (True, None)
-    assert manager_cls.call_args.kwargs["socket_name"] == "custom"
-    assert manager_cls.call_args.kwargs["socket_path"] == "/tmp/tmux-1000/custom"
-    manager.get_session.assert_awaited_once_with("sess")
+    registry.resolve.assert_called_once_with("tmux")
+    runtime.is_live.assert_awaited_once_with(row)
 
 
 @pytest.mark.asyncio
-async def test_check_tmux_session_alive_rejects_dead_pane() -> None:
-    manager = MagicMock()
-    manager.is_available.return_value = True
-    manager.get_session = AsyncMock(
-        return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
-    )
-    manager.capture_pane = AsyncMock(return_value="/bin/bash: claude: command not found\n")
+async def test_terminal_is_live_reports_dead_runtime_output() -> None:
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
 
-    with (
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager_for",
-            return_value=manager,
-        ) as manager_cls,
-        patch(
-            "gobby.agents.tmux.get_configured_tmux_config",
-            return_value=TmuxConfig(),
-        ),
-    ):
-        result = await _check_tmux_session_alive("sess", socket_name="gobby")
+    class DeadRuntime:
+        def __init__(self) -> None:
+            self.live_rows: list[Terminal] = []
+            self.snapshot_requests: list[tuple[Terminal, int]] = []
+
+        async def is_live(self, terminal: Terminal) -> bool:
+            self.live_rows.append(terminal)
+            return False
+
+        async def snapshot(self, terminal: Terminal, *, lines: int) -> SimpleNamespace:
+            self.snapshot_requests.append((terminal, lines))
+            return SimpleNamespace(text="/bin/bash: claude: command not found\n")
+
+    runtime = DeadRuntime()
+    resolved_backends: list[str] = []
+
+    def resolve(backend: str) -> DeadRuntime:
+        resolved_backends.append(backend)
+        return runtime
+
+    registry = MagicMock(spec=TerminalRuntimeRegistry)
+    registry.resolve.side_effect = resolve
+
+    result = await _terminal_is_live(row, registry)
 
     assert result == (False, _bounded_redacted_pane_output("/bin/bash: claude: command not found"))
-    assert manager_cls.call_args.kwargs["socket_name"] == "gobby"
-    manager.is_available.assert_called_once_with()
-    manager.get_session.assert_awaited_once_with("sess")
-    manager.capture_pane.assert_awaited_once_with("sess", lines=50)
+    assert resolved_backends == ["tmux"]
+    assert runtime.live_rows == [row]
+    assert runtime.snapshot_requests == [(row, 50)]
 
 
 @pytest.mark.asyncio
-async def test_check_tmux_session_alive_rejects_missing_pane_pid() -> None:
-    manager = MagicMock()
-    manager.is_available.return_value = True
-    manager.get_session = AsyncMock(return_value=TmuxSessionInfo(name="sess", pane_pid=None))
-    manager.capture_pane = AsyncMock(return_value="x" * 5000)
+async def test_terminal_is_live_bounds_dead_runtime_output() -> None:
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
+    runtime = MagicMock()
+    runtime.is_live = AsyncMock(return_value=False)
+    runtime.snapshot = AsyncMock(return_value=SimpleNamespace(text="x" * 5000))
+    registry = MagicMock(spec=TerminalRuntimeRegistry)
+    registry.resolve.return_value = runtime
 
-    with (
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager_for",
-            return_value=manager,
-        ) as manager_cls,
-        patch(
-            "gobby.agents.tmux.get_configured_tmux_config",
-            return_value=TmuxConfig(),
-        ),
-    ):
-        result = await _check_tmux_session_alive("sess", socket_name="gobby")
+    result = await _terminal_is_live(row, registry)
 
     assert result == (False, _bounded_redacted_pane_output("x" * 5000))
     assert result[1] is not None
     assert len(result[1]) <= 1024
     assert result[1].startswith("[truncated]\n")
-    assert manager_cls.call_args.kwargs["socket_name"] == "gobby"
-    manager.is_available.assert_called_once_with()
-    manager.get_session.assert_awaited_once_with("sess")
-    manager.capture_pane.assert_awaited_once_with("sess", lines=50)
+    runtime.snapshot.assert_awaited_once_with(row, lines=50)
 
 
 @pytest.mark.asyncio
-async def test_check_tmux_session_alive_keeps_confirmed_death_when_capture_fails() -> None:
-    manager = MagicMock()
-    manager.is_available.return_value = True
-    manager.get_session = AsyncMock(
-        return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
-    )
-    manager.capture_pane = AsyncMock(side_effect=OSError("capture failed"))
+async def test_terminal_is_live_keeps_confirmed_death_when_snapshot_fails() -> None:
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="native"))
+    runtime = MagicMock()
+    runtime.is_live = AsyncMock(return_value=False)
+    runtime.snapshot = AsyncMock(side_effect=OSError("capture failed"))
+    registry = MagicMock(spec=TerminalRuntimeRegistry)
+    registry.resolve.return_value = runtime
 
-    with (
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager_for",
-            return_value=manager,
-        ),
-        patch(
-            "gobby.agents.tmux.get_configured_tmux_config",
-            return_value=TmuxConfig(),
-        ),
-    ):
-        result = await _check_tmux_session_alive("sess")
+    result = await _terminal_is_live(row, registry)
 
     assert result[0] is False
     assert result[1] is None
-    manager.capture_pane.assert_awaited_once_with("sess", lines=50)
+    runtime.snapshot.assert_awaited_once_with(row, lines=50)
 
 
 @pytest.mark.asyncio
-async def test_check_tmux_session_alive_propagates_unexpected_capture_failure() -> None:
-    manager = MagicMock()
-    manager.is_available.return_value = True
-    manager.get_session = AsyncMock(
-        return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
-    )
-    manager.capture_pane = AsyncMock(side_effect=RuntimeError("capture failed"))
+async def test_terminal_is_live_propagates_unexpected_snapshot_failure() -> None:
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="native"))
+    runtime = MagicMock()
+    runtime.is_live = AsyncMock(return_value=False)
+    runtime.snapshot = AsyncMock(side_effect=RuntimeError("capture failed"))
+    registry = MagicMock(spec=TerminalRuntimeRegistry)
+    registry.resolve.return_value = runtime
 
-    with (
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager_for",
-            return_value=manager,
-        ),
-        patch(
-            "gobby.agents.tmux.get_configured_tmux_config",
-            return_value=TmuxConfig(),
-        ),
-        pytest.raises(RuntimeError, match="capture failed"),
-    ):
-        await _check_tmux_session_alive("sess")
+    with pytest.raises(RuntimeError, match="capture failed"):
+        await _terminal_is_live(row, registry)
 
-    assert manager.get_session.await_args_list == [call("sess")]
-    assert manager.capture_pane.await_args_list == [call("sess", lines=50)]
+    assert runtime.is_live.await_args_list == [call(row)]
+    assert runtime.snapshot.await_args_list == [call(row, lines=50)]
 
 
 @pytest.mark.asyncio
-async def test_check_tmux_session_alive_bounds_capture_timeout(
+async def test_terminal_is_live_bounds_snapshot_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manager = MagicMock()
-    manager.is_available.return_value = True
-    manager.get_session = AsyncMock(
-        return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
-    )
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="native"))
+    runtime = MagicMock()
+    runtime.is_live = AsyncMock(return_value=False)
 
     async def capture_forever(*_args: object, **_kwargs: object) -> str:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
-    manager.capture_pane = AsyncMock(side_effect=capture_forever)
+    runtime.snapshot = AsyncMock(side_effect=capture_forever)
+    registry = MagicMock(spec=TerminalRuntimeRegistry)
+    registry.resolve.return_value = runtime
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._health._TMUX_HEALTH_CHECK_TIMEOUT_SECONDS",
         0.001,
     )
 
-    with (
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager_for",
-            return_value=manager,
-        ),
-        patch(
-            "gobby.agents.tmux.get_configured_tmux_config",
-            return_value=TmuxConfig(),
-        ),
-    ):
-        result = await _check_tmux_session_alive("sess")
+    result = await _terminal_is_live(row, registry)
 
     assert result == (False, None)
-    assert manager.get_session.await_args_list == [call("sess")]
-    assert manager.capture_pane.await_args_list == [call("sess", lines=50)]
+    assert runtime.is_live.await_args_list == [call(row)]
+    assert runtime.snapshot.await_args_list == [call(row, lines=50)]
 
 
 def test_bounded_redacted_pane_output_redacts_secret_and_preserves_tail_bound() -> None:
@@ -209,29 +176,26 @@ def test_bounded_redacted_pane_output_redacts_secret_and_preserves_tail_bound() 
 
 @pytest.mark.asyncio
 async def test_deferred_health_check_does_not_fail_terminal_run() -> None:
-    runner = MagicMock()
+    run_storage = MagicMock()
+    runner = _runner_with_terminal(run_storage)
     terminal_run = SimpleNamespace(status="success")
-    runner.run_storage.get.return_value = terminal_run
-    runner.run_storage.fail.side_effect = lambda *args, **kwargs: setattr(
-        terminal_run, "status", "error"
-    )
+    run_storage.get.return_value = terminal_run
+    run_storage.fail.side_effect = lambda *args, **kwargs: setattr(terminal_run, "status", "error")
 
     with patch(
-        "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+        "gobby.mcp_proxy.tools.spawn_agent._health._terminal_is_live",
         new_callable=AsyncMock,
         return_value=(False, None),
     ):
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            terminal_id="tmux-run",
-            socket_name=None,
-            socket_path=None,
+            terminal_id="terminal-1",
             delay=0,
         )
 
     assert terminal_run.status == "success"
-    runner.run_storage.fail.assert_not_called()
+    run_storage.fail.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -258,24 +222,22 @@ async def test_deferred_health_failure_reports_available_pane_output(
     def fail_run(_run_id: str, error: str) -> None:
         recorded_errors.append(error)
 
-    runner = SimpleNamespace(
-        run_storage=SimpleNamespace(
+    runner = _runner_with_terminal(
+        SimpleNamespace(
             get=get_run,
             fail=fail_run,
         )
     )
 
     with patch(
-        "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+        "gobby.mcp_proxy.tools.spawn_agent._health._terminal_is_live",
         new_callable=AsyncMock,
         return_value=(False, pane_output),
     ):
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            terminal_id="tmux-run",
-            socket_name=None,
-            socket_path=None,
+            terminal_id="terminal-1",
             delay=0,
         )
 
@@ -289,11 +251,11 @@ async def test_deferred_health_delivery_failure_is_logged(
     run_storage = MagicMock()
     run_storage.get.return_value = SimpleNamespace(status="running")
     run_storage.fail.return_value = SimpleNamespace(status="error")
-    runner = SimpleNamespace(run_storage=run_storage)
+    runner = _runner_with_terminal(run_storage)
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            "gobby.mcp_proxy.tools.spawn_agent._health._terminal_is_live",
             new_callable=AsyncMock,
             return_value=(False, None),
         ),
@@ -307,9 +269,7 @@ async def test_deferred_health_delivery_failure_is_logged(
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            terminal_id="tmux-run",
-            socket_name=None,
-            socket_path=None,
+            terminal_id="terminal-1",
             delay=0,
         )
 
@@ -325,8 +285,6 @@ async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
         runner=runner,
         run_id="run-1",
         terminal_id="session-1",
-        socket_name=None,
-        socket_path=None,
         delay=60,
     )
 
@@ -342,8 +300,6 @@ async def test_cancel_health_checks_cancels_pending_timer_before_callback() -> N
             runner=runner,
             run_id="run-1",
             terminal_id="session-1",
-            socket_name=None,
-            socket_path=None,
             delay=60,
         )
         cancel_health_checks()
@@ -393,7 +349,7 @@ class TestDeferredHealthFailureWakesWaiter:
                 error="Agent process exited immediately after spawn",
             ),
         ]
-        runner = SimpleNamespace(run_storage=run_storage)
+        runner = _runner_with_terminal(run_storage)
         return SimpleNamespace(wake=wake, registry=registry, runner=runner)
 
     @pytest.mark.asyncio
@@ -403,16 +359,14 @@ class TestDeferredHealthFailureWakesWaiter:
         harness = self._harness(ism_persisted=True)
         removals = record_removals(monkeypatch)
         with patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            "gobby.mcp_proxy.tools.spawn_agent._health._terminal_is_live",
             new_callable=AsyncMock,
             return_value=(False, None),
         ):
             await _deferred_tmux_health_check(
                 harness.runner,
                 "run-123",
-                "tmux-run-123",
-                None,
-                None,
+                "terminal-1",
                 delay=0,
                 completion_registry=harness.registry,
             )
@@ -427,16 +381,14 @@ class TestDeferredHealthFailureWakesWaiter:
         harness = self._harness(ism_persisted=False)
         removals = record_removals(monkeypatch)
         with patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            "gobby.mcp_proxy.tools.spawn_agent._health._terminal_is_live",
             new_callable=AsyncMock,
             return_value=(False, None),
         ):
             await _deferred_tmux_health_check(
                 harness.runner,
                 "run-123",
-                "tmux-run-123",
-                None,
-                None,
+                "terminal-1",
                 delay=0,
                 completion_registry=harness.registry,
             )

@@ -604,10 +604,9 @@ async def _promote_prepared(
         child_session_id=plan.child_session_id,
         status="pending",
         pid=pid,
-        terminal_type=backend,
+        backend=backend,
         terminal_id=terminal_id,
         locator=handle.locator,
-        tmux_session_name=spawn_key if backend == "tmux" else None,
         message=f"{plan.auth_cli} agent spawned with session {plan.child_session_id}",
     )
 
