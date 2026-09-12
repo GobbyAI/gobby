@@ -906,6 +906,16 @@ them too. Content that needs the branch's code (new effect handlers, new MCP
 tools) needs the cutover above or the merge; forcing it in only produces rows
 the running daemon cannot serve.
 
+## Native Code Index
+
+Use the separately installed `gcode` binary for code navigation. There is no
+`gobby code-index` command or code-index MCP service in this checkout.
+`gcode --help` lists the native surface; the
+[gcode guide](gcode-user-guide.md) covers search, retrieval, graph views,
+freshness, repair, and operator cleanup. `gcode init` requires a registered
+checkout; it does not create standalone project identity. Runtime access uses
+daemon-issued grants. Mutating index/cleanup commands need their own authority.
+
 ## ID Resolution
 
 Task and session commands accept project-scoped sequence references such as

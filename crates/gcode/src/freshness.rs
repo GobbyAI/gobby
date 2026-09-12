@@ -293,14 +293,17 @@ mod tests {
     }
 
     fn postgres_context_with_root(project_id: &str, root: &Path) -> Context {
+        let root = root
+            .canonicalize()
+            .expect("canonical freshness test checkout");
         let database_url = crate::test_env::postgres_test_database_url("freshness tests");
         let mut conn = db::connect_readwrite(&database_url)
             .expect("connect freshness PostgreSQL test database");
-        crate::test_env::seed_test_checkout(&mut conn, project_id, root)
+        crate::test_env::seed_test_checkout(&mut conn, project_id, &root)
             .expect("register freshness test checkout");
         Context {
             database_url,
-            project_root: root.to_path_buf(),
+            project_root: root,
             project_id: project_id.to_string(),
             quiet: true,
             falkordb: None,

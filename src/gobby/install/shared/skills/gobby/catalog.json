@@ -312,6 +312,50 @@
           "when": "Operating or diagnosing memory dream"
         }
       ]
+    },
+    {
+      "name": "code-index",
+      "description": "Search, navigate, and verify source and dependency evidence",
+      "overview": "references/code-index/overview.md",
+      "when": "Locating implementation or diagnosing code-index state",
+      "topics": [
+        {
+          "name": "search",
+          "description": "Choose search lanes and interpret matches",
+          "path": "references/code-index/search.md",
+          "when": "Locating symbols or repository text"
+        },
+        {
+          "name": "retrieval",
+          "description": "Retrieve exact source from hits and locations",
+          "path": "references/code-index/retrieval.md",
+          "when": "Reading source bodies or recovering stale IDs"
+        },
+        {
+          "name": "navigation",
+          "description": "Survey structure and preserve scope and pagination",
+          "path": "references/code-index/navigation.md",
+          "when": "Exploring files, projects, and complete result pages"
+        },
+        {
+          "name": "impact",
+          "description": "Trace callers and dependencies",
+          "path": "references/code-index/impact.md",
+          "when": "Assessing effects before implementation"
+        },
+        {
+          "name": "graphs",
+          "description": "Inspect and maintain native code projections",
+          "path": "references/code-index/graphs.md",
+          "when": "Using structural views, reports, or projection lifecycle"
+        },
+        {
+          "name": "recovery",
+          "description": "Diagnose freshness and repair index state",
+          "path": "references/code-index/recovery.md",
+          "when": "Indexing, repairing, or operating cleanup"
+        }
+      ]
     }
   ]
 }

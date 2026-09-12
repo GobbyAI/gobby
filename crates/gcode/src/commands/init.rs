@@ -47,8 +47,8 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         }
     }
 
-    // Auto-index the project. The daemon process is not required, but a migrated
-    // PostgreSQL hub must already be configured in Gobby bootstrap.
+    // Auto-index the registered project through a daemon-issued grant to the
+    // migrated PostgreSQL hub.
     let database_url = db::resolve_database_url()?;
     let index_ctx = config::Context {
         database_url,

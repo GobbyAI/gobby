@@ -12,11 +12,11 @@ const MAX_GREP_MAX_COUNT: usize = 10_000;
     version,
     about = "Fast code index CLI for Gobby",
     after_help = "Examples:
-  find call sites:   gcode grep \"spawn_ui_server(\" [PATH...] -m 50
+  find call sites:   gcode grep -F \"spawn_ui_server(\" [PATH...] -m 50
   read function:    gcode search-symbol \"spawn_ui_server\" --kind function
                     gcode symbol <id>
   locate by line:   gcode symbol-at src/auth.ts:42
-  find config key:  gcode grep \"config.ui.mode\" -F [PATH...] -m 50"
+  find config key:  gcode grep -F \"config.ui.mode\" [PATH...] -m 50"
 )]
 pub(crate) struct Cli {
     /// Override project root (default: detect from cwd)

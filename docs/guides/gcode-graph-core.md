@@ -23,6 +23,23 @@ daemon integration surface.
 
 ## Transitional Python Shims
 
+### Current Implementation And Target Gap
+
+Verified 2026-09-12: `GcodeGateway.incremental_index` invokes per-file indexing
+with `--skip-if-locked --format json`, without `--sync-projections`.
+`sync_worker.py` subsequently delegates file projection work to native graph
+and vector commands. Thus the synchronous trigger integration specified below
+is a migration target that the current trigger has not fulfilled. This note
+does not relax that target or authorize replacing asynchronous dispatch during
+a documentation migration. Operational instructions must describe the current
+queue and inspect its completion separately.
+
+The failure-preservation requirement below applies now. A native skipped
+missing-file response can still carry degraded cleanup; the worker must keep
+that file pending and preserve the error instead of marking it synced.
+
+### Required Migration Integration
+
 Python daemon consumers may temporarily shell out to stable `gcode` JSON
 commands while the daemon is still Python-owned.
 
@@ -138,3 +155,5 @@ The Python shim period ends when the daemon can link the Rust APIs directly and
 all callers have moved off Python `CodeGraph`, Python graph/vector projection
 code in `sync_worker.py`, and projection lifecycle methods on
 `CodeIndexContext`.
+
+_Last verified: 2026-09-12_

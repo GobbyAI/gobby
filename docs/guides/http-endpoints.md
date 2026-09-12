@@ -640,10 +640,12 @@ Build profile operator/client routes are:
 | `GET` | `/api/code-index/graph/file/{file_path:path}` | `gcode graph file` shim. |
 | `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | `gcode graph neighbors` shim. |
 | `GET` | `/api/code-index/graph/blast-radius` | `gcode graph blast-radius` shim. |
+| `GET` | `/api/code-index/graph/path` | Shortest CALLS path; `project_id`, `symbol_a`, `symbol_b`, `max_depth` (default 6). |
 | `GET` | `/api/code-index/graph/search` | Daemon PostgreSQL symbol autocomplete. |
 | `POST` | `/api/code-index/graph/clear` | `gcode graph clear --project-id` shim. |
 | `POST` | `/api/code-index/graph/rebuild` | `gcode graph rebuild --project` shim. |
 | `POST` | `/api/code-index/invalidate` | Invalidate code index data. |
+| `POST` | `/api/code-index/prune` | Operator-only global maintenance; optional JSON `force`, `retention_days`. |
 | `GET` | `/api/metrics/current` | Current metrics snapshot. |
 | `GET` | `/api/metrics/snapshots` | Historical metric snapshots. |
 | `GET` | `/api/pipelines/executions` | List pipeline executions. |

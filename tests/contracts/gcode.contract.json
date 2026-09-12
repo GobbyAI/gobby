@@ -258,7 +258,7 @@
     },
     {
       "name": "search",
-      "summary": "Hybrid symbol and content search over the code index.",
+      "summary": "Hybrid symbol search.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -742,7 +742,7 @@
     },
     {
       "name": "outline",
-      "summary": "Show a hierarchical symbol tree for a file.",
+      "summary": "Show a hierarchical AST symbol tree for a parser-backed source file.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -2195,6 +2195,50 @@
         }
       ],
       "json_output_keys": []
+    },
+    {
+      "name": "retire-files",
+      "summary": "Validate or apply exact manifest-bound retirement of missing file content; apply requires a private receipt.",
+      "daemon_consumed": false,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--manifest",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--apply",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--receipt",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "version",
+        "manifest_digest",
+        "backends",
+        "source_inventory_digest",
+        "project_id",
+        "machine_id",
+        "root_path",
+        "mode",
+        "complete",
+        "files"
+      ]
     },
     {
       "name": "prune",

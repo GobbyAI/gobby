@@ -6,10 +6,10 @@ A complete guide to using `gcode` for code search, symbol navigation, and depend
 
 ### Install
 
-Download the `gcode-v*` release from [GitHub Releases](https://github.com/GobbyAI/gobby/releases) or build from source:
+Install the bundled native binary with `gobby install`, or build this checkout:
 
 ```bash
-cargo install gobby-code
+cargo build --release -p gobby-code
 ```
 
 Graph and semantic features are configured at runtime, not behind Cargo feature
@@ -30,10 +30,13 @@ cd your-project
 gcode init
 ```
 
-`gcode init` does everything in one step:
-1. Creates `.gobby/gcode.json` (project identity file)
-2. Installs AI CLI skills for supported project-local targets
-3. Indexes the entire project with tree-sitter AST parsing plus non-binary text files
+Register the checkout with Gobby first (`gobby init` for operator setup).
+`gcode init` resolves that identity, installs CLI skills for applicable isolation
+contexts, and indexes parser-backed source plus eligible non-binary text files.
+It does not create `.gobby/gcode.json`; a standalone identity is rejected with
+`checkout_required`. Primary writes are fenced to this machine's registered
+checkout. A release build must be installed via a new inode; see
+[native workspace instructions](../../crates/AGENTS.md).
 
 You'll see a progress bar while indexing:
 
@@ -43,7 +46,7 @@ You'll see a progress bar while indexing:
 
 After init, you can search immediately.
 
-For non-Gobby-managed projects, `gcode init` installs the bundled `gcode` skill
+For supported isolation/worktree identities, `gcode init` can install the bundled `gcode` skill
 for Claude Code, Codex, Droid, Grok, Qwen, and AGY:
 
 | CLI | Project-local files |
@@ -99,7 +102,7 @@ gcode search "auth" --limit 5
 gcode search "handler" --kind function
 gcode search "config" --offset 10              # Page 2 of results
 gcode search "Memory" src/storage              # Scope to directory
-gcode search "Memory" src/storage tests/**/*.rs
+gcode search "Memory" src/storage 'tests/**/*.rs'
 gcode search "Context" --language rust         # Scope to Rust sources
 ```
 
@@ -147,7 +150,7 @@ pg_search BM25 search on symbol metadata: names, qualified names, signatures, an
 ```bash
 gcode search-text "parseConfig"
 gcode search-text "parseConfig" src
-gcode search-text "parseConfig" src/**/*.py tests
+gcode search-text "parseConfig" 'src/**/*.py' tests
 gcode search-text "parseConfig" --language python
 ```
 
@@ -193,8 +196,8 @@ skill files, configs (YAML/TOML/JSON/etc.), SQL/CSS, scripts,
 
 ```bash
 gcode search-content "TODO: refactor"
-gcode search-content "GOBBY_FALKORDB_HOST" *.py
-gcode search-content "database_url" crates/gcode/src docs/**/*.md
+gcode search-content "GOBBY_FALKORDB_HOST" '*.py'
+gcode search-content "database_url" crates/gcode/src 'docs/**/*.md'
 gcode search-content "primary-color" --language css
 ```
 
@@ -260,7 +263,8 @@ fallback diagnostic unless `--quiet` is set.
 Fetch multiple symbols in one call:
 
 ```bash
-gcode symbols "id1" "id2" "id3"
+gcode outline src/config.rs --verbose
+# Pass full stored UUIDs from the outline to: gcode symbols UUID UUID
 ```
 
 ### Symbol Kinds
@@ -335,6 +339,23 @@ gcode graph rebuild
 - `gcode graph sync-file --allow-missing-indexed-file` is daemon/background-worker only. It converts a missing indexed file into a skipped JSON payload with `reason: "indexed_file_not_found"`; strict human defaults return a typed error with exit code `2`.
 - `gcode graph sync-file` returns a terminal skipped payload with `reason: "no_graph_facts"` for indexed files with no imports, symbols, or calls after deleting any stale file projection and marking the file graph-synced.
 
+### Scoped Views And Reports
+
+Use `gcode graph view --view mcg --file <path>` (or `--module <name>`) for
+imports, `--view fcg --symbol <query>` for calls, and `--view class-hierarchy
+--symbol <query>` for inheritance. Views return complete JSON and Mermaid.
+Class hierarchy defaults to depth 8 with no row limit inside that depth;
+FCG/MCG default to depth 1 and expose incoming/outgoing truncation flags.
+Inspect those bounds when assessing completeness.
+
+For MCG, uniquely resolving module aliases and their provider file expand the
+same neighborhood. Incoming imports are consumers, not ownership records;
+ambiguous module nodes can have a null `file`. Use a concrete file seed when
+needed. `gcode graph report --top-n 10` produces a project report; unavailable
+required services fail, while optional memory-bridge data can be degraded.
+`gcode graph file --file <path>` and `graph neighbors --symbol-id <uuid>` inspect
+smaller neighborhoods without constructing a report.
+
 ### Callers
 
 Who calls this function?
@@ -345,9 +366,15 @@ gcode callers "handleAuth" --limit 20
 gcode callers "handleAuth" --offset 10    # Page 2
 ```
 
+### Callees
+
+Use `gcode callees "handleAuth"` for outgoing calls. Like callers, it supports
+`--limit`, `--offset`, and `--token-budget`.
+
 ### Usages
 
-Incoming call sites:
+Incoming call sites (callback references need an additional `gcode grep -w`
+search; graph results are not an exhaustive textual reference list):
 
 ```bash
 gcode usages "DatabasePool"
@@ -408,6 +435,16 @@ See all indexed projects in the PostgreSQL hub:
 gcode projects
 ```
 
+### Repair
+
+`gcode repair` compares the stored indexer version with the running Cargo
+version. A mismatch triggers full indexing with graph/vector projection reports.
+Otherwise it promotes stranded local imports and marks graph drift for later
+projection resync. Inspect `marked_for_resync`, `graph_reconcile.skipped_reason`,
+and the optional `full_reindex` report; queued work is not completed projection
+work. Run `gcode index --full` explicitly after extractor changes without a
+version bump. Nightly daemon maintenance uses this repair command.
+
 ### Prune And Projection Cleanup
 
 Remove stale project records from the PostgreSQL hub and reconcile graph/vector
@@ -418,12 +455,13 @@ gcode prune
 gcode prune --force
 ```
 
-Stale-project pruning is global and keeps its confirmation prompt unless
-`--force` is supplied. Plain `gcode prune` re-collects the remaining indexed
-projects after stale invalidation, then deletes FalkorDB and Qdrant projection
-data for file paths that no longer exist in PostgreSQL for each remaining
-project. `gcode --project <path-or-name> prune` keeps projection cleanup scoped
-to the resolved project.
+Pruning is operator maintenance. Plain `gcode prune` delegates a global sweep
+to the daemon, including stale project reconciliation and unreferenced content
+retention. Explicit `gcode --project <path-or-name> prune` scopes the work to
+that project. Destructive sets require confirmation unless `--force` is given.
+`--retention-days` defaults to 1 and must be positive; `--max-seconds` requires
+explicit `--project` and can defer content versions to a later run. Inspect
+failure and deferred counts before claiming cleanup finished.
 
 Projection-specific cleanup is available when only one store needs
 reconciliation:
@@ -441,6 +479,16 @@ cleanup-orphans` scans `code_symbols_{project_id}` Qdrant payloads filtered by
 Top-level `gcode prune` reports graph and vector cleanup failures independently
 for each project so an unavailable FalkorDB does not block Qdrant cleanup, and
 an unavailable Qdrant does not block graph cleanup.
+
+### Exact Content Retirement
+
+Operator-only `gcode retire-files --manifest <private-manifest>` validates exact
+project, machine, root, file, and content identities without deleting them.
+Applying requires `--apply --receipt <private-receipt>`. The receipt records
+partial progress durably; retain it with the same inventory manifest when
+recovering an interrupted run. New content, changed selectors, or a reappearing
+file fails validation rather than broadening deletion. Test retirement against
+isolated fixtures; never derive an ad hoc deletion list from search results.
 
 ### Cross-Project Queries
 
@@ -532,7 +580,7 @@ alone, so they work for projects whose checkout is already gone.
 
 gcode is a daemon client, not a standalone database tool:
 - Database: grant-resolved PostgreSQL hub DSN
-- Identity: `.gobby/project.json`, `.gobby/gcode.json`, isolated root, linked worktree, or generated identity from `gcode init`
+- Identity: registered `.gobby/project.json`, supported isolated root/overlay, or linked worktree; standalone `.gobby/gcode.json` and generated unregistered identities are rejected
 - Required service configs: FalkorDB, Qdrant, and embeddings from the signed grant and daemon-served config
 
 Graph commands and semantic search become available when the required services
@@ -543,9 +591,12 @@ are configured; unhealthy services are reported as degraded required sources.
 Two cases break the usual "one `.gobby/project.json` ↔ one project id" mapping. gcode handles them automatically:
 
 - **Isolation marker** — when `.gobby/isolation.json` carries both `parent_project_path` and `parent_project_id`, gcode treats the directory as an overlay of the parent rather than as the parent itself. The overlay id is a deterministic UUID5 derived from the canonical filesystem path, so the directory gets its own symbol/file rows in the PostgreSQL hub and never collides with the parent's index. Parent keys inside tracked `.gobby/project.json` are ignored.
-- **Linked git worktrees** — runs from inside a `git worktree add` directory resolve to the worktree's own top-level (via `git rev-parse --show-toplevel` and `git worktree list --porcelain`). The code-index id is derived from the worktree path, not from any inherited `.gobby/project.json`. If an inherited id would have been used, gcode prints a warning naming the filesystem-derived id it picked instead.
+- **Linked git worktrees** — runs from inside a `git worktree add` directory resolve to the worktree's own top-level (via `git rev-parse --show-toplevel` and `git worktree list --porcelain`). The code-index id is derived from the worktree path, not from any inherited `.gobby/project.json`.
 
-Both cases are reported by `gcode init`'s status line (`isolated`, `linked-worktree`) so it's clear which identity source resolved.
+Init JSON reports the resolved project id and root. A standalone isolated root
+reports `isolated`, a linked worktree reports `linked-worktree`, and an isolated
+overlay currently reports `existing`; inspect scope rather than inferring it
+from that status label alone.
 
 ## Configuration
 
@@ -565,7 +616,7 @@ a full scan prunes facts for files that become excluded.
 The database connection is the grant DSN. There is no client DSN environment
 variable or local credential file.
 
-The daemon URL (used by `invalidate` and savings reporting) is resolved by the
+The daemon URL (including runtime grant acquisition) is resolved by the
 shared `gobby_core::daemon_url` contract:
 1. `GOBBY_DAEMON_URL` environment variable (full base URL)
 2. `GOBBY_PORT` environment variable → `http://127.0.0.1:{port}`
@@ -652,9 +703,10 @@ gcode --allow-stale search "query"
 gcode --allow-stale outline src/main.rs
 ```
 
-Set `GCODE_FRESHNESS_INFLIGHT=1` in nested processes (or scripts that already
-run their own re-index) to short-circuit the same checks. gcode also sets this
-flag internally to prevent the indexer from recursing into itself.
+`GCODE_FRESHNESS_INFLIGHT` is the internal recursion guard set during freshness
+work. Use the explicit `--allow-stale` option for a deliberate user bypass.
+Busy refreshes and refresh failures can return existing data with a warning;
+that warning must remain visible when freshness matters.
 
 Incremental overlay indexing (a worktree or clone layered over its parent
 project's index) reconciles only the paths that can differ from the parent:
@@ -677,9 +729,10 @@ deleted or re-created inherited file trips it.
 
 ### "No gcode project found"
 
-You haven't initialized the project yet:
+Resolve project registration first. Operator setup is:
 
 ```bash
+gobby init
 gcode init
 ```
 
@@ -712,20 +765,36 @@ gcode projects
 
 If you get "No symbol matching 'X' found", the input didn't resolve to any indexed symbol. Try a different term or check what's indexed with `gcode search-text "X"`.
 
-If results are empty but the symbol exists, this is expected when FalkorDB is not configured. In Gobby mode, check that FalkorDB is running and configured:
+An empty graph can mean no extracted edges. An unavailable graph service is a
+failure/degradation to diagnose, not proof of no dependencies. Check the
+daemon-served FalkorDB configuration and service health. Client
+`GOBBY_FALKORDB_HOST`/`PORT` values do not replace signed grant settings:
 
 ```bash
-echo $GOBBY_FALKORDB_HOST
-echo $GOBBY_FALKORDB_PORT
 gcode status
 ```
 
 ### `gcode graph clear` / `gcode graph rebuild` fail immediately
 
 - If you see a project-context error, initialize the project first with `gcode init` or use `--project <path>`
-- If you see a FalkorDB configuration or connectivity error, confirm `GOBBY_FALKORDB_HOST` / `GOBBY_FALKORDB_PORT` or `config_store` are correct
+- If you see a FalkorDB configuration or connectivity error, inspect active daemon configuration and the granted service; do not bypass it with local credentials
 - For stale-project cleanup where cwd has no project context, use `gcode graph clear --project-id <PROJECT_ID>`
 
 ### Slow first index
 
 Tree-sitter parsing is fast but scales with codebase size. Subsequent runs are incremental — only changed files are re-indexed. Large `node_modules`, `target`, `.venv` directories are excluded automatically.
+
+### Contract, Schema, And Embedding Diagnostics
+
+Use `gcode contract` for the daemon-facing CLI contract and `gcode
+schema-identity --json` for the embedded schema identity. An installed binary
+from a different branch may expose commands absent from this checkout. On
+`payload_skew` or `api_contract_mismatch`, stop retries, preserve the recovery
+directive, and use fallback navigation while coordinating the correct install.
+
+`gcode embeddings doctor` reports configuration source, endpoint/model/dimension
+availability, peer errors, and drift. It does not grant permission to reveal
+keys or mutate collections. Diagnose daemon configuration before rebuilding
+vectors.
+
+_Last verified: 2026-09-12_
