@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -14,6 +14,7 @@ from gobby.terminals.frame_client import (
     FrameClient,
     FrameLagError,
     FrameProtocolError,
+    _read_local_cli_token,
     decode_frame,
     encode_frame,
 )
@@ -245,3 +246,39 @@ def test_frame_client_has_no_write_method() -> None:
     assert "def write(" not in source
     assert "async def write(" not in source
     _unused: Any = FrameClient
+
+
+def test_read_local_cli_token_reads_the_configured_gobby_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    gobby_home.mkdir()
+    (gobby_home / "local_cli_token").write_text("isolated-token\n", encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    assert _read_local_cli_token() == "isolated-token"
+
+
+async def test_handshake_failure_names_the_host_error_code() -> None:
+    class _Writer:
+        def write(self, data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    incoming = asyncio.StreamReader()
+    incoming.feed_data(_golden("error_stale.bin"))
+    client = FrameClient(incoming, cast(Any, _Writer()))
+    locator = AttachLocator(backend="native", frame_host_epoch="epoch-1", host_terminal_id="ht-1")
+
+    with pytest.raises(FrameProtocolError) as failure:
+        await client.handshake(locator, local_token="token")
+
+    assert "stale" in str(failure.value)

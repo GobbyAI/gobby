@@ -6,6 +6,7 @@ import asyncio
 import base64
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -813,3 +814,39 @@ async def test_coordinator_writes_reach_the_native_runtime() -> None:
     assert isinstance(outcome, Delivered)
     assert b"".join(host.pty) == b"are you there"
     assert tmux.write_log == []
+
+
+@dataclass
+class _SocketDirClient:
+    """Minimal control client that only exposes the host socket directory."""
+
+    socket_dir: Path
+
+
+def test_frame_token_falls_back_to_gobby_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    gobby_home.mkdir()
+    (gobby_home / "local_cli_token").write_text("home-token\n", encoding="utf-8")
+    sockets = tmp_path / "gterm-host"
+    sockets.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    runtime = NativeTerminalRuntime(_SocketDirClient(socket_dir=sockets))
+
+    assert runtime._frame_token() == "home-token"
+
+
+def test_frame_token_prefers_the_socket_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    gobby_home.mkdir()
+    (gobby_home / "local_cli_token").write_text("home-token\n", encoding="utf-8")
+    sockets = tmp_path / "gterm-host"
+    sockets.mkdir()
+    (sockets / "local_cli_token").write_text("socket-token\n", encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    runtime = NativeTerminalRuntime(_SocketDirClient(socket_dir=sockets))
+
+    assert runtime._frame_token() == "socket-token"

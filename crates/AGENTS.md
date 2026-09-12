@@ -36,6 +36,17 @@ GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60
   cargo nextest run -p gobby-code -E 'test(serial_db)'
 ```
 
+`gobby-terminal` builds a vendored Zig library (libghostty-vt) whenever the
+`vt-engine` feature is on, which the `gterm` binary requires. Zig 0.15's bundled
+libcxx does not compile against the macOS 27 SDK that Command Line Tools ships
+(`use of undeclared identifier 'INFINITY'`), so point the build at Xcode's older
+SDK instead:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  cargo build --release -p gobby-terminal --features vt-engine --bin gterm
+```
+
 Builds land in one shared directory per project,
 `~/.gobby/cache/cargo-target/<project_id>/`: Gobby links `<checkout>/target` there
 for every registered checkout and worktree, and sets `CARGO_TARGET_DIR` for spawned

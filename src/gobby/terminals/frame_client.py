@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import MAX_FRAME_SIZE
 from gobby.terminals.host_client import HostEpochChangedError
+from gobby.utils.local_token import local_token_path
 
 PROTOCOL_VERSION = 1
 DELTA_QUEUE_ENTRIES = 64
@@ -470,7 +470,9 @@ class FrameClient:
         )
         welcome = await self.read_message()
         if welcome.get("type") != "welcome":
-            raise FrameProtocolError(f"expected welcome, got {welcome.get('type')}")
+            code = welcome.get("code")
+            detail = f"{welcome.get('type')} ({code})" if code else str(welcome.get("type"))
+            raise FrameProtocolError(f"expected welcome, got {detail}")
         if str(welcome.get("host_epoch")) != locator.frame_host_epoch:
             await self.close()
             raise HostEpochChangedError("host epoch changed")
@@ -523,9 +525,8 @@ class FrameClient:
 
 
 def _read_local_cli_token() -> str:
-    path = Path.home() / ".gobby" / "local_cli_token"
     try:
-        return path.read_text(encoding="utf-8").strip()
+        return local_token_path().read_text(encoding="utf-8").strip()
     except OSError:
         return ""
 

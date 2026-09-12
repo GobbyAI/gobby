@@ -35,6 +35,7 @@ const CONTROL_SOCKET: &str = "gterm-control.sock";
 const FRAMES_SOCKET: &str = "gterm-frames.sock";
 const PID_FILE: &str = "gterm.pid";
 const TOKEN_FILE: &str = "gterm-control.token";
+const LOCAL_CLI_TOKEN_FILE: &str = "local_cli_token";
 
 pub async fn run() -> io::Result<()> {
     let args = HostArgs::parse();
@@ -236,12 +237,14 @@ fn parse_u32(value: Option<String>) -> u32 {
 }
 
 fn read_local_token(socket_dir: &Path) -> String {
-    let candidates = [
-        socket_dir.join("local_cli_token"),
-        dirs_home()
-            .map(|home| home.join(".gobby").join("local_cli_token"))
-            .unwrap_or_else(|| PathBuf::from("local_cli_token")),
-    ];
+    read_local_token_from(socket_dir, gobby_home().as_deref())
+}
+
+fn read_local_token_from(socket_dir: &Path, gobby_home: Option<&Path>) -> String {
+    let mut candidates = vec![socket_dir.join(LOCAL_CLI_TOKEN_FILE)];
+    if let Some(home) = gobby_home {
+        candidates.push(home.join(LOCAL_CLI_TOKEN_FILE));
+    }
     for path in candidates {
         if let Ok(text) = fs::read_to_string(&path) {
             let trimmed = text.trim();
@@ -255,6 +258,21 @@ fn read_local_token(socket_dir: &Path) -> String {
 
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Gobby home for this host, honouring `GOBBY_HOME` exactly as the daemon does.
+///
+/// An isolated daemon sets `GOBBY_HOME` and writes `local_cli_token` there. Falling
+/// straight through to `~/.gobby` would make the host expect the machine-wide operator
+/// token and reject the credential its own daemon sends.
+fn gobby_home() -> Option<PathBuf> {
+    if let Some(configured) = std::env::var_os("GOBBY_HOME") {
+        let path = PathBuf::from(configured);
+        if !path.as_os_str().is_empty() {
+            return Some(path);
+        }
+    }
+    dirs_home().map(|home| home.join(".gobby"))
 }
 
 fn write_pidfile(path: &Path, pid: u32) -> io::Result<()> {
@@ -288,3 +306,6 @@ fn init_tracing(log_file: &Path) {
             .try_init();
     }
 }
+
+#[cfg(test)]
+mod tests;

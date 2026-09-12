@@ -42,6 +42,7 @@ from gobby.terminals.runtime import (
     WriteOutcome,
     is_named_key,
 )
+from gobby.utils.local_token import LOCAL_API_TOKEN_FILENAME, local_token_path
 
 
 @dataclass(frozen=True)
@@ -165,14 +166,23 @@ class NativeTerminalRuntime:
         return Path(directory)
 
     def _frame_token(self) -> str:
+        # gterm resolves the same credential from its socket directory first and
+        # falls back to Gobby home, so a host whose socket directory carries no
+        # token file still authenticates. Resolving only the socket directory
+        # here sends an empty token and the host answers `invalid_token`.
+        candidates: list[Path] = []
         directory = self._socket_dir()
-        if directory is None:
-            return ""
-        path = directory / "local_cli_token"
-        try:
-            return path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
+        if directory is not None:
+            candidates.append(directory / LOCAL_API_TOKEN_FILENAME)
+        candidates.append(local_token_path())
+        for path in candidates:
+            try:
+                token = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if token:
+                return token
+        return ""
 
     async def _ensure_frame_client(self, locator: AttachLocator) -> Any:
         existing = self._frame_client
