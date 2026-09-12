@@ -14,6 +14,7 @@ from gobby.feedback.agent import (
     validate_feedback_findings,
 )
 from gobby.feedback.digest import render_digest
+from gobby.feedback.report import combine_report
 from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow, write_review_report
 from gobby.prompts.loader import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
@@ -71,15 +72,18 @@ class FeedbackReviewService:
             )
             checkpoint(actions)
             status = "partial" if actions.get("failed") else "completed"
+            report_rows, report_findings, report_actions = await asyncio.to_thread(
+                self.store.report_inputs, run_id, findings, actions
+            )
             digest = render_digest(
-                rows,
-                findings,
-                actions,
+                report_rows,
+                report_findings,
+                report_actions,
                 dry_run=dry_run,
                 resolve_task=self.actions._resolve_feedback_task,
             )
             if review_result.summary_md:
-                digest = review_result.summary_md.rstrip() + "\n\n---\n\n" + digest
+                digest = combine_report(review_result.summary_md, digest)
             if report_path:
                 await asyncio.to_thread(write_review_report, report_path, digest)
             if not dry_run:

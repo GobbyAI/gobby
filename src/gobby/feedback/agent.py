@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import jsonschema
@@ -15,6 +14,7 @@ from gobby.events.completion_registry import (
     CompletionEventRegistry,
     CompletionResultEvictedError,
 )
+from gobby.feedback.report import daily_report_path
 from gobby.feedback.storage import FeedbackReviewStore
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.storage.hub.protocol import HubDatabase
@@ -251,6 +251,21 @@ class FeedbackReviewerAgent:
                     f"feedback reviewer launch failed: project checkout unavailable: {exc}"
                 ) from exc
 
+        store = FeedbackReviewStore(self.db)
+        review_run = await asyncio.to_thread(store.get_run, review_run_id)
+        if review_run is None:
+            raise FeedbackReviewerLaunchError(f"Unknown feedback review run: {review_run_id}")
+        report_path = daily_report_path(project_path, review_run)
+        prompt += (
+            f"\n\nShared daily report: `{report_path}`. Read this file if it exists. "
+            "Update it as one cumulative synthesis, integrating this batch with earlier "
+            "findings, task references, resolved concerns, and uncertainties. Do not append "
+            "separate batch reports. Submit the complete revised narrative as summary_md; "
+            "omit the generated section starting at <!-- gobby-feedback-outcomes -->. "
+            "The daemon preserves the combined evidence and task outcomes there. "
+            "Your findings JSON must cover only this run's frozen observations. "
+            "Use submit_review to write the shared file."
+        )
         try:
             launcher_session_id = await asyncio.to_thread(
                 get_or_create_launcher_session,
@@ -295,8 +310,6 @@ class FeedbackReviewerAgent:
 
         run_id = spawned_run_id
         completion_error: Exception | None = None
-        store = FeedbackReviewStore(self.db)
-        report_path = str(Path(project_path) / ".gobby/reports/feedback" / f"{review_run_id}.md")
         await asyncio.to_thread(store.assign_reviewer, review_run_id, run_id, report_path)
         try:
             await self.completion_registry.wait(

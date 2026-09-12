@@ -3,7 +3,7 @@ description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   Markdown report and validated findings for human-reviewed tasks.
 
-version: "3.0"
+version: "4.0"
 enabled: true
 priority: 20
 surfaces: [spawn]
@@ -38,7 +38,12 @@ prompts:
     Record concrete verification evidence in the task description and Markdown
     summary. Keep uncertain concerns explicit rather than claiming verification.
 
-    Submit findings and your Markdown summary through gobby-feedback:submit_review.
+    Read the shared daily report path from the spawn prompt if it exists. Submit
+    one revised cumulative synthesis through gobby-feedback:submit_review so all
+    reviewers write the same gobby-feedback-YYYYMMDD.md. Preserve earlier findings,
+    task references, and uncertainties; never append separate batch reports.
+    Findings JSON covers only your frozen batch. The daemon rebuilds the combined
+    evidence and outcomes section; omit that generated section from summary_md.
     This saves the report outside handoff and queues verified findings for task
     creation with awaiting-human-review. Do not put JSON or the report into handoff.
     After submission succeeds, load handoff-discipline and call end_agent_run with

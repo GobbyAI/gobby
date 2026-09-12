@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -99,6 +100,8 @@ def _reviewer(
         FeedbackReviewStore,
         "get_run",
         lambda *_args: SimpleNamespace(
+            created_at=datetime(2026, 9, 11, 12).astimezone(),
+            dry_run=False,
             findings=findings if findings is not None else {"clusters": []},
             digest_md="# Review\nVerified against current source." if has_submission else None,
         ),
@@ -149,11 +152,16 @@ async def test_named_reviewer_launches_waits_and_reads_submitted_report(
     assert result.agent_run_id == "agent-run-1"
     assert result.findings == findings
     assert result.summary_md.startswith("# Review")
-    assert result.report_path == "/tmp/gobby-project/.gobby/reports/feedback/review-1.md"
+    assert (
+        result.report_path
+        == "/tmp/gobby-project/.gobby/reports/feedback/gobby-feedback-20260911.md"
+    )
     assert captured["resolved"] == (FEEDBACK_REVIEWER_AGENT_NAME, None, "project-1")
     spawn_args = captured["spawn_args"]
     spawn_kwargs = captured["spawn_kwargs"]
-    assert spawn_args[0] == "rendered observations"
+    assert spawn_args[0].startswith("rendered observations")
+    assert result.report_path in spawn_args[0]
+    assert "one cumulative synthesis" in spawn_args[0]
     assert spawn_kwargs["agent_lookup_name"] == FEEDBACK_REVIEWER_AGENT_NAME
     assert spawn_kwargs["parent_session_id"] == "launcher-session-1"
     assert spawn_kwargs["notify_parent_on_completion"] is True
@@ -320,7 +328,10 @@ async def test_submitted_report_survives_later_agent_lifecycle_failure(
     result = await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
     assert result.findings == {"clusters": []}
     assert result.summary_md == "# Review\nVerified against current source."
-    assert result.report_path == "/tmp/gobby-project/.gobby/reports/feedback/review-1.md"
+    assert (
+        result.report_path
+        == "/tmp/gobby-project/.gobby/reports/feedback/gobby-feedback-20260911.md"
+    )
 
 
 @pytest.mark.asyncio
