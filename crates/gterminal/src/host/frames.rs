@@ -206,10 +206,11 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                 }
             }
             outgoing = recv_opt(&mut out_rx) => {
-                if let Some(msg) = outgoing {
-                    if write_frame(&mut writer, &msg).await.is_err() {
-                        break;
-                    }
+                let Some(msg) = outgoing else {
+                    break;
+                };
+                if write_frame(&mut writer, &msg).await.is_err() {
+                    break;
                 }
             }
         }

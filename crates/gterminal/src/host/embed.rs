@@ -82,7 +82,7 @@ pub async fn detach_frame(state: &Arc<HostState>, attachment_id: u64) {
                 .is_none_or(|slot| slot.user_attachments.is_empty())
         };
         if reap {
-            reap_observer(state, &key).await;
+            reap_observer(state, &key, true).await;
         }
     }
 }
@@ -243,11 +243,14 @@ fn existing_host_id(inner: &super::state::Inner, key: &str) -> Option<String> {
         .map(|slot| slot.host_terminal_id.clone())
 }
 
-async fn reap_observer(state: &Arc<HostState>, key: &str) {
+async fn reap_observer(state: &Arc<HostState>, key: &str, abort_poll: bool) {
     if let Some(handle) = state.polls.lock().await.remove(key) {
-        handle.abort();
+        if abort_poll {
+            handle.abort();
+        }
     }
     let mut inner = state.inner.lock().await;
+    let mut senders = Vec::new();
     let identity = inner
         .terminals
         .iter()
@@ -261,9 +264,20 @@ async fn reap_observer(state: &Arc<HostState>, key: &str) {
         if let Some(slot) = inner.terminals.remove(&identity) {
             inner.by_host_id.remove(&slot.host_terminal_id);
             for att_id in slot.user_attachments {
-                inner.attachments.remove(&att_id);
+                if let Some(attachment) = inner.attachments.remove(&att_id) {
+                    senders.push(attachment.tx);
+                }
             }
         }
+    }
+    drop(inner);
+    for sender in senders {
+        let _ = sender
+            .send(ServerMessage::Error {
+                code: "observer_reaped".into(),
+                message: None,
+            })
+            .await;
     }
 }
 
@@ -369,7 +383,7 @@ async fn poll_loop(state: Arc<HostState>, key: String) {
                     || parsed.start_time != locator.server_start_time
                 {
                     emit_exit(&state, &key).await;
-                    reap_observer(&state, &key).await;
+                    reap_observer(&state, &key, false).await;
                     break;
                 }
                 if geometry_oversize(parsed.width, parsed.height) {
@@ -406,7 +420,7 @@ async fn poll_loop(state: Arc<HostState>, key: String) {
             Err(class) => {
                 if class == PollClass::ConfirmedAbsence {
                     emit_exit(&state, &key).await;
-                    reap_observer(&state, &key).await;
+                    reap_observer(&state, &key, false).await;
                     break;
                 }
                 let reason = class.reason();

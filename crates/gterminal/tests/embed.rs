@@ -14,6 +14,7 @@ use gobby_terminal::host::{
 use gobby_terminal::protocol::{
     ClientMessage, ObservationReason, ObservationState, ServerMessage, MAX_CELLS,
 };
+use std::io::Read;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -343,6 +344,33 @@ fn pane_death_releases_attachments() {
             .as_array()
             .is_some_and(|t| t.is_empty())
     });
+}
+
+#[test]
+fn reaped_observer_frame_task_exits() {
+    let pane = start_tmux();
+    let host = spawn_host(&[]);
+    let mut stream = connect_frames(&host, None);
+    let _ = attach(&mut stream, pane.locator());
+    pane.tmux(&["kill-pane", "-t", &pane.pane_id]);
+    let messages = collect_until(&mut stream, Duration::from_secs(3), |message| {
+        matches!(
+            message,
+            ServerMessage::Error { code, .. } if code == "observer_reaped"
+        )
+    });
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            ServerMessage::Error { code, .. } if code == "observer_reaped"
+        )),
+        "{messages:?}"
+    );
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout");
+    let mut byte = [0_u8; 1];
+    assert_eq!(stream.read(&mut byte).expect("read frame EOF"), 0);
 }
 
 #[test]

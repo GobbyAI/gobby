@@ -1,4 +1,4 @@
-use super::{KillGroupError, kill_group};
+use super::{kill_group, KillGroupError};
 
 #[test]
 fn kill_group_refuses_non_positive_pgid() {

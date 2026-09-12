@@ -2,21 +2,21 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value, json};
-use tokio::sync::{Mutex, mpsc, watch};
+use serde_json::{json, Map, Value};
+use tokio::sync::{mpsc, watch, Mutex};
 
 use super::config::HostConfig;
 use super::helpers::{err, list_rows, s, spawn_fingerprint};
 #[cfg(feature = "vt-engine")]
-use super::spawn::{PreparedChild, spawn_prepared};
+use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{
+    validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
     DELTA_QUEUE_ENTRIES, EVENT_QUEUE_BYTES, EVENT_QUEUE_ENTRIES, LIFECYCLE_RESERVED_SLOTS,
-    ObservationReason, ObservationState, RenderEncoding, ServerMessage, validate_dimensions,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

@@ -2,16 +2,19 @@
 
 #![cfg(unix)]
 
+mod embed_support;
 mod host_support;
 
 use host_support::{
-    connect, recv_json, send_json, spawn_host, wait_exit, wait_socket, write_token, CONTROL_SOCKET,
+    connect, recv_json, send_json, spawn_host, wait_exit, wait_socket, wait_until, write_token,
+    CONTROL_SOCKET,
 };
 use serde_json::json;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::time::Duration;
 
 const LOCAL_CLI_TOKEN: &str = "local-cli-token-must-not-authenticate-control";
+const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 
 #[test]
 fn hello_required_before_any_verb() {
@@ -120,6 +123,131 @@ fn hello_required_before_any_verb() {
         wait_exit(&mut child, Duration::from_secs(5)).is_some(),
         "host must exit after host_shutdown"
     );
+}
+
+#[test]
+fn oversize_control_line_is_refused_before_parse() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token = "control-token-overflow";
+    write_token(dir.path(), token);
+    let mut child = spawn_host(dir.path());
+    let control = dir.path().join(CONTROL_SOCKET);
+    wait_socket(&control);
+
+    for newline_terminated in [true, false] {
+        let mut stream = connect(&control);
+        let mut line = vec![b'{'; MAX_CONTROL_LINE + 1];
+        if newline_terminated {
+            line.push(b'\n');
+        }
+        stream.write_all(&line).expect("write oversized request");
+        stream.flush().expect("flush oversized request");
+
+        let reply = recv_json(&mut stream);
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["error"], "control_overflow", "{reply}");
+        let mut byte = [0_u8; 1];
+        assert_eq!(stream.read(&mut byte).expect("read closed socket"), 0);
+    }
+
+    let mut stream = connect(&control);
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "hello",
+            "protocol_version": 1,
+            "control_token": token,
+        }),
+    );
+    assert_eq!(recv_json(&mut stream)["ok"], true);
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    let _ = recv_json(&mut stream);
+    let _ = wait_exit(&mut child, Duration::from_secs(5));
+}
+
+#[test]
+fn native_verbs_refuse_tmux_terminals() {
+    let pane = embed_support::start_tmux();
+    let host = embed_support::spawn_host(&[]);
+    let mut frames = embed_support::connect_frames(&host, None);
+    let attached = embed_support::attach(&mut frames, pane.locator());
+    let host_terminal_id = match attached {
+        gobby_terminal::protocol::ServerMessage::Attached {
+            host_terminal_id, ..
+        } => host_terminal_id,
+        other => panic!("expected attached, got {other:?}"),
+    };
+    let pane_before = pane.snapshot();
+    let mut control = embed_support::control(&host);
+    let requests = [
+        json!({
+            "method": "kill",
+            "operation_seq": 1,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": 0,
+        }),
+        json!({
+            "method": "write",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "kind": "text",
+            "encoding": "utf8-b64",
+            "data": "eA==",
+        }),
+        json!({
+            "method": "write",
+            "operation_seq": 3,
+            "host_terminal_id": host_terminal_id,
+            "kind": "paste",
+            "encoding": "utf8-b64",
+            "data": "eA==",
+        }),
+        json!({
+            "method": "resize",
+            "operation_seq": 4,
+            "host_terminal_id": host_terminal_id,
+            "rows": 12,
+            "cols": 40,
+        }),
+        json!({
+            "method": "snapshot",
+            "host_terminal_id": host_terminal_id,
+            "max_bytes": 128,
+            "max_lines": 8,
+        }),
+        json!({
+            "method": "reserve_observer",
+            "terminal_id": host_terminal_id,
+            "reserve_key": "tmux-must-not-reserve",
+        }),
+        json!({
+            "method": "release_observer",
+            "host_terminal_id": host_terminal_id,
+            "reservation_id": "tmux-must-not-release",
+            "reserve_key": "tmux-must-not-release",
+        }),
+    ];
+    for request in requests {
+        embed_support::send_json(&mut control, &request);
+        let reply = embed_support::recv_json(&mut control);
+        assert_eq!(
+            reply["error"], "not_native",
+            "request={request} reply={reply}"
+        );
+    }
+
+    embed_support::send_json(&mut control, &json!({"method": "ping"}));
+    assert_eq!(embed_support::recv_json(&mut control)["ok"], true);
+    embed_support::send_json(&mut control, &json!({"method": "list"}));
+    let listed = embed_support::recv_json(&mut control);
+    assert!(listed["terminals"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["host_terminal_id"] == host_terminal_id)
+    }));
+    assert_eq!(pane.snapshot(), pane_before);
 }
 
 fn authed(
@@ -337,6 +465,111 @@ fn control_surface_round_trip() {
     let shutdown = recv_json(&mut stream);
     assert_eq!(shutdown["ok"], true);
     assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
+}
+
+#[test]
+fn snapshot_truncates_on_char_boundaries() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token = "control-token-snapshot-utf8";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "reserve_observer",
+            "terminal_id": "term-utf8",
+            "reserve_key": "rk-utf8",
+        }),
+    );
+    let reserved = recv_json(&mut stream);
+    let reservation_id = reserved["reservation_id"].as_str().unwrap();
+    let prepared = seq_spawn(
+        &mut stream,
+        1,
+        json!({
+            "terminal_id": "term-utf8",
+            "spawn_key": "sk-utf8",
+            "reservation_id": reservation_id,
+            "reserve_key": "rk-utf8",
+            "argv": ["/bin/sh", "-c", "printf 'éééééé'; exec sleep 30"],
+            "cwd": "/",
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 8000,
+        }),
+    );
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "spawn_commit",
+            "terminal_id": "term-utf8",
+            "spawn_key": "sk-utf8",
+        }),
+    );
+    assert_eq!(recv_json(&mut stream)["ok"], true);
+
+    let mut full_snapshot = None;
+    wait_until("UTF-8 snapshot output", || {
+        send_json(
+            &mut stream,
+            &json!({
+                "method": "snapshot",
+                "host_terminal_id": host_terminal_id,
+                "max_bytes": 1024 * 1024,
+                "max_lines": 50,
+            }),
+        );
+        let snapshot = recv_json(&mut stream);
+        if snapshot["text"]
+            .as_str()
+            .is_some_and(|text| text.contains('é'))
+        {
+            full_snapshot = Some(snapshot);
+            true
+        } else {
+            false
+        }
+    });
+    let full_snapshot = full_snapshot.expect("UTF-8 snapshot");
+    let full_text = full_snapshot["text"].as_str().expect("full snapshot text");
+    let inside_multibyte = full_text.find('é').expect("multibyte output") + 1;
+    assert!(!full_text.is_char_boundary(inside_multibyte));
+    let max_bytes = full_text.len() - inside_multibyte;
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "snapshot",
+            "host_terminal_id": host_terminal_id,
+            "max_bytes": max_bytes,
+            "max_lines": 50,
+        }),
+    );
+    let snapshot = recv_json(&mut stream);
+    let text = snapshot["text"].as_str().expect("snapshot text");
+    assert!(
+        snapshot["truncated"].as_bool().unwrap_or(false),
+        "{snapshot}"
+    );
+    assert!(text.len() <= max_bytes, "{snapshot}");
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": 20,
+        }),
+    );
+    let _ = recv_json(&mut stream);
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    let _ = recv_json(&mut stream);
+    let _ = wait_exit(&mut child, Duration::from_secs(5));
 }
 
 #[test]

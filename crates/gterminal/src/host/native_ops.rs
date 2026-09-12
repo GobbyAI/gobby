@@ -4,13 +4,13 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::helpers::{err, native_entitlements, push_terminal_ansi, s, truncate_title};
-use super::state::{CommitState, HostState, Identity, Reservation};
+use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
 use crate::protocol::{
-    DELTA_LAG_TIMEOUT_MS, RenderEncoding, SNAPSHOT_DEFAULT_MAX_BYTES, SNAPSHOT_DEFAULT_MAX_LINES,
-    ServerMessage, validate_dimensions,
+    validate_dimensions, RenderEncoding, ServerMessage, DELTA_LAG_TIMEOUT_MS,
+    SNAPSHOT_DEFAULT_MAX_BYTES, SNAPSHOT_DEFAULT_MAX_LINES,
 };
 
 #[derive(Debug)]
@@ -61,6 +61,15 @@ fn targets_tmux(inner: &super::state::Inner, extra: &Map<String, Value>) -> bool
         });
     }
     false
+}
+
+fn remove_slot_attachments(inner: &mut super::state::Inner, slot: &TerminalSlot) {
+    for attachment_id in &slot.user_attachments {
+        inner.attachments.remove(attachment_id);
+    }
+    if let ObserverBind::Bound { attachment_id, .. } = &slot.observer_bind {
+        inner.attachments.remove(attachment_id);
+    }
 }
 
 impl HostState {
@@ -186,6 +195,7 @@ impl HostState {
         if let Some(slot) = inner.terminals.remove(&identity) {
             inner.by_host_id.remove(&host_terminal_id);
             inner.reservations.remove(&slot.reservation_id);
+            remove_slot_attachments(&mut inner, &slot);
             let _ = kill_group(slot.pgid, libc::SIGTERM);
             let pgid = slot.pgid;
             tokio::spawn(async move {
@@ -301,6 +311,7 @@ impl HostState {
             if let Some(slot) = inner.terminals.remove(&identity) {
                 inner.by_host_id.remove(&slot.host_terminal_id);
                 inner.reservations.remove(&slot.reservation_id);
+                remove_slot_attachments(&mut inner, &slot);
                 let _ = kill_group(slot.pgid, libc::SIGKILL);
             }
         }
