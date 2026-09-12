@@ -218,9 +218,18 @@ pub(super) fn down<W: WorkspaceView>(
             };
             MouseOutcome::Handled
         }
-        Hit::AgentSort => MouseOutcome::Action(Action::ToggleAgentSort),
         Hit::ProjectsFilter => MouseOutcome::Action(Action::ToggleProjectsFilter),
-        Hit::SessionsScope => MouseOutcome::Action(Action::ToggleSessionsScope),
+        // The band has room for one control, so both session axes live in
+        // its menu.
+        Hit::SessionsView => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::SessionsView,
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
+        }
         Hit::Agent(entry_id) => {
             // Another project's row focuses that project first: its panes
             // attach when the project's tab set is restored.

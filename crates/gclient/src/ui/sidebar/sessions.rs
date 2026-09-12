@@ -3,13 +3,14 @@
 //! filter and the scope admit — interactive sessions with the agent runs
 //! they spawned nested under them, parentless runs at the top level — and
 //! one per bare terminal (a pane no roster entry names), in tab order or by
-//! urgency (`agent_sort`). The band carries the scope and sort controls.
+//! urgency (`agent_sort`). The band carries the `[view]` control, which
+//! opens the menu holding both axes.
 //!
 //! herdr lists every workspace's agents and marks the view with a label in
-//! the header; gclient has two axes instead: the scope (`[project]`, the
-//! focused project's rows, or `[all]`, every project's rows under a dim
-//! heading per project) and the machine filter chosen in the machines
-//! section (the local machine, one remote machine, or `ALL_MACHINES`).
+//! the header; gclient has two axes instead: the scope (the focused
+//! project's rows, or every project's rows under a dim heading per project)
+//! and the machine filter chosen in the machines section (the local
+//! machine, one remote machine, or `ALL_MACHINES`).
 
 use std::cmp::Reverse;
 
@@ -26,10 +27,11 @@ use ratatui::Frame;
 
 /// `SidebarState::machine_filter` value that admits every machine.
 pub const ALL_MACHINES: &str = "all";
-/// The band's scope control while the focused project's rows are listed.
-pub const PROJECT_SCOPE_LABEL: &str = "[project]";
-/// The band's scope control while every project's rows are listed.
-pub const ALL_SCOPE_LABEL: &str = "[all]";
+/// The band's only control: it opens the menu carrying both axes. One
+/// control fits the default sidebar width, which the two labels it replaced
+/// did not, and the rows show the chosen view themselves — the project
+/// headings under `all projects`, the `├─`/`└─` nesting under `grouped`.
+pub const VIEW_LABEL: &str = "[view]";
 /// Row id prefix of a bare terminal: `terminal:<terminal_id>`.
 pub const TERMINAL_ROW: &str = "terminal:";
 /// Row id prefix of a project heading of the all-projects list.
@@ -53,15 +55,6 @@ pub fn agent_label<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> String {
     match address {
         Some(address) => format!("{} {address}", agent.name),
         None => agent.name.clone(),
-    }
-}
-
-/// What the sessions band's scope control reads.
-pub fn sessions_scope_label(chrome: &Chrome) -> &'static str {
-    if chrome.sidebar.all_sessions {
-        ALL_SCOPE_LABEL
-    } else {
-        PROJECT_SCOPE_LABEL
     }
 }
 
@@ -433,16 +426,14 @@ pub(super) fn render_sessions(
     hits: &mut SidebarHits,
 ) {
     let section = SidebarSection::Sessions;
-    let sort = format!("[{}]", chrome.prefs.agent_sort.label());
     let (_, controls) = render_band(
         frame,
         area,
         section.title(),
-        &[sessions_scope_label(chrome), &sort],
+        &[VIEW_LABEL],
         BandStyle::section(&chrome.palette),
     );
-    hits.sessions_scope = controls.first().copied();
-    hits.agent_sort = controls.get(1).copied();
+    hits.sessions_view = controls.first().copied();
     render_section_rows(frame, area, section, rows, chrome, hits);
 }
 

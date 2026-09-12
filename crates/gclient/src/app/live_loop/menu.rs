@@ -1,8 +1,9 @@
 //! Context menu state and item lists.
 //!
 //! A right-click on a pane, a tab, a sidebar row (project card, worktree
-//! row, agent row) or empty chrome opens a menu; the projects footer's
-//! `menu` opens the global one. This module is pure: [`build_menu`] reads the
+//! row, agent row) or empty chrome opens a menu; the menu band's `[Menu]`
+//! opens the global one and the sessions band's `[view]` its own. This
+//! module is pure: [`build_menu`] reads the
 //! workspace and chrome to decide which items apply, [`menu_hit`] maps a
 //! screen cell to an item, and the routers in `mouse` and `modal_input` own
 //! the open, select, activate and close transitions. The loops dispatch the
@@ -14,6 +15,7 @@ use ratatui::layout::{Margin, Position, Rect};
 use crate::app::{ControlState, PaneId};
 use crate::daemon::Daemon;
 use crate::ui::chrome::attention_pane;
+use crate::ui::settings::AgentSort;
 use crate::ui::sidebar::agent_blocked;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
@@ -27,6 +29,8 @@ pub enum ContextMenuKind {
     Project(String),
     Worktree(String),
     Agent(String),
+    /// The sessions band's `[view]` control.
+    SessionsView,
     Global,
 }
 
@@ -96,6 +100,7 @@ pub fn build_menu<W: WorkspaceView>(
         ContextMenuKind::Project(project_id) => project_items(ws, chrome, project_id),
         ContextMenuKind::Worktree(worktree_id) => worktree_items(chrome, worktree_id),
         ContextMenuKind::Agent(entry_id) => agent_items(ws, entry_id),
+        ContextMenuKind::SessionsView => sessions_view_items(chrome),
     };
     let item_rects = item_rects(menu_rect(anchor, &items), items.len());
     ContextMenuState {
@@ -356,6 +361,31 @@ pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> 
         .clone()
 }
 
+/// The sessions band's `[view]` menu: the scope, then the order, one pair
+/// each. The rows below the band show the view they are in, so the menu
+/// marks which value is in force rather than naming the next one.
+fn sessions_view_items(chrome: &Chrome) -> Vec<MenuItem> {
+    let all = chrome.sidebar.all_sessions;
+    let priority = chrome.prefs.agent_sort == AgentSort::Priority;
+    let scope = MenuAction::Act(Action::ToggleSessionsScope);
+    let sort = MenuAction::Act(Action::ToggleAgentSort);
+    vec![
+        choice(("✓ this project", "  this project"), !all, scope.clone()),
+        choice(("✓ all projects", "  all projects"), all, scope),
+        choice(("✓ grouped", "  grouped"), !priority, sort.clone()),
+        choice(("✓ priority", "  priority"), priority, sort),
+    ]
+}
+
+/// One choice of a pair, `(marked, plain)` spellings against one margin.
+/// The value in force is marked and disabled, so choosing what is already
+/// chosen closes the menu and changes nothing; the other choice carries the
+/// toggle its chord runs.
+fn choice(labels: (&'static str, &'static str), active: bool, action: MenuAction) -> MenuItem {
+    let (marked, plain) = labels;
+    enabled_if(item(if active { marked } else { plain }, action), !active)
+}
+
 fn global_items() -> Vec<MenuItem> {
     vec![
         item("new terminal", MenuAction::Act(Action::NewTerminal)),
@@ -546,6 +576,55 @@ mod tests {
             .expect("destroy orphans item");
         assert_eq!(item.label, "destroy orphaned terminals…");
         assert!(item.enabled, "enabled without knowing the candidates");
+    }
+
+    #[test]
+    fn sessions_view_menu_marks_the_view_in_force() {
+        let ws = Workspace::scripted();
+        let mut chrome = Chrome::dark();
+        let items = |chrome: &Chrome| -> Vec<(&'static str, bool)> {
+            build_menu(&ws, chrome, ContextMenuKind::SessionsView, (0, 0))
+                .items
+                .into_iter()
+                .map(|item| (item.label, item.enabled))
+                .collect()
+        };
+
+        // The defaults: the focused project's rows in tab order. Each pair
+        // marks what is in force and disables it, so choosing it is a no-op.
+        assert_eq!(
+            items(&chrome),
+            [
+                ("✓ this project", false),
+                ("  all projects", true),
+                ("✓ grouped", false),
+                ("  priority", true),
+            ]
+        );
+
+        // The marks follow both axes independently.
+        chrome.sidebar.all_sessions = true;
+        chrome.prefs.agent_sort = AgentSort::Priority;
+        assert_eq!(
+            items(&chrome),
+            [
+                ("  this project", true),
+                ("✓ all projects", false),
+                ("  grouped", true),
+                ("✓ priority", false),
+            ]
+        );
+
+        // The enabled choice of each pair carries the toggle its chord runs.
+        let menu = build_menu(&ws, &chrome, ContextMenuKind::SessionsView, (0, 0));
+        assert_eq!(
+            menu.items[0].action,
+            MenuAction::Act(Action::ToggleSessionsScope)
+        );
+        assert_eq!(
+            menu.items[2].action,
+            MenuAction::Act(Action::ToggleAgentSort)
+        );
     }
 
     #[test]

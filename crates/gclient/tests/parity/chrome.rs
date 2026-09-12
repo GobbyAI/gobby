@@ -1218,12 +1218,14 @@ switch_project = "ctrl+1..9"
                     // into machines, projects, sessions and agents, and
                     // again when the sidebar became bands over one-line
                     // cards with the runs nested under their sessions and
-                    // the hub row took the pinned test host name (#22203):
+                    // the hub row took the pinned test host name (#22203),
+                    // and again when the sessions band traded its scope and
+                    // sort controls for one `[view]` menu (#22209):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "2225ad46d3645874e3301599ea97f362c526573b07ee3b8db21620c3660be874"
+                        "00d4a1e971192191c56d7b7652b775f2f0852c84f563593d64872ebc1f7caa02"
                     );
                 });
         }

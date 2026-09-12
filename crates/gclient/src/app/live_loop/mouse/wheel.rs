@@ -77,8 +77,7 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::ProjectsMenu
         | Hit::ProjectsFilter
         | Hit::Agent(_)
-        | Hit::AgentSort
-        | Hit::SessionsScope
+        | Hit::SessionsView
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarToggle
@@ -94,7 +93,7 @@ pub(super) fn wheel<W: WorkspaceView>(
                 | Hit::ProjectsNew
                 | Hit::ProjectsMenu
                 | Hit::ProjectsFilter => SidebarSection::Projects,
-                Hit::Agent(_) | Hit::AgentSort | Hit::SessionsScope => SidebarSection::Sessions,
+                Hit::Agent(_) | Hit::SessionsView => SidebarSection::Sessions,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => sidebar_section_at(&chrome.view, row),
             };

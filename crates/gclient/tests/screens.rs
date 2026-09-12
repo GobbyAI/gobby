@@ -392,7 +392,7 @@ fn projects_agents_golden() {
     let sessions = row_containing(" Sessions");
     assert_eq!(sessions, alpha + 1, "the sessions band follows the cards");
     assert!(
-        rows[sessions].contains("[project]"),
+        rows[sessions].contains("[view]"),
         "sessions band: {:?}",
         rows[sessions]
     );

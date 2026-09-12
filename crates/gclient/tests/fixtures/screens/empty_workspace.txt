@@ -8,8 +8,8 @@
 02 : -/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim+d*8 -/surface_dim*6 surface_dim/panel_bg*1 -/panel_bg*94
 03 | Projects      [working] │                                                                                              |
 03 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
-04 | Sessions      [project] │                                                                                              |
-04 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
+04 | Sessions         [view] │                                                                                              |
+04 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 -/panel_bg*94
 05 |                         │                                                                                              |
 05 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 06 |                         │                                                                                              |

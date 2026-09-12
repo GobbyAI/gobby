@@ -122,8 +122,8 @@ fn hit_test_covers_split_live_layout() {
         .projects_filter_hit_area
         .expect("projects filter drawn");
     assert_eq!(at(view, filter.x, filter.y), Hit::ProjectsFilter);
-    let scope = view.sessions_scope_hit_area.expect("sessions scope drawn");
-    assert_eq!(at(view, scope.x, scope.y), Hit::SessionsScope);
+    let view_control = view.sessions_view_hit_area.expect("sessions view drawn");
+    assert_eq!(at(view, view_control.x, view_control.y), Hit::SessionsView);
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
     assert_eq!(at(view, toggle.x, toggle.y), Hit::SidebarToggle);
     let (id, rect) = view.machine_hit_areas.first().expect("machine row");
