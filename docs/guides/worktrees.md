@@ -10,14 +10,14 @@ Use the CLI when you are operating from a shell:
 
 ```bash
 # Create a worktree for a task branch
-gobby worktrees create feature/auth --task #123 --json
+gobby worktrees create feature/auth --task '#123' --json
 
 # Inspect and filter worktrees
 gobby worktrees list --status active
 gobby worktrees show 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c --json
 
 # Attach or clear session ownership
-gobby worktrees claim 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c #4817
+gobby worktrees claim 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c '#4817'
 gobby worktrees release 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c
 
 # Sync, detect stale worktrees, and clean them up
@@ -104,8 +104,8 @@ stateDiagram-v2
 ```
 
 Merged worktrees receive a `cleanup_after` timestamp. Maintenance can later
-delete expired merged worktrees because their work is already in the target
-branch.
+consider them for deletion, subject to current dirt and ancestry checks. A
+metadata label or elapsed cleanup window alone does not prove disposable content.
 
 ## CLI Reference
 
@@ -120,7 +120,7 @@ reference accept a full ID or an unambiguous ID prefix.
 | `gobby worktrees delete WORKTREE` | Delete git worktree and record through MCP. | `--force`, `--yes`, `--merged-into BRANCH` |
 | `gobby worktrees claim WORKTREE SESSION` | Assign worktree ownership to a session. | none |
 | `gobby worktrees release WORKTREE` | Clear worktree ownership. | none |
-| `gobby worktrees sync WORKTREE` | Sync with the worktree's base branch. | `--source SOURCE` (currently non-functional, see below), `--json` |
+| `gobby worktrees sync WORKTREE` | Sync with the worktree's base branch or an explicit source. | `--source SOURCE`, `--json` |
 | `gobby worktrees stale` | Detect inactive worktrees. | `--days N`, `--json` |
 | `gobby worktrees cleanup` | Mark stale worktrees abandoned after confirmation. | `--days N`, `--dry-run`, `--yes` |
 | `gobby worktrees stats` | Count worktrees by status. | `--json` |
@@ -129,11 +129,9 @@ reference accept a full ID or an unambiguous ID prefix.
 `gobby-worktrees` MCP tools through the daemon. If the daemon is not running,
 those commands report a connection error.
 
-The CLI exposes `gobby worktrees sync --source`, while the current MCP
-`sync_worktree` schema exposes `strategy` and `project_path`; the proxy drops
-the unknown `source_branch` argument, so `--source` is currently a silent
-no-op and sync always runs against the worktree's base branch. Automation
-should prefer the MCP schema when calling the tool directly.
+The CLI passes `--source` as the supported MCP `source_branch` argument.
+Omitting it uses the worktree's stored base branch. MCP also accepts
+`strategy="merge"` or `"rebase"`; the CLI uses the default merge strategy.
 
 ## MCP Reference
 
@@ -155,11 +153,11 @@ automating against them.
 | `abandon_worktree` | `worktree_id` | none |
 | `reactivate_worktree` | `worktree_id` | none |
 | `link_task_to_worktree` | `worktree_id`, `task_id` | none |
-| `sync_worktree` | `worktree_id` | `strategy`, `project_path` |
+| `sync_worktree` | `worktree_id` | `strategy`, `source_branch`, `project_path` |
 | `merge_worktree` | `worktree_id` | `source_branch`, `target_branch`, `project_path` (`push`/`prefer_remote` are rejected if true — local-only) |
 | `push_branch` | `worktree_id` | `branch`, `remote`, `target_branch`, `force_with_lease`, `project_path` |
 | `detect_stale_worktrees` | none | `project_path`, `hours`, `limit` |
-| `cleanup_stale_worktrees` | none | `project_path`, `hours`, `dry_run`, `delete_git` |
+| `cleanup_stale_worktrees` | none | `project_path`, `hours`, `dry_run`, `delete_git`, `force_delete_branch` |
 
 ### Deleting After Final Landing
 
@@ -200,11 +198,13 @@ call_tool(
 
 When `use_local` is omitted, Gobby auto-detects unpushed commits on the base
 branch and uses the local branch ref when needed.
+The base must name a local branch; `origin/...` and `refs/remotes/...` are
+rejected. Inspect existing task-linked worktrees before creating another.
 
 ### Sync And Merge
 
-`sync_worktree` updates a worktree from its base branch. Its `strategy` is
-`merge` by default and also accepts `rebase`.
+`sync_worktree` updates a worktree from its base branch, or the explicit
+`source_branch`. Its `strategy` is `merge` by default and also accepts `rebase`.
 
 ```python
 call_tool(
@@ -224,9 +224,19 @@ branch), operating in the target branch's checkout — the main repository or
 the target's own worktree. It temporarily checks out the target branch in
 that checkout and restores the original branch afterward. It never fetches
 or pushes; `push=True` and `prefer_remote=True` return errors, and remote
-`origin/` target refs are rejected. Trivial `.gobby/` conflicts are
-auto-resolved. Remote publication goes through `push_branch` or the PR
-delivery flow.
+`origin/` target refs are rejected. The operation temporarily stashes dirty
+`.gobby/` files by exact stash identity. It reports merge conflicts and cleans
+up the active merge before releasing its checkout lock. Remote publication goes
+through `push_branch` or the PR delivery flow.
+
+Check `merged` and the final target SHA as well as `success`. Unrelated staged
+target changes use a fast-forward landing path; overlapping dirt is refused.
+After timeout or cleanup faults, Git reconciliation can report
+`landing_state="landed"`, `"not-landed"` or `"unknown"`. A verified landing
+retains success and target SHA with `cleanup_warnings`; preserve its exact
+`retained_stash_oid` for recovery. Unknown state requires inspection before any
+retry or deletion. A schema identity change adds a cutover advisory; the merge
+does not execute that cutover or restart the daemon.
 
 ```python
 call_tool(
@@ -241,7 +251,9 @@ call_tool(
 ```
 
 Use `push_branch` when the worktree branch is already prepared and only needs to
-be pushed:
+be pushed. Omitting `target_branch` publishes under the source branch's name;
+setting it to `main` instead publishes the source into remote `main` and needs
+that delivery authority:
 
 ```python
 call_tool(
@@ -250,11 +262,14 @@ call_tool(
     arguments={
         "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
         "remote": "origin",
-        "target_branch": "main",
         "force_with_lease": False,
     },
 )
 ```
+
+`push_branch` invokes Git with `--no-verify`. Run the repository's required
+prepublication checks explicitly; a successful push is not evidence that its
+pre-push hook ran. `force_with_lease` is for an authorized history rewrite.
 
 ### Stale Cleanup
 
@@ -275,9 +290,12 @@ call_tool(
 ```
 
 With `dry_run=False`, stale active worktrees are marked `abandoned`. With
-`delete_git=True`, Gobby also deletes their git worktree directories. Expired
-merged worktrees are deleted from git and removed from the database when cleanup
-runs with `dry_run=False`.
+`delete_git=True`, Gobby also attempts safe Git deletion. Expired merged
+worktrees are considered for Git and database removal whenever `dry_run=False`,
+even without `delete_git=True`. Dirty or insufficiently merged workspaces can
+be skipped; inspect per-item errors and skips despite top-level `success=True`.
+`force_delete_branch` explicitly abandons unmerged branch content and is not a
+normal cleanup option.
 
 ## Worktrees And Task Automation
 
@@ -309,8 +327,13 @@ worktree is not enough isolation.
 
 Clone CLI examples:
 
+Remote creation clones the requested existing source branch (shallow depth 1
+by default); it does not create `feature/auth` from `main`. The following create
+example therefore assumes that feature branch already exists at the remote.
+For a new local branch with unpushed base commits, use MCP `use_local=True`.
+
 ```bash
-gobby clones create feature/auth /tmp/gobby-auth --task #123 --json
+gobby clones create feature/auth ~/.gobby/clones/feature-auth --task '#123' --json
 gobby clones list --status active
 gobby clones sync clone-123 --direction pull
 gobby clones merge clone-123 --target main
@@ -325,7 +348,7 @@ call_tool(
     tool_name="create_clone",
     arguments={
         "branch_name": "feature/auth",
-        "clone_path": "/tmp/gobby-auth",
+        "clone_path": "~/.gobby/clones/feature-auth",
         "base_branch": "main",
         "task_id": "#123",
         "use_local": False,
@@ -344,6 +367,26 @@ call_tool(
 
 `gobby-clones` currently exposes 13 tools: create, get, list, delete, sync,
 merge, claim, release, task lookup/linking, stats, stale detection, and cleanup.
+
+Local creation makes a full clone from the base and creates the requested branch.
+Managed clone paths must resolve below `~/.gobby/clones`; arbitrary `/tmp` paths
+and paths escaping that root are rejected for creation and deletion.
+Claim/release and task linking change ownership metadata. Sync accepts pull,
+push or both and restores active status even on failure; inspect its result.
+Clone CLI mutations return nonzero for `success=False`, including JSON mode.
+
+`merge_clone` fetches directly from the local clone into a temporary branch in
+the main repository, then lands locally; it does not push to origin. Overlapping
+target dirt is rejected. Unrelated staged target changes use a fast-forward
+landing path that preserves the staged index. Record the returned target SHA.
+Stash restoration warnings after verified landing retain success and identify
+the stash object for recovery. An unreadable target SHA returns
+`landing_state="unknown"`; inspect the target before retrying or deleting.
+
+Stale clone cleanup defaults to a preview. `delete_files=True` uses forced file
+deletion, so authorize disposal of those selected contents first. Ordinary
+`delete_clone` checks dirt unless forced. File and metadata deletion can fail
+separately; inspect the row and path after errors.
 
 ## Merge Resolution Tools
 
@@ -382,6 +425,33 @@ call_tool(
 `merge_resolve` requires `conflict_id` and accepts either `resolved_content` or
 `use_ai=True`.
 
+These carriers are not interchangeable. CLI `merge start` creates/selects a
+resolution record, while MCP `merge_start` executes the resolver. CLI human
+resolution leaves pending work; JSON reports the actual conflict status without
+progress prose. Apply and abort use the MCP registry handlers. Abort first
+aborts an active Git merge and only then deletes its record; a failed Git abort
+preserves that record.
+
+`merge_apply` validates resolved contents, rejects remaining conflict markers,
+and completes the source worktree's merge. Its SHA is not final target delivery;
+use `merge_worktree` or `merge_clone` for that landing.
+
+Campaign tools include `analyze_merge_landscape`, `predict_conflicts`,
+`inspect_merge_state`, `cherry_pick_into_worktree`, `merge_subset`,
+`verify_in_worktree` and `probe_branch_protection`. The landscape lists at most
+200 active/merged worktrees, not clones or every branch. Inspect missing-path
+errors and unknown divergence counts. Merge-state inspection can hydrate missing
+conflict records; `state="clean"` only means no active Git operation marker.
+Subset merging copies selected source paths and commits the current index:
+ensure there are no unrelated staged entries. Cherry-pick conflicts retain
+`CHERRY_PICK_HEAD` and need an allowed continuation/recovery path.
+
+Verification runs an allowlisted command without a shell in the selected
+worktree, with scoped test requirements and timeout handling. `final=True` adds
+a clean-tree check; it does not satisfy transcript-derived task-close gates.
+Branch protection probing uses GitHub protection/fallback evidence; uncertain
+policy never authorizes bypassing required reviews or publication authority.
+
 ## Operational Guidance
 
 - Link worktrees to tasks with `task_id` so commits and diffs are traceable.
@@ -411,4 +481,4 @@ call_tool(
 - [mcp-tools.md](./mcp-tools.md) - MCP server and tool reference
 - [dispatch.md](./dispatch.md) - Stage manifests, automation, and workspace delivery
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

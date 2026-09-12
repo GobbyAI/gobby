@@ -1,0 +1,1542 @@
+{
+  "version": 1,
+  "capability": "source-control",
+  "status": "verified",
+  "source_skills": [
+    "source-control",
+    "clones",
+    "merge",
+    "merge-expert"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/worktrees.md",
+      "anchors": [
+        "worktree-management-guide",
+        "quick-start",
+        "create-a-worktree-for-a-task-branch",
+        "inspect-and-filter-worktrees",
+        "attach-or-clear-session-ownership",
+        "sync-detect-stale-worktrees-and-clean-them-up",
+        "mental-model",
+        "status-and-ownership",
+        "cli-reference",
+        "mcp-reference",
+        "deleting-after-final-landing",
+        "creation",
+        "sync-and-merge",
+        "stale-cleanup",
+        "worktrees-and-task-automation",
+        "clones",
+        "merge-resolution-tools",
+        "operational-guidance",
+        "troubleshooting",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-workspaces"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "workspaces",
+        "worktrees",
+        "clones",
+        "merge-resolution"
+      ],
+      "evidence": [
+        "source-audit",
+        "cli-help"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "source-control-files-projects-and-config"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-workspaces"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "detect_stale_clones",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_cleanup.py",
+        "symbol": "detect_stale_clones"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "cleanup_stale_clones",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_cleanup.py",
+        "symbol": "cleanup_stale_clones"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "create_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_creation.py",
+        "symbol": "create_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "delete_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_operations.py",
+        "symbol": "delete_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "sync_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_operations.py",
+        "symbol": "sync_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "merge_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_operations.py",
+        "symbol": "merge_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "get_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "get_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "list_clones",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "list_clones"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "claim_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "claim_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "release_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "release_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "get_clone_by_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "get_clone_by_task"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "link_task_to_clone",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "link_task_to_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-clones",
+      "tool": "get_clone_stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/_clones_read.py",
+        "symbol": "get_clone_stats"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "merge_abort",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_abort_tool.py",
+        "symbol": "merge_abort"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "merge_apply",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_apply_tool.py",
+        "symbol": "merge_apply"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "probe_branch_protection",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_branch_protection_tool.py",
+        "symbol": "probe_branch_protection"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "analyze_merge_landscape",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_landscape.py",
+        "symbol": "analyze_merge_landscape"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "predict_conflicts",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_landscape.py",
+        "symbol": "predict_conflicts"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "cherry_pick_into_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_landscape.py",
+        "symbol": "cherry_pick_into_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "merge_subset",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_landscape.py",
+        "symbol": "merge_subset"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "verify_in_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_landscape.py",
+        "symbol": "verify_in_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "inspect_merge_state",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_landscape.py",
+        "symbol": "inspect_merge_state"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "merge_resolve",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_resolve_tool.py",
+        "symbol": "merge_resolve"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "merge_start",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_start_tool.py",
+        "symbol": "merge_start"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "merge_status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_status_tool.py",
+        "symbol": "merge_status"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "detect_stale_worktrees",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_cleanup.py",
+        "symbol": "detect_stale_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "cleanup_stale_worktrees",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_cleanup.py",
+        "symbol": "cleanup_stale_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "create_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_create.py",
+        "symbol": "create_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "get_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_crud.py",
+        "symbol": "get_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "list_worktrees",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_crud.py",
+        "symbol": "list_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "get_worktree_stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_crud.py",
+        "symbol": "get_worktree_stats"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "get_worktree_by_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_crud.py",
+        "symbol": "get_worktree_by_task"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "claim_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "claim_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "release_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "release_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "mark_worktree_merged",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "mark_worktree_merged"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "abandon_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "abandon_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "reactivate_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "reactivate_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "link_task_to_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "link_task_to_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "delete_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_lifecycle.py",
+        "symbol": "delete_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "sync_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/synchronization.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_sync.py",
+        "symbol": "sync_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "merge_worktree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_sync.py",
+        "symbol": "merge_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-worktrees",
+      "tool": "push_branch",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/synchronization.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/worktrees/_sync.py",
+        "symbol": "push_branch"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees create",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "create_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "list_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "show_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees delete",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "delete_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees claim",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "claim_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees release",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "release_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/synchronization.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "sync_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees stale",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "detect_stale"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees cleanup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "cleanup_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby worktrees stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/cli/worktrees.py",
+        "symbol": "worktree_stats"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby clones list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/cli/clones.py",
+        "symbol": "list_clones"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby clones create",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/cli/clones.py",
+        "symbol": "create_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby clones spawn",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/cli/clones.py",
+        "symbol": "spawn_agent"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby clones sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/cli/clones.py",
+        "symbol": "sync_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby clones merge",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/cli/clones.py",
+        "symbol": "merge_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby clones delete",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/cli/clones.py",
+        "symbol": "delete_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby merge start",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/cli/merge.py",
+        "symbol": "merge_start"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby merge status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/cli/merge.py",
+        "symbol": "merge_status"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby merge resolve",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/cli/merge.py",
+        "symbol": "merge_resolve"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby merge apply",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/cli/merge.py",
+        "symbol": "merge_apply"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby merge abort",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/cli/merge.py",
+        "symbol": "merge_abort"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/overview.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "get_status"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/branches",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/overview.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "list_branches"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/source-control/branches/checkout",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/overview.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "checkout_branch"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/branches/{branch_name:path}/commits",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/overview.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "list_branch_commits"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/diff",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/overview.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "get_diff"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/prs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "list_pull_requests"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/prs/{number}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "get_pull_request"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/prs/{number}/checks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "get_pr_checks"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/issues",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "list_issues"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/issues/{number}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "get_issue"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/cicd/runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control.py",
+        "symbol": "list_cicd_runs"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/worktrees",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "list_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/source-control/worktrees",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "create_client_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/worktrees/stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "get_worktree_stats"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "route": "/api/source-control/worktrees/{worktree_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "delete_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/source-control/worktrees/cleanup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "cleanup_worktrees"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/source-control/worktrees/{worktree_id}/sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/synchronization.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "sync_worktree"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/source-control/clones",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "list_clones"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "route": "/api/source-control/clones/{clone_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/cleanup.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "delete_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/source-control/clones/{clone_id}/sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/clones.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/source_control_worktrees.py",
+        "symbol": "sync_clone"
+      },
+      "verification": [
+        "registration-inventory",
+        "focused-api-clones-landscape"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "get_delivery_state",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_delivery.py",
+        "symbol": "get_delivery_state"
+      },
+      "verification": [
+        "source-audit",
+        "focused-delivery"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "record_pr_state",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_delivery.py",
+        "symbol": "record_pr_state"
+      },
+      "verification": [
+        "source-audit",
+        "focused-delivery"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "open_delivery_pr",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_delivery.py",
+        "symbol": "open_delivery_pr"
+      },
+      "verification": [
+        "source-audit",
+        "focused-delivery"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "record_pr_opened",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "record_pr_opened"
+      },
+      "verification": [
+        "source-audit",
+        "focused-delivery"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "record_pr_verdict",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "record_pr_verdict"
+      },
+      "verification": [
+        "source-audit",
+        "focused-delivery"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "record_merge_result",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "record_merge_result"
+      },
+      "verification": [
+        "source-audit",
+        "focused-workspaces"
+      ],
+      "audience": "agent"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "registration-inventory",
+      "kind": "implementation-and-registry",
+      "command": "AST inspection of registry.tool/registry.register, Click command decorators and source-control router decorators; live inventories from prior context",
+      "result": "42 workspace/clone/merge MCP registrations plus six task-delivery tools, 21 CLI leaves and 20 composed HTTP routes: 89 mapped operations. Behavioral audit completed against implementation, schemas and focused tests."
+    },
+    {
+      "id": "focused-cli",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_clones_cli.py tests/cli/test_merge_cli.py tests/cli/test_worktrees_cli.py tests/cli/test_worktrees_coverage.py tests/cli/test_cli_worktrees_coverage.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "152 passed in 0.40s in the final focused rerun."
+    },
+    {
+      "id": "focused-api-clones-landscape",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_source_control_routes.py tests/mcp_proxy/tools/test_mcp_proxy_tools_clones.py tests/mcp_proxy/tools/test_merge_clone_dirty_target.py tests/mcp_proxy/tools/test_merge_landscape.py -q --tb=short",
+      "result": "267 passed in 7.48s after clone HTTP missing-path recovery fix. Subsequent worktree HTTP failure-status changes passed the 391-test focused-workspaces run."
+    },
+    {
+      "id": "schema-example-check",
+      "kind": "registered-schemas",
+      "command": "get_tool_schema for 10 tools used in worktrees guide code blocks",
+      "result": "Verified required properties/defaults for create_worktree, claim_worktree, sync_worktree, merge_worktree, push_branch, cleanup_stale_worktrees, create_clone, merge_clone, merge_start and merge_status. No live mutation examples executed."
+    },
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-registered-contracts",
+      "command": "gcode outline/symbol-at and AST inspection of workspace, merge, task delivery, CLI and HTTP registrations; compare absorbed skills; list_tools(gobby-tasks-ops)",
+      "result": "Documented source/target selection, managed clone root, ownership/deletion, local landing/publication, carrier differences, result fields and recovery checked against implementation and focused tests. Six delivery tools added. HTTP source-control rows audited; other feature rows in the shared section belong to their capabilities."
+    },
+    {
+      "id": "focused-workspaces",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_source_control_routes.py tests/merge/test_merge_mcp_tools.py tests/merge/test_merge_direct_git.py tests/mcp_proxy/tools/test_merge_resolve_locks.py tests/mcp_proxy/tools/test_worktrees_merge_state.py tests/mcp_proxy/tools/tasks/test_record_merge_result.py tests/storage/test_storage_clones.py tests/storage/test_worktrees.py tests/storage/test_storage_worktree_adoption.py tests/storage/test_worktree_reference_resolution.py tests/worktrees/test_merge_worktree_dirty_target.py tests/worktrees/test_merge_worktree_sync.py -q --tb=short",
+      "result": "391 passed in28.25s on schema432 after all HTTP failure-status updates. Temporary Git and isolated test-hub fixtures; no live mutation examples."
+    },
+    {
+      "id": "cli-help",
+      "kind": "cli-contract",
+      "command": "CliRunner --help for all leaves of gobby.cli.worktrees, clones and merge; inspect command.params",
+      "result": "All21 leaves exit0; documented arguments/options verified."
+    },
+    {
+      "id": "installed-observation",
+      "kind": "read-only-installed-state",
+      "command": "gobby-workflows:list_agent_definitions(surface_filter=spawn)",
+      "result": "2026-09-12: merge-worker installed/global/enabled, claude sonnet, inherit isolation, three steps; merge-orchestrator installed/global/enabled, codex gpt-5.6-sol, none isolation, seven steps. Observation only, not launch authority."
+    },
+    {
+      "id": "library-validation",
+      "kind": "catalog-links-and-examples",
+      "command": "load_capability_catalog(skill_root); AST implementation/reference checks; Markdown local-link/heading checks; ast.parse guide call_tool examples against ten leased schemas",
+      "result": "12 capabilities;89 operation symbols/reference files exist.50 local links/anchors resolve across11Markdown files.11 MCP examples match registered required/allowed fields; no execution. Initial loader call mistakenly passed catalog.json instead of the skill root; corrected after checking signature."
+    },
+    {
+      "id": "schema-cutover",
+      "kind": "coordinated-runtime-receipt",
+      "command": "gobby-agents receipts from owners12858/12953; successful gcode navigation",
+      "result": "Installed/live schema 432 coherent. Foreign worktree recovery committed e493b48315aa15887b1e8f61c1e23e2a13e3d4c6, task 22235 closed. Final coordinated restart by session 12858 after explicit validation releases: PID 87748 replaced 95829; health passed in 9.7s. Main checkout /Users/josh/Projects/gobby at HEAD 9a6e7261ca loaded the verified uncommitted clone and HTTP source-control modules without changing files. HTTP, WebSocket, MCP, code index and lifecycle subsystems healthy. No live mutating examples executed."
+    },
+    {
+      "id": "review",
+      "kind": "independent-review",
+      "command": "Mendel review_reference_identity, bounded code and guide reviews",
+      "result": "Final independent review by Mendel covered all 23 owned paths, skipped zero, with no remaining critical/high/medium findings. OCR preview/rules and manual documentation review completed. Prior managed-root, TDD red-phase and missing-path recovery findings fixed and verified; six delivery mappings and PR guidance match implementations."
+    },
+    {
+      "id": "types",
+      "kind": "static-checks",
+      "command": "uv run gobby test-types audit six touched test files --baseline .gobby/test-types-baseline.json --fail-on-new; uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "Six test files zero errors. Suppression ratchet4274files217baseline, zero new/stale. No baseline relaxed or edited."
+    },
+    {
+      "id": "focused-delivery",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_delivery_state_tools.py tests/mcp_proxy/tools/tasks/test_record_pr_opened.py tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py tests/mcp_proxy/tools/tasks/test_checkout_unresolved_envelopes.py -q --tb=short",
+      "result": "40 passed in 4.75s; isolated fixtures cover delivery metadata, PR creation and stage verdicts."
+    },
+    {
+      "id": "final-quality",
+      "kind": "static-checks",
+      "command": "uv run ruff check <10 changed Python paths>; uv run ruff format --check <same paths>; uv run mypy <same paths>; uv run gobby test-quality audit <six changed test paths>",
+      "result": "Ruff clean; 10 files formatted; mypy no issues; test-quality six files, 298 tests, zero issues. Initial test-quality invocation incorrectly supplied --fail-on-new without --baseline; corrected to the complete report, which contains zero findings."
+    },
+    {
+      "id": "review-recall",
+      "kind": "review-learning",
+      "command": "gobby-review-learning:recall_review_context for clone landing and HTTP recovery findings",
+      "result": "Recalled lesson 65065159-ac0c-50f3-ad04-d39e628aacf1 preserves committed landing proof independently of cleanup success. Current fixes follow this contract; no conflicting recommendation adopted."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "CLI clone JSON mutations returned exit zero on domain failure.",
+      "resolution": "Five mutation carriers now exit nonzero; 20-case matrix first failed five JSON cases.",
+      "evidence": [
+        "focused-cli"
+      ]
+    },
+    {
+      "finding": "CLI merge abort deleted resolution metadata without aborting Git; human resolve claimed resolved and JSON included progress prose.",
+      "resolution": "Apply/abort share actual registry handler; abort failure retains record. Resolve emits truthful status and pure JSON.",
+      "evidence": [
+        "focused-cli"
+      ]
+    },
+    {
+      "finding": "Clone landing converted verified success into failure on stash cleanup error and could succeed with empty target SHA.",
+      "resolution": "Preserve landing success and exact stash recovery evidence; missing target SHA returns unknown without scheduling cleanup. Two real Git fault cases first failed then passed.",
+      "evidence": [
+        "focused-api-clones-landscape"
+      ]
+    },
+    {
+      "finding": "HTTP clone sync/delete only mutated metadata; deletion ignored false record-removal result.",
+      "resolution": "HTTP invokes managed clone registry using the registered project checkout, preserves missing-path retry and reports failures with HTTP409. Core deletion checks the storage result.",
+      "evidence": [
+        "focused-api-clones-landscape"
+      ]
+    },
+    {
+      "finding": "Imported merge-landscape tests had 63 type errors and 17 failures from synchronous Git fakes after the async API transition.",
+      "resolution": "Use real datetime fixtures, precise parameter/capture types, real WorktreeGitManager and async method specs. Four-source direct mypy clean and 127 clone/landscape tests pass.",
+      "evidence": [
+        "focused-api-clones-landscape"
+      ]
+    },
+    {
+      "finding": "Guide called --source a no-op and claimed automatic .gobby conflict resolution.",
+      "resolution": "Document supported source_branch forwarding, exact stash handling and current conflict/recovery results.",
+      "evidence": [
+        "source-audit",
+        "focused-workspaces"
+      ]
+    },
+    {
+      "finding": "Clone examples violated managed-root containment; migration omitted the TDD red exception.",
+      "resolution": "Use ~/.gobby/clones; preserve expected-failing test deliverables without a green verification command.",
+      "evidence": [
+        "source-audit",
+        "review"
+      ]
+    },
+    {
+      "finding": "HTTP worktree sync/delete returned200 on Git failure while UI trusted HTTP status.",
+      "resolution": "Return409 with failure evidence; API tests cover false results and deletion exceptions.",
+      "evidence": [
+        "focused-workspaces"
+      ]
+    },
+    {
+      "finding": "CLI guide omitted merge family and HTTP table omitted client worktree creation; carrier differences were unstated.",
+      "resolution": "Add verified entries and distinguish metadata cleanup/Git operations, record creation/resolution execution and local landing/publication.",
+      "evidence": [
+        "source-audit",
+        "cli-help"
+      ]
+    }
+  ],
+  "verified_at": "2026-09-12"
+}

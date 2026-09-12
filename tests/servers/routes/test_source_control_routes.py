@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException
 from starlette.testclient import TestClient
 
 import gobby.servers.routes.source_control as sc_module
+from gobby.clones.git import CloneGitManager
 from gobby.servers.routes.source_control import (
     _get_cached,
     _parse_github_repo,
@@ -1973,8 +1974,8 @@ class TestDeleteWorktree:
 
             response = client.delete("/api/source-control/worktrees/wt-1")
 
-        assert response.status_code == 200
-        data = response.json()
+        assert response.status_code == 409
+        data = response.json()["detail"]
         assert data["success"] is False
         assert data["git_deleted"] is False
         assert data["git_error"] == "worktree locked"
@@ -2004,8 +2005,8 @@ class TestDeleteWorktree:
 
             response = client.delete("/api/source-control/worktrees/wt-1")
 
-        assert response.status_code == 200
-        data = response.json()
+        assert response.status_code == 409
+        data = response.json()["detail"]
         assert data["success"] is False
         assert data["git_deleted"] is False
         assert data["git_error"] == "git failed"
@@ -2107,7 +2108,10 @@ class TestSyncWorktree:
         response = client.post("/api/source-control/worktrees/wt-999/sync")
         assert response.status_code == 404
 
-    def test_sync_with_git_manager(self, client: TestClient, mock_server: MagicMock) -> None:
+    @pytest.mark.parametrize("success", [True, False])
+    def test_sync_with_git_manager(
+        self, client: TestClient, mock_server: MagicMock, success: bool
+    ) -> None:
         wt = MagicMock()
         wt.worktree_path = "/tmp/wt"
         wt.base_branch = "main"
@@ -2117,17 +2121,17 @@ class TestSyncWorktree:
         mock_server.services.worktree_storage = mock_storage
 
         mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.message = "Synced successfully"
+        mock_result.success = success
+        mock_result.message = "Synced successfully" if success else "Merge conflict"
         mock_git = MagicMock()
         mock_git.sync_from_main = AsyncMock(return_value=mock_result)
         mock_server.services.git_manager = mock_git
 
         response = client.post("/api/source-control/worktrees/wt-1/sync")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["message"] == "Synced successfully"
+        assert response.status_code == (200 if success else 409)
+        data = response.json() if success else response.json()["detail"]
+        assert data["success"] is success
+        assert data["message"] == mock_result.message
         assert data["id"] == "wt-1"
 
     def test_sync_without_git_manager_returns_unavailable(
@@ -2190,7 +2194,63 @@ class TestListClones:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def clone_git(mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MagicMock:
+    clone = SimpleNamespace(
+        id="clone-1",
+        clone_path=str(tmp_path),
+        project_id="project-1",
+        branch_name="feature/test",
+        status="active",
+    )
+    mock_server.services.clone_storage = MagicMock()
+    mock_server.services.clone_storage.get.return_value = clone
+    mock_server.services.clone_storage.delete.return_value = True
+    manager = MagicMock(spec=CloneGitManager)
+    manager.delete_clone.return_value = SimpleNamespace(success=True)
+    manager.sync_clone.return_value = SimpleNamespace(success=True)
+    monkeypatch.setattr(
+        "gobby.servers.routes.source_control_worktrees.CloneGitManager", lambda _path: manager
+    )
+    monkeypatch.setattr(
+        "gobby.servers.routes.source_control_git._resolve_project",
+        lambda _server, _project_id: (str(tmp_path), None),
+    )
+    return manager
+
+
 class TestDeleteClone:
+    def test_delete_missing_managed_path_retries_record_removal(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        clones_root = tmp_path / "clones"
+        clones_root.mkdir()
+        clone_path = clones_root / "already-deleted"
+        clone = SimpleNamespace(
+            id="clone-1", clone_path=str(clone_path), project_id="project-1", status="active"
+        )
+        storage = MagicMock()
+        storage.get.return_value = clone
+        storage.delete.side_effect = [False, True]
+        mock_server.services.clone_storage = storage
+        monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", clones_root)
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control_git._resolve_project",
+            lambda _server, _project_id: (str(tmp_path), None),
+        )
+
+        first = client.delete("/api/source-control/clones/clone-1")
+        assert first.status_code == 409
+        second = client.delete("/api/source-control/clones/clone-1")
+        assert second.status_code == 200
+        assert second.json()["success"] is True
+        assert storage.delete.call_count == 2
+        assert not clone_path.exists()
+
     def test_foreign_clone_returns_conflict_without_effects(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
@@ -2222,30 +2282,37 @@ class TestDeleteClone:
         response = client.delete("/api/source-control/clones/clone-999")
         assert response.status_code == 404
 
-    def test_delete_success(self, client: TestClient, mock_server: MagicMock) -> None:
-        clone = MagicMock()
-        mock_storage = MagicMock()
-        mock_storage.get.return_value = clone
-        mock_storage.delete.return_value = True
-        mock_server.services.clone_storage = mock_storage
-
+    def test_delete_success(
+        self, client: TestClient, mock_server: MagicMock, clone_git: MagicMock
+    ) -> None:
         response = client.delete("/api/source-control/clones/clone-1")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["id"] == "clone-1"
+        clone_git.delete_clone.assert_awaited_once_with(
+            mock_server.services.clone_storage.get.return_value.clone_path, force=False
+        )
 
-    def test_delete_returns_false(self, client: TestClient, mock_server: MagicMock) -> None:
-        """When storage.delete returns False (e.g. DB constraint), success=False."""
-        clone = MagicMock()
-        mock_storage = MagicMock()
-        mock_storage.get.return_value = clone
-        mock_storage.delete.return_value = False
-        mock_server.services.clone_storage = mock_storage
+    def test_delete_returns_false(
+        self, client: TestClient, mock_server: MagicMock, clone_git: MagicMock
+    ) -> None:
+        """A failed record removal must not look successful to HTTP clients."""
+        mock_server.services.clone_storage.delete.return_value = False
 
         response = client.delete("/api/source-control/clones/clone-1")
-        assert response.status_code == 200
-        assert response.json()["success"] is False
+        assert response.status_code == 409
+        assert response.json()["detail"]["success"] is False
+        clone_git.delete_clone.assert_awaited_once()
+
+    def test_delete_git_failure_preserves_record(
+        self, client: TestClient, mock_server: MagicMock, clone_git: MagicMock
+    ) -> None:
+        clone_git.delete_clone.return_value = SimpleNamespace(success=False, error="dirty")
+        response = client.delete("/api/source-control/clones/clone-1")
+        assert response.status_code == 409
+        assert "dirty" in response.json()["detail"]["error"]
+        mock_server.services.clone_storage.delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -2287,18 +2354,28 @@ class TestSyncClone:
         response = client.post("/api/source-control/clones/clone-999/sync")
         assert response.status_code == 404
 
-    def test_sync_success(self, client: TestClient, mock_server: MagicMock) -> None:
-        clone = MagicMock()
-        mock_storage = MagicMock()
-        mock_storage.get.return_value = clone
-        mock_server.services.clone_storage = mock_storage
-
+    def test_sync_success(
+        self, client: TestClient, mock_server: MagicMock, clone_git: MagicMock
+    ) -> None:
         response = client.post("/api/source-control/clones/clone-1/sync")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["id"] == "clone-1"
-        mock_storage.record_sync.assert_called_once_with("clone-1")
+        mock_server.services.clone_storage.record_sync.assert_called_once_with("clone-1")
+        clone_git.sync_clone.assert_awaited_once_with(
+            clone_path=mock_server.services.clone_storage.get.return_value.clone_path,
+            direction="pull",
+        )
+
+    def test_sync_git_failure_does_not_record_success(
+        self, client: TestClient, mock_server: MagicMock, clone_git: MagicMock
+    ) -> None:
+        clone_git.sync_clone.return_value = SimpleNamespace(success=False, error="conflict")
+        response = client.post("/api/source-control/clones/clone-1/sync")
+        assert response.status_code == 409
+        assert "conflict" in response.json()["detail"]["error"]
+        mock_server.services.clone_storage.record_sync.assert_not_called()
 
 
 @pytest.mark.asyncio

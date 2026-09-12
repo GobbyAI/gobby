@@ -11,14 +11,52 @@ Tests for Clone CLI commands:
 
 import importlib
 import json
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import click
+import httpx
 import pytest
 from click.testing import CliRunner
 
 from gobby.storage.clones import Clone
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
+
+@pytest.mark.parametrize(
+    "arguments,tool",
+    [
+        (["create", "feature/test", "/unused/clone"], "create_clone"),
+        (["spawn", "clone-id", "Review", "--parent-session-id", "session-id"], "spawn_agent"),
+        (["sync", "clone-id"], "sync_clone"),
+        (["merge", "clone-id"], "merge_clone"),
+        (["delete", "clone-id", "--yes"], "delete_clone"),
+    ],
+)
+@pytest.mark.parametrize("success", [True, False])
+@pytest.mark.parametrize("json_format", [True, False], ids=["json", "text"])
+def test_clone_mutation_exit_matches_result(
+    arguments: list[str], tool: str, success: bool, json_format: bool
+) -> None:
+    from gobby.cli.clones import clones
+
+    payload = {"success": success, "error": None if success else "operation refused"}
+    response = httpx.Response(200, json=payload, request=httpx.Request("POST", "http://fixture"))
+    with (
+        patch("gobby.cli.clones.get_clone_manager"),
+        patch("gobby.cli.clones.resolve_clone_id", return_value="clone-id"),
+        patch("gobby.cli.clones.httpx.post", return_value=response) as post,
+    ):
+        result = CliRunner().invoke(clones, [*arguments, *(["--json"] if json_format else [])])
+
+    assert result.exit_code == (0 if success else 1), result.output
+    assert post.call_count == 1
+    assert post.call_args.args[0].endswith(f"/tools/{tool}")
+    if json_format:
+        assert json.loads(result.output) == payload
+    elif not success:
+        assert "operation refused" in result.output
 
 
 def test_full_uuid_foreign_clone_reports_ownership_mismatch() -> None:
@@ -54,19 +92,19 @@ MOCK_CLONE = Clone(
     remote_url="https://github.com/user/repo.git",
     last_sync_at=None,
     cleanup_after=None,
-    created_at="2024-01-01T00:00:00Z",
-    updated_at="2024-01-01T00:00:00Z",
+    created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    updated_at=datetime(2024, 1, 1, tzinfo=UTC),
 )
 
 
 @pytest.fixture
-def mock_clone_manager():
+def mock_clone_manager() -> Iterator[MagicMock]:
     with patch("gobby.cli.clones.get_clone_manager") as mock:
         yield mock.return_value
 
 
 @pytest.fixture
-def mock_httpx():
+def mock_httpx() -> Iterator[MagicMock]:
     with patch("gobby.cli.clones.httpx.post") as mock:
         yield mock
 
@@ -74,7 +112,7 @@ def mock_httpx():
 class TestClonesListCommand:
     """Tests for 'clones list' command."""
 
-    def test_list_clones_empty(self, mock_clone_manager) -> None:
+    def test_list_clones_empty(self, mock_clone_manager: MagicMock) -> None:
         """Test 'clones list' with no clones."""
         from gobby.cli.clones import clones
 
@@ -86,7 +124,7 @@ class TestClonesListCommand:
         assert result.exit_code == 0
         assert "No clones found" in result.output
 
-    def test_list_clones_populated(self, mock_clone_manager) -> None:
+    def test_list_clones_populated(self, mock_clone_manager: MagicMock) -> None:
         """Test 'clones list' with clones present."""
         from gobby.cli.clones import clones
 
@@ -100,7 +138,7 @@ class TestClonesListCommand:
         assert "feature/test" in result.output
         assert "active" in result.output
 
-    def test_list_clones_json_format(self, mock_clone_manager) -> None:
+    def test_list_clones_json_format(self, mock_clone_manager: MagicMock) -> None:
         """Test 'clones list --json'."""
         from gobby.cli.clones import clones
 
@@ -116,7 +154,7 @@ class TestClonesListCommand:
 class TestClonesCreateCommand:
     """Tests for 'clones create' command."""
 
-    def test_create_clone_success(self, mock_httpx) -> None:
+    def test_create_clone_success(self, mock_httpx: MagicMock) -> None:
         """Test 'clones create' success."""
         from gobby.cli.clones import clones
 
@@ -136,7 +174,7 @@ class TestClonesCreateCommand:
         mock_httpx.assert_called_once()
         assert "headers" in mock_httpx.call_args.kwargs
 
-    def test_create_clone_failure(self, mock_httpx) -> None:
+    def test_create_clone_failure(self, mock_httpx: MagicMock) -> None:
         """Test 'clones create' failure."""
         from gobby.cli.clones import clones
 
@@ -158,7 +196,9 @@ class TestClonesCreateCommand:
 class TestClonesSpawnCommand:
     """Tests for 'clones spawn' command."""
 
-    def test_spawn_agent_success(self, mock_clone_manager, mock_httpx) -> None:
+    def test_spawn_agent_success(
+        self, mock_clone_manager: MagicMock, mock_httpx: MagicMock
+    ) -> None:
         """Test 'clones spawn' success."""
         from gobby.cli.clones import clones
 
@@ -185,7 +225,7 @@ class TestClonesSpawnCommand:
         mock_httpx.assert_called_once()
         assert "headers" in mock_httpx.call_args.kwargs
 
-    def test_spawn_agent_clone_not_found(self, mock_clone_manager) -> None:
+    def test_spawn_agent_clone_not_found(self, mock_clone_manager: MagicMock) -> None:
         """Test 'clones spawn' with non-existent clone."""
         from gobby.cli.clones import clones
 
@@ -204,7 +244,7 @@ class TestClonesSpawnCommand:
 class TestClonesSyncCommand:
     """Tests for 'clones sync' command."""
 
-    def test_sync_clone_success(self, mock_clone_manager, mock_httpx) -> None:
+    def test_sync_clone_success(self, mock_clone_manager: MagicMock, mock_httpx: MagicMock) -> None:
         """Test 'clones sync' success."""
         from gobby.cli.clones import clones
 
@@ -227,7 +267,9 @@ class TestClonesSyncCommand:
 class TestClonesMergeCommand:
     """Tests for 'clones merge' command."""
 
-    def test_merge_clone_success(self, mock_clone_manager, mock_httpx) -> None:
+    def test_merge_clone_success(
+        self, mock_clone_manager: MagicMock, mock_httpx: MagicMock
+    ) -> None:
         """Test 'clones merge' success."""
         from gobby.cli.clones import clones
 
@@ -249,7 +291,9 @@ class TestClonesMergeCommand:
         assert "Merged" in result.output or "success" in result.output.lower()
         assert "headers" in mock_httpx.call_args.kwargs
 
-    def test_merge_clone_conflicts(self, mock_clone_manager, mock_httpx) -> None:
+    def test_merge_clone_conflicts(
+        self, mock_clone_manager: MagicMock, mock_httpx: MagicMock
+    ) -> None:
         """Test 'clones merge' with conflicts."""
         from gobby.cli.clones import clones
 
@@ -275,7 +319,9 @@ class TestClonesMergeCommand:
 class TestClonesDeleteCommand:
     """Tests for 'clones delete' command."""
 
-    def test_delete_clone_success(self, mock_clone_manager, mock_httpx) -> None:
+    def test_delete_clone_success(
+        self, mock_clone_manager: MagicMock, mock_httpx: MagicMock
+    ) -> None:
         """Test 'clones delete' success."""
         from gobby.cli.clones import clones
 
@@ -294,7 +340,9 @@ class TestClonesDeleteCommand:
         assert "Deleted" in result.output or "success" in result.output.lower()
         assert "headers" in mock_httpx.call_args.kwargs
 
-    def test_delete_clone_force_json_requires_yes(self, mock_clone_manager, mock_httpx) -> None:
+    def test_delete_clone_force_json_requires_yes(
+        self, mock_clone_manager: MagicMock, mock_httpx: MagicMock
+    ) -> None:
         """Test 'clones delete --force --json' without --yes does not delete."""
         from gobby.cli.clones import clones
 
@@ -311,7 +359,7 @@ class TestClonesDeleteCommand:
         }
         mock_httpx.assert_not_called()
 
-    def test_delete_clone_not_found(self, mock_clone_manager) -> None:
+    def test_delete_clone_not_found(self, mock_clone_manager: MagicMock) -> None:
         """Test 'clones delete' with non-existent clone."""
         from gobby.cli.clones import clones
 
@@ -328,7 +376,7 @@ class TestClonesDeleteCommand:
 class TestResolveCloneId:
     def test_resolve_clone_id_scopes_prefix_lookup_to_current_project(
         self,
-        mock_clone_manager,
+        mock_clone_manager: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         clones_module = importlib.import_module("gobby.cli.clones")

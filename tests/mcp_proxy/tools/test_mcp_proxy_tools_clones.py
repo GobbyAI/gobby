@@ -1271,7 +1271,9 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.return_value = MagicMock()
 
         # Mock fetch from clone path (returncode=0 = success)
-        mock_git_manager.run_git_command.return_value = _git_result()
+        mock_git_manager.run_git_command.side_effect = lambda args, **kwargs: _git_result(
+            stdout="deadbeef" if args == ["rev-parse", "refs/heads/main"] else ""
+        )
         # Mock merge operation
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
@@ -1294,10 +1296,10 @@ class TestMergeCloneToTarget:
         )
 
     @pytest.mark.asyncio
-    async def test_merge_clone_sha_timeout_still_returns_success(
+    async def test_merge_clone_sha_timeout_reports_unknown_landing(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
-        """SHA lookup failure after merge leaves merge_sha empty."""
+        """Missing target evidence must not authorize automatic clone cleanup."""
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
@@ -1316,9 +1318,10 @@ class TestMergeCloneToTarget:
             {"clone_id": "clone-123", "target_branch": "main"},
         )
 
-        assert result["success"] is True
-        assert result["merge_sha"] == ""
-        mock_clone_storage.mark_merged.assert_called_once()
+        assert result["success"] is False
+        assert result["landing_state"] == "unknown"
+        assert result["step"] == "verify-target"
+        mock_clone_storage.mark_merged.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_merge_clone_waits_for_checkout_mutation_lock(
@@ -1330,7 +1333,9 @@ class TestMergeCloneToTarget:
     ) -> None:
         """Clone merge does not mutate the main checkout while its lock is held."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        mock_git_manager.run_git_command.return_value = _git_result()
+        mock_git_manager.run_git_command.side_effect = lambda args, **kwargs: _git_result(
+            stdout="deadbeef" if args == ["rev-parse", "refs/heads/main"] else ""
+        )
         mock_git_manager.merge_branch.return_value = MagicMock(success=True)
         lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
         observed_lock = _ObservedLock(lock)
@@ -1372,7 +1377,9 @@ class TestMergeCloneToTarget:
             if args and args[0] == "fetch":
                 worker_started.set()
                 await asyncio.wait_for(release_worker.wait(), timeout=5)
-            return _git_result()
+            return _git_result(
+                stdout="deadbeef" if args == ["rev-parse", "refs/heads/main"] else ""
+            )
 
         mock_git_manager.run_git_command.side_effect = blocking_fetch
         mock_git_manager.merge_branch.return_value = MagicMock(success=True)
@@ -1429,12 +1436,16 @@ class TestMergeCloneToTarget:
             if args[:2] == ["stash", "push"]:
                 worker_started.set()
                 await asyncio.wait_for(release_worker.wait(), timeout=5)
-                return _git_result()
+                return _git_result(
+                    stdout="deadbeef" if args == ["rev-parse", "refs/heads/main"] else ""
+                )
             if args == ["stash", "list", "--format=%H%x00%gs"]:
                 return _git_result(stdout="operation-stash\x00On main: test-stash-marker")
             if args == ["stash", "list", "--format=%gd%x00%H"]:
                 return _git_result(stdout="stash@{0}\0operation-stash")
-            return _git_result()
+            return _git_result(
+                stdout="deadbeef" if args == ["rev-parse", "refs/heads/main"] else ""
+            )
 
         mock_git_manager.run_git_command.side_effect = blocking_stash
         mock_git_manager.merge_branch.return_value = MagicMock(success=True)
@@ -1787,7 +1798,7 @@ class TestMergeCloneToTarget:
     async def test_merge_clone_stash_restore_failure_surfaces_after_success(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
-        """A successful merge is reported incomplete when exact stash restore fails."""
+        """Cleanup failure preserves the verified landing and exact stash evidence."""
         mock_clone_storage.get.return_value = _merge_test_clone()
         mock_git_manager.run_git_command.side_effect = [
             _git_result(),
@@ -1807,10 +1818,13 @@ class TestMergeCloneToTarget:
             {"clone_id": "clone-123", "target_branch": "main"},
         )
 
-        assert result["success"] is False
-        assert result["step"] == "stash_restore"
-        assert result["error"] == "Failed to restore stashed .gobby/ files: restore conflict"
-        assert result["stash_restore_error"] == result["error"]
+        assert result["success"] is True
+        assert result["merge_sha"] == "deadbeef"
+        assert result["retained_stash_oid"] == "ours"
+        assert result["stash_restore_error"] == (
+            "Failed to restore stashed .gobby/ files: restore conflict"
+        )
+        mock_clone_storage.mark_merged.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_merge_clone_with_conflicts(
@@ -1879,7 +1893,9 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.return_value = MagicMock()
 
         # Fetch succeeds
-        mock_git_manager.run_git_command.return_value = _git_result()
+        mock_git_manager.run_git_command.side_effect = lambda args, **kwargs: _git_result(
+            stdout="deadbeef" if args == ["rev-parse", "refs/heads/main"] else ""
+        )
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
             has_conflicts=False,

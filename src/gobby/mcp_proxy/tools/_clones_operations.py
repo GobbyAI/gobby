@@ -121,10 +121,15 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             }
 
         try:
-            ctx.clone_storage.delete(clone_id)
+            deleted = ctx.clone_storage.delete(clone_id)
         except Exception as e:
             logger.error("Failed to delete clone record %s after file deletion: %s", clone_id, e)
             return {"success": False, "error": f"Failed to delete clone record: {e}"}
+        if not deleted:
+            return {
+                "success": False,
+                "error": "Clone files deleted, but its record was not removed",
+            }
 
         return {"success": True, "message": f"Deleted clone {clone_id}"}
 
@@ -332,9 +337,9 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         Merge clone branch to target branch in main repository.
 
         Performs:
-        1. Push clone changes to remote (sync_clone push)
-        2. Fetch branch in main repo
-        3. Attempt merge to target branch
+        1. Fetch the branch directly from the local clone into the main repo
+        2. Attempt local landing into the target branch
+        3. Verify the target SHA and restore operation-owned temporary state
 
         On success, sets cleanup_after to 7 days from now.
 
@@ -390,12 +395,6 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         async def _success_result(landing: str) -> dict[str, Any]:
             nonlocal merge_succeeded
-            cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
-            ctx.clone_storage.mark_merged(
-                clone_id,
-                cleanup_after=cleanup_after,
-            )
-            merge_succeeded = True
             merge_sha = ""
             try:
                 sha_result = await git_manager.run_git_command(
@@ -407,6 +406,23 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 sha_result = None
             if sha_result is not None and sha_result.returncode == 0:
                 merge_sha = sha_result.stdout.strip()
+            if not merge_sha:
+                return {
+                    "success": False,
+                    "landing_state": "unknown",
+                    "landing": landing,
+                    "step": "verify-target",
+                    "error": (
+                        "Git reported landing, but the target SHA could not be read; "
+                        "inspect before retrying"
+                    ),
+                }
+            cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+            ctx.clone_storage.mark_merged(
+                clone_id,
+                cleanup_after=cleanup_after,
+            )
+            merge_succeeded = True
             return {
                 "success": True,
                 "message": f"Successfully merged {clone.branch_name} into {target_branch}",
@@ -732,10 +748,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 primary_result["warnings"] = warnings
             if stash_restore_error:
                 primary_result["stash_restore_error"] = stash_restore_error
-                if primary_result.get("success") is True:
-                    primary_result["success"] = False
-                    primary_result["error"] = stash_restore_error
-                    primary_result["step"] = "stash_restore"
+                primary_result["retained_stash_oid"] = stash_oid
             return primary_result
         finally:
             try:

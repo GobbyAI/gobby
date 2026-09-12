@@ -124,6 +124,8 @@ def create_clone(
 
     if json_format:
         click.echo(json_dumps(result, indent=2, default=str))
+        if not result.get("success"):
+            raise SystemExit(1)
         return
 
     if result.get("success"):
@@ -213,6 +215,8 @@ def spawn_agent(
 
     if json_format:
         click.echo(json_dumps(result, indent=2, default=str))
+        if not result.get("success"):
+            raise SystemExit(1)
         return
 
     if result.get("success"):
@@ -270,6 +274,8 @@ def sync_clone(clone_ref: str, direction: str, json_format: bool) -> None:
 
     if json_format:
         click.echo(json_dumps(result, indent=2, default=str))
+        if not result.get("success"):
+            raise SystemExit(1)
         return
 
     if result.get("success"):
@@ -322,6 +328,8 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
 
     if json_format:
         click.echo(json_dumps(result, indent=2, default=str))
+        if not result.get("success"):
+            raise SystemExit(1)
         return
 
     if result.get("success"):
@@ -423,6 +431,8 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
 
     if json_format:
         click.echo(json_dumps(result, indent=2, default=str))
+        if not result.get("success"):
+            raise SystemExit(1)
         return
 
     if result.get("success"):

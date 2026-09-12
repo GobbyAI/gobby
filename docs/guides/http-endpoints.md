@@ -592,6 +592,14 @@ breakdowns as an exhaustive inventory. See the
 
 ## Source Control, Files, Projects, And Config
 
+Source-control workspace mutations are operator/UI carriers. Agent procedures
+use the [managed workspace tools](./worktrees.md). Clone sync pulls its upstream;
+clone deletion removes files before its record and supports retrying a missing
+managed directory after partial deletion. Worktree/clone Git failures return
+HTTP 409, with operation evidence under `detail`. Inspect that evidence before
+retrying. Worktree cleanup here changes stale metadata only; it does not expose
+the MCP cleanup tool's Git-deletion options.
+
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/source-control/status` | Repository status. |
@@ -606,13 +614,14 @@ breakdowns as an exhaustive inventory. See the
 | `GET` | `/api/source-control/issues/{number}` | Get an issue. |
 | `GET` | `/api/source-control/cicd/runs` | List CI/CD runs. |
 | `GET` | `/api/source-control/worktrees` | List worktrees. |
+| `POST` | `/api/source-control/worktrees` | Create a client-owned worktree. |
 | `GET` | `/api/source-control/worktrees/stats` | Worktree statistics. |
-| `POST` | `/api/source-control/worktrees/cleanup` | Clean worktrees. |
+| `POST` | `/api/source-control/worktrees/cleanup` | Preview or mark stale worktree records abandoned. |
 | `DELETE` | `/api/source-control/worktrees/{worktree_id}` | Delete a worktree. |
 | `POST` | `/api/source-control/worktrees/{worktree_id}/sync` | Sync a worktree. |
 | `GET` | `/api/source-control/clones` | List clones. |
-| `DELETE` | `/api/source-control/clones/{clone_id}` | Delete a clone. |
-| `POST` | `/api/source-control/clones/{clone_id}/sync` | Sync a clone. |
+| `DELETE` | `/api/source-control/clones/{clone_id}` | Delete managed clone files, then its record; preserve the record on Git failure. |
+| `POST` | `/api/source-control/clones/{clone_id}/sync` | Pull the clone's configured upstream through its managed Git operation. |
 | `GET` | `/api/files/projects` | List project roots for file browsing. |
 | `GET` | `/api/files/tree` | List a directory. |
 | `GET` | `/api/files/read` | Read a file. |

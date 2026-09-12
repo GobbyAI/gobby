@@ -574,6 +574,56 @@
           "when": "Creating, changing or diagnosing schedules"
         }
       ]
+    },
+    {
+      "name": "source-control",
+      "description": "Manage commits, isolated repositories and verified delivery",
+      "when": "Working with branches, workspaces, merges or PR delivery",
+      "overview": "references/source-control/overview.md",
+      "topics": [
+        {
+          "name": "commits",
+          "description": "Review and commit owned work",
+          "when": "Staging or committing task changes",
+          "path": "references/source-control/commits.md"
+        },
+        {
+          "name": "worktrees",
+          "description": "Manage shared-repository isolation",
+          "when": "Discovering, creating or claiming worktrees",
+          "path": "references/source-control/worktrees.md"
+        },
+        {
+          "name": "clones",
+          "description": "Manage independent repository copies",
+          "when": "Creating or operating clone isolation",
+          "path": "references/source-control/clones.md"
+        },
+        {
+          "name": "synchronization",
+          "description": "Sync or publish branch work",
+          "when": "Updating or publishing isolated branches",
+          "path": "references/source-control/synchronization.md"
+        },
+        {
+          "name": "merge-campaigns",
+          "description": "Resolve and land local work",
+          "when": "Surveying or executing local delivery",
+          "path": "references/source-control/merge-campaigns.md"
+        },
+        {
+          "name": "pr-delivery",
+          "description": "Apply remote delivery policy",
+          "when": "Creating, reviewing or landing PRs",
+          "path": "references/source-control/pr-delivery.md"
+        },
+        {
+          "name": "cleanup",
+          "description": "Retire or hand off workspaces",
+          "when": "Releasing, deleting or recovering isolation",
+          "path": "references/source-control/cleanup.md"
+        }
+      ]
     }
   ]
 }

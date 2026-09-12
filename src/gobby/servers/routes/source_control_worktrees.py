@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from gobby.clones.git import CloneGitManager
+from gobby.mcp_proxy.tools.clones import create_clones_registry
 from gobby.servers.routes import source_control_git
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.worktrees import git as worktree_git
@@ -173,6 +175,8 @@ def create_source_control_worktrees_router(
             response["message"] = "Git worktree deletion failed; DB record was preserved"
         if result.error_code:
             response["error_code"] = result.error_code
+        if not result.success:
+            raise HTTPException(status_code=409, detail=response)
         return response
 
     @router.post("/worktrees/cleanup")
@@ -219,12 +223,15 @@ def create_source_control_worktrees_router(
                 base_branch=worktree.base_branch,
                 source_branch=source_branch,
             )
-            return {
+            response = {
                 "success": result.success,
                 "message": result.message,
                 "id": worktree_id,
                 "source_branch": source_branch or worktree.base_branch,
             }
+            if not result.success:
+                raise HTTPException(status_code=409, detail=response)
+            return response
 
         raise HTTPException(503, "Git manager not available")
 
@@ -243,23 +250,15 @@ def create_source_control_worktrees_router(
 
     @router.delete("/clones/{clone_id}")
     async def delete_clone(clone_id: str) -> dict[str, Any]:
-        """Delete a clone."""
-        if not server.services.clone_storage:
-            raise HTTPException(503, "Clone storage not available")
-
-        try:
-            clone = await server.run_db(server.services.clone_storage.get, clone_id)
-        except MachineOwnershipMismatchError as exc:
-            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
-        if not clone:
-            raise HTTPException(404, "Clone not found")
-
-        deleted = await server.run_db(server.services.clone_storage.delete, clone_id)
-        return {"success": deleted, "id": clone_id}
+        """Delete clone files before retiring their record."""
+        return await run_clone_operation(clone_id, "delete_clone")
 
     @router.post("/clones/{clone_id}/sync")
     async def sync_clone(clone_id: str) -> dict[str, Any]:
-        """Sync a clone."""
+        """Pull the clone's configured upstream through the managed Git operation."""
+        return await run_clone_operation(clone_id, "sync_clone")
+
+    async def run_clone_operation(clone_id: str, tool_name: str) -> dict[str, Any]:
         if not server.services.clone_storage:
             raise HTTPException(503, "Clone storage not available")
 
@@ -270,8 +269,26 @@ def create_source_control_worktrees_router(
         if not clone:
             raise HTTPException(404, "Clone not found")
 
-        await server.run_db(server.services.clone_storage.record_sync, clone_id)
-        return {"success": True, "id": clone_id}
+        try:
+            repo_path, _ = await server.run_db(
+                source_control_git._resolve_project, server, clone.project_id
+            )
+            if not repo_path:
+                raise HTTPException(503, "Clone project checkout not available")
+            git_manager = CloneGitManager(repo_path)
+            registry = create_clones_registry(
+                clone_storage=server.services.clone_storage,
+                git_manager=git_manager,
+                project_id=clone.project_id,
+            )
+            result = await registry.call(tool_name, {"clone_id": clone_id})
+        except MachineOwnershipMismatchError as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not result.get("success"):
+            raise HTTPException(status_code=409, detail=result)
+        return {**result, "id": clone_id}
 
     return router
 

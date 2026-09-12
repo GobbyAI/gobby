@@ -117,9 +117,10 @@ async def _resolve_conflict_with_ai(
     }
 
 
-async def _apply_active_resolution(
+async def _run_resolution_tool(
     manager: MergeResolutionManager,
     resolution_id: str,
+    tool_name: str,
 ) -> dict[str, Any]:
     worktree_path = _get_resolution_worktree_path(manager, resolution_id)
 
@@ -132,7 +133,7 @@ async def _apply_active_resolution(
             git_manager=get_git_manager(worktree_path),
             worktree_manager=worktree_manager,
         )
-        result = await registry.call("merge_apply", {"resolution_id": resolution_id})
+        result = await registry.call(tool_name, {"resolution_id": resolution_id})
     return result if isinstance(result, dict) else {"success": False, "error": str(result)}
 
 
@@ -357,14 +358,12 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
             raise SystemExit(1)
 
         if strategy == "ai":
-            click.echo(f"Resolving {file_path} with AI...")
+            if not json_format:
+                click.echo(f"Resolving {file_path} with AI...")
             result = asyncio.run(_resolve_conflict_with_ai(manager, conflict))
             if not result.get("success"):
                 _echo_tool_error("Error resolving conflict", result)
                 raise SystemExit(1)
-        else:
-            # Human resolution - just mark as pending human review
-            click.echo(f"Marked {file_path} for human resolution")
 
         if json_format:
             updated = manager.get_conflict(conflict.id)
@@ -372,7 +371,10 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
                 click.echo(json_dumps(updated.to_dict(), indent=2, default=str))
             return
 
-        click.echo(f"Resolved: {file_path}")
+        if strategy == "human":
+            click.echo(f"Human resolution required: {file_path}")
+        else:
+            click.echo(f"Resolved: {file_path}")
 
     except Exception as e:
         click.echo(f"Error resolving conflict: {e}", err=True)
@@ -419,7 +421,7 @@ def merge_apply(force: bool, json_format: bool) -> None:
             )
             raise SystemExit(1)
 
-        result = asyncio.run(_apply_active_resolution(manager, resolution.id))
+        result = asyncio.run(_run_resolution_tool(manager, resolution.id, "merge_apply"))
         if not result.get("success"):
             if json_format:
                 click.echo(json_dumps(result, indent=2, default=str))
@@ -472,19 +474,21 @@ def merge_abort(json_format: bool) -> None:
             click.echo("Error: Cannot abort an already resolved merge.", err=True)
             raise SystemExit(1)
 
-        # Delete resolution (cascades to conflicts)
         resolution_id = resolution.id
-        deleted = manager.delete_resolution(resolution_id)
+        result = asyncio.run(_run_resolution_tool(manager, resolution_id, "merge_abort"))
+
+        if not result.get("success"):
+            if json_format:
+                click.echo(json_dumps(result, indent=2, default=str))
+            else:
+                _echo_tool_error("Error aborting merge", result)
+            raise SystemExit(1)
 
         if json_format:
-            click.echo(json_dumps({"aborted": deleted, "resolution_id": resolution_id}))
+            click.echo(json_dumps(result, indent=2, default=str))
             return
 
-        if deleted:
-            click.echo(f"Aborted merge: {resolution_id}")
-        else:
-            click.echo("Failed to abort merge.", err=True)
-            raise SystemExit(1)
+        click.echo(f"Aborted merge: {resolution_id}")
 
     except Exception as e:
         click.echo(f"Error aborting merge: {e}", err=True)

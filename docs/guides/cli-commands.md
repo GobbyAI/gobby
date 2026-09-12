@@ -693,10 +693,10 @@ CLI kill defaults differ from MCP: pass `--stop` to stop the workflow as well.
 gobby worktrees create BRANCH_NAME [--base BRANCH] [--task TASK] [--json]
 gobby worktrees list [--status STATUS] [--project PROJECT] [--json]
 gobby worktrees show WORKTREE [--json]
-gobby worktrees delete WORKTREE [--force] [--yes]
+gobby worktrees delete WORKTREE [--force] [--yes] [--merged-into BRANCH]
 gobby worktrees claim WORKTREE SESSION_ID
 gobby worktrees release WORKTREE
-gobby worktrees sync WORKTREE
+gobby worktrees sync WORKTREE [--source BRANCH] [--json]
 gobby worktrees stale [--days N]
 gobby worktrees cleanup [--days N] [--dry-run]
 gobby worktrees stats
@@ -715,6 +715,28 @@ gobby clones delete CLONE
 
 `clones spawn` supports `--workflow`, `--reasoning-effort`,
 `--reasoning-required/--no-reasoning-required`, and `--json`.
+
+Clone creation uses an existing remote branch by default; MCP `use_local=True`
+provides full local cloning and new-branch creation. Clone mutations report
+domain failures with a nonzero exit status in text and JSON modes. Worktree
+`--source` forwards the supported `source_branch` argument; omitted source uses
+the stored base. See [worktree and clone behavior](./worktrees.md).
+
+### Merge Resolution
+
+```bash
+gobby merge start SOURCE_BRANCH --target TARGET_BRANCH --strategy auto
+gobby merge status --verbose
+gobby merge resolve FILE_PATH --strategy ai
+gobby merge apply
+gobby merge abort
+```
+
+CLI start creates/selects a resolution record; MCP `merge_start` executes the
+resolver. Human resolve leaves pending work and JSON contains its actual status.
+Apply completes the source-worktree resolution. Abort performs Git abort before
+deleting the record and retains it if Git abort fails. Final target landing uses
+the managed worktree/clone merge operation; a resolution SHA alone is not delivery.
 
 ## Memory, Skills, Variables, And Rules
 
