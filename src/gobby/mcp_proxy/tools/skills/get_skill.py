@@ -233,7 +233,16 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         skill: Skill,
         effective_level: str | None,
         session_id: str | None,
+        reference_path: str | None = None,
     ) -> None:
+        from gobby.skills.instruction_requirements import parse_instruction_requirement
+
+        identity = skill.name
+        if reference_path is not None:
+            try:
+                identity = parse_instruction_requirement(f"{skill.name}:{reference_path}").identity
+            except ValueError:
+                return
         session_reference = session_id or get_current_session_id()
         if not session_reference:
             return
@@ -243,22 +252,23 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 session_reference,
                 project_id=ctx.project_id,
             )
-            await ctx.run_db(
-                ctx.session_manager.record_skills_used,
-                resolved_session_id,
-                [skill.name],
-            )
+            if reference_path is None:
+                await ctx.run_db(
+                    ctx.session_manager.record_skills_used,
+                    resolved_session_id,
+                    [skill.name],
+                )
             from gobby.workflows.state_manager import SessionVariableManager
 
             variables = SessionVariableManager(ctx.db)
             await ctx.run_db(
                 variables.append_to_set_variable,
                 resolved_session_id,
-                "loaded_skills",
-                [skill.name],
+                "loaded_skills" if reference_path is None else "loaded_skill_references",
+                [identity],
                 preserve_order=True,
             )
-            if effective_level is not None:
+            if reference_path is None and effective_level is not None:
                 await ctx.run_db(
                     variables.set_variable,
                     resolved_session_id,
@@ -448,7 +458,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             "Follow next_cursor until null."
         ),
     )
-    def get_skill_file_tool(
+    async def get_skill_file_tool(
         path: str | None = None,
         name: str | None = None,
         skill_id: str | None = None,
@@ -485,11 +495,11 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             skill = None
             if skill_id:
                 try:
-                    skill = ctx.storage.get_skill(skill_id)
+                    skill = await ctx.run_db(ctx.storage.get_skill, skill_id)
                 except ValueError:
                     pass
             if skill is None and name:
-                skill = ctx.storage.get_by_name(name, project_id=ctx.project_id)
+                skill = await ctx.run_db(ctx.storage.get_by_name, name, project_id=ctx.project_id)
             if skill is None:
                 if continuation:
                     return _error(
@@ -499,7 +509,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     )
                 return _error("not_found", f"Skill not found: {skill_id or name}")
 
-            skill_file = ctx.storage.get_skill_file(skill.id, path or "")
+            skill_file = await ctx.run_db(ctx.storage.get_skill_file, skill.id, path or "")
             if skill_file is None:
                 if continuation:
                     return _error(
@@ -565,7 +575,10 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     },
                 }
 
-            return build_content_page(skill_file.content, state, response_factory)
+            response = build_content_page(skill_file.content, state, response_factory)
+            if response["page"]["complete"]:
+                await record_completed_load(skill, None, None, reference_path=skill_file.path)
+            return response
         except CursorError as exc:
             return _error(
                 "invalid_cursor",

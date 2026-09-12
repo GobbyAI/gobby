@@ -500,6 +500,9 @@ def test_in_place_compact_clears_queued_context(
         {
             "grok_pending_briefing": [_component("turn:stale", "Context is 356k tokens.")],
             "grok_pending_turn_context": [_component("ctx:turn:1", "turn context")],
+            "loaded_skills": ["brevity"],
+            "loaded_skill_references": ["gobby:references/tasks/closing.md"],
+            "brevity_level": "max",
         },
     )
     handler = SimpleNamespace(_session_manager=session_manager, _task_manager=None)
@@ -509,6 +512,9 @@ def test_in_place_compact_clears_queued_context(
     stored = variables.get_variables(grok_session_id)
     assert stored.get("grok_pending_briefing") in ([], None)
     assert stored.get("grok_pending_turn_context") in ([], None)
+    assert stored["loaded_skills"] == []
+    assert stored["loaded_skill_references"] == []
+    assert stored["brevity_level"] == "max"
 
 
 def test_in_place_compact_rearms_the_feedback_survey(

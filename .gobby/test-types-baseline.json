@@ -3811,16 +3811,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/skills/test_get_skill_serve_scan.py::::mypy:misc",
-      "issue_code": "mypy:misc",
-      "line": 40,
-      "message": "The return type of a generator function should be \"Generator\" or one of its supertypes",
-      "occurrences": 9,
-      "path": "tests/mcp_proxy/tools/skills/test_get_skill_serve_scan.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/skills/test_hub_tools.py::::mypy:misc",
       "issue_code": "mypy:misc",
       "line": 77,

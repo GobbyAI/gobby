@@ -85,3 +85,22 @@ async def test_reset_reactivates_only_the_matching_language_gate(
     for _, other_skill in LANGUAGE_CASES:
         if other_skill != expected_skill:
             assert skill_fetch_directive(other_skill) not in (response.reason or "")
+
+
+@pytest.mark.parametrize("source,pending", [("compact", False), ("clear", False), ("resume", True)])
+async def test_reference_contract_1_2_3(temp_db: HubDatabase, source: str, pending: bool) -> None:
+    _sync_language_rules(temp_db)
+    variables: dict[str, object] = {
+        "loaded_skills": ["brevity", "gobby"],
+        "loaded_skill_references": ["gobby:references/tasks/closing.md"],
+        "brevity_level": "max",
+        "pending_context_reset": pending,
+    }
+    await RuleEngine(temp_db).evaluate(
+        _event(HookEventType.SESSION_START, {"source": source}),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert variables["loaded_skills"] == []
+    assert variables["loaded_skill_references"] == []
+    assert variables["brevity_level"] == "max"

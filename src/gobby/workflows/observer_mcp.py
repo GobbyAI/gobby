@@ -32,14 +32,15 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
     tool_output = event.data.get("tool_output") or {}
 
     tracked = _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
-    if server_name == "gobby-skills" and inner_tool == "get_skill":
+    if server_name == "gobby-skills" and inner_tool in {"get_skill", "get_skill_file"}:
         if tracked:
             _track_loaded_skill(
                 variables,
                 tool_output,
                 session_id,
+                reference=inner_tool == "get_skill_file",
             )
-        else:
+        elif inner_tool == "get_skill":
             _track_unresolvable_claimed_task_extra_skill(
                 variables,
                 event.data.get("tool_input") or {},
@@ -52,47 +53,78 @@ def _track_loaded_skill(
     variables: dict[str, Any],
     tool_output: dict[str, Any] | Any,
     session_id: str,
+    *,
+    reference: bool = False,
 ) -> None:
-    """Record a successful agent-visible gobby-skills:get_skill result."""
-    name = _extract_loaded_skill_name(tool_output)
+    """Record only completed instruction delivery in the appropriate context ledger."""
+    name = (
+        _extract_loaded_reference(tool_output)
+        if reference
+        else _extract_loaded_skill_name(tool_output)
+    )
     if not name:
         return
 
-    loaded = variables.setdefault("loaded_skills", [])
+    key = "loaded_skill_references" if reference else "loaded_skills"
+    loaded = variables.setdefault(key, [])
     if not isinstance(loaded, list):
         loaded = [loaded] if loaded else []
     if name not in loaded:
         loaded.append(name)
-    variables["loaded_skills"] = loaded
+    variables[key] = loaded
     logger.debug("Session %s: loaded skill tracked %s", session_id, name)
 
 
-def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
-    """Extract the resolved skill name from a successful get_skill tool result."""
-    if not isinstance(tool_output, dict):
-        return None
-    if tool_output.get("error") or tool_output.get("status") == "error":
-        return None
-    if tool_output.get("success") is False:
-        return None
-
-    candidates = [tool_output]
-    result = tool_output.get("result")
-    if isinstance(result, dict):
-        if result.get("success") is False or result.get("error"):
+def _completed_instruction(tool_output: Any, field: str) -> dict[str, Any] | None:
+    """Unwrap proxy results without accepting errors or incomplete pages."""
+    candidate = tool_output
+    for _ in range(4):
+        if not isinstance(candidate, dict):
             return None
-        candidates.append(result)
-        nested_result = result.get("result")
-        if isinstance(nested_result, dict):
-            candidates.append(nested_result)
-
-    for candidate in candidates:
-        skill = candidate.get("skill") if isinstance(candidate, dict) else None
-        if isinstance(skill, dict):
-            name = skill.get("name")
-            if isinstance(name, str) and name:
-                return name
+        if (
+            candidate.get("error")
+            or candidate.get("status") == "error"
+            or candidate.get("success") is False
+            or candidate.get("isError") is True
+        ):
+            return None
+        instruction = candidate.get(field)
+        if isinstance(instruction, dict):
+            page = candidate.get("page")
+            if not isinstance(page, dict) or page.get("complete") is not True:
+                return None
+            if page.get("next_cursor") is not None:
+                return None
+            if not isinstance(instruction.get("content"), str):
+                return None
+            return instruction
+        candidate = candidate.get("result", candidate.get("structuredContent"))
     return None
+
+
+def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
+    """Extract the resolved name from a completed get_skill result."""
+    skill = _completed_instruction(tool_output, "skill")
+    if skill is not None:
+        name = skill.get("name")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def _extract_loaded_reference(tool_output: Any) -> str | None:
+    from gobby.skills.instruction_requirements import parse_instruction_requirement
+
+    file = _completed_instruction(tool_output, "file")
+    if file is None:
+        return None
+    name, path = file.get("skill_name"), file.get("path")
+    if not isinstance(name, str) or not isinstance(path, str):
+        return None
+    try:
+        return parse_instruction_requirement(f"{name}:{path}").identity
+    except ValueError:
+        return None
 
 
 def _track_unresolvable_claimed_task_extra_skill(
