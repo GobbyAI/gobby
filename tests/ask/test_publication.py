@@ -102,8 +102,8 @@ def test_expiry_during_publication_never_exposes_an_answer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.ask.artifacts import AskArtifactStore
     from gobby.ask import publication as publication_module
+    from gobby.ask.artifacts import AskArtifactStore
     from gobby.ask.publication import publish_answer
     from gobby.ask.validation import validate_claims, validate_review
 

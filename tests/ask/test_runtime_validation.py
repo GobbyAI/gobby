@@ -9,10 +9,13 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.sandbox import compute_sandbox_paths
+from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions
 from gobby.ask.runtime_validation import (
     ASK_NATIVE_PROBE_EXPECTATIONS,
     AskRuntimeValidationArtifact,
     ask_runtime_control_digest,
+    ask_sandbox_config,
     build_ask_runtime_probe_artifact,
     load_ask_runtime_validation,
     normalized_ask_srt_policy_digest,
@@ -540,3 +543,129 @@ def test_loader_rejects_inconsistent_sealed_provenance(tmp_path: Path, tamper: s
             AskRuntimeValidationArtifact(path=path, sha256=digest),
             provider_executable=executable,
         )
+
+
+def _gcode_runtime_home(workspace: Path) -> str:
+    return gcode_runtime_write_exceptions(workspace)[0]
+
+
+def _gcode_runtime_policy(
+    *,
+    source_root: Path,
+    scratch_root: Path,
+    run_root: Path,
+    gcode_runtime_home: str,
+) -> dict[str, Any]:
+    """Render the shape of an Ask launch policy that carries a gcode runtime home."""
+    return {
+        "network": {
+            "allowedDomains": [],
+            "deniedDomains": [],
+            "strictAllowlist": True,
+            "allowUnixSockets": [str(run_root / "tmp")],
+            "allowAllUnixSockets": False,
+            "allowLocalBinding": True,
+        },
+        "filesystem": {
+            "denyRead": [str(source_root)],
+            "allowRead": [str(run_root / "assets"), gcode_runtime_home],
+            "allowWrite": [str(run_root / "logs"), gcode_runtime_home],
+            "denyWrite": [str(source_root), str(scratch_root)],
+            "allowGitConfig": False,
+        },
+        "allowPty": True,
+        "enableWeakerNestedSandbox": False,
+        "enableWeakerNetworkIsolation": True,
+        "allowAppleEvents": False,
+    }
+
+
+def test_policy_digest_normalizes_the_workspace_keyed_gcode_runtime_home(tmp_path: Path) -> None:
+    """Two launches under different roots agree despite workspace-keyed runtime homes."""
+    digests = set()
+    for launch in ("first", "second"):
+        source_root = tmp_path / launch / "source"
+        scratch_root = tmp_path / launch / "scratch"
+        run_root = tmp_path / launch / "runtime"
+        policy = _gcode_runtime_policy(
+            source_root=source_root,
+            scratch_root=scratch_root,
+            run_root=run_root,
+            gcode_runtime_home=_gcode_runtime_home(scratch_root),
+        )
+        digests.add(
+            normalized_ask_srt_policy_digest(
+                policy,
+                source_root=str(source_root),
+                scratch_root=str(scratch_root),
+                policy_path=str(run_root / "assets" / "settings.json"),
+            )
+        )
+    assert len(digests) == 1
+
+
+def test_policy_digest_rejects_another_workspaces_gcode_runtime_home(tmp_path: Path) -> None:
+    """Normalizing the runtime home must not blind the digest to a foreign grant."""
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    run_root = tmp_path / "runtime"
+    policy_path = str(run_root / "assets" / "settings.json")
+    digests = [
+        normalized_ask_srt_policy_digest(
+            _gcode_runtime_policy(
+                source_root=source_root,
+                scratch_root=scratch_root,
+                run_root=run_root,
+                gcode_runtime_home=_gcode_runtime_home(workspace),
+            ),
+            source_root=str(source_root),
+            scratch_root=str(scratch_root),
+            policy_path=policy_path,
+        )
+        for workspace in (scratch_root, tmp_path / "someone-elses-scratch")
+    ]
+    assert digests[0] != digests[1]
+
+
+def test_policy_digest_is_stable_across_ask_runs_stages_and_attempts(tmp_path: Path) -> None:
+    """Every axis that varies an Ask workspace in production leaves the digest alone."""
+    source_root = tmp_path / "source"
+    digests = set()
+    for ask_run_id in ("ask-run-a", "ask-run-b"):
+        for stage in ("investigator", "reviewer"):
+            for attempt in (0, 1):
+                run_root = tmp_path / ask_run_id / "runtime"
+                scratch_root = tmp_path / ask_run_id / "scratch" / f"{stage}-{attempt}"
+                policy = _gcode_runtime_policy(
+                    source_root=source_root,
+                    scratch_root=scratch_root,
+                    run_root=run_root,
+                    gcode_runtime_home=_gcode_runtime_home(scratch_root),
+                )
+                digests.add(
+                    normalized_ask_srt_policy_digest(
+                        policy,
+                        source_root=str(source_root),
+                        scratch_root=str(scratch_root),
+                        policy_path=str(run_root / "assets" / "settings.json"),
+                    )
+                )
+    assert len(digests) == 1
+
+
+async def test_ask_launch_grants_the_scratch_root_gcode_runtime_home(tmp_path: Path) -> None:
+    """The normalizer derives the runtime home from scratch_root; the launch must use it."""
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    source_root.mkdir()
+    scratch_root.mkdir()
+
+    paths = await compute_sandbox_paths(
+        ask_sandbox_config(str(source_root), str(scratch_root)),
+        workspace_path=str(scratch_root),
+        provider="claude",
+    )
+
+    runtime_home = _gcode_runtime_home(scratch_root)
+    assert paths.write_paths.count(runtime_home) == 1
+    assert paths.read_paths.count(runtime_home) == 1

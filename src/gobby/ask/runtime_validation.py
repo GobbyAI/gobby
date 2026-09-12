@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.sandbox_policy import SRT_SETTINGS_RELATIVE_PATH, registered_run_tmp
+from gobby.agents.sandbox_policy import (
+    SRT_SETTINGS_RELATIVE_PATH,
+    gcode_runtime_write_exceptions,
+    registered_run_tmp,
+)
 from gobby.agents.srt_runtime import SRT_POLICY_SCHEMA_VERSION as _SRT_POLICY_SCHEMA_VERSION
 from gobby.ask.runtime_probe_cleanup import validate_probe_group_cleanup
 from gobby.install.version_probe import probe_native_bin_version
@@ -493,10 +497,17 @@ def normalized_ask_srt_policy_digest(
     ):
         raise ValueError("Ask runtime probe policy path is not a managed SRT settings path")
     run_root = policy_file.parents[len(SRT_SETTINGS_RELATIVE_PATH.parts) - 1]
+    scratch = Path(scratch_root).expanduser().resolve(strict=False)
     roots: list[tuple[Path, str]] = [
         (Path(source_root).expanduser().resolve(strict=False), "<source>"),
-        (Path(scratch_root).expanduser().resolve(strict=False), "<scratch>"),
+        (scratch, "<scratch>"),
         (run_root, "<run>"),
+        # gcode's generated runtime home is keyed by SHA-256 of the sandbox workspace and
+        # lives under GOBBY_HOME, outside every launch root. Ask gives each stage and each
+        # repair attempt its own workspace, so hashing that path verbatim would make the
+        # digest differ on every launch. Relabelling it keeps the binding honest: a policy
+        # granting some other workspace's runtime home still fails to match.
+        (Path(gcode_runtime_write_exceptions(scratch)[0]), "<gcode-runtime>"),
     ]
     registered_tmp = registered_run_tmp(run_root)
     if run_tmp_root is not None:
