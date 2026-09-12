@@ -930,7 +930,7 @@ describe("App wiring", () => {
         name: "Log out",
       });
       expect(logoutButton).toHaveClass(
-        "w-8",
+        "w-7",
         "shrink-0",
         "pointer-coarse:before:min-w-11",
       );

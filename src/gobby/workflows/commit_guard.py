@@ -7,7 +7,6 @@ import json
 import logging
 import re
 import shlex
-from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +23,7 @@ from gobby.workflows.task_claim_state import (
     normalize_task_edited_path,
     task_edited_file_set_for_checkout,
 )
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -227,16 +227,20 @@ async def foreign_staged_commit_conflict(
         )
 
 
-def foreign_dirty_edit_conflict(
+async def foreign_dirty_edit_conflict(
     db: HubDatabase,
     event: HookEvent,
     *,
     session_id: str,
     project_id: str,
     project_path: str,
-    dirty_files: Callable[[], AbstractSet[str]],
 ) -> str:
-    """Return an actionable block reason for edits to dirty foreign-owned paths."""
+    """Return an actionable block reason for edits to dirty foreign-owned paths.
+
+    Candidates are the edit's paths that another active session's task ledger
+    claims; only those are verified against git, with a pathspec-limited
+    status. An unverifiable candidate blocks rather than guesses.
+    """
     data = event.data if isinstance(event.data, dict) else {}
     if data.get("canonical_repo_mutation") is not True:
         return ""
@@ -246,17 +250,9 @@ def foreign_dirty_edit_conflict(
         if not mutation_paths:
             return ""
 
-        normalized_dirty = {
-            normalized
-            for path in dirty_files()
-            if (normalized := normalize_task_edited_path(path)) is not None
-        }
-        candidate_paths = mutation_paths & normalized_dirty
-        if not candidate_paths:
-            return ""
-
         try:
-            owners = _active_foreign_path_owners(
+            owners = await asyncio.to_thread(
+                _active_foreign_path_owners,
                 db,
                 session_id=session_id,
                 project_id=project_id,
@@ -264,7 +260,21 @@ def foreign_dirty_edit_conflict(
             )
         except (psycopg.OperationalError, PoolTimeout) as exc:
             raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-        conflicts = {owner for path in candidate_paths for owner in owners.get(path, ())}
+        candidate_paths = mutation_paths & owners.keys()
+        if not candidate_paths:
+            return ""
+
+        dirty_paths = await task_dirty_paths_async(candidate_paths, project_path)
+        if dirty_paths is None:
+            return _format_unverified_dirty_edit_reason(candidate_paths)
+        normalized_dirty = {
+            normalized
+            for path in dirty_paths
+            if (normalized := normalize_task_edited_path(path)) is not None
+        }
+        conflicts = {
+            owner for path in candidate_paths & normalized_dirty for owner in owners.get(path, ())
+        }
         if not conflicts:
             return ""
         return _format_dirty_edit_reason(conflicts)
@@ -321,9 +331,12 @@ def _active_path_owners(
             tasks.id AS task_id,
             tasks.seq_num AS task_seq_num,
             sessions.id AS session_id,
-            sessions.seq_num AS session_seq_num
+            sessions.seq_num AS session_seq_num,
+            sessions.project_id AS session_project_id,
+            projects.name AS project_name
         FROM tasks
         JOIN sessions ON sessions.id = tasks.claimed_by_session_id
+        LEFT JOIN projects ON projects.id = sessions.project_id
         WHERE tasks.project_id = %s
           AND tasks.claimed_by_session_id IS NOT NULL
           AND tasks.closed_at IS NULL
@@ -346,7 +359,12 @@ def _active_path_owners(
         task_id = str(row["task_id"])
         paths = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
 
-        session_ref = _format_ref(row["session_seq_num"], owner_session_id)
+        session_ref = _format_session_ref(
+            row["session_seq_num"],
+            owner_session_id,
+            project_name=row["project_name"],
+            project_id=row["session_project_id"],
+        )
         task_ref = _format_ref(row["task_seq_num"], task_id)
         for path in paths:
             owners.setdefault(path, []).append(
@@ -398,6 +416,41 @@ def foreign_owned_dirty_paths(
     except (psycopg.OperationalError, PoolTimeout) as exc:
         raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
     return {path: owners[path] for path in paths if path in owners}
+
+
+async def foreign_owned_dirty_paths_async(
+    db: HubDatabase,
+    *,
+    session_id: str,
+    project_id: str,
+    checkout_root: str,
+) -> set[str]:
+    """Return foreign-attributed paths that are dirty in ``checkout_root``.
+
+    Verifies only the paths another active session's open task claims, so git
+    never walks the tree. Raises DirtyEditOwnershipInspectionError when the
+    ownership query or the bounded status is unavailable.
+    """
+    try:
+        owners = await asyncio.to_thread(
+            _active_foreign_path_owners,
+            db,
+            session_id=session_id,
+            project_id=project_id,
+            checkout_root=checkout_root,
+        )
+    except (psycopg.OperationalError, PoolTimeout) as exc:
+        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
+    if not owners:
+        return set()
+    dirty_paths = await task_dirty_paths_async(set(owners), checkout_root)
+    if dirty_paths is None:
+        raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
+    return {
+        normalized
+        for path in dirty_paths
+        if (normalized := normalize_task_edited_path(path)) is not None and normalized in owners
+    }
 
 
 async def inspect_checkout_path_ownership_async(
@@ -465,6 +518,21 @@ def _format_ref(seq_num: object, fallback_id: str) -> str:
     return f"#{seq_num}" if isinstance(seq_num, int) else fallback_id
 
 
+def _format_session_ref(
+    seq_num: object,
+    session_id: str,
+    *,
+    project_name: object,
+    project_id: object,
+) -> str:
+    """Project-qualified session reference, matching ``Session.ref``."""
+    if not isinstance(seq_num, int):
+        return session_id
+    name = project_name.strip() if isinstance(project_name, str) else ""
+    project = name or (str(project_id) if project_id else "")
+    return f"{project}#{seq_num}"
+
+
 def _format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
     ordered_conflicts = sorted(
         conflicts,
@@ -488,6 +556,15 @@ def _format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
         "foreign staged entries will remain intact.",
     ]
     return "\n".join(lines)
+
+
+def _format_unverified_dirty_edit_reason(paths: AbstractSet[str]) -> str:
+    listed = ", ".join(sorted(paths))
+    return (
+        f"Edit blocked: Gobby could not verify whether {listed} carries another "
+        "session's uncommitted work (git status unavailable). Retry once the "
+        "repository is responsive."
+    )
 
 
 def _format_dirty_edit_reason(conflicts: set[ForeignPathOwner]) -> str:

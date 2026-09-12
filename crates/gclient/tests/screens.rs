@@ -333,59 +333,117 @@ fn screens_match_committed_captures() {
     }
 }
 
-/// 3.1.1: the projects section renders each project as a two-line card
-/// (state dot, name, then branch with the ahead/behind counts), lists its
-/// worktrees under it, and the agents section follows; the collapsed rail
-/// numbers the projects. The committed capture pins the exact layout.
+/// The glyph column of every row of a capture, in row order.
+fn glyph_rows(capture: &str) -> Vec<&str> {
+    capture
+        .lines()
+        .filter_map(|line| line.split_once(" |"))
+        .map(|(_, glyphs)| glyphs)
+        .collect()
+}
+
+/// 3.1.1: the sidebar stacks the menu band, the machines, the projects, the
+/// sessions, and the footer band. A project is a one-line card (state
+/// glyph, name, branch with the ahead/behind counts, fold marker) that lists
+/// its worktrees only while expanded; the `working` filter hides a project
+/// with nothing live; the attention entry lists under the sessions band with
+/// its reason; the collapsed rail numbers the cards and the sessions. The
+/// committed capture pins the exact layout.
 #[test]
 fn projects_agents_golden() {
     let theme = Theme::new(ThemeKind::Dark);
     let rendered = deterministic_capture("projects_agents", projects_agents, &theme);
-    let glyph_rows: Vec<&str> = rendered
-        .lines()
-        .filter_map(|line| line.split_once(" |"))
-        .map(|(_, glyphs)| glyphs)
-        .collect();
+    let rows = glyph_rows(&rendered);
     let row_containing = |needle: &str| {
-        glyph_rows
-            .iter()
+        rows.iter()
             .position(|row| row.contains(needle))
             .unwrap_or_else(|| panic!("no row contains {needle:?}\n{rendered}"))
     };
 
-    let header = row_containing(" projects");
-    // alpha carries the most urgent state of its bound agents: blocked.
-    let alpha = row_containing("● alpha");
-    assert_eq!(alpha, header + 2, "the card follows the two-row header");
     assert!(
-        glyph_rows[alpha + 1].starts_with("   main ↑2 ↓1"),
-        "branch line: {:?}",
-        glyph_rows[alpha + 1]
+        rows[0].starts_with(" [Menu]") && rows[0].contains("[+] "),
+        "menu band: {:?}",
+        rows[0]
+    );
+    let machines = row_containing(" Machines");
+    let projects = row_containing(" Projects");
+    assert!(
+        rows[projects].contains("[working]"),
+        "projects band: {:?}",
+        rows[projects]
+    );
+    assert!(machines < projects, "the machines sit above the projects");
+    // alpha carries the most urgent state of its bound agents: needs you.
+    let alpha = row_containing("⍾ alpha");
+    assert_eq!(alpha, projects + 1, "the card follows the one-row band");
+    assert!(
+        rows[alpha].starts_with(" ⍾ alpha (main ↑2 ↓1)") && rows[alpha].contains("▸│"),
+        "folded card: {:?}",
+        rows[alpha]
     );
     assert!(
-        glyph_rows[alpha + 2].starts_with("   └─ ○ feature · #123"),
+        !rendered.contains("feature"),
+        "a folded card lists no worktree\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("○ beta"),
+        "the working filter hides a project with nothing live\n{rendered}"
+    );
+    let sessions = row_containing(" Sessions");
+    assert_eq!(sessions, alpha + 1, "the sessions band follows the cards");
+    assert!(
+        rows[sessions].contains("[project]"),
+        "sessions band: {:?}",
+        rows[sessions]
+    );
+    let entry = row_containing("term-alpha");
+    assert_eq!(
+        entry,
+        sessions + 1,
+        "the attention entry lists under sessions"
+    );
+    assert!(
+        rows[entry].contains("⍾ term-alpha · needs you"),
+        "a needs-you row carries its reason: {:?}",
+        rows[entry]
+    );
+    assert!(
+        rows[rows.len() - 1].contains("[«] │"),
+        "footer band: {:?}",
+        rows[rows.len() - 1]
+    );
+
+    // Expanding the card unfolds its worktree under it and flips the marker.
+    let (ws, mut chrome) = projects_agents();
+    chrome.sidebar.toggle_group("proj-alpha");
+    let expanded = capture("projects_agents", &render(&ws, &mut chrome), &theme);
+    let expanded_rows = glyph_rows(&expanded);
+    assert!(
+        expanded_rows[alpha].contains("▾│"),
+        "expanded card: {:?}",
+        expanded_rows[alpha]
+    );
+    assert!(
+        expanded_rows[alpha + 1].starts_with("   └─ ○ feature · #123"),
         "worktree line: {:?}",
-        glyph_rows[alpha + 2]
-    );
-    let beta = row_containing("○ beta");
-    assert_eq!(beta, alpha + 3);
-    assert!(
-        row_containing(" agents") > beta,
-        "the agents section follows the projects"
-    );
-    assert!(
-        row_containing("term-alpha") > row_containing(" agents"),
-        "the attention entry lists under agents"
+        expanded_rows[alpha + 1]
     );
 
     let (ws, mut chrome) = projects_agents();
     chrome.sidebar.collapsed = true;
     let rail = capture("projects_agents", &render(&ws, &mut chrome), &theme);
     assert!(
-        rail.lines().any(|line| line.contains("|1 ●")),
+        rail.lines().any(|line| line.contains("|1 ⍾")),
         "the rail numbers the first project\n{rail}"
     );
-    assert!(rail.lines().any(|line| line.contains("|2 ○")));
+    assert!(
+        rail.lines().any(|line| line.contains("|2 ○")),
+        "the rail numbers the sessions\n{rail}"
+    );
+    assert!(
+        rail.lines().any(|line| line.contains("| » ")),
+        "the rail carries the expand toggle\n{rail}"
+    );
 
     let committed = fs::read_to_string(fixture_path("projects_agents"))
         .unwrap_or_else(|error| panic!("projects_agents golden: {error}"));

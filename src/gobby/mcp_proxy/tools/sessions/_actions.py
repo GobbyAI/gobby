@@ -69,6 +69,8 @@ def register_action_tools(
                     {
                         "baseline_dirty_files": baseline,
                         "session_edited_files": [],
+                        "session_dirty_files": [],
+                        "session_dirty_file_checkouts": {},
                         "active_task_id": None,
                         "task_edited_files": {},
                     },

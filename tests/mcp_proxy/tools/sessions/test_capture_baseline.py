@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -64,7 +64,7 @@ class TestCaptureBaselineDirtyFiles:
             .id
         )
 
-    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
+    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async", new_callable=AsyncMock)
     def test_persists_baseline_to_session_variables(self, mock_dirty, db, session_id) -> None:
         """Should store baseline_dirty_files in session variables."""
         mock_dirty.return_value = {"file_a.py", "file_b.py"}
@@ -85,7 +85,7 @@ class TestCaptureBaselineDirtyFiles:
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
 
-    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
+    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async", new_callable=AsyncMock)
     def test_no_persist_without_session_id(self, mock_dirty, db) -> None:
         """Should not persist when no session context is set."""
         mock_dirty.return_value = {"file_a.py"}
@@ -99,7 +99,7 @@ class TestCaptureBaselineDirtyFiles:
 
         assert result["success"] is True
 
-    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
+    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async", new_callable=AsyncMock)
     def test_no_persist_without_db(self, mock_dirty) -> None:
         """Should succeed without db (no persistence)."""
         mock_dirty.return_value = {"file_a.py"}
@@ -114,7 +114,7 @@ class TestCaptureBaselineDirtyFiles:
         assert result["success"] is True
         assert result["file_count"] == 1
 
-    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
+    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async", new_callable=AsyncMock)
     def test_empty_baseline_persisted(self, mock_dirty, db, session_id) -> None:
         """Should persist empty list when no dirty files."""
         mock_dirty.return_value = set()
@@ -135,9 +135,9 @@ class TestCaptureBaselineDirtyFiles:
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
 
-    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
+    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async", new_callable=AsyncMock)
     def test_blocking_work_is_offloaded_to_thread(self, mock_dirty, db, session_id) -> None:
-        """Git status and session variable writes should not run on the event loop."""
+        """Git status is awaited and the session variable write leaves the event loop."""
         mock_dirty.return_value = {"file_a.py"}
 
         async def fake_to_thread(fn, *args, **kwargs):
@@ -156,10 +156,9 @@ class TestCaptureBaselineDirtyFiles:
 
         assert result["success"] is True
         assert result["files"] == ["file_a.py"]
-        assert len(mock_to_thread.call_args_list) == 2
-        dirty_call = mock_to_thread.call_args_list[0]
-        merge_call = mock_to_thread.call_args_list[1]
-        assert dirty_call.args == (mock_dirty, "/tmp")
+        mock_dirty.assert_awaited_once_with("/tmp")
+        assert len(mock_to_thread.call_args_list) == 1
+        merge_call = mock_to_thread.call_args_list[0]
         assert merge_call.args[0].__name__ == "merge_variables"
         assert merge_call.args[1] == session_id
         assert merge_call.args[2]["baseline_dirty_files"] == ["file_a.py"]

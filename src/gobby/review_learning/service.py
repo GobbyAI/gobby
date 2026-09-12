@@ -36,6 +36,7 @@ from gobby.review_learning.lessons import (
     derive_lesson_domain,
     has_verified_fix,
     normalize_lesson,
+    slugify,
     validate_decision,
     validate_source_kind,
 )
@@ -51,6 +52,8 @@ logger = logging.getLogger(__name__)
 MAX_RECALL_FINDINGS = 20
 # Matches also appear in per-finding groups; cap the flattened duplicate view.
 MAX_RECALL_FLAT_MATCHES = 100
+# Each finding keeps only its best-ranked matches after language/repo tiering.
+MAX_RECALL_MATCHES_PER_FINDING = 5
 
 _SPACE_RE = re.compile(r"\s+")
 _LESSON_FIELD_RE = re.compile(r"^-\s+(?P<key>[a-zA-Z_]+):\s*(?P<value>.*)$")
@@ -173,6 +176,7 @@ class ReviewLearningService:
                     },
                 )
                 matches = []
+            matches = rank_recall_matches(matches, language=language, repo=repo)
             grouped.append({"finding_index": index, "matches": matches})
             remaining_flat_matches = MAX_RECALL_FLAT_MATCHES - len(flat_matches)
             if remaining_flat_matches > 0:
@@ -596,6 +600,30 @@ def build_recall_queries(
     if len(compact) > 240:
         queries.append(compact[:240])
     return queries
+
+
+def rank_recall_matches(
+    matches: list[dict[str, Any]],
+    *,
+    language: str | None,
+    repo: str | None,
+) -> list[dict[str, Any]]:
+    """Order lessons tagged for this language or repo first, other lessons next,
+    project memories last; keep backend order inside each tier; cap the result."""
+    wanted: set[str] = set()
+    if language:
+        wanted.add(f"lang:{slugify(language)}")
+    if repo:
+        wanted.add(f"repo:{slugify(repo, hashed=True)}")
+
+    def tier(match: dict[str, Any]) -> int:
+        tags = set(match.get("tags") or [])
+        if "review-lesson" not in tags:
+            return 2
+        return 0 if wanted & tags else 1
+
+    ranked = sorted(matches, key=tier)  # sorted() is stable
+    return ranked[:MAX_RECALL_MATCHES_PER_FINDING]
 
 
 def _normalize_recall_findings(findings: list[dict[str, Any] | str]) -> list[dict[str, Any]]:

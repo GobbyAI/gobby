@@ -15,13 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
-from gobby.workflows.enforcement.blocking import (
-    ARGUMENTLESS_PROXY_TOOLS,
-    DISCOVERY_TOOLS,
-    GOBBY_PROXY_TOOLS,
-    PROVIDER_DISCOVERY_TOOLS,
-    canonical_gobby_tool_name,
-)
 
 if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
@@ -35,58 +28,6 @@ logger = logging.getLogger(__name__)
 # here holds one of the workflow runtime's few blocking threads.
 DEFAULT_GIT_STATUS_TIMEOUT_SECONDS = 5.0
 GIT_STATUS_UNAVAILABLE_MARKER = "__gobby_git_status_unavailable__"
-
-# These exact internal queries remain usable when repository inspection is
-# degraded. The catalog is intentionally capability-based: an unknown tool,
-# external server, shell command, or lookalike name still gets Git preflight.
-_REPOSITORY_INDEPENDENT_QUERY_TOOLS = frozenset(
-    {
-        *ARGUMENTLESS_PROXY_TOOLS,
-        *PROVIDER_DISCOVERY_TOOLS,
-        *(f"gobby:{tool}" for tool in DISCOVERY_TOOLS & GOBBY_PROXY_TOOLS),
-        "gobby:get_variable",
-        "gobby-agents:get_agent_result",
-        "gobby-agents:get_inter_session_message",
-        "gobby-memory:get_memory",
-        "gobby-memory:get_related_memories",
-        "gobby-memory:list_memories",
-        "gobby-memory:memory_stats",
-        "gobby-memory:search_knowledge_graph",
-        "gobby-memory:search_memories",
-        "gobby-results:get_tool_result",
-        "gobby-results:search_tool_result",
-        "gobby-sessions:get_current_session",
-        "gobby-sessions:get_session",
-        "gobby-sessions:get_session_commits",
-        "gobby-sessions:get_session_messages",
-        "gobby-sessions:get_transcript_status",
-        "gobby-sessions:list_sessions",
-        "gobby-sessions:search_session_messages",
-        "gobby-sessions:session_stats",
-        "gobby-skills:get_skill",
-        "gobby-skills:get_skill_file",
-        "gobby-skills:get_skill_files",
-        "gobby-skills:list_hubs",
-        "gobby-skills:list_skills",
-        "gobby-skills:search_hub",
-        "gobby-skills:search_skills",
-        "gobby-tasks:get_task",
-        "gobby-tasks:list_tasks",
-        "gobby-tasks:search_tasks",
-    }
-)
-
-
-def is_repository_independent_query_identity(tool_identity: str) -> bool:
-    """Return whether an exact normalized tool route needs no repository state."""
-    identity = tool_identity
-    if ":" not in identity:
-        canonical = canonical_gobby_tool_name(identity)
-        if canonical.startswith("mcp__gobby__"):
-            identity = f"gobby:{canonical.removeprefix('mcp__gobby__')}"
-        elif canonical in GOBBY_PROXY_TOOLS:
-            identity = f"gobby:{canonical}"
-    return identity in _REPOSITORY_INDEPENDENT_QUERY_TOOLS
 
 
 class GitStatusUnavailable(RuntimeError):
@@ -422,10 +363,21 @@ def resolve_git_worktree_root(*candidate_paths: str | Path | None) -> str | None
     return None
 
 
+# Candidate path -> worktree root. Hook events arrive several times a second
+# from the same few directories, and a directory's worktree root does not
+# change while it exists, so ordinary events spawn no git process at all.
+# Negative answers are not cached: a directory can become a repository later.
+_WORKTREE_ROOT_CACHE: dict[str, str] = {}
+
+
 async def resolve_git_worktree_root_async(
     *candidate_paths: str | Path | None,
 ) -> str | None:
-    """Return the first candidate path that belongs to a git worktree."""
+    """Return the first candidate path that belongs to a git worktree.
+
+    Never raises: a candidate whose resolution fails is logged and skipped, so
+    rule evaluation continues without a worktree root instead of dropping.
+    """
     for raw_path in candidate_paths:
         if raw_path is None:
             continue
@@ -436,6 +388,9 @@ async def resolve_git_worktree_root_async(
         if not Path(path_text).is_dir():
             logger.debug("resolve_git_worktree_root: candidate is not a directory: %s", path_text)
             continue
+        cached = _WORKTREE_ROOT_CACHE.get(path_text)
+        if cached is not None:
+            return cached
 
         result = await daemon_git.run(
             ["rev-parse", "--show-toplevel"],
@@ -449,10 +404,17 @@ async def resolve_git_worktree_root_async(
                 path_text,
             )
             continue
-        result = _require_git_ok(result, "Git worktree resolution")
+        if not isinstance(result, GitOk):
+            logger.warning(
+                "resolve_git_worktree_root: skipping candidate %s: %s",
+                path_text,
+                result.stderr.strip() or result.status,
+            )
+            continue
 
         worktree_root = result.stdout.strip()
         if worktree_root:
+            _WORKTREE_ROOT_CACHE[path_text] = worktree_root
             return worktree_root
 
     return None

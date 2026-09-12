@@ -1,7 +1,7 @@
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { coarseHitAreaCls } from "./controlStyles";
+import { coarseHitAreaCls, segmentedActiveOptionCls } from "./controlStyles";
 
 interface BaseSegmentedControlOption<T extends string> {
   value: T;
@@ -85,9 +85,7 @@ export function SegmentedControl<T extends string>({
   const trackBg = isLight
     ? "bg-[var(--bg-secondary)]"
     : "bg-[var(--bg-primary)]";
-  const activeOption = isLight
-    ? "bg-[var(--surface-selected)] text-[var(--text-primary)] font-semibold"
-    : "bg-accent/15 text-accent font-semibold";
+  const activeOption = segmentedActiveOptionCls(isLight);
 
   return (
     <div

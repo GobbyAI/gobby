@@ -14,11 +14,10 @@ import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close as lifecycle_close
+from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
-from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
@@ -27,6 +26,11 @@ from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
+from tests.mcp_proxy.tools.close_review_test_support import (
+    complete_invalid_close_review,
+    complete_valid_close_review,
+    return_detached_response,
+)
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
@@ -165,10 +169,6 @@ def _stub_project_manager() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
             return_value=_checkout_session_manager(),
         ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.check_linked_committed_bundled_manifest",
-            return_value=None,
-        ),
     ):
         mock_pm.return_value.get.return_value = MagicMock()
         mock_pm.return_value.list.return_value = []
@@ -230,105 +230,8 @@ def _create_registry(
         return create_task_registry(task_manager, task_validator_resolver=lambda: task_validator)
 
 
-async def _complete_close_review(
-    ctx: RegistryContext,
-    *,
-    evaluation: CloseEvaluation,
-    close_arguments: dict[str, Any],
-    status: str,
-    feedback: str,
-) -> dict[str, Any]:
-    """Apply a matching detached verdict without exercising review persistence."""
-    reviewed = await lifecycle_close._evaluate_close(
-        ctx,
-        task_id=close_arguments["task_id"],
-        reason=close_arguments["reason"],
-        changes_summary=close_arguments["changes_summary"],
-        commit_sha=close_arguments["commit_sha"],
-        project_path=close_arguments["project_path"],
-        response_detail=close_arguments["response_detail"],
-        override_justification=close_arguments["override_justification"],
-        scope_justification=close_arguments["scope_justification"],
-        submitted_review=SubmittedCloseReview(
-            verdict={
-                "status": status,
-                "criteria": [
-                    {
-                        "index": 1,
-                        "satisfied": status == "valid",
-                        "gap": None if status == "valid" else feedback,
-                    }
-                ],
-                "feedback": feedback,
-            },
-            review_fingerprint=evaluation.extra["review_fingerprint"],
-            evidence_fingerprint=evaluation.extra["deterministic_evidence_fingerprint"],
-            diff_sha=evaluation.extra["diff_sha"],
-            test_bodies_sha=evaluation.extra["test_bodies_sha"],
-            stable_facts=evaluation.extra["stable_facts"],
-        ),
-    )
-    if not reviewed.ready:
-        return reviewed.response(preview=bool(close_arguments["preview"]))
-    result = await lifecycle_close._commit_close(
-        ctx,
-        reviewed,
-        reason=close_arguments["reason"],
-        skip_validation=bool(close_arguments["skip_validation"]),
-        override_justification=close_arguments["override_justification"],
-        commit_sha=close_arguments["commit_sha"],
-    )
-    result.update(
-        {
-            "preview": bool(close_arguments["preview"]),
-            "can_close": result.get("closed") is True,
-        }
-    )
-    return result
-
-
-async def _return_detached_response(
-    _ctx: RegistryContext,
-    *,
-    evaluation: CloseEvaluation,
-    close_arguments: dict[str, Any],
-) -> dict[str, Any]:
-    return evaluation.response(preview=bool(close_arguments["preview"]))
-
-
-async def _complete_valid_close_review(
-    ctx: RegistryContext,
-    *,
-    evaluation: CloseEvaluation,
-    close_arguments: dict[str, Any],
-) -> dict[str, Any]:
-    return await _complete_close_review(
-        ctx,
-        evaluation=evaluation,
-        close_arguments=close_arguments,
-        status="valid",
-        feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
-    )
-
-
-async def _complete_invalid_close_review(
-    ctx: RegistryContext,
-    *,
-    evaluation: CloseEvaluation,
-    close_arguments: dict[str, Any],
-) -> dict[str, Any]:
-    return await _complete_close_review(
-        ctx,
-        evaluation=evaluation,
-        close_arguments=close_arguments,
-        status="invalid",
-        feedback="The mypy criterion failed.",
-    )
-
-
 def _create_stage_ops_registry(task_manager: MagicMock) -> Any:
     """Create the gobby-tasks-ops stage registry with patched context managers."""
-    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 
     with (
@@ -666,9 +569,9 @@ class TestCloseTask:
                 return_value=(([], []), None),
             ),
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_valid_close_review,
+                new=complete_valid_close_review,
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
@@ -737,12 +640,12 @@ class TestCloseTask:
                 return_value=(([], []), None),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close._task_dirty_paths",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_validation.task_dirty_paths_async",
                 return_value=set(),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._has_committable_edits",
-                return_value=False,
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._committable_task_paths",
+                side_effect=lambda paths, _repo_path: set(paths),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
@@ -754,9 +657,9 @@ class TestCloseTask:
                 ),
             ),
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_valid_close_review,
+                new=complete_valid_close_review,
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
@@ -844,12 +747,12 @@ class TestCloseTask:
                 return_value=(([], []), None),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close._task_dirty_paths",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_validation.task_dirty_paths_async",
                 return_value=set(),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._has_committable_edits",
-                return_value=False,
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._committable_task_paths",
+                side_effect=lambda paths, _repo_path: set(paths),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
@@ -861,9 +764,9 @@ class TestCloseTask:
                 ),
             ),
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_valid_close_review,
+                new=complete_valid_close_review,
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
@@ -992,9 +895,9 @@ class TestCloseTask:
         registry = _create_registry(mock_task_manager, task_validator)
 
         with patch.object(
-            lifecycle_close,
+            close_tool,
             "launch_close_review",
-            new=_complete_valid_close_review,
+            new=complete_valid_close_review,
         ):
             result = await registry.call(
                 "close_task",
@@ -1035,9 +938,9 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_valid_close_review,
+                new=complete_valid_close_review,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -1090,9 +993,9 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_valid_close_review,
+                new=complete_valid_close_review,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -1143,9 +1046,9 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_valid_close_review,
+                new=complete_valid_close_review,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -1197,9 +1100,9 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_invalid_close_review,
+                new=complete_invalid_close_review,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -1246,9 +1149,9 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_invalid_close_review,
+                new=complete_invalid_close_review,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -1296,9 +1199,9 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_complete_invalid_close_review,
+                new=complete_invalid_close_review,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -2110,9 +2013,9 @@ class TestCloseTaskSessionContextGuard:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch.object(
-                lifecycle_close,
+                close_tool,
                 "launch_close_review",
-                new=_return_detached_response,
+                new=return_detached_response,
             ),
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
@@ -2185,7 +2088,6 @@ class TestEscalateTaskSessionContextGuard:
 
 def test_close_task_git_helper_calls_follow_repo_path_resolution() -> None:
     """close_task must resolve project_path before commit/Git helper cwd use."""
-    import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle_close
 
     evaluation_source = inspect.getsource(lifecycle_close._evaluate_close)
     evaluation = ast.parse(evaluation_source)

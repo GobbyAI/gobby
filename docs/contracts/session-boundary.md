@@ -26,6 +26,38 @@ Planning, review, and ongoing task work use `clear_session=false`. The
 current task and is moving to another task or epic child. Before-tool rules enforce the
 compact boundary for autonomous sessions and whenever resolved `plan_mode` is true.
 
+## Handoff Content And Incidental History
+
+A handoff is an operational continuation record. Include current state, remaining
+work, decisions, blockers, and relevant final validation from the current context
+epoch. Carry forward earlier constraints only when they still affect the next action,
+with references to the existing evidence rather than cumulative history.
+
+Omit superseded intermediate test counts and historical run labels from the handoff
+narrative unless they are needed to explain an active blocker or next action. This
+applies to every authored section, including Problems Encountered, What Didn't Work,
+Notes, and References. Keep actionable failure diagnostics and distinguish completed
+validation from acceptance work that is still required. A coordination wait is not
+evidence that acceptance ran or passed.
+
+Leave detailed history in existing task/session records, raw transcripts, or optional
+evidence and progress-log files; use references to those sources when needed. A
+reference identifies evidence without inventing a run classification or chronology.
+This policy does not delete or rewrite historical records.
+
+Task #21887 records the inclusion decision accepted on 2026-09-05. Its generated
+recovery/combination examples and "Source Records" terminology predate the current
+persisted-Markdown delivery contract. Today, `get_handoff()` returns authored content;
+it does not regenerate or merge summaries. The policy guides authors and bounded
+review, not a runtime telemetry filter or a guarantee of automatic semantic checking.
+The historical cases and their expected treatment are documented in
+[Creating And Reading Handoffs](../guides/sessions.md#creating-and-reading-handoffs).
+
+No additional model calls or whole-session replays are required by this policy. An
+audit-grade event ledger, source-position ordering, run-type classification, and
+semantic verification are outside this contract. Generated archival-summary behavior
+is unchanged.
+
 ## Persisted State
 
 Authored payloads live in `session_handoffs`; `sessions.handoff_markdown` remains the
@@ -94,7 +126,7 @@ strictly below `small_window_tokens` use `small_window_warn_ratio` and
 `extended_window_tokens`, plus unknown or invalid windows, use `warn_tokens` and
 `block_tokens`; windows at or above the extended cutoff use `extended_warn_tokens`
 and `extended_block_tokens`. Warnings repeat every turn and every
-`warn_every_tool_calls` tool calls. Plan mode, pipelines, and web chat are exempt.
+`warn_every_tool_calls` tool calls. Plan mode and pipelines are exempt.
 At block pressure, handoff prerequisites and schema discovery remain callable. A
 non-retryable missing terminal compaction path caps the epoch at warning pressure;
 a background delivery failure remains blocked until `set_handoff` is retried.

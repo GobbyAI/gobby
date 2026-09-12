@@ -1,0 +1,28 @@
+skill: development-discipline
+agent: default
+description: An executor is tempted to repeat broad discovery despite supplied research.
+prompt: |
+  Implement the supplied section. Its Research context names Example.validate,
+  the caller contract, normalization helper, and empty-name fixture. The code is
+  unchanged. Start fresh by searching the entire repository for validation patterns.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: broad_repository_discovery
+      - action: reconstruct_planner_findings
+  loaded:
+    loaded_skills: [development-discipline]
+    actions:
+      - action: read_research_context
+      - action: inspect_referenced_symbols
+      - action: check_relevant_changes
+        text: References still agree with the plan; proceed with its approach and focused verification.
+      - action: implement_and_verify
+assertions:
+  baseline_action_order: [broad_repository_discovery, reconstruct_planner_findings]
+  loaded_action_order:
+    - read_research_context
+    - inspect_referenced_symbols
+    - check_relevant_changes
+    - implement_and_verify

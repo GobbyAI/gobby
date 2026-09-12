@@ -26,7 +26,7 @@ use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
 use super::sidebar_model::SidebarModel;
-use super::{PaneId, Workspace};
+use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace};
 
 mod actions;
 mod control;
@@ -190,6 +190,8 @@ pub async fn run_live_loop<B: Backend>(
     let mut prefix_armed = false;
     let mut supervisor = ReconnectSupervisor::new();
     let mut reconnect_job = None;
+    let mut sidebar_job: Option<SidebarFetchFuture> = None;
+    let mut sidebar_error_shown = false;
     let mut last_snapshot = None;
 
     // Draw once before the first select: input outranks the render tick, so
@@ -317,8 +319,25 @@ pub async fn run_live_loop<B: Backend>(
                     loop_error = Some(error);
                 }
             }
+            result = await_sidebar_job(&mut sidebar_job), if sidebar_job.is_some() => {
+                sidebar_job = None;
+                let error = match result {
+                    Ok(fetch) => {
+                        workspace.apply_sidebar_fetch(fetch);
+                        None
+                    }
+                    Err(error) => Some(error),
+                };
+                settle_sidebar_banner(
+                    &mut chrome.status_message,
+                    &mut sidebar_error_shown,
+                    error.as_ref(),
+                );
+            }
             result = await_reconnect_job(&mut reconnect_job), if reconnect_job.is_some() => {
                 reconnect_job = None;
+                // A refetch begun on the old connection has nothing to add.
+                sidebar_job = None;
                 let outcome = supervisor.complete_attempt(result);
                 handle_reconnect_outcome(
                     workspace,
@@ -342,12 +361,14 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             _ = render_tick.tick() => {
+                chrome.ticker = chrome.ticker.wrapping_add(1);
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
                 if !chrome.sidebar.collapsed {
                     workspace.request_git_refresh_if_due();
                 }
-                if let Err(error) = workspace.flush_sidebar_refetches().await {
-                    chrome.status_message = Some(error.to_string());
+                // The refetch runs beside the loop; its branch above applies it.
+                if sidebar_job.is_none() {
+                    sidebar_job = workspace.start_sidebar_refetch();
                 }
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                     workspace.latch_exit(error.to_string());
@@ -384,6 +405,7 @@ pub async fn run_live_loop<B: Backend>(
         tracing::warn!(%error, "could not save the gclient workspace state");
     }
     drop(reconnect_job.take());
+    drop(sidebar_job.take());
     supervisor.cancel(DaemonError::Protocol {
         detail: workspace
             .exit_reason()
@@ -487,6 +509,15 @@ async fn await_reconnect_job(job: &mut Option<ReconnectFuture>) -> Result<Genera
     }
 }
 
+async fn await_sidebar_job(
+    job: &mut Option<SidebarFetchFuture>,
+) -> Result<SidebarFetch, DaemonError> {
+    match job {
+        Some(job) => job.as_mut().await,
+        None => std::future::pending().await,
+    }
+}
+
 async fn wait_for_reconnect(ready_at: Option<Instant>) {
     match ready_at {
         Some(ready_at) => tokio::time::sleep_until(ready_at).await,
@@ -577,7 +608,7 @@ async fn route_live_input(
                     .panes
                     .get_mut(&pane_id)
                     .expect("pane exists")
-                    .status_message = Some("paste_too_large".into());
+                    .status_message = Some("Paste too large.".into());
             } else if workspace.pane(pane_id).copy_search {
                 workspace
                     .panes
@@ -750,4 +781,50 @@ async fn resize_live_workspace<B: Backend>(
         return Ok(());
     }
     workspace.propagate_geometry(&updates).await
+}
+
+/// Show a sidebar refetch failure in the status line and retire it on the
+/// next successful refetch. A transient timeout under daemon load otherwise
+/// stays on screen until an unrelated message replaces it.
+fn settle_sidebar_banner(
+    status: &mut Option<String>,
+    shown: &mut bool,
+    error: Option<&DaemonError>,
+) {
+    match error {
+        Some(error) => {
+            *status = Some(error.to_string());
+            *shown = true;
+        }
+        None if *shown => {
+            *status = None;
+            *shown = false;
+        }
+        None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_banner_clears_on_the_next_successful_refetch() {
+        let mut status = None;
+        let mut shown = false;
+        settle_sidebar_banner(&mut status, &mut shown, Some(&DaemonError::Timeout));
+        assert_eq!(status.as_deref(), Some("Daemon request timed out."));
+        assert!(shown);
+        settle_sidebar_banner(&mut status, &mut shown, None);
+        assert_eq!(status, None);
+        assert!(!shown);
+    }
+
+    #[test]
+    fn sidebar_banner_leaves_an_unrelated_message_alone() {
+        let mut status = Some("Response sent.".to_string());
+        let mut shown = false;
+        settle_sidebar_banner(&mut status, &mut shown, None);
+        assert_eq!(status.as_deref(), Some("Response sent."));
+    }
 }

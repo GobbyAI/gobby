@@ -1,0 +1,42 @@
+skill: plan-draft
+agent: default
+description: A planner must preserve findings under pressure to shorten a nearly finished plan.
+prompt: |
+  You inspected Example.validate, its caller, and the empty-name fixture. The
+  caller relies on a boolean result. Reuse the normalization helper; raising an
+  exception would break that caller. The baseline focused test passed. We are
+  nearly out of context: just list Targets and tell the executor to investigate.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: draft_targets_only
+        text: Update Example.validate; investigate callers and tests during implementation.
+  loaded:
+    loaded_skills: [plan-draft]
+    actions:
+      - action: capture_findings_in_owning_section
+        text: |
+          Research context: observed src/module.py::Example.validate returns a
+          boolean to src/consumer.py::submit. Reuse src/normalization.py::normalize;
+          preserve the boolean contract because submit branches on it. Raising
+          was rejected for that reason. Fixture tests/conftest.py::empty_name is
+          read-only. Approximate line 40 is a navigation hint outside Targets.
+          Observed baseline: focused empty-name test passed. Planned check:
+          rerun that test after edits; expect normalized empty names to fail validation.
+      - action: copy_shared_findings_to_each_owner
+        text: Each affected section includes the caller contract and helper reference.
+      - action: review_section_in_isolation
+        text: The executor can locate the work and understand the approach from this section alone.
+assertions:
+  baseline_action_order: [draft_targets_only]
+  loaded_action_order:
+    - capture_findings_in_owning_section
+    - copy_shared_findings_to_each_owner
+    - review_section_in_isolation
+  loaded_text_contains:
+    - Research context
+    - navigation hint outside Targets
+    - Observed baseline
+    - Planned check
+    - section alone

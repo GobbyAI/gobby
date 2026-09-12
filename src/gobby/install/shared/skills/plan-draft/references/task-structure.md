@@ -73,6 +73,16 @@ Targets:
 - `src/module/file.py::Example.validate`
 - `tests/test_module.py::test_validate_empty`
 
+**Research context:**
+- Observed behavior/entry points: {file-qualified symbols and what they do;
+  label proposed symbols as new. Optional approximate lines are navigation hints.}
+- Call paths and reuse: {consumers, helpers, read-only dependencies, fixtures,
+  and the contracts relevant to this change.}
+- Approach: {chosen implementation, constraints, consequential rejected
+  alternatives and why.}
+- Verification: {focused commands and expected outcomes; separate observed
+  results from planned checks.}
+
 {Full implementation specification for this task. Everything here becomes the
 subtask description during expansion — the implementing agent sees ONLY this
 section.}
@@ -105,6 +115,8 @@ class Example(Base):
 
 Target: `src/module/other.py::build_other`
 
+**Research context:** {Observed references, approach, and checks for this task.}
+
 {Full implementation specification — code examples, behavioral specs, edge cases…}
 
 **Acceptance:**
@@ -120,6 +132,8 @@ Target: `src/module/other.py::build_other`
 `kind: deliverable`
 
 Target: `config/settings.yaml`
+
+**Research context:** {Observed config consumers, constraints, and checks.}
 
 {Full specification including config schema, defaults, validation rules…}
 
@@ -162,6 +176,10 @@ sees its own subtask — it does **not** have access to the full plan document.
 
 **Each task section must be self-contained:**
 
+- Research context, including necessary shared findings copied into this section.
+  Keep approximate line hints and read-only references outside the contiguous
+  Targets block, separated by a blank line. Apply the Research Context contract
+  in `docs/contracts/plan-coverage.md` proportionally to the work.
 - File paths to create or modify
 - Code examples (classes, functions, method signatures)
 - Config snippets, SQL migrations, YAML schemas
@@ -266,18 +284,66 @@ unannotated and drops it.
 
 ## Task Granularity Guidelines
 
-Each task should be:
+**One deliverable section = one manifest entry = one implementation leaf.**
+The compiler preserves this mapping; it does not discover smaller tasks.
+Atomize the narrative before review or manifest derivation.
 
-- **Atomic** — completable in one AI session.
-- **Testable** — clear pass/fail criteria.
-- **Verb-led** — starts with an action verb: Add, Create, Implement, Update, Remove, Extract.
-- **Scoped** — references specific files/functions when possible.
-- **Self-contained** — every section contains ALL implementation detail the
-  implementing agent needs (code examples, schemas, file paths, behavioral
-  specs).
+Each leaf owns **one independently verifiable outcome**, with concrete Targets,
+complete implementation detail, and focused pass/fail validation. It should fit
+one focused implementation session including tests, review, and fixes. Session
+duration and prose length are estimates, not proof of atomicity.
+Use a verb-led title that names the outcome, such as "Encode terminal key events."
 
-Good: `"Add TaskEnricher class to src/gobby/tasks/enrich.py"`
-Bad: `"Implement enrichment"` (too vague — the agent has to guess)
+### Decomposition pass
+
+For every proposed section, enumerate its behaviors and state machines. For each
+candidate part, name the contract it consumes or exposes and the focused check
+that proves it works. If a part can be implemented, tested, and committed while
+the remaining behaviors are absent, give it its own deliverable. A prerequisite
+may close against its specified interface or test harness before its consumer
+exists; write the integration into the later consumer's scope and dependency.
+
+Split at independently testable state machines, lifecycle owners, protocol
+boundaries, and user actions. A shared file, feature name, agent, or eventual
+end-to-end demonstration does not justify combining those parts. Keep one
+behavior's implementation, failure cases, consumer updates, and tests together;
+do not create per-file chores or duplicate TDD-wrapper tasks.
+
+Use these **review triggers**, not hard numerical ceilings:
+
+- More than **6 acceptance items**.
+- More than **6 distinct hand-maintained production Target files** (count paths
+  once, not symbol entries; exclude tests, docs, generated files, and fixtures).
+- **2 or more independently testable state machines or lifecycle owners**, even
+  if the section has few files or compresses its requirements into one item.
+
+For a triggered section, include a short **Granularity:** paragraph naming the
+outcome, candidate seams, and split decision. Retaining a section requires a
+concrete reason the proposed parts cannot close independently, such as one
+atomic protocol change across producer and consumers. "Closely related" and
+"all needed for the feature" are insufficient. Thresholds are conservative
+inspection prompts, not measured predictors of runtime; review every section
+for separable outcomes even below them. Never merge acceptance items or omit
+Targets to get below a trigger.
+
+### Splitting without losing the contract
+
+Give each resulting deliverable a stable section ID, its own Targets, complete
+specification, acceptance IDs under that section, and explicit dependencies.
+Map every original acceptance obligation to its new owner; split compound items
+without dropping edge cases. Shared Target files require dependency ordering,
+not recombining the leaves. Keep only the producer/consumer interaction checks
+in the integration leaf; it must not absorb unfinished producer behavior.
+Re-derive the manifest through the normal approval path after narrative changes.
+Do not split one source section into multiple manifest entries or hand-edit
+`covers:` labels to bypass the 1:1 invariant.
+
+For example, "Build the app shell, event loop, and terminal views" can hide an
+input encoder, grid renderer, attachment/fallback state machine, reconnect
+supervisor, resize policy, and spawn/terminate lifecycle. Each can expose a
+bounded contract with focused checks; the loop integrates those completed
+contracts through dependent deliverables. An encoder's arrows, modifiers, and
+invalid-input cases remain together as one behavior even with many tests.
 
 ---
 

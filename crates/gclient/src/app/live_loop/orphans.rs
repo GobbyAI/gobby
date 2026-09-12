@@ -138,12 +138,12 @@ pub async fn open_destroy_orphans_dialog(workspace: &Workspace<LiveDaemon>, chro
     let rows = match fetch_orphans(workspace).await {
         Ok(rows) => rows,
         Err(error) => {
-            chrome.status_message = Some(format!("orphaned terminals: {error}"));
+            chrome.status_message = Some(format!("Orphaned terminals: {error}"));
             return;
         }
     };
     if rows.is_empty() {
-        chrome.status_message = Some("no orphaned terminals".to_string());
+        chrome.status_message = Some("No orphaned terminals.".to_string());
         return;
     }
     chrome.dialog = Some(Dialog::DestroyOrphans {

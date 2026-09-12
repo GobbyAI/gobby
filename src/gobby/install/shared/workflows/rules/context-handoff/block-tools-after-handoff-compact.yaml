@@ -7,8 +7,7 @@ rules:
     enabled: true
     priority: 1
     when: >-
-      event.metadata.get('session_type') != 'web_chat'
-      and source != 'pipeline'
+      source != 'pipeline'
       and variables.get('context_compact_mid_turn_pressure_band') == 'block'
       and variables.get('context_compact_block_message')
       and not variables.get('plan_mode')

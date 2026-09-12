@@ -203,9 +203,17 @@ fn carve_matches_upstream_map_and_renders_data() {
         })
         .unwrap();
     let side = screen(&terminal);
-    // The sidebar lists projects and agents; term-beta, a plain terminal
-    // with no entry, shows in the tab bar instead.
-    for needle in [" projects", " agents", "term-alpha", "blocked"] {
+    // The sidebar stacks its bands and lists the attention entry under the
+    // sessions band with its reason.
+    for needle in [
+        " [Menu]",
+        " Machines",
+        " Projects",
+        " Sessions",
+        "term-alpha",
+        "needs you",
+        "[«]",
+    ] {
         assert!(side.contains(needle), "sidebar lacks {needle:?}:\n{side}");
     }
 
@@ -216,7 +224,7 @@ fn carve_matches_upstream_map_and_renders_data() {
         })
         .unwrap();
     let nav = screen(&terminal);
-    for needle in ["term-alpha", "term-beta", "blocked"] {
+    for needle in ["term-alpha", "term-beta", "needs you"] {
         assert!(nav.contains(needle), "navigator lacks {needle:?}:\n{nav}");
     }
 
@@ -260,7 +268,7 @@ fn render_workspace_composes_imported_chrome() {
         for needle in [
             "term-alpha",
             "term-beta",
-            "blocked",
+            "needs you",
             "second",
             "observe",
             "close",

@@ -16,7 +16,6 @@ import pytest
 
 from gobby.config.sessions import FeedbackReviewConfig
 from gobby.feedback.actions import (
-    _RECENT_CLOSED_TASK_LIMIT,
     FINDINGS_EPIC_TITLE,
 )
 from gobby.feedback.agent import (
@@ -84,6 +83,7 @@ class _FakeLLM:
         self,
         prompt: str,
         *,
+        run_id: str,
         timeout_seconds: float,
     ) -> FeedbackReviewerResult:
         self.calls.append(
@@ -262,13 +262,15 @@ async def test_launch_retry_preserves_attempt_and_files_once(
     first = _insert_feedback(temp_db, session_id)
 
     class TransientReviewer(_FakeLLM):
-        async def review(self, prompt: str, *, timeout_seconds: float) -> FeedbackReviewerResult:
+        async def review(
+            self, prompt: str, *, run_id: str, timeout_seconds: float
+        ) -> FeedbackReviewerResult:
             if not self.calls:
                 self.calls.append({"prompt": prompt, "timeout_seconds": timeout_seconds})
                 raise FeedbackReviewerLaunchError("temporary launch failure") from OSError(
                     "socket unavailable"
                 )
-            return await super().review(prompt, timeout_seconds=timeout_seconds)
+            return await super().review(prompt, run_id=run_id, timeout_seconds=timeout_seconds)
 
     reviewer = TransientReviewer(response={"clusters": [_cluster([first], title="Fix transport")]})
     manager = _FakeTaskManager()
@@ -328,7 +330,11 @@ def _cluster(
 ) -> dict[str, Any]:
     proposed: dict[str, Any] | None = None
     if title is not None:
-        proposed = {"title": title, "description": "Observed repeatedly by agents."}
+        proposed = {
+            "title": title,
+            "description": "Observed repeatedly by agents.",
+            "verification_evidence": "Current implementation and tests confirm the issue remains reproducible.",
+        }
         if priority is not None:
             proposed["priority"] = priority
     return {
@@ -489,7 +495,7 @@ async def test_marked_temporary_checkout_reaches_digest(
     assert "**fixture** [noise, 1 obs]" in run.digest_md
 
 
-async def test_run_review_suppresses_proposal_with_fixed_disposition(
+async def test_current_verification_overrides_old_fixed_disposition(
     temp_db: HubDatabase, session_id: str
 ) -> None:
     observation_id = _insert_feedback(
@@ -505,25 +511,16 @@ async def test_run_review_suppresses_proposal_with_fixed_disposition(
 
     result = await _service(temp_db, llm, task_manager).run_review()
 
-    assert result["tasks_filed"] == 0
-    assert task_manager.created == []
+    assert result["tasks_filed"] == 1
+    assert len(task_manager.created) == 1
     run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
     assert run is not None and run.actions is not None
-    assert run.actions["suppressed"] == [
-        {
-            "title": "Refix resolved behavior",
-            "observation_ids": [observation_id],
-            "disposition": "fixed",
-            "matched_task_ref": "#42",
-            "reason": f"observation {observation_id} has resolved fixed disposition",
-        }
-    ]
-    assert run.digest_md is not None
-    assert "Suppressed Refix resolved behavior (#42)" in run.digest_md
+    assert run.actions["suppressed"] == []
+    assert "Current verification:" in task_manager.created[0].description
 
 
 @pytest.mark.parametrize("label", ["needs-decision", "needs-planning", "clean-window"])
-async def test_run_review_suppresses_proposal_with_valid_filed_task_disposition(
+async def test_run_review_deduplicates_against_actual_open_filed_task(
     temp_db: HubDatabase, session_id: str, label: str
 ) -> None:
     observation_id = _insert_feedback(
@@ -532,8 +529,16 @@ async def test_run_review_suppresses_proposal_with_valid_filed_task_disposition(
         disposition="filed-task",
         evidence="Filed decision task #42",
     )
-    referenced_task = SimpleNamespace(labels=[label], closed_at=None)
-    task_manager = _FakeTaskManager(tasks_by_ref={"#42": referenced_task})
+    referenced_task = SimpleNamespace(
+        id="existing-decision",
+        title="Duplicate decision task",
+        description="",
+        labels=[label, "feedback-review"],
+        closed_at=None,
+    )
+    task_manager = _FakeTaskManager(
+        tasks_by_ref={"#42": referenced_task}, existing_tasks=[referenced_task]
+    )
     llm = _FakeLLM(
         response={"clusters": [_cluster([observation_id], title="Duplicate decision task")]}
     )
@@ -544,13 +549,8 @@ async def test_run_review_suppresses_proposal_with_valid_filed_task_disposition(
     assert task_manager.created == []
     run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
     assert run is not None and run.actions is not None
-    assert run.actions["suppressed"][0] == {
-        "title": "Duplicate decision task",
-        "observation_ids": [observation_id],
-        "disposition": "filed-task",
-        "matched_task_ref": "#42",
-        "reason": f"observation {observation_id} has resolved filed-task disposition",
-    }
+    assert result["deduplicated"] == 1
+    assert run.actions["suppressed"][0]["reason"] == "matched open task"
 
 
 async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
@@ -621,7 +621,7 @@ async def test_run_review_appends_observations_to_open_task_matching_theme(
     assert current in existing.description
 
 
-async def test_run_review_suppresses_duplicate_of_reachable_recent_closed_task(
+async def test_current_verification_overrides_reachable_closed_task(
     temp_db: HubDatabase,
     session_id: str,
     tmp_path: Path,
@@ -649,22 +649,12 @@ async def test_run_review_suppresses_duplicate_of_reachable_recent_closed_task(
 
     result = await _service(temp_db, llm, task_manager).run_review()
 
-    assert result["tasks_filed"] == 0
-    assert result["deduplicated"] == 1
-    assert task_manager.created == []
+    assert result["tasks_filed"] == 1
+    assert result["deduplicated"] == 0
+    assert len(task_manager.created) == 1
     run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
     assert run is not None and run.actions is not None
-    assert run.actions["suppressed"] == [
-        {
-            "title": "Stop repeated close-gate checks",
-            "observation_ids": [observation_id],
-            "matched_task_ref": "#21999",
-            "matched_commits": [commit_sha],
-            "reason": (
-                "matched recently closed valid task whose linked commits are reachable from HEAD"
-            ),
-        }
-    ]
+    assert run.actions["suppressed"] == []
 
 
 async def test_run_review_files_when_closed_duplicate_commit_is_absent_from_head(
@@ -703,55 +693,6 @@ async def test_run_review_files_when_closed_duplicate_commit_is_absent_from_head
     run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
     assert run is not None and run.actions is not None
     assert run.actions["suppressed"] == []
-
-
-async def test_run_review_bounds_recent_closed_task_lookup(
-    temp_db: HubDatabase,
-    session_id: str,
-    tmp_path: Path,
-) -> None:
-    commit_sha = _commit_file(tmp_path / "gobby", "README.md", _T0)
-    closed_tasks = [
-        _closed_task(
-            task_id=f"recent-{index}",
-            title=f"Unrelated recent task {index}",
-            theme=f"unrelated theme {index}",
-            commits=[commit_sha],
-        )
-        for index in range(_RECENT_CLOSED_TASK_LIMIT)
-    ]
-    closed_tasks.append(
-        _closed_task(
-            task_id="too-old-match",
-            title="Stop redundant close validation",
-            commits=[commit_sha],
-        )
-    )
-    observation_id = _insert_feedback(temp_db, session_id)
-    task_manager = _FakeTaskManager(existing_closed_tasks=closed_tasks)
-    llm = _FakeLLM(
-        response={
-            "clusters": [
-                _cluster(
-                    [observation_id],
-                    title="Stop repeated close-gate checks",
-                    theme="close gate validation reruns",
-                )
-            ]
-        }
-    )
-
-    result = await _service(temp_db, llm, task_manager).run_review()
-
-    assert result["tasks_filed"] == 1
-    closed_call = next(call for call in task_manager.list_calls if call["closed"] is True)
-    assert closed_call == {
-        "closed": True,
-        "limit": _RECENT_CLOSED_TASK_LIMIT,
-        "offset": 0,
-        "sort_by": "updated_at",
-        "sort_order": "desc",
-    }
 
 
 async def test_run_review_marks_missing_cited_path_unverified_at_priority_three(
@@ -1175,3 +1116,60 @@ async def test_digest_accepts_labeled_rung_three_filing(
     assert run is not None
     assert run.digest_md is not None
     assert "**decision-bound defect** (" not in run.digest_md
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write_fails", [False, True])
+async def test_review_report_contains_summary_and_actual_task_refs(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_fails: bool,
+) -> None:
+    observation_id = _insert_feedback(temp_db, session_id)
+    report = tmp_path / "review.md"
+
+    class ReportReviewer(_FakeLLM):
+        async def review(
+            self, prompt: str, *, run_id: str, timeout_seconds: float
+        ) -> FeedbackReviewerResult:
+            result = await super().review(prompt, run_id=run_id, timeout_seconds=timeout_seconds)
+            return FeedbackReviewerResult(
+                agent_run_id=result.agent_run_id,
+                findings=result.findings,
+                summary_md="# Verified review\n\nThe concern remains reproducible.",
+                report_path=str(report),
+            )
+
+    reviewer = ReportReviewer(
+        {"clusters": [_cluster([observation_id], title="Fix verified issue")]}
+    )
+    manager = _FakeTaskManager()
+    service = FeedbackReviewService(temp_db, reviewer, FeedbackReviewConfig(), manager)
+    if write_fails:
+
+        def fail_write(*_args: object) -> None:
+            raise OSError("Report disk unavailable")
+
+        monkeypatch.setattr("gobby.feedback.service.write_review_report", fail_write)
+        with pytest.raises(OSError, match="Report disk unavailable"):
+            await service.run_review()
+        assert [row.id for row in service.store.list_unreviewed(200)] == [observation_id]
+        failed_run = service.store.latest_run()
+        assert failed_run is not None
+        assert failed_run.status == "failed"
+        assert failed_run.actions is not None
+        assert len(failed_run.actions["filed"]) == 1
+        return
+    result = await service.run_review()
+    assert result["status"] == "completed"
+    assert result["tasks_filed"] == 1
+    assert result["report_path"] == str(report)
+    saved = service.store.get_run(result["run_id"])
+    assert saved is not None and saved.actions is not None
+    task_ref = saved.actions["filed"][0]["task_ref"]
+    markdown = report.read_text()
+    assert markdown.startswith("# Verified review")
+    assert task_ref in markdown
+    assert "awaiting-human-review" in saved.actions["filed"][0]["labels"]

@@ -525,7 +525,7 @@ export default function App() {
             <Button
               type="button"
               variant="accent"
-              size="icon"
+              size="icon-sm"
               dense
               className={cn("shrink-0", coarseHitAreaCls)}
               onClick={() => settingsOverlay.open()}
@@ -540,7 +540,7 @@ export default function App() {
               <Button
                 type="button"
                 variant="accent"
-                size="icon"
+                size="icon-sm"
                 dense
                 className={cn("shrink-0", coarseHitAreaCls)}
                 onClick={() => logout()}

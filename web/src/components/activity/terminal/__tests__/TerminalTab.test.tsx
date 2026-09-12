@@ -98,6 +98,10 @@ vi.mock("../TerminalView", () => ({
           >
             Protocol reply
           </button>
+          <button type="button" onClick={() => props.onProtocolResponse?.("c")}>
+            Typed c
+          </button>
+          <output aria-label="Terminal min cols">{props.minCols ?? ""}</output>
           <button type="button" onClick={() => props.onSizeChange?.(33, 101)}>
             Renderer resized
           </button>
@@ -199,6 +203,10 @@ let historyListener: ((history: TerminalAttachHistory) => void) | null;
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  window.localStorage.clear();
+  // Most fixtures are bare tmux panes; show every session unless a test
+  // exercises the agents-only default explicitly.
+  window.localStorage.setItem("gobby:terminal:session-scope", "all");
   outputListener = null;
   historyListener = null;
   terminalViewState.mounts = 0;
@@ -838,5 +846,93 @@ describe("attach error and reconnect gating", () => {
       "replacement",
       "default",
     );
+  });
+});
+
+describe("sticky Ctrl", () => {
+  it("folds a sticky Ctrl into the next typed letter and leaves other bytes armed", async () => {
+    const user = userEvent.setup();
+    hookState = makeHookState({
+      sessionsLoaded: true,
+      sessions: [makeTmuxSession({ name: "interactive" })],
+      attachedTarget: { terminal_id: "default:interactive" },
+      streamingId: "stream-input",
+    });
+    render(<TerminalTab />);
+    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
+
+    const ctrl = screen.getByRole("button", { name: "Ctrl" });
+    await user.click(ctrl);
+    // A protocol reply is not the key Ctrl was armed for.
+    await user.click(screen.getByRole("button", { name: "Protocol reply" }));
+    expect(hookState.sendInput).toHaveBeenLastCalledWith("\u001b[6n");
+    expect(ctrl).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "Typed c" }));
+    expect(hookState.sendInput).toHaveBeenLastCalledWith("\u0003");
+    expect(ctrl).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
+describe("session scope", () => {
+  it("hides panes without a Gobby session by default and offers the full list", async () => {
+    const user = userEvent.setup();
+    window.localStorage.clear();
+    const agentSession = makeGobbySession({ id: "agent-session" });
+    hookState = makeHookState({
+      sessionsLoaded: true,
+      sessions: [
+        makeTmuxSession({ name: "tail" }),
+        makeTmuxSession({ name: "agent", gobby_session_id: "agent-session" }),
+      ],
+    });
+    const first = render(<TerminalTab sessions={[agentSession]} />);
+
+    const list = screen.getByRole("combobox", { name: "Terminal session" });
+    expect(
+      Array.from(list.querySelectorAll("option")).map((o) => o.value),
+    ).toEqual(["default:agent"]);
+    await waitFor(() => expect(list).toHaveValue("default:agent"));
+    first.unmount();
+
+    // With no agent session at all the list explains itself and offers the
+    // recovery; the choice persists. Drop the first mount's remembered target
+    // so the second mount does not open on the "session ended" notice.
+    hookState = makeHookState({
+      sessionsLoaded: true,
+      sessions: [makeTmuxSession({ name: "tail" })],
+    });
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    render(<TerminalTab />);
+    await user.click(screen.getByRole("button", { name: "Show all sessions" }));
+    expect(
+      screen.queryByRole("button", { name: "Show all sessions" }),
+    ).toBeNull();
+    expect(window.localStorage.getItem("gobby:terminal:session-scope")).toBe(
+      "all",
+    );
+  });
+
+  it("drops the 80-column floor on the mobile tier so the PTY wraps", () => {
+    const mobileMatchMedia = vi.fn((query: string) => ({
+      matches: query.includes("max-width"),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    vi.stubGlobal("matchMedia", mobileMatchMedia);
+    try {
+      hookState = makeHookState({
+        sessionsLoaded: true,
+        sessions: [makeTmuxSession({ name: "shell" })],
+      });
+      render(<TerminalTab />);
+      expect(screen.getByLabelText("Terminal min cols")).toHaveTextContent(
+        "1",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

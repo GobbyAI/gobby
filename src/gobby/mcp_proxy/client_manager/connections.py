@@ -258,6 +258,12 @@ async def connect_server(
 async def disconnect_all(manager: Any, logger: logging.Logger) -> None:
     """Disconnect all active connections and background health tasks."""
     manager._running = False
+    authorization_tasks = list(manager._oauth_authorization_tasks.values())
+    manager._oauth_authorization_tasks.clear()
+    manager._oauth_authorization_versions.clear()
+    for task in authorization_tasks:
+        task.cancel()
+    await asyncio.gather(*authorization_tasks, return_exceptions=True)
     try:
         await finalize_disconnect_all(
             connections=manager._connections,
@@ -274,6 +280,7 @@ async def disconnect_all(manager: Any, logger: logging.Logger) -> None:
 
 async def disconnect_server(manager: Any, server_id: str, logger: logging.Logger) -> None:
     """Best-effort disconnect of one server without removing its config."""
+    await cancel_oauth_authorization(manager, server_id)
     connection = clear_connection_state(
         server_id,
         manager._connections,
@@ -286,8 +293,7 @@ async def disconnect_server(manager: Any, server_id: str, logger: logging.Logger
     manager.health.pop(server_id, None)
 
 
-async def ensure_connected(manager: Any, server_id: str) -> ClientSession:
-    """Ensure a server has an active session, connecting lazily if needed."""
+async def _ensure_connected_once(manager: Any, server_id: str) -> ClientSession:
     if server_id not in manager._configs:
         raise KeyError(f"Server '{server_id}' not configured")
 
@@ -322,6 +328,67 @@ async def ensure_connected(manager: Any, server_id: str) -> ClientSession:
         return await _connect_with_retries(manager, server_id, config)
     finally:
         lock.release()
+
+
+def _forget_oauth_authorization(manager: Any, server_id: str, task: asyncio.Task[None]) -> None:
+    if manager._oauth_authorization_tasks.get(server_id) is task:
+        manager._oauth_authorization_tasks.pop(server_id, None)
+    if not task.cancelled():
+        task.exception()
+
+
+async def cancel_oauth_authorization(manager: Any, server_id: str) -> None:
+    task = manager._oauth_authorization_tasks.pop(server_id, None)
+    if task is None:
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+async def _authorize_oauth_once(
+    manager: Any,
+    server_id: str,
+    config: MCPServerConfig,
+    required: MCPAuthorizationRequired,
+    observed_version: int,
+) -> None:
+    if manager.oauth_authorizer is None:
+        raise required
+
+    task = manager._oauth_authorization_tasks.get(server_id)
+    if task is None:
+        if manager._oauth_authorization_versions.get(server_id, 0) > observed_version:
+            return
+
+        manager._oauth_authorization_versions[server_id] = observed_version + 1
+        task = asyncio.create_task(
+            manager._authorize_oauth(config),
+            name=f"mcp-oauth:{config.name}",
+        )
+        manager._oauth_authorization_tasks[server_id] = task
+        task.add_done_callback(lambda done: _forget_oauth_authorization(manager, server_id, done))
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logging.getLogger("gobby.mcp.manager").warning(
+            "Automatic OAuth authorization failed for '%s': %s",
+            config.name,
+            type(exc).__name__,
+        )
+        raise required from exc
+
+
+async def ensure_connected(manager: Any, server_id: str) -> ClientSession:
+    """Ensure a server is connected, authorizing it interactively when needed."""
+    observed_version = manager._oauth_authorization_versions.get(server_id, 0)
+    try:
+        return await _ensure_connected_once(manager, server_id)
+    except MCPAuthorizationRequired as required:
+        config = manager._configs[server_id]
+        await _authorize_oauth_once(manager, server_id, config, required, observed_version)
+        return await _ensure_connected_once(manager, server_id)
 
 
 async def get_client_session(manager: Any, server_id: str) -> ClientSession:

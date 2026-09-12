@@ -61,6 +61,10 @@ observations remain available. Fetch a tool's schema again after such a reset.
 
 `get_skill`, `list_skills`, and `search_skills` on `gobby-skills` are bootstrap
 tools and bypass the schema gate. Call them directly through `call_tool`.
+`get_skill_file` and `get_skill_files` are not bootstrap tools: call
+`get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file")` (or
+`get_skill_files`) once per context before the first reference load; the lease
+then covers later loads until context is cleared or compacted.
 
 ---
 

@@ -37,6 +37,7 @@ export const FilterDropdownTrigger = forwardRef<
       type="button"
       variant="accent"
       size="sm"
+      dense
       className={cn(
         coarseHitAreaCls,
         "relative aria-expanded:border-[color-mix(in_srgb,var(--accent)_60%,transparent)] aria-expanded:bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] in-data-[theme=light]:aria-expanded:border-accent in-data-[theme=light]:aria-expanded:bg-accent in-data-[theme=light]:aria-expanded:text-accent-foreground",
@@ -54,7 +55,11 @@ export const FilterDropdownTrigger = forwardRef<
           {activeCount}
         </span>
       )}
-      <DropdownCaret open={open} />
+      {/* The caret collapses with the label so the icon-only square holds
+          just the glyph. */}
+      <span className="activity-panel-action-btn__label inline-flex">
+        <DropdownCaret open={open} />
+      </span>
     </Button>
   );
 });

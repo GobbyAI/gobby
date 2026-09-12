@@ -1,0 +1,8 @@
+# Environment for the processes cargo and nextest launch (builds, tests,
+# and `cargo run`; installed binaries are unaffected).
+[env]
+# gclient's machines list names this machine by its host name; pin it so
+# the golden screens and frame digests render the same on every machine.
+# A `cargo run -p gobby-client` shows this name too; unset it in the shell
+# (`GOBBY_CLIENT_HOSTNAME= cargo run ...`) to see the real host name.
+GOBBY_CLIENT_HOSTNAME = "scripted"

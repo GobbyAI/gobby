@@ -9,6 +9,7 @@ import pytest
 from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
 from gobby.review_learning.service import (
+    MAX_RECALL_MATCHES_PER_FINDING,
     ReviewLearningMemoryManager,
     ReviewLearningService,
     build_recall_queries,
@@ -189,6 +190,77 @@ async def test_recall_returns_ordinary_and_review_lesson_memories(
     assert memory_ids == {"mem-ordinary", "mem-lesson"}
     assert result["findings"][0]["finding_index"] == 0
     assert all(match["finding_index"] == 0 for match in result["matches"])
+
+
+@pytest.mark.asyncio
+async def test_recall_ranks_language_and_repo_matched_lessons_first(
+    fake_task_manager: FakeTaskManager,
+) -> None:
+    fake_memory_manager = _scoped_memory_manager()
+    fake_memory_manager.search_results = [
+        FakeMemory(
+            id="mem-project",
+            content="Gobby psycopg storage uses %s placeholders.",
+            tags=["sql"],
+        ),
+        FakeMemory(
+            id="mem-typescript-lesson",
+            content="Review lesson: narrow unknown before property access.",
+            tags=["review-lesson", "lang:typescript"],
+        ),
+        FakeMemory(
+            id="mem-rust-lesson",
+            content="Review lesson: prefer ? over unwrap in fallible paths.",
+            tags=["review-lesson", "lang:rust"],
+        ),
+    ]
+    service = _service(fake_memory_manager, fake_task_manager)
+
+    result = await service.recall_context(
+        findings=[{"title": "unwrap on a fallible call", "query_hints": ["unwrap"]}],
+        session_id=SESSION_ID,
+        language="Rust",
+    )
+
+    ordered_ids = [match["memory_id"] for match in result["findings"][0]["matches"]]
+    assert ordered_ids == ["mem-rust-lesson", "mem-typescript-lesson", "mem-project"]
+    assert [match["memory_id"] for match in result["matches"]] == ordered_ids
+
+
+@pytest.mark.asyncio
+async def test_recall_caps_matches_per_finding(
+    fake_task_manager: FakeTaskManager,
+) -> None:
+    fake_memory_manager = _scoped_memory_manager()
+    fake_memory_manager.search_results = [
+        FakeMemory(id=f"mem-project-{index}", content=f"project fact {index}", tags=["sql"])
+        for index in range(4)
+    ] + [
+        FakeMemory(
+            id=f"mem-lesson-{index}",
+            content=f"Review lesson {index}",
+            tags=["review-lesson", "lang:python"],
+        )
+        for index in range(4)
+    ]
+    service = _service(fake_memory_manager, fake_task_manager)
+
+    result = await service.recall_context(
+        findings=[{"title": "placeholder style", "query_hints": ["psycopg"]}],
+        session_id=SESSION_ID,
+        language="python",
+    )
+
+    group_matches = result["findings"][0]["matches"]
+    assert len(group_matches) == MAX_RECALL_MATCHES_PER_FINDING
+    assert [match["memory_id"] for match in group_matches] == [
+        "mem-lesson-0",
+        "mem-lesson-1",
+        "mem-lesson-2",
+        "mem-lesson-3",
+        "mem-project-0",
+    ]
+    assert result["matches"] == group_matches
 
 
 @pytest.mark.asyncio

@@ -12,11 +12,13 @@ import {
   type TmuxTarget,
   useTmuxSessions,
 } from "../../../hooks/useTmuxSessions";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import type { GobbySession } from "../../../types/sessions";
 import { Button } from "../../ui/Button";
 import { ResizeHandle } from "../../shared/ResizeHandle";
 import { useRegisterActivityActions } from "../activityActions";
 import { TerminalKeysBar } from "./TerminalKeysBar";
+import { applyCtrlModifier } from "./terminalKeys";
 import { TerminalSessionList } from "./TerminalSessionList";
 import {
   findByGobbySessionId,
@@ -107,6 +109,37 @@ function storeTerminalTarget(target: { terminal_id: string } | null): void {
   }
 }
 
+// Which sessions the list shows. "agents" hides panes with no Gobby session
+// (idle shells, tail processes) and is the default; the choice persists as a
+// preference across visits.
+type SessionScope = "agents" | "all";
+
+const SESSION_SCOPE_STORAGE_KEY = "gobby:terminal:session-scope";
+
+const SESSION_SCOPE_OPTIONS: readonly { value: SessionScope; label: string }[] =
+  [
+    { value: "agents", label: "Agents" },
+    { value: "all", label: "All" },
+  ];
+
+function loadStoredSessionScope(): SessionScope {
+  try {
+    return window.localStorage.getItem(SESSION_SCOPE_STORAGE_KEY) === "all"
+      ? "all"
+      : "agents";
+  } catch {
+    return "agents";
+  }
+}
+
+function storeSessionScope(scope: SessionScope): void {
+  try {
+    window.localStorage.setItem(SESSION_SCOPE_STORAGE_KEY, scope);
+  } catch {
+    // The toggle still works for this visit when storage is unavailable.
+  }
+}
+
 function PlusIcon() {
   return (
     <svg
@@ -156,6 +189,9 @@ export function TerminalTab({
     null,
   );
   const [focusNotice, setFocusNotice] = useState<string | null>(null);
+  const [scope, setScope] = useState<SessionScope>(loadStoredSessionScope);
+  const [ctrlArmed, setCtrlArmed] = useState(false);
+  const isMobile = useIsMobile();
   const viewRef = useRef<TerminalViewHandle>(null);
   const streamingIdRef = useRef<string | null>(streamingId);
   const lastAttachedKeyRef = useRef<string | null>(null);
@@ -164,9 +200,20 @@ export function TerminalTab({
   const allowInitialSelectionRef = useRef(selectedKey === null);
 
   const joinedSessions = useMemo(
-    () => joinTmuxSessions(tmuxSessions, sessions),
-    [sessions, tmuxSessions],
+    () => joinTmuxSessions(tmuxSessions, sessions, projectId),
+    [projectId, sessions, tmuxSessions],
   );
+  const visibleSessions = useMemo(
+    () =>
+      scope === "all"
+        ? joinedSessions
+        : joinedSessions.filter((session) => session.gobby !== null),
+    [joinedSessions, scope],
+  );
+  const changeScope = useCallback((next: SessionScope) => {
+    setScope(next);
+    storeSessionScope(next);
+  }, []);
   const selected =
     joinedSessions.find(
       (session) => sessionKey(session.tmux) === selectedKey,
@@ -266,7 +313,8 @@ export function TerminalTab({
       } else {
         setFocusNotice("No live terminal for this session");
         const fallback =
-          joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
+          visibleSessions.find((session) => !session.dead) ??
+          visibleSessions[0];
         if (fallback) chooseSession(sessionKey(fallback.tmux));
       }
       onFocusHandled?.();
@@ -278,6 +326,7 @@ export function TerminalTab({
     joinedSessions,
     onFocusHandled,
     sessionsLoaded,
+    visibleSessions,
   ]);
 
   useEffect(() => {
@@ -311,20 +360,20 @@ export function TerminalTab({
       !sessionsLoaded ||
       endedKey !== null ||
       selectedKey !== null ||
-      joinedSessions.length === 0 ||
+      visibleSessions.length === 0 ||
       focusSessionId !== null ||
       !allowInitialSelectionRef.current
     ) {
       return;
     }
     const fallback =
-      joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
+      visibleSessions.find((session) => !session.dead) ?? visibleSessions[0];
     const timer = window.setTimeout(() => {
       allowInitialSelectionRef.current = false;
       setSelectedKey(sessionKey(fallback.tmux));
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [endedKey, focusSessionId, joinedSessions, selectedKey, sessionsLoaded]);
+  }, [endedKey, focusSessionId, visibleSessions, selectedKey, sessionsLoaded]);
 
   useEffect(() => {
     if (
@@ -406,14 +455,36 @@ export function TerminalTab({
 
   // "+ New Terminal" lives in the shared activity toolbar like every other
   // tab's add action — the tab body contributes no chrome bar of its own.
-  useRegisterActivityActions(
+  useRegisterActivityActions<SessionScope>(
     {
+      selector: {
+        value: scope,
+        onChange: changeScope,
+        options: SESSION_SCOPE_OPTIONS,
+        ariaLabel: "Terminal sessions shown",
+      },
       onAdd: () => createSession(),
       addLabel: "New Terminal",
       addAriaLabel: "Create terminal session",
       addDisabled: !connected || requestPending,
     },
-    [connected, createSession, requestPending],
+    [changeScope, connected, createSession, requestPending, scope],
+  );
+
+  // Sticky Ctrl from the keys bar folds into the next key typed into the
+  // renderer; bytes the modifier leaves untouched (protocol replies, digits)
+  // keep it armed for the key it was meant for.
+  const sendTypedInput = useCallback(
+    (data: string) => {
+      if (!ctrlArmed) {
+        sendInput(data);
+        return;
+      }
+      const modified = applyCtrlModifier(data);
+      if (modified !== data) setCtrlArmed(false);
+      sendInput(modified);
+    },
+    [ctrlArmed, sendInput],
   );
 
   const isAttaching =
@@ -491,11 +562,25 @@ export function TerminalTab({
         style={{ height: `${listHeight}%` }}
       >
         <TerminalSessionList
-          sessions={joinedSessions}
+          sessions={visibleSessions}
           value={selectedKey}
           onChange={chooseSession}
           onTerminate={terminateSession}
         />
+        {visibleSessions.length === 0 ? (
+          <div className="flex flex-col items-start gap-2 px-3 py-3 text-sm text-muted-foreground">
+            <span>No agent terminals. Shells and other panes are hidden.</span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              dense
+              onClick={() => changeScope("all")}
+            >
+              Show all sessions
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <ResizeHandle
@@ -518,7 +603,8 @@ export function TerminalTab({
           ref={viewRef}
           onReady={handleViewReady}
           onSizeChange={resizeTerminal}
-          onProtocolResponse={sendInput}
+          onProtocolResponse={sendTypedInput}
+          minCols={isMobile ? 1 : undefined}
         />
 
         {isAttaching ? (
@@ -566,7 +652,11 @@ export function TerminalTab({
 
       {selected && !selected.dead ? (
         <div className="shrink-0 border-t border-border px-2.5 py-1.5">
-          <TerminalKeysBar sendInput={sendInput} />
+          <TerminalKeysBar
+            sendInput={sendInput}
+            ctrlArmed={ctrlArmed}
+            onCtrlArmedChange={setCtrlArmed}
+          />
         </div>
       ) : null}
     </div>

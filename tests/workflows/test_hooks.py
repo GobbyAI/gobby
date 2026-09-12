@@ -9,12 +9,11 @@ threading scenarios:
 - Exception handling in all cases
 """
 
-import asyncio
 import concurrent.futures
 import json
 import logging
 import threading
-from collections.abc import Coroutine
+from collections.abc import Collection, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn
@@ -27,13 +26,9 @@ from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.git_utils import (
-    DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
-    DirtyFiles,
-    GitStatusUnavailable,
-)
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
@@ -565,23 +560,6 @@ class TestCancelledErrorHandling:
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.evaluate(event)
             assert result.decision == "allow"
-
-    def test_git_status_unavailable_propagates_without_duplicate_error_log(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        event = self._make_event(HookEventType.STOP)
-        runtime = MagicMock()
-        runtime.run.side_effect = GitStatusUnavailable("status timeout")
-
-        with (
-            patch("asyncio.get_running_loop", side_effect=RuntimeError),
-            caplog.at_level(logging.ERROR, logger="gobby.workflows.hooks"),
-            pytest.raises(GitStatusUnavailable, match="status timeout"),
-        ):
-            WorkflowHookHandler(evaluation_runtime=runtime).evaluate(event)
-
-        assert not caplog.records
 
     def test_cancelled_error_blocks_stop_handle(self) -> None:
         """CancelledError on STOP event should block in handle()."""
@@ -1264,12 +1242,11 @@ class TestVariablePersistence:
         assert variables.get("tool_counter") == 1
 
 
-class TestBaselineDirtyFilesSubtraction:
-    """Verify has_dirty_files subtracts baseline_dirty_files from session variables.
+class TestLedgerDirtyState:
+    """``has_dirty_files`` reads the daemon's edit ledger; hook events never ask git.
 
-    When baseline_dirty_files is stored in session variables (captured at session
-    start), has_dirty_files should only be True when there are NEW dirty files
-    beyond the baseline.
+    Git is consulted once, bounded to the ledger's own paths, only after the
+    session's own git activity, to release paths that are clean again.
     """
 
     @pytest.fixture
@@ -1299,15 +1276,52 @@ class TestBaselineDirtyFilesSubtraction:
             resolve_root,
         )
 
-    def _make_event(self, session_id: str = SESSION_ID) -> HookEvent:
+    @pytest.fixture
+    def status_calls(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, set[str]]]:
+        """Record every daemon git status; the default answer is 'everything clean'."""
+        calls: list[tuple[str, set[str]]] = []
+
+        async def fake_status(
+            cwd: str,
+            paths: Collection[str] = (),
+            *,
+            timeout: float = 10.0,
+            env: dict[str, str] | None = None,
+        ) -> GitOk:
+            del timeout, env
+            calls.append((cwd, set(paths)))
+            return GitOk(status="ok", argv=("git", "status"), stdout="", stderr="")
+
+        monkeypatch.setattr(daemon_git, "status", fake_status)
+        return calls
+
+    def _make_event(
+        self,
+        event_type: HookEventType = HookEventType.BEFORE_TOOL,
+        *,
+        data: dict[str, Any] | None = None,
+        session_id: str = SESSION_ID,
+    ) -> HookEvent:
         return HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
+            event_type=event_type,
             session_id=session_id,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(),
-            data={"tool_name": "some_tool"},
+            data={"tool_name": "some_tool"} if data is None else data,
             metadata={"_platform_session_id": session_id, "project_path": "/tmp"},
         )
+
+    def _make_shell_event(self, command: str) -> HookEvent:
+        event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                "tool_output": "",
+            },
+        )
+        event.metadata["is_failure"] = False
+        return event
 
     def _insert_block_on_dirty_rule(self, db: HubDatabase) -> None:
         """Insert a rule that blocks when has_dirty_files is true."""
@@ -1325,313 +1339,220 @@ class TestBaselineDirtyFilesSubtraction:
             (str(uuid4()), "test-dirty-block", json.dumps(definition), True),
         )
 
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_not_blocked_when_all_files_in_baseline(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Should not block when all dirty files are in the baseline."""
-        mock_get_dirty.return_value = DirtyFiles({"file_a.py", "file_b.py"}, set())
-        session_var_manager.set_variable(
-            SESSION_ID, "baseline_dirty_files", ["file_a.py", "file_b.py"]
+    def _insert_set_variable_rule(self, db: HubDatabase, event: str, variable: str) -> None:
+        definition = {
+            "event": event,
+            "effects": [{"type": "set_variable", "variable": variable, "value": "seen"}],
+        }
+        db.execute(
+            "INSERT INTO rule_definitions "
+            "(id, name, definition_json, enabled, source) "
+            "VALUES (%s, %s, %s, %s, 'custom')",
+            (str(uuid4()), f"test-{event}-marker", json.dumps(definition), True),
         )
-        self._insert_block_on_dirty_rule(db)
 
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        assert response.decision == "allow"
+    def _seed_claimed_task_edits(
+        self, session_var_manager: SessionVariableManager, paths: list[str]
+    ) -> None:
+        session_var_manager.set_variable(SESSION_ID, "claimed_tasks", {"task-1": "#1"})
+        assert session_var_manager.record_edited_files(SESSION_ID, paths, checkout_root="/tmp")
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_not_blocked_when_new_files_but_no_session_edits(
+    async def test_recorded_edit_blocks_without_asking_git(
         self,
-        mock_get_dirty: AsyncMock,
         db: HubDatabase,
         handler: WorkflowHookHandler,
         session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
     ) -> None:
-        """Should allow when files beyond baseline exist but session has no edits."""
-        mock_get_dirty.return_value = DirtyFiles({"file_a.py", "file_b.py", "new_file.py"}, set())
-        session_var_manager.set_variable(
-            SESSION_ID, "baseline_dirty_files", ["file_a.py", "file_b.py"]
-        )
+        session_var_manager.record_edited_files(SESSION_ID, ["file_a.py"], checkout_root="/tmp")
         self._insert_block_on_dirty_rule(db)
 
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
+        response = await handler._evaluate_rules(self._make_event())
 
-        # No session edits → has_dirty_files is False even with new dirty files
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_not_blocked_when_no_baseline_lazy_init(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Should NOT block when no baseline is stored — lazy-init captures current dirty files."""
-        mock_get_dirty.return_value = DirtyFiles({"file_a.py"}, set())
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        # Lazy-init captures file_a.py as baseline, so dirty - baseline = {} → allow
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_not_blocked_when_no_dirty_files(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Should not block when there are no dirty files at all."""
-        mock_get_dirty.return_value = DirtyFiles(set(), set())
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        assert response.decision == "allow"
-
-    # --- Session-scoped has_dirty_files tests ---
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_scoped_to_session_edits_ignores_other_dirty(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Should block only when session's own edited files are dirty."""
-        mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py", "c.py"}, set())
-        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["c.py"])
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        # c.py is in both session_edited_files AND dirty → block
         assert response.decision == "block"
+        assert status_calls == []
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_other_session_files_not_visible(
+    async def test_no_recorded_edits_allows_without_asking_git(
         self,
-        mock_get_dirty: AsyncMock,
         db: HubDatabase,
         handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
     ) -> None:
-        """Should allow when session's edited files are not dirty (committed)."""
-        mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
-        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["c.py"])
         self._insert_block_on_dirty_rule(db)
 
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
+        response = await handler._evaluate_rules(self._make_event())
 
-        # c.py was committed, not in dirty set → allow
         assert response.decision == "allow"
+        assert status_calls == []
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_session_edits_override_baseline(
+    async def test_released_paths_no_longer_block(
         self,
-        mock_get_dirty: AsyncMock,
         db: HubDatabase,
         handler: WorkflowHookHandler,
         session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
     ) -> None:
-        """Should block when session edited a file that was already in baseline."""
-        mock_get_dirty.return_value = DirtyFiles({"a.py"}, set())
-        session_var_manager.merge_variables(
-            SESSION_ID,
-            {
-                "baseline_dirty_files": ["a.py"],
-                "session_edited_files": ["a.py"],
-            },
-        )
+        session_var_manager.record_edited_files(SESSION_ID, ["file_a.py"], checkout_root="/tmp")
+        assert session_var_manager.release_session_dirty_files(
+            SESSION_ID, ["file_a.py"], checkout_root="/tmp"
+        ) == ["file_a.py"]
         self._insert_block_on_dirty_rule(db)
 
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
+        response = await handler._evaluate_rules(self._make_event())
 
-        # Session touched a.py → it owns it, even though it was in baseline
-        assert response.decision == "block"
+        assert response.decision == "allow"
+        # The lifetime history survives a release; only the dirty subset shrinks.
+        assert session_var_manager.get_variables(SESSION_ID)["session_edited_files"] == [
+            "file_a.py"
+        ]
+        assert status_calls == []
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_concurrent_sessions_isolated(
+    async def test_git_commit_reconciles_both_ledgers_against_its_own_paths(
         self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
         handler: WorkflowHookHandler,
         session_var_manager: SessionVariableManager,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two sessions sharing a repo should only see their own edits."""
-        mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
+        self._seed_claimed_task_edits(session_var_manager, ["a.py", "b.py"])
+        calls: list[tuple[str, set[str]]] = []
 
-        # Session A edited a.py, Session B edited b.py
-        session_var_manager.set_variable(SESSION_A_ID, "session_edited_files", ["a.py"])
-        session_var_manager.set_variable(SESSION_B_ID, "session_edited_files", ["b.py"])
-        self._insert_block_on_dirty_rule(db)
+        async def fake_status(
+            cwd: str,
+            paths: Collection[str] = (),
+            *,
+            timeout: float = 10.0,
+            env: dict[str, str] | None = None,
+        ) -> GitOk:
+            del timeout, env
+            calls.append((cwd, set(paths)))
+            return GitOk(status="ok", argv=("git", "status"), stdout=" M b.py\0", stderr="")
 
-        # Session A should be blocked (a.py dirty & in its edits)
-        event_a = self._make_event(session_id=SESSION_A_ID)
-        response_a = await handler._evaluate_rules(event_a)
-        assert response_a.decision == "block"
+        monkeypatch.setattr(daemon_git, "status", fake_status)
 
-        # Session B should be blocked (b.py dirty & in its edits)
-        event_b = self._make_event(session_id=SESSION_B_ID)
-        response_b = await handler._evaluate_rules(event_b)
-        assert response_b.decision == "block"
+        response = await handler._evaluate_rules(self._make_shell_event("git commit -m 'a'"))
 
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_concurrent_session_not_blocked_by_other(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Session should not be blocked by files only another session edited."""
-        mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
-
-        # Session A edited a.py only
-        session_var_manager.set_variable(SESSION_A_ID, "session_edited_files", ["a.py"])
-        # Session B edited b.py only
-        session_var_manager.set_variable(SESSION_B_ID, "session_edited_files", ["b.py"])
-        self._insert_block_on_dirty_rule(db)
-
-        # Now check: if we ONLY look at session-a's files,
-        # and a.py gets committed (removed from dirty), session-a should allow
-        mock_get_dirty.return_value = DirtyFiles({"b.py"}, set())
-        event_a = self._make_event(session_id=SESSION_A_ID)
-        response_a = await handler._evaluate_rules(event_a)
-        assert response_a.decision == "allow"  # a.py committed, b.py is not session-a's
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_lazy_init_baseline_persisted_to_session_variables(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Lazy-init baseline should be persisted so future evaluations have it."""
-        mock_get_dirty.return_value = DirtyFiles({"pre_existing.py", "other.py"}, set())
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        await handler._evaluate_rules(event)
-
-        # Baseline should be persisted
+        assert response.decision == "allow"
+        assert calls == [("/tmp", {"a.py", "b.py"})]
         variables = session_var_manager.get_variables(SESSION_ID)
-        assert set(variables.get("baseline_dirty_files", [])) == {"pre_existing.py", "other.py"}
-        assert variables.get("session_edited_files") == []
+        assert variables["session_dirty_files"] == ["b.py"]
+        assert variables["task_edited_files"] == {"task-1": ["b.py"]}
+        assert variables["session_edited_files"] == ["a.py", "b.py"]
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_lazy_init_then_new_file_allows_without_session_edits(
+    async def test_git_timeout_keeps_ledgers_and_warns_once(
         self,
-        mock_get_dirty: AsyncMock,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        self._seed_claimed_task_edits(session_var_manager, ["a.py"])
+
+        async def fake_status(
+            cwd: str,
+            paths: Collection[str] = (),
+            *,
+            timeout: float = 10.0,
+            env: dict[str, str] | None = None,
+        ) -> GitTimeout:
+            del cwd, paths, env
+            return GitTimeout(status="timeout", argv=("git", "status"), timeout=timeout)
+
+        monkeypatch.setattr(daemon_git, "status", fake_status)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.ledger_reconcile"):
+            response = await handler._evaluate_rules(self._make_shell_event("git commit -m 'a'"))
+
+        assert response.decision == "allow"
+        variables = session_var_manager.get_variables(SESSION_ID)
+        assert variables["session_dirty_files"] == ["a.py"]
+        assert variables["task_edited_files"] == {"task-1": ["a.py"]}
+        warnings = [r for r in caplog.records if "edit ledger reconcile skipped" in r.getMessage()]
+        assert len(warnings) == 1
+
+    @pytest.mark.asyncio
+    async def test_git_in_another_checkout_never_releases_edits_made_elsewhere(
+        self,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
+        tmp_path: Path,
+    ) -> None:
+        session_var_manager.set_variable(SESSION_ID, "claimed_tasks", {"task-1": "#1"})
+        assert session_var_manager.record_edited_files(
+            SESSION_ID, ["a.py"], checkout_root=str(tmp_path)
+        )
+
+        # The session's git runs in /tmp; its edits live in another checkout.
+        response = await handler._evaluate_rules(self._make_shell_event("git status"))
+
+        # Nothing edited in /tmp is verifiable there, so git is not even asked
+        # and both ledgers keep the other checkout's dirt.
+        assert response.decision == "allow"
+        assert status_calls == []
+        variables = session_var_manager.get_variables(SESSION_ID)
+        assert variables["session_dirty_files"] == ["a.py"]
+        assert variables["task_edited_files"] == {"task-1": ["a.py"]}
+
+    @pytest.mark.asyncio
+    async def test_git_stash_never_reconciles(
+        self,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
+    ) -> None:
+        self._seed_claimed_task_edits(session_var_manager, ["a.py"])
+
+        response = await handler._evaluate_rules(self._make_shell_event("git stash"))
+
+        assert response.decision == "allow"
+        assert status_calls == []
+        assert session_var_manager.get_variables(SESSION_ID)["session_dirty_files"] == ["a.py"]
+
+    @pytest.mark.asyncio
+    async def test_non_git_shell_command_never_reconciles(
+        self,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
+    ) -> None:
+        self._seed_claimed_task_edits(session_var_manager, ["a.py"])
+
+        response = await handler._evaluate_rules(self._make_shell_event("ls -la"))
+
+        assert response.decision == "allow"
+        assert status_calls == []
+        assert session_var_manager.get_variables(SESSION_ID)["session_dirty_files"] == ["a.py"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("event_type", "rule_event"),
+        [
+            (HookEventType.SESSION_START, "session_start"),
+            (HookEventType.STOP, "stop"),
+        ],
+    )
+    async def test_lifecycle_rules_evaluate_with_git_never_invoked(
+        self,
+        event_type: HookEventType,
+        rule_event: str,
         db: HubDatabase,
         handler: WorkflowHookHandler,
         session_var_manager: SessionVariableManager,
+        status_calls: list[tuple[str, set[str]]],
     ) -> None:
-        """After lazy-init baseline, new dirty files should NOT block without session edits."""
-        # First evaluation: captures baseline
-        mock_get_dirty.return_value = DirtyFiles({"pre_existing.py"}, set())
-        self._insert_block_on_dirty_rule(db)
+        session_var_manager.record_edited_files(SESSION_ID, ["a.py"], checkout_root="/tmp")
+        self._insert_set_variable_rule(db, rule_event, "lifecycle_marker")
 
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
+        response = await handler._evaluate_rules(self._make_event(event_type, data={}))
+
         assert response.decision == "allow"
-
-        # Second evaluation: new file appears (from another session/process)
-        mock_get_dirty.return_value = DirtyFiles({"pre_existing.py", "new_file.py"}, set())
-        response = await handler._evaluate_rules(event)
-        # No session edits → has_dirty_files is False
-        assert response.decision == "allow"
-
-    # --- Untracked file scoping tests ---
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_untracked_files_ignored_when_not_session_edited(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Untracked files not created by this session should not trigger has_dirty_files."""
-        # Untracked screenshots/docs that existed before session
-        mock_get_dirty.return_value = DirtyFiles(set(), {"screenshot.png", "plan.md"})
-        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["src/main.py"])
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        # src/main.py was committed (not in dirty), untracked files aren't ours → allow
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_untracked_files_block_when_session_created_them(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Untracked files created by this session should trigger has_dirty_files."""
-        mock_get_dirty.return_value = DirtyFiles(set(), {"new_module.py"})
-        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["new_module.py"])
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        # new_module.py is untracked AND in session_edited_files → block
-        assert response.decision == "block"
-
-    @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
-    async def test_untracked_ignored_without_session_edits(
-        self,
-        mock_get_dirty: AsyncMock,
-        db: HubDatabase,
-        handler: WorkflowHookHandler,
-        session_var_manager: SessionVariableManager,
-    ) -> None:
-        """Untracked files should not trigger has_dirty_files without session edits."""
-        mock_get_dirty.return_value = DirtyFiles(set(), {"random_file.txt"})
-        session_var_manager.set_variable(SESSION_ID, "baseline_dirty_files", [])
-        self._insert_block_on_dirty_rule(db)
-
-        event = self._make_event()
-        response = await handler._evaluate_rules(event)
-
-        # No session edits → allow
-        assert response.decision == "allow"
+        assert session_var_manager.get_variables(SESSION_ID)["lifecycle_marker"] == "seen"
+        assert status_calls == []
 
 
 class TestStopFailsClosedOnVariableLoadError:
@@ -1948,10 +1869,8 @@ class TestProjectPathResolution:
         return database
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_codex_after_tool_uses_project_repo_path_when_cwd_missing(
         self,
-        mock_get_dirty: Any,
         db: HubDatabase,
         caplog: pytest.LogCaptureFixture,
         tmp_path: Path,
@@ -1973,7 +1892,6 @@ class TestProjectPathResolution:
         handler._session_var_manager = MagicMock()
         handler._session_var_manager.get_variables.return_value = {}
 
-        mock_get_dirty.return_value = DirtyFiles(set(), set())
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             session_id="external-codex-session",
@@ -1988,10 +1906,6 @@ class TestProjectPathResolution:
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"
-        mock_get_dirty.assert_called_once_with(
-            isolated.root_path,
-            timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
-        )
         assert event.metadata["project_path"] == isolated.root_path
         assert "no project_path resolved" not in caplog.text
 
@@ -2122,7 +2036,7 @@ class TestHookBlockingWorkOffload:
             collaborator_threads["get_variables"] = threading.get_ident()
             return {
                 "_variable_defaults_loaded": True,
-                "baseline_dirty_files": [],
+                "session_dirty_files": [],
             }
 
         def merge_variables(_session_id: str, _updates: dict[str, object]) -> None:
@@ -2139,7 +2053,7 @@ class TestHookBlockingWorkOffload:
             assert isinstance(variables, dict)
             eval_context = kwargs["eval_context"]
             assert isinstance(eval_context, dict)
-            assert not await asyncio.to_thread(bool, eval_context["has_dirty_files"])
+            assert eval_context["has_dirty_files"] is False
             variables["rule_changed"] = True
             return HookResponse(decision="allow")
 
@@ -2157,14 +2071,8 @@ class TestHookBlockingWorkOffload:
             collaborator_threads["observers"] = threading.get_ident()
             return set()
 
-        async def dirty_files(
-            _project_path: str | None,
-            *,
-            timeout: float = DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
-        ) -> DirtyFiles:
-            del timeout
-            collaborator_threads["git_status"] = threading.get_ident()
-            return DirtyFiles(set(), set())
+        async def git_status(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("no hook event may run git status")
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -2178,10 +2086,7 @@ class TestHookBlockingWorkOffload:
         with (
             patch.object(handler, "_resolve_project_path", side_effect=resolve_project),
             patch.object(handler, "_run_observers", side_effect=run_observers),
-            patch(
-                "gobby.workflows.git_utils.get_dirty_files_categorized_async",
-                side_effect=dirty_files,
-            ),
+            patch.object(daemon_git, "status", side_effect=git_status),
         ):
             response = await handler._evaluate_rules(event)
 
@@ -2191,9 +2096,7 @@ class TestHookBlockingWorkOffload:
             "merge_variables",
             "resolve_project",
             "observers",
-            "git_status",
         }
-        assert collaborator_threads["git_status"] == loop_thread_id
         assert all(
             collaborator_threads[name] != loop_thread_id
             for name in {"get_variables", "merge_variables", "resolve_project", "observers"}

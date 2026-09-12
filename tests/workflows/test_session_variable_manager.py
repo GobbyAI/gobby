@@ -841,6 +841,80 @@ def test_record_edited_files_atomically_preserves_order_and_deduplicates(db: Any
     assert variables["task_edited_files"] == {"task-1": expected}
 
 
+def test_record_edited_files_fills_session_dirty_files(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"session_dirty_files": ["existing.py"]})
+
+    mgr.record_edited_files(S1, ["src/first.py", "existing.py"])
+
+    variables = mgr.get_variables(S1)
+    assert variables["session_dirty_files"] == ["existing.py", "src/first.py"]
+    assert variables["session_edited_files"] == ["src/first.py", "existing.py"]
+
+
+def test_release_session_dirty_files_drops_only_requested_paths(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.record_edited_files(S1, ["a.py", "b.py"])
+
+    released = mgr.release_session_dirty_files(S1, ["a.py", "missing.py"])
+
+    assert released == ["a.py"]
+    variables = mgr.get_variables(S1)
+    assert variables["session_dirty_files"] == ["b.py"]
+    # The lifetime history is untouched; only the dirty subset shrinks.
+    assert variables["session_edited_files"] == ["a.py", "b.py"]
+
+
+def test_record_edited_files_tracks_the_checkout_of_each_dirty_path(
+    db: Any, tmp_path: Path
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    main = tmp_path / "main"
+    worktree = tmp_path / "wt"
+
+    mgr.record_edited_files(S1, ["a.py"], checkout_root=str(main))
+    mgr.record_edited_files(S1, ["a.py", "b.py"], checkout_root=str(worktree))
+
+    variables = mgr.get_variables(S1)
+    assert variables["session_dirty_files"] == ["a.py", "b.py"]
+    assert variables["session_dirty_file_checkouts"] == {
+        str(main.resolve()): ["a.py"],
+        str(worktree.resolve()): ["a.py", "b.py"],
+    }
+
+
+def test_release_session_dirty_files_keeps_paths_still_dirty_in_another_checkout(
+    db: Any, tmp_path: Path
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    main = tmp_path / "main"
+    worktree = tmp_path / "wt"
+    mgr.record_edited_files(S1, ["a.py"], checkout_root=str(main))
+    mgr.record_edited_files(S1, ["a.py", "b.py"], checkout_root=str(worktree))
+
+    # Main's git reports a.py clean: the worktree still has its own edit of it,
+    # and b.py was never edited in main, so neither leaves the session ledger.
+    assert mgr.release_session_dirty_files(S1, ["a.py", "b.py"], checkout_root=str(main)) == []
+    variables = mgr.get_variables(S1)
+    assert variables["session_dirty_files"] == ["a.py", "b.py"]
+    assert variables["session_dirty_file_checkouts"] == {str(worktree.resolve()): ["a.py", "b.py"]}
+
+    released = mgr.release_session_dirty_files(S1, ["a.py", "b.py"], checkout_root=str(worktree))
+
+    assert released == ["a.py", "b.py"]
+    variables = mgr.get_variables(S1)
+    assert variables["session_dirty_files"] == []
+    assert variables["session_dirty_file_checkouts"] == {}
+
+
 def test_release_task_edited_files_removes_only_requested_task_paths(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 

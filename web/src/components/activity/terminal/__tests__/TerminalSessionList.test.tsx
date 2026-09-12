@@ -41,6 +41,8 @@ function makeJoined(
     tmux: makeTmux(),
     gobby: null,
     label: "shell",
+    refLabel: null,
+    titleText: "shell",
     provider: null,
     paneRef: "default:shell",
     backendLabel: "tmux",
@@ -111,15 +113,19 @@ describe("TerminalSessionList kebab menu", () => {
     expect(onTerminate).not.toHaveBeenCalled();
   });
 
-  it("bounds long labels and paneRefs so the kebab stays pinned to the row edge", () => {
-    const longName = "x".repeat(120);
+  it("keeps the ref static, tickers the title, and pins chip + kebab to the row edge", () => {
+    const longTitle = "x".repeat(120);
+    const label = `#12: ${longTitle}`;
     render(
       <TerminalSessionList
         sessions={[
           makeJoined({
-            tmux: makeTmux({ name: longName }),
-            label: longName,
-            paneRef: `default:${longName}`,
+            tmux: makeTmux({ name: "agent-12" }),
+            label,
+            refLabel: "#12",
+            titleText: longTitle,
+            paneRef: "agent-12",
+            external: false,
           }),
         ]}
         value={null}
@@ -129,18 +135,21 @@ describe("TerminalSessionList kebab menu", () => {
     );
 
     const row = screen.getByRole("listitem");
-    // The label lives in the shared truncating title slot and the paneRef
-    // meta carries its own cap — the shared idiom marks meta shrink-0, so an
-    // uncapped tmux name would push the kebab off the row (gobby-#20064).
-    const title = row.querySelector(".activity-row-title");
-    expect(title).toHaveTextContent(longName);
-    const meta = row.querySelector(".activity-row-meta");
-    expect(meta).toHaveClass("truncate", "max-w-[45%]");
-    // Kebab wrapper is the row's last element so flex layout pins it right.
-    const kebab = screen.getByRole("button", {
-      name: `Open actions for ${longName}`,
-    });
-    expect(row.lastElementChild).toContainElement(kebab);
+    // The ref is a static mono meta slot; only the title tail lives in the
+    // ticker, which owns the row's flexible width (gobby-#22205).
+    expect(row.querySelector(".activity-row-meta")).toHaveTextContent("#12");
+    const ticker = row.querySelector(".ticker");
+    expect(ticker).toHaveClass("min-w-0", "flex-1");
+    expect(ticker).toHaveTextContent(longTitle);
+    // The raw tmux pane name is the terminal's identity, not the row's.
+    expect(within(row).queryByText("agent-12")).toBeNull();
+    // Chip and kebab share the row's last element so flex layout pins both
+    // right with one gap between them.
+    const trailing = row.lastElementChild;
+    expect(trailing).toContainElement(
+      screen.getByRole("button", { name: `Open actions for ${label}` }),
+    );
+    expect(trailing).toContainElement(within(row).getByText("tmux"));
   });
 
   it("keeps row selection independent of the kebab", async () => {

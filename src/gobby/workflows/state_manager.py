@@ -94,6 +94,18 @@ def _clear_variable_defaults_caches() -> None:
 register_revision_listener("variables", _clear_variable_defaults_caches)
 
 
+def _session_dirty_file_checkouts(variables: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Return a mutable copy of ``session_dirty_file_checkouts`` (checkout root -> paths)."""
+    raw = variables.get("session_dirty_file_checkouts")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(root): list(dict.fromkeys(str(path) for path in paths if path))
+        for root, paths in raw.items()
+        if isinstance(paths, list)
+    }
+
+
 class SessionVariableManager:
     """Manages session-scoped shared variables (visible to all workflows).
 
@@ -566,6 +578,25 @@ class SessionVariableManager:
             session_files = list(dict.fromkeys(str(file) for file in stored if file))
             session_files.extend(path for path in normalized_paths if path not in session_files)
             variables["session_edited_files"] = session_files
+            # Paths edited since the last reconcile released them as clean; this
+            # is what ``has_dirty_files`` reads, so no hook has to ask git.
+            stored_dirty = variables.get("session_dirty_files", [])
+            if not isinstance(stored_dirty, list):
+                stored_dirty = [stored_dirty] if stored_dirty else []
+            dirty_files = list(dict.fromkeys(str(file) for file in stored_dirty if file))
+            dirty_files.extend(path for path in normalized_paths if path not in dirty_files)
+            variables["session_dirty_files"] = dirty_files
+            if normalized_checkout is not None:
+                # Which checkout each dirty path was edited in: a reconcile run
+                # from another worktree's git cannot see this dirt and must not
+                # release it.
+                dirty_checkouts = _session_dirty_file_checkouts(variables)
+                files_for_dirty_checkout = dirty_checkouts.get(normalized_checkout, [])
+                files_for_dirty_checkout.extend(
+                    path for path in normalized_paths if path not in files_for_dirty_checkout
+                )
+                dirty_checkouts[normalized_checkout] = files_for_dirty_checkout
+                variables["session_dirty_file_checkouts"] = dirty_checkouts
 
             task_id = active_task_id_for_edit(variables)
             if task_id:
@@ -620,6 +651,62 @@ class SessionVariableManager:
                     task_checkouts[task_id] = checkouts_for_task
                     variables["task_edited_file_checkouts"] = task_checkouts
             return True, True
+
+        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+
+    def release_session_dirty_files(
+        self,
+        session_id: str,
+        repo_relative_paths: list[str],
+        *,
+        checkout_root: str | None = None,
+    ) -> list[str]:
+        """Atomically drop paths git reconciled as clean from the session dirty ledger.
+
+        ``checkout_root`` is the checkout whose git reported the paths clean. A
+        path stays dirty while any other checkout still records an edit of it,
+        and a path recorded only in other checkouts is never released here.
+        """
+        from gobby.workflows.task_claim_state import (
+            normalize_task_checkout_root,
+            normalize_task_edited_path,
+        )
+
+        requested = {
+            path
+            for value in repo_relative_paths
+            if (path := normalize_task_edited_path(value)) is not None
+        }
+        root = normalize_task_checkout_root(checkout_root)
+
+        def mutate(variables: dict[str, Any]) -> tuple[list[str], bool]:
+            stored = variables.get("session_dirty_files", [])
+            values = stored if isinstance(stored, list) else []
+            dirty_checkouts = _session_dirty_file_checkouts(variables)
+            checkouts_changed = False
+            if root is not None and root in dirty_checkouts:
+                kept = [path for path in dirty_checkouts[root] if path not in requested]
+                checkouts_changed = len(kept) != len(dirty_checkouts[root])
+                if kept:
+                    dirty_checkouts[root] = kept
+                else:
+                    del dirty_checkouts[root]
+            still_dirty_elsewhere = {path for paths in dirty_checkouts.values() for path in paths}
+            released: list[str] = []
+            remaining: list[str] = []
+            for value in values:
+                normalized = normalize_task_edited_path(value)
+                if normalized is None:
+                    continue
+                releasable = normalized in requested and normalized not in still_dirty_elsewhere
+                bucket = released if releasable else remaining
+                if normalized not in bucket:
+                    bucket.append(normalized)
+            if not released and not checkouts_changed:
+                return released, False
+            variables["session_dirty_files"] = remaining
+            variables["session_dirty_file_checkouts"] = dirty_checkouts
+            return released, True
 
         return self._mutate_variables(session_id, mutate, apply_defaults=True)
 

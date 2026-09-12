@@ -36,6 +36,15 @@ GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60
   cargo nextest run -p gobby-code -E 'test(serial_db)'
 ```
 
+Builds land in one shared directory per project,
+`~/.gobby/cache/cargo-target/<project_id>/`: Gobby links `<checkout>/target` there
+for every registered checkout and worktree, and sets `CARGO_TARGET_DIR` for spawned
+agents. Cargo's build-directory lock serializes concurrent builds across worktrees
+("Blocking waiting for file lock on build directory"). A pre-existing real `target/`
+directory is left alone; move it aside to join the share. On macOS also raise
+the vnode ceiling once per machine, or the daemon's Git commands time out
+while cargo runs: see `docs/guides/system-requirements.md`, Troubleshooting.
+
 Inline `#[cfg(test)]` modules count toward the owning production file's
 1,000-line ceiling. Keep large unit-test modules out of production Rust files.
 Place the tests at `<module>/tests.rs` and declare them from `<module>.rs` with:

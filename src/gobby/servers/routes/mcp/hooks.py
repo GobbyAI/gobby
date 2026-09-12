@@ -392,6 +392,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         adapter: Any | None = None
         claim_lease: StartupClaimLease | None = None
         owner_token: str | None = None
+        lease_renewal: asyncio.Task[None] | None = None
+        # An adapter worker that outlived its timeout still owns the lease;
+        # its done-callback finalizes or releases it and the renewal loop
+        # stops on its own once that CAS lands.
+        lease_outlives_request = False
         request_metadata: dict[str, Any] = {
             "request_shape": "unknown",
             "schema_version": None,
@@ -582,7 +587,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             if envelope_id:
                 owner_token = envelope_processing_owner_token(envelope_id)
                 if owner_token:
-                    start_envelope_lease_renewal(envelope_id, owner_token)
+                    lease_renewal = start_envelope_lease_renewal(envelope_id, owner_token)
 
             # Select adapter based on source
             from gobby.adapters.agy import AgyAdapter
@@ -807,6 +812,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         and owner_token
                     ):
                         live_worker = True
+                        lease_outlives_request = True
                         schedule_adapter_timeout_finalization(
                             executor_future,
                             envelope_id=envelope_id,
@@ -918,5 +924,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
             # Fallback: return basic success to prevent CLI hook failure
             return {"continue": True, "decision": "approve"}
+        finally:
+            # The lease dies with this execution, including a client
+            # disconnect or a cancelled replay. Releasing is a CAS on the live
+            # lease this request owns, so a finalized marker is untouched.
+            if not lease_outlives_request:
+                if lease_renewal is not None:
+                    lease_renewal.cancel()
+                if envelope_id and owner_token:
+                    release_envelope_processing_claim(envelope_id, owner_token=owner_token)
 
     return router

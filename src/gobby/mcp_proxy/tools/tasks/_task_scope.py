@@ -35,8 +35,6 @@ _BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _DECLARED_ANNOTATION_SOURCES = frozenset({"manual", "expansion"})
 _ADVISORY_ANNOTATION_SOURCES = frozenset({"hypothesis"})
 _TESTS_ROOT = "tests/"
-_SHARED_INSTALL_ROOT = "src/gobby/install/shared/"
-_BUNDLED_CONTENT_MANIFEST = "src/gobby/install/bundled_content_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -102,11 +100,6 @@ async def evaluate_task_scope_async(
         if not repo_path:
             raise RuntimeError("No repository path is available for linked commit inspection.")
         actual_paths.update(await collect_commit_paths_async(commit_list, repo_path))
-
-    if _BUNDLED_CONTENT_MANIFEST in actual_paths and any(
-        _path_is_under(path, _SHARED_INSTALL_ROOT) for path in actual_paths
-    ):
-        actual_paths.remove(_BUNDLED_CONTENT_MANIFEST)
 
     declared_actual_paths = _paths_relevant_to_scope(actual_paths, declared_paths)
     advisory_actual_paths = _paths_relevant_to_scope(actual_paths, advisory_paths)

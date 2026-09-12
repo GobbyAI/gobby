@@ -165,19 +165,6 @@ def test_inline_reference_examples_do_not_expand_declared_scope() -> None:
     assert evaluation.out_of_scope_paths == ("docs/evidence/example.md",)
 
 
-def test_bundled_manifest_in_scope_when_shared_tree_changes() -> None:
-    evaluation = _evaluate(
-        annotations=[_annotation("src/gobby/install/shared/skills/tasks/SKILL.md", "manual")],
-        actual_paths={
-            "src/gobby/install/bundled_content_manifest.json",
-            "src/gobby/install/shared/skills/tasks/SKILL.md",
-        },
-    )
-
-    assert evaluation.accepted is True
-    assert evaluation.out_of_scope_paths == ()
-
-
 def test_production_refactor_exceeds_test_only_scope() -> None:
     evaluation = _evaluate(
         annotations=[_annotation("tests/", "manual")],

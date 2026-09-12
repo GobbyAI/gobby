@@ -24,10 +24,19 @@ migration/storage, or documented manual check.
 
 Before editing:
 
-1. Identify the capability that owns the change.
-2. Search with `gcode` for established placement and dependency patterns.
-3. Check dependency direction, state ownership, public-surface impact, and test
-   placement.
+1. Read the supplied Research context and implementation specification. Inspect
+   the referenced symbols, callers, helpers, and fixtures with `gcode`, then check
+   relevant working-tree diffs and recent changes. Treat approximate line
+   locations as navigation hints; verify symbol identity and current behavior.
+2. Identify the capability that owns the change. Confirm the supplied approach
+   against current dependency direction, state ownership, public-surface impact,
+   and test placement. When the references and evidence still agree, proceed
+   using that context and focused verification.
+3. Use targeted rediscovery when references are stale, evidence contradicts the
+   plan, or required information is missing. Start with symbol lookup and the
+   affected call path; broaden research only as needed to resolve the gap.
+   Correct the execution context before editing. With no supplied research,
+   search for the missing placement and dependency patterns with `gcode`.
 
 For package creation, module movement, cross-package dependencies, shared
 abstractions, or ownership changes, REQUIRED SKILL: repository-maintenance.

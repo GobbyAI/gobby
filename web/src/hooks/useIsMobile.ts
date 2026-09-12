@@ -75,6 +75,18 @@ export function useIsMobile(): boolean {
   return isMobile;
 }
 
+/**
+ * The tier preview stamps `data-pointer="coarse"` on the root (main.tsx,
+ * `?pointer=coarse`) so a desktop iframe behaves like a phone; the CSS
+ * `pointer-coarse` variant honours the same stamp.
+ */
+function isCoarsePointerForced(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.documentElement.dataset.pointer === "coarse"
+  );
+}
+
 function createCoarsePointerMediaQuery(): MediaQueryList | null {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function")
     return null;
@@ -91,11 +103,14 @@ export function useCoarsePointer(): boolean {
   const [mediaQuery] = useState<MediaQueryList | null>(
     createCoarsePointerMediaQuery,
   );
-  const [coarse, setCoarse] = useState(mediaQuery?.matches ?? false);
+  const [coarse, setCoarse] = useState(
+    (mediaQuery?.matches ?? false) || isCoarsePointerForced(),
+  );
 
   useEffect(() => {
     if (!mediaQuery) return;
-    const handler = (e: MediaQueryListEvent) => setCoarse(e.matches);
+    const handler = (e: MediaQueryListEvent) =>
+      setCoarse(e.matches || isCoarsePointerForced());
     mediaQuery.addEventListener("change", handler);
     return () => mediaQuery.removeEventListener("change", handler);
   }, [mediaQuery]);

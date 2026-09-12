@@ -542,7 +542,6 @@ async def test_context_limit_message_coordination_does_not_release_handoff_gate(
     ("plan_mode", "session_type", "source"),
     [
         pytest.param(True, "terminal", SessionSource.CLAUDE, id="plan-mode"),
-        pytest.param(False, "web_chat", SessionSource.CLAUDE, id="web-chat"),
         pytest.param(False, "terminal", SessionSource.PIPELINE, id="pipeline"),
     ],
 )
@@ -570,6 +569,30 @@ async def test_context_limit_skips_exempt_session_modes_and_sources(
     assert allowed.decision == "allow"
     if plan_mode:
         assert pressure.context is None
+
+
+@pytest.mark.asyncio
+async def test_context_limit_blocks_web_chat(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+
+    pressure = await handler._evaluate_rules(_arbitrary_after_tool_event(session_type="web_chat"))
+    blocked = await handler._evaluate_rules(_arbitrary_tool_event(session_type="web_chat"))
+    handoff = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            session_type="web_chat",
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="set_handoff",
+        )
+    )
+
+    assert "Context is 300k tokens" in (pressure.context or "")
+    assert blocked.decision == "block"
+    assert handoff.decision == "allow"
 
 
 @pytest.mark.asyncio

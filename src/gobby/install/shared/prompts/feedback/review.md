@@ -1,6 +1,6 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
-version: "4.0"
+version: "5.0"
 required_variables:
   - run_id
   - max_tasks
@@ -8,8 +8,10 @@ required_variables:
 You are reviewing structured feedback that coding agents recorded about the Gobby
 platform (its daemon, rules, MCP tools, and harness) while working. Cluster the
 observations, classify each cluster, and propose follow-up tasks only where the
-evidence supports one. You propose; deterministic code files the tasks — never
-assume a proposal is accepted.
+current evidence supports one. Verify concerns against current code, relevant git
+history, installed configuration, and existing tasks before requesting a task.
+Submit your findings through the feedback API for task creation and write a
+Markdown summary for the human reviewer.
 
 ## Observations
 
@@ -56,11 +58,11 @@ belongs to later runs. The reader is the authoritative source of observation IDs
    - `noise`: one-off, stale, or unactionable observations.
    - `praise`: `useful` observations worth keeping visible; never a task.
 3. Propose a task (`proposed_task`) only for `defect` and `guidance-gap` clusters
-   that are actionable now. Respect dispositions: a cluster whose observations
-   already have a ladder-compliant `fixed` or `filed-task` disposition gets
-   `proposed_task: null` — mention the existing resolution and any task refs like
-   `#12345` in `digest_note`. Treat an unclaimed or unlabeled `filed-task` ref as
-   unresolved; deterministic digest code verifies the task state. Propose at most
+   that you verified are actionable now. Treat `fixed` and `filed-task`
+   dispositions, existing tasks, and later commits as leads to inspect. Suppress
+   a concern only when current evidence shows it is resolved or an open task
+   already covers it. A previous fix can be incomplete or regress. Include the
+   concrete current check and result in `verification_evidence`. Propose at most
    {{ max_tasks }} tasks; prioritize by frequency and impact.
 4. Task titles must be imperative, specific, and self-contained (deterministic
    intake deduplicates them against open tasks by theme and attached
@@ -68,7 +70,12 @@ belongs to later runs. The reader is the authoritative source of observation IDs
    evidence: what happened, where, how often, and the suggested direction if the
    observations include one. Priority: 1 for recurring defects that block work,
    2 for the rest, 3 for minor polish.
-5. Write a one-or-two-sentence `digest_note` per cluster for the human digest:
+5. For every actionable cluster, inspect the relevant implementation and existing
+   tasks. Explain in its description what you checked and why the concern remains
+   valid. Existing closed tasks and later commits are leads to verify, not proof
+   that a concern was fixed. If you cannot establish validity, do not file it as a
+   verified defect; explain the uncertainty in the Markdown summary.
+6. Write a one-or-two-sentence `digest_note` per cluster for the human digest:
    what the cluster says and what, if anything, was proposed.
 
 ## Output
@@ -85,6 +92,7 @@ Produce exactly this JSON shape:
       "proposed_task": {
         "title": "Cache close-gate validation verdicts per evidence state",
         "description": "Two sessions observed …",
+        "verification_evidence": "Current code still calls validation on unchanged evidence; inspected the close handler and its tests.",
         "labels": ["feedback-review"],
         "priority": 1
       },
@@ -100,7 +108,13 @@ marked `llm-reviewed` and `awaiting-human-review`; a human removes the latter la
 after verification to make the task dispatchable. Do not add other keys. Do not
 invent observation ids, task refs, paths, or behavior beyond the evidence.
 
-Submit the compact JSON object as the exact `current_state` value in your
-`end_agent_run` handoff, with one nonblank `next_steps` item telling deterministic
-feedback intake to validate and apply the proposal. Do not wrap the JSON in
-Markdown or add commentary to `current_state`.
+Call `gobby-feedback:submit_review` with `run_id="{{ run_id }}"`, the JSON
+object above as `findings`, and your Markdown report as `summary_md`. The report
+should explain what you reviewed, which concerns remain valid and why, which were
+resolved or duplicates, and any uncertainty. The tool saves a standalone `.md`
+document; deterministic task intake appends actual task references and outcomes.
+This submission is independent of handoff. Fix any rejected submission and retry.
+
+Only after submission succeeds, end your agent run with a short completion status
+and the returned report path in `references`. Never put findings JSON or the
+Markdown report into `current_state` or any other handoff field.

@@ -32,30 +32,29 @@ pub struct Toast {
     pub target: Option<String>,
 }
 
-/// herdr `state_dot`: glyph plus colour for a roster row state.
-/// Attention "●" red, Working "●" yellow, Unseen "●" teal, Idle "○" green,
-/// Unknown "·" overlay0.
+/// Glyph plus colour for a roster row state, one shape per state so the
+/// rows read without colour: `▶` working (accent), `⍾` needs you (warning),
+/// `◆` unseen output (info), `○` idle, `◌` orphaned (destructive), `·`
+/// unknown.
 pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
-        RowState::Attention => ("●", p.red),
-        // The warning token: apart from the destructive magenta and the idle
-        // green in hue and lightness, and the dotted ring already means
-        // "detached" in the control indicators.
-        RowState::Orphaned => ("◌", p.peach),
-        RowState::Working => ("●", p.yellow),
-        RowState::Unseen => ("●", p.teal),
-        RowState::Idle => ("○", p.green),
+        RowState::Attention => ("⍾", p.peach),
+        RowState::Orphaned => ("◌", p.red),
+        RowState::Working => ("▶", p.accent),
+        RowState::Unseen => ("◆", p.teal),
+        RowState::Idle => ("○", p.overlay0),
         RowState::Unknown => ("·", p.overlay0),
     }
 }
 
-/// herdr `state_label`.
+/// herdr `state_label`: the word beside a row's glyph where a surface
+/// spells the state out.
 pub fn state_label(state: RowState) -> &'static str {
     match state {
-        RowState::Attention => "blocked",
+        RowState::Attention => "needs you",
         RowState::Orphaned => "orphaned",
         RowState::Working => "working",
-        RowState::Unseen => "done",
+        RowState::Unseen => "unseen",
         RowState::Idle | RowState::Unknown => "idle",
     }
 }
@@ -345,7 +344,7 @@ pub fn render_status_line<W: WorkspaceView>(
                 ));
             }
         }
-        None => spans.push(Span::styled(" no pane", base.fg(p.overlay1))),
+        None => spans.push(Span::styled(" No pane.", base.fg(p.overlay1))),
     }
     if let Some(name) = mode_name(chrome.mode) {
         spans.push(Span::styled(format!(" │ {name}"), base.fg(p.accent)));
@@ -357,7 +356,7 @@ pub fn render_status_line<W: WorkspaceView>(
         base.fg(p.subtext0),
     ));
     if !ws.daemon_ready() {
-        spans.push(Span::styled(" │ daemon unreachable", base.fg(p.red)));
+        spans.push(Span::styled(" │ Daemon unreachable.", base.fg(p.red)));
     }
     if let Some(message) = chrome.status_message.as_deref() {
         spans.push(Span::styled(format!(" │ {message}"), base.fg(p.subtext0)));

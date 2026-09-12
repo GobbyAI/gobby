@@ -933,6 +933,41 @@ class TestEnsureProjectJsonForIsolation:
         assert target_project_json.read_bytes() == original
         assert list(target_project_json.parent.glob(".project.json.*")) == []
 
+    async def test_cargo_checkout_links_shared_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Cargo isolated checkout gets a target symlink into the shared build dir."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+        repo = tmp_path / "repo"
+        (repo / ".gobby").mkdir(parents=True)
+        (repo / ".gobby" / "project.json").write_text('{"id": "proj-1", "name": "test"}')
+        target = tmp_path / "worktree"
+        target.mkdir()
+        (target / "Cargo.toml").write_text("[workspace]\n")
+
+        await ensure_project_json_for_isolation(repo, target)
+
+        link = target / "target"
+        assert link.is_symlink()
+        assert os.readlink(link) == str(tmp_path / "home" / "cache" / "cargo-target" / "proj-1")
+        assert link.is_dir()
+
+    async def test_non_cargo_checkout_gets_no_target_link(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A checkout without Cargo.toml is left without a target entry."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+        repo = tmp_path / "repo"
+        (repo / ".gobby").mkdir(parents=True)
+        (repo / ".gobby" / "project.json").write_text('{"id": "proj-1", "name": "test"}')
+        target = tmp_path / "worktree"
+        target.mkdir()
+
+        await ensure_project_json_for_isolation(repo, target)
+
+        assert not (target / "target").exists()
+        assert not (target / "target").is_symlink()
+
 
 class TestBuildAndSetProjectContext:
     """Tests for _build_and_set_project_context helper."""

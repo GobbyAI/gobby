@@ -8,12 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
+from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdict
+from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
+from tests.mcp_proxy.tools.close_review_test_support import complete_valid_close_review
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
@@ -62,17 +64,7 @@ def _stub_checkout_resolvers() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
             return_value=_checkout_session_manager(),
         ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.check_linked_committed_bundled_manifest",
-            return_value=None,
-        ),
     ):
-        yield
-
-
-@pytest.fixture(autouse=True)
-def _committed_manifest_is_current() -> Iterator[None]:
-    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
         yield
 
 
@@ -106,12 +98,63 @@ def create_task_registry(
             criteria=(),
             feedback="Every criterion is satisfied by admissible evidence.",
         )
+        validator.prepare_task_review = MagicMock(
+            side_effect=lambda **kwargs: PreparedCloseReview(
+                prompt="prompt",
+                criteria=(kwargs["validation_criteria"],),
+                prompt_chars=1_024,
+                prompt_limit=256_000,
+                review_fingerprint="close",
+                evidence_fingerprint="evidence",
+                diff_sha="diff",
+                test_bodies_sha="tests",
+                stable_facts={},
+                manifest_count=1,
+                excerpt_chars=10,
+            )
+        )
         kwargs["task_validator_resolver"] = lambda: validator
     with patch(
         "gobby.mcp_proxy.tools.tasks._context.SessionManager",
         return_value=_checkout_session_manager(),
     ):
         return _create_task_registry(task_manager, *args, **kwargs)
+
+
+def _resolve_sha(sha: str, cwd: str | None = None) -> str | None:
+    return None if sha == "bad-sha" else sha
+
+
+@pytest.fixture(autouse=True)
+def _linked_commits_exist() -> Iterator[None]:
+    """Close gates read linked commits through daemon Git; every SHA but bad-sha resolves."""
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation.normalize_commit_sha",
+            side_effect=_resolve_sha,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
+            side_effect=_resolve_sha,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
+            return_value=set(),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.collect_commit_paths",
+            return_value=set(),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
+            return_value=(([], []), None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.unlinked_tagged_commits",
+            return_value=(([], []), None),
+        ),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -130,6 +173,7 @@ def _disable_validation_backoff_storage() -> Iterator[None]:
             ".TaskCloseReviewStore.get_active_for_task",
             return_value=None,
         ),
+        patch.object(close_tool, "launch_close_review", new=complete_valid_close_review),
     ):
         yield
 
@@ -455,11 +499,10 @@ class TestCloseTaskTool:
         (tmp_path / "repo").mkdir()
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
             patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
+                side_effect=_resolve_sha,
+            ) as mock_norm,
             patch(
                 "gobby.mcp_proxy.tools.task_repo_paths.require_root",
                 return_value=expected_repo_path,
@@ -472,7 +515,6 @@ class TestCloseTaskTool:
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = MagicMock()
             MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
 
             # Build the registry inside the patch so RegistryContext picks up
             # the mocked LocalProjectManager.
@@ -491,9 +533,11 @@ class TestCloseTaskTool:
             )
 
             assert result["closed"] is True
-            call_args = mock_task_manager.link_commit.call_args
-            assert call_args[0] == ("550e8400-e29b-41d4-a716-446655440000", "new-commit")
-            assert call_args.kwargs["cwd"] == expected_repo_path
+            # The SHA resolves against the task repository before the manager links it.
+            mock_norm.assert_any_call("new-commit", cwd=expected_repo_path)
+            assert mock_task_manager.link_commit.call_args == call(
+                "550e8400-e29b-41d4-a716-446655440000", "new-commit"
+            )
 
             close_call = mock_task_manager.close_task.call_args
             assert close_call[0] == ("550e8400-e29b-41d4-a716-446655440000",)
@@ -1125,11 +1169,6 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command", return_value="abc123"),
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
         ):
             MockSessionTaskManager.return_value = MagicMock()
 
@@ -1153,12 +1192,14 @@ class TestCloseTaskTool:
                     concurrent_uuid: ["src/concurrent.py"],
                 },
             }
+            owner_reads: list[str] = []
+
+            def _owner_vars(session_id: str) -> dict[str, Any]:
+                owner_reads.append(session_id)
+                return initial_owner_vars if len(owner_reads) == 1 else fresh_owner_vars
+
             mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.side_effect = [
-                initial_owner_vars,
-                fresh_owner_vars,
-                fresh_owner_vars,
-            ]
+            mock_sv_manager.get_variables.side_effect = _owner_vars
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
@@ -1189,11 +1230,9 @@ class TestCloseTaskTool:
             )
 
         assert "error" not in result
-        assert mock_sv_manager.get_variables.call_args_list == [
-            call("owner-session"),
-            call("owner-session"),
-            call("owner-session"),
-        ]
+        # Every read targets the owner, and the merge below proves the last read was fresh.
+        assert len(owner_reads) >= 2
+        assert set(owner_reads) == {"owner-session"}
         mock_sv_manager.merge_variables.assert_called_once_with(
             "owner-session",
             {
@@ -1498,9 +1537,7 @@ class TestSessionVariableMirroring:
             mock_task.seq_num = 300
             mock_task.status = "in_progress"
             mock_task.claimed_by_session_id = "test-session"
-            mock_task_manager.create_task_with_decomposition.return_value = {
-                "task": {"id": task_uuid},
-            }
+            mock_task_manager.create_task_for_agent.return_value = mock_task
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.claim_task.return_value = mock_task
 

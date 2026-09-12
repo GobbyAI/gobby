@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
 from gobby.agents import spawn_executor_support
-from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
+from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, UV_CACHE_DIR
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import (
@@ -1894,6 +1894,7 @@ class TestExecuteSpawnSandbox:
         env_vars = {
             "GOBBY_SESSION_ID": "child/session:one",
             UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-one",
+            CARGO_TARGET_DIR: "/shared/cargo-target/proj",
         }
         config = SandboxConfig(enabled=True, extra_write_paths=["/already-allowed"])
 
@@ -1908,6 +1909,7 @@ class TestExecuteSpawnSandbox:
         assert "/already-allowed" in resolved.extra_write_paths
         assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
         assert env_vars[CARGO_HOME] in resolved.extra_write_paths
+        assert "/shared/cargo-target/proj" in resolved.extra_write_paths
         assert hook_inbox_dir() in resolved.extra_write_paths
         assert managed_tool_bin_dir() not in resolved.extra_write_paths
         assert config.extra_write_paths == ["/already-allowed"]

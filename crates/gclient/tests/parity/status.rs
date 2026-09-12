@@ -58,13 +58,17 @@ parity_tests! {
             let palette = palette();
             // herdr (AgentState, seen) pairs map onto gclient RowState:
             // Blocked -> Attention, Working -> Working, Idle unseen -> Unseen,
-            // Idle seen -> Idle, Unknown -> Unknown.
+            // Idle seen -> Idle, Unknown -> Unknown. herdr's `●` in three
+            // colours is gclient's one distinct glyph per state: `⍾` needs
+            // you (warning), `▶` working (accent), `◆` unseen (info), `○`
+            // idle, `·` unknown, `◌` orphaned (destructive).
             for (state, symbol, color) in [
-                (RowState::Attention, "●", palette.red),
-                (RowState::Working, "●", palette.yellow),
-                (RowState::Unseen, "●", palette.teal),
-                (RowState::Idle, "○", palette.green),
+                (RowState::Attention, "⍾", palette.peach),
+                (RowState::Working, "▶", palette.accent),
+                (RowState::Unseen, "◆", palette.teal),
+                (RowState::Idle, "○", palette.overlay0),
                 (RowState::Unknown, "·", palette.overlay0),
+                (RowState::Orphaned, "◌", palette.red),
             ] {
                 let (actual_symbol, actual_color) = state_dot(state, &palette);
                 assert_eq!(actual_symbol, symbol);

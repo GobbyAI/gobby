@@ -31,7 +31,7 @@ from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -3492,6 +3492,7 @@ class TestHooksEndpoints:
             "hook_type": "session-start",
             "source": "claude",
             "input_data": {"session_id": "claude-envelope"},
+            "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
     def test_execute_hook_rejects_unsupported_source(
@@ -3550,6 +3551,7 @@ class TestHooksEndpoints:
             "hook_type": "PreToolUse",
             "source": "droid",
             "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+            "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
     @pytest.mark.parametrize(
@@ -4248,7 +4250,11 @@ class TestHooksEndpoints:
             "retry_kind": "ingress_backpressure",
             "reason": reason,
         }
-        release.assert_called_once_with(envelope_id)
+        # The retry path releases for the caller, then request teardown
+        # releases again as a CAS on the lease this execution owned.
+        assert release.call_args_list[0] == call(envelope_id)
+        assert len(release.call_args_list) == 2
+        assert set(release.call_args_list[1].kwargs) == {"owner_token"}
         mark_processed.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -4385,6 +4391,7 @@ class TestHooksEndpoints:
             "hook_type": "SessionStart",
             "source": "codex",
             "input_data": {"session_id": "test-123", "cwd": "/tmp"},
+            "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
     def test_execute_hook_codex_root_cwd_project_miss_logs_debug(
@@ -4494,6 +4501,7 @@ class TestHooksEndpoints:
             "hook_type": "SessionStart",
             "source": "codex",
             "input_data": {"session_id": "test-envelope", "cwd": "/tmp"},
+            "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
     def test_execute_hook_rejects_unsupported_envelope_schema_version(
@@ -4604,11 +4612,13 @@ class TestHooksEndpoints:
                 "hook_type": "post-tool-use",
                 "source": "claude",
                 "input_data": {"tool_name": "Bash"},
+                "_enqueued_at": "2026-04-16T12:00:00Z",
             },
             {
                 "hook_type": "post-tool-use",
                 "source": "claude",
                 "input_data": {"tool_name": "Bash"},
+                "_enqueued_at": "2026-04-16T12:00:00Z",
             },
         ]
 

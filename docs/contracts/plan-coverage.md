@@ -214,6 +214,48 @@ the defining one), and dynamic access by string that does not spell the bare
 name. The `plan-draft` consumer sweep covers these with literal `gcode grep`
 evidence.
 
+## Research Context
+
+Every deliverable's implementation specification includes a **Research context:**
+block before `**Acceptance:**`, proportional to the work. Capture findings during exploration
+and carry them into the owning section as the plan develops:
+
+- Observed existing behavior and entry points, with file paths and exact indexed
+  qualified symbols. Explicitly label proposed symbols as new.
+- Relevant call paths, consumers, reusable helpers, and test fixtures, including
+  read-only dependencies and the contracts they supply.
+- The chosen approach, constraints, and consequential rejected alternatives with
+  their reasons. Preserve decisions that would otherwise need rediscovery.
+- Focused verification commands and expected outcomes. Label checks already run
+  and their observed results separately from planned checks; planned success is
+  not evidence of a passing run.
+
+Approximate line locations are optional navigation hints, clearly labeled and
+kept outside `Targets:`. End the contiguous inventory with a blank line before
+the research block. Read-only references belong in research prose; changes and
+consumer coverage still follow the existing Target Inventory rules. Do not use
+change-intent wording for a dependency that is only being inspected.
+
+Each section must stand alone: copy necessary shared findings from framing,
+constraints, or sibling sections into every owning deliverable. Expansion copies
+the section body into the leaf description; context left only elsewhere is not
+part of that leaf's implementation specification. Preserve useful conclusions
+and evidence, without dumping search transcripts.
+
+Drafting verification and qualitative review check whether an executor can locate
+the work and understand the approach from the section alone. A heading or a list
+of paths is insufficient: findings must name the concrete missing reference,
+behavior, decision, or verification detail and its implementation consequence.
+This is an authoring and review requirement, with no new parser grammar, storage
+field, or deterministic validation gate.
+
+Executors read this context, inspect referenced symbols, and check relevant
+changes first. When it still matches the code, proceed with the supplied approach
+and focused verification. Stale references, contradictory evidence, or missing
+required information trigger targeted rediscovery, broadening only as needed.
+Correct the execution context before edits; approximate line hints never replace
+symbol identity or verification against the current checkout.
+
 ## Deferrals
 
 `kind: deferred`
@@ -344,6 +386,26 @@ grandfather state or legacy classification files under `src/gobby/install/shared
 is a contract violation and must fail pre-flight validation.
 
 ## Task Manifest
+
+### Leaf Granularity
+
+The plan author owns leaf sizing. Each deliverable must have one independently
+verifiable outcome; the decomposition pass in `plan-draft`'s
+`references/task-structure.md` applies before review and after scope revisions.
+More than 6 acceptance items, more than 6 distinct hand-maintained production
+Target files, or 2 independently testable state machines/lifecycle owners
+trigger a recorded **Granularity:** decision. These are qualitative inspection
+triggers, not parser limits or runtime estimates. Independently closeable parts
+must become separate deliverable sections even below those counts.
+
+Preserve every acceptance obligation, give split items IDs under their new
+owning sections, order shared Targets, and re-derive the manifest through the
+normal approval path. Expansion preserves the 1:1 section/entry/leaf invariant;
+it does not split a section. Deterministic validation checks grammar and
+coverage, while authoring and qualitative review check atomicity. Optional
+review does not exempt the author from the decomposition pass.
+
+### Manifest Format
 
 Implementation plans carry a single `## M1 Task Manifest` section at the end of
 the document. The manifest is the typed bridge between the plan's deliverable

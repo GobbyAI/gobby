@@ -12,6 +12,10 @@ with:
 - observable acceptance and validation criteria;
 - task type, category, and implementation domain where required;
 - dependencies, risks, and explicit exclusions.
+- proportional Research context: observed behavior and file-qualified symbols,
+  relevant consumers/helpers/fixtures, chosen approach and consequential rejected
+  alternatives, and focused commands with observed versus planned outcomes.
+  Label new symbols and optional approximate line hints; keep hints outside Targets.
 
 Load the existing `tasks` workflow and hand the contract to that workflow as the
 real implementation task. Create no plan file, plan registry row, manifest, or

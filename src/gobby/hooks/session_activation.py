@@ -422,7 +422,9 @@ def _baseline_updates(
     if "baseline_dirty_files" not in variables:
         from gobby.workflows.git_utils import GIT_STATUS_UNAVAILABLE_MARKER
 
-        log.debug("Deferring baseline dirty-file sampling to async workflow evaluation")
+        # Hooks never sample git status; only the sessions capture-baseline tool
+        # replaces this marker with a real list.
+        log.debug("Marking baseline dirty files unsampled for session activation")
         updates["baseline_dirty_files"] = [GIT_STATUS_UNAVAILABLE_MARKER]
     if "session_edited_files" not in variables:
         updates["session_edited_files"] = []

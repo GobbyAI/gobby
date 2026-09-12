@@ -1,30 +1,43 @@
 // upstream: herdr v0.8.0 src/ui/sidebar.rs
-//! Sidebar row models: project cards with their worktree rows, and agent
-//! rows, plus the line builders the sidebar and navigator share.
+//! Sidebar row models: machine rows, project cards with their worktree
+//! rows, and session rows, plus the line builders the sidebar and navigator
+//! share.
 //!
 //! Ported from herdr `resolved_token_spans`: a state glyph plus text tokens
 //! joined by `" "` after the glyph and `" · "` elsewhere; trailing tokens
-//! drop from the right before the title truncates. Project cards follow
-//! herdr's workspace cards (`src/client/shell/sidebar.rs`): name on the
-//! first line, branch and git counts on the second.
+//! drop from the right before the title truncates. Project cards are one
+//! line: the name, then the branch and git counts in parentheses, dropped
+//! whole before the name truncates.
 
 use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
+use crate::ui::sidebar::machine_admits;
 use crate::ui::status::{control_indicator, state_dot, state_label, state_label_color};
 use crate::ui::text::{display_width, truncate_end};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthChar;
+
+/// Render ticks per cell the ticker moves (about eight frames a cell).
+pub const TICKER_STEP: u64 = 8;
+/// Cells' worth of ticks the ticker rests at either end of its run.
+pub const TICKER_PAUSE: u64 = 12;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RowKind {
-    /// A project card: two lines, the name then the branch.
+    /// A project card: one line, the name then the branch.
     #[default]
     Project,
     /// A worktree row indented under its project card.
     Worktree,
-    /// An agent row in the agents section.
+    /// A session, agent run or bare terminal row: two lines.
     Agent,
+    /// A machine row: one line.
+    Machine,
+    /// A project sub-heading of the all-projects sessions list: one dim
+    /// line, not clickable.
+    Group,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -33,19 +46,23 @@ pub struct SidebarRow {
     pub label: String,
     pub kind: RowKind,
     pub state: RowState,
-    /// The task ref of a worktree row.
+    /// The task ref of a worktree row; a machine row's `local`/`all` mark.
     pub detail: String,
-    /// An agent row's second line: provider, model, task ref, tab, and
+    /// An agent row's second line: provider, model, task ref or tab, and
     /// remote machine, empties already elided.
     pub tokens: Vec<String>,
-    /// The project card's second line: its checkout branch, `~` without one.
+    /// The project card's branch, `~` without one.
     pub branch: Option<String>,
     pub ahead: u32,
     pub behind: u32,
-    /// `Some(collapsed)` on a project card that has worktrees, which draws the
-    /// `▸`/`▾` toggle at its right edge.
+    /// `Some(expanded)` on a project card that has worktrees, which draws
+    /// the `▾`/`▸` toggle at its right edge.
     pub group: Option<bool>,
-    /// The last worktree row under its card (`└─` instead of `├─`).
+    /// A row drawn under a parent with a `├─`/`└─` prefix: a worktree
+    /// under its card, an agent run under the session that spawned it, a
+    /// machine under the hub.
+    pub nested: bool,
+    /// The last nested row under its parent (`└─` instead of `├─`).
     pub last_child: bool,
     pub selected: bool,
     /// A project card: the focused project. An agent row: the focused pane
@@ -55,18 +72,15 @@ pub struct SidebarRow {
 }
 
 impl SidebarRow {
-    /// Screen lines the row takes: a project card and an agent row are two,
-    /// a worktree row one.
+    /// Screen lines the row takes: an agent row is two, the rest one.
     pub fn height(&self) -> u16 {
         match self.kind {
-            RowKind::Project | RowKind::Agent => 2,
-            RowKind::Worktree => 1,
+            RowKind::Agent => 2,
+            RowKind::Project | RowKind::Worktree | RowKind::Machine | RowKind::Group => 1,
         }
     }
 }
 
-/// Project cards in the user's order, each followed by its worktree rows
-/// unless the card is collapsed; `selected` indexes this flat list.
 /// The card label of `project_id`: the user's label when one is set, else
 /// the daemon's name; `None` for a project the sidebar does not list.
 pub fn project_label<W: WorkspaceView>(
@@ -89,14 +103,13 @@ pub fn project_label<W: WorkspaceView>(
     )
 }
 
+/// Project cards in the user's order, the expanded card followed by its
+/// worktree rows; `selected` indexes this flat list.
 pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
     let focused = ws.focused_project();
     let mut rows = Vec::new();
-    for project in ordered_projects(&ws.sidebar().projects, &chrome.sidebar.project_order) {
-        let collapsed = chrome
-            .sidebar
-            .collapsed_projects
-            .contains(&project.project_id);
+    for project in listed_projects(ws, chrome) {
+        let expanded = chrome.sidebar.is_expanded(&project.project_id);
         rows.push(SidebarRow {
             id: project.project_id.clone(),
             label: chrome
@@ -110,11 +123,11 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
             branch: Some(project.branch.clone().unwrap_or_else(|| "~".to_string())),
             ahead: project.ahead.unwrap_or(0),
             behind: project.behind.unwrap_or(0),
-            group: (!project.worktrees.is_empty()).then_some(collapsed),
+            group: (!project.worktrees.is_empty()).then_some(expanded),
             active: focused == Some(project.project_id.as_str()),
             ..SidebarRow::default()
         });
-        if collapsed {
+        if !expanded {
             continue;
         }
         let count = project.worktrees.len();
@@ -133,6 +146,7 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                     kind: RowKind::Worktree,
                     state: worktree.state,
                     detail: worktree.task_ref.clone().unwrap_or_default(),
+                    nested: true,
                     last_child: index + 1 == count,
                     ..SidebarRow::default()
                 }),
@@ -145,13 +159,42 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
 }
 
 /// Project ids as the sidebar lists them: the saved order first, the rest
-/// after in model order. Index-based project actions and drag reorders go
-/// by this list.
+/// after in model order, under the working filter. Index-based project
+/// actions and drag reorders go by this list.
 pub fn displayed_project_ids<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<String> {
-    ordered_projects(&ws.sidebar().projects, &chrome.sidebar.project_order)
+    listed_projects(ws, chrome)
         .into_iter()
         .map(|project| project.project_id.clone())
         .collect()
+}
+
+/// The projects the section lists, in the user's order: every project
+/// under the `all` filter; under `working`, the focused one and those with
+/// a live entry the machine filter admits, or every project when none
+/// qualifies.
+pub fn listed_projects<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Vec<&'a ProjectEntry> {
+    let model = ws.sidebar();
+    let ordered = ordered_projects(&model.projects, &chrome.sidebar.project_order);
+    if chrome.sidebar.all_projects {
+        return ordered;
+    }
+    let focused = ws.focused_project();
+    let working: Vec<&ProjectEntry> = ordered
+        .iter()
+        .copied()
+        .filter(|project| {
+            focused == Some(project.project_id.as_str())
+                || model.agents.iter().any(|agent| {
+                    agent.project_id == project.project_id
+                        && machine_admits(ws, chrome, &agent.machine_id)
+                })
+        })
+        .collect();
+    if working.is_empty() {
+        ordered
+    } else {
+        working
+    }
 }
 
 /// `projects` with the ones `order` names first, in that order, and the
@@ -191,12 +234,23 @@ pub(crate) fn attention_kind(entry_id: &str) -> &str {
     entry_id.split_once(':').map_or("prompt", |(kind, _)| kind)
 }
 
+/// The `├─ `/`└─ ` prefix of a nested row, empty on a top-level one.
+fn nest_prefix(row: &SidebarRow) -> &'static str {
+    match (row.nested, row.last_child) {
+        (false, _) => "",
+        (true, false) => "├─ ",
+        (true, true) => "└─ ",
+    }
+}
+
 /// The first rendered line of `row` at `width` columns. A project card is
-/// `{marker}{dot} {name}` with the group toggle at the right edge; a
-/// worktree row is `{marker}  ├─ {dot} {branch} · {task}` with the prefix in
-/// `overlay0` so the branch sits under its card's name; an agent row is the
-/// herdr composition: state dot, the label always bold, trailing state
-/// label, with its tokens on `row_second_line`.
+/// `{marker}{dot} {name} ({branch} ↑a ↓b)` with the group toggle at the
+/// right edge; a worktree row is `{marker}  ├─ {dot} {branch} · {task}`
+/// with the prefix in `overlay0` so the branch sits under its card's name;
+/// a machine row is the same shape without the indent; an agent row is the
+/// herdr composition: state dot, the label always bold, `needs you` after
+/// a blocked one, with its tokens on `row_second_line`; a group row is the
+/// dim project name and a rule.
 pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     let p = &chrome.palette;
     let (glyph, glyph_color) = state_dot(row.state, p);
@@ -217,20 +271,15 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
     let detail_style = Style::default()
         .fg(if row.selected { p.mauve } else { p.overlay0 })
         .add_modifier(Modifier::DIM);
+    let prefix_style = Style::default().fg(p.overlay0);
     let marker = if row.selected { "▸" } else { " " };
     let mut spans = vec![Span::styled(marker, marker_style)];
     let budget = usize::from(width).saturating_sub(1);
     match row.kind {
         RowKind::Project => {
-            let toggle = row.group.map(|collapsed| if collapsed { "▸" } else { "▾" });
+            let toggle = row.group.map(|expanded| if expanded { "▾" } else { "▸" });
             let name_budget = budget.saturating_sub(if toggle.is_some() { 2 } else { 0 });
-            spans.extend(fitted_spans(
-                glyph,
-                (&row.label, title_style),
-                &[],
-                p,
-                name_budget,
-            ));
+            spans.extend(card_spans(row, glyph, title_style, p, name_budget));
             if let Some(toggle) = toggle {
                 let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
                 let pad = usize::from(width).saturating_sub(used + 1);
@@ -241,12 +290,20 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
         RowKind::Worktree => {
             // Two cells after the marker so the branch sits under the card's
             // name (marker, dot, space, name).
-            let prefix = if row.last_child {
-                "  └─ "
-            } else {
-                "  ├─ "
-            };
-            spans.push(Span::styled(prefix, Style::default().fg(p.overlay0)));
+            let prefix = format!("  {}", nest_prefix(row));
+            let prefix_width = display_width(&prefix);
+            spans.push(Span::styled(prefix, prefix_style));
+            spans.extend(fitted_spans(
+                glyph,
+                (&row.label, title_style),
+                &[(row.detail.as_str(), detail_style)],
+                p,
+                budget.saturating_sub(prefix_width),
+            ));
+        }
+        RowKind::Machine => {
+            let prefix = nest_prefix(row);
+            spans.push(Span::styled(prefix, prefix_style));
             spans.extend(fitted_spans(
                 glyph,
                 (&row.label, title_style),
@@ -256,71 +313,170 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
             ));
         }
         RowKind::Agent => {
+            let prefix = nest_prefix(row);
+            spans.push(Span::styled(prefix, prefix_style));
+            let budget = budget.saturating_sub(display_width(prefix));
             let label_style = Style::default()
                 .fg(state_label_color(row.state, p))
                 .add_modifier(Modifier::DIM);
+            let mut trailing: Vec<(&str, Style)> = (row.state == RowState::Attention)
+                .then(|| (state_label(row.state), label_style))
+                .into_iter()
+                .collect();
+            let label = if row.active || row.selected {
+                // As on every row, the word drops before the title loses a
+                // cell; a title over-long even alone tickers instead.
+                if display_width(&row.label) > title_budget(&trailing, budget) {
+                    trailing.clear();
+                }
+                ticker_window(&row.label, title_budget(&trailing, budget), chrome.ticker)
+            } else {
+                row.label.clone()
+            };
             spans.extend(fitted_spans(
                 glyph,
-                (&row.label, title_style),
-                &[(state_label(row.state), label_style)],
+                (&label, title_style),
+                &trailing,
                 p,
                 budget,
             ));
+        }
+        RowKind::Group => {
+            let style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+            let name = truncate_end(&row.label, budget.saturating_sub(2));
+            let rule = budget.saturating_sub(display_width(&name) + 1);
+            spans.push(Span::styled(name, style));
+            spans.push(Span::styled(format!(" {}", "─".repeat(rule)), style));
         }
     }
     Line::from(spans)
 }
 
-/// A project card's second line: the branch under the name, then ` ↑n` in
-/// the success role and ` ↓m` in the warning role when either count is set.
-/// The branch is `mauve` on the focused project and `overlay0` elsewhere.
-/// An agent row's second line: its tokens under the label, ` · ` apart, in
-/// herdr's dim `overlay0` agent style, dropped from the right as the width
-/// runs out.
-pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
-    let p = &chrome.palette;
-    if row.kind == RowKind::Agent {
-        let Some((first, rest)) = row.tokens.split_first() else {
-            return Line::default();
-        };
-        let token_style = Style::default()
-            .fg(if row.selected { p.mauve } else { p.overlay0 })
-            .add_modifier(Modifier::DIM);
-        let rest: Vec<(&str, Style)> = rest
-            .iter()
-            .map(|token| (token.as_str(), token_style))
-            .collect();
-        // One blank for the marker column, then the glyph column blank, so
-        // the tokens start under the label (herdr's three-cell indent).
-        let mut spans = vec![Span::raw(" ")];
-        spans.extend(fitted_spans(
-            (" ", token_style),
-            (first, token_style),
-            &rest,
-            p,
-            usize::from(width).saturating_sub(1),
-        ));
-        return Line::from(spans);
-    }
+/// A project card's glyph, name and `(branch ↑a ↓b)`: the parenthetical
+/// goes whole when it does not fit beside the whole name, and the name
+/// truncates only once it stands alone. The branch is `mauve` on the
+/// focused project and `overlay0` elsewhere; ` ↑n` is the success role
+/// and ` ↓m` the warning role.
+fn card_spans(
+    row: &SidebarRow,
+    glyph: (&str, Style),
+    title_style: Style,
+    p: &Palette,
+    max_width: usize,
+) -> Vec<Span<'static>> {
+    let paren_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
     let branch_style = Style::default().fg(if row.active { p.mauve } else { p.overlay0 });
-    let mut counts: Vec<Span<'a>> = Vec::new();
+    let mut paren = vec![
+        Span::styled(" (", paren_style),
+        Span::styled(
+            row.branch.clone().unwrap_or_else(|| "~".into()),
+            branch_style,
+        ),
+    ];
     if row.ahead > 0 {
-        counts.push(Span::styled(
+        paren.push(Span::styled(
             format!(" ↑{}", row.ahead),
             Style::default().fg(p.green),
         ));
     }
     if row.behind > 0 {
-        counts.push(Span::styled(
+        paren.push(Span::styled(
             format!(" ↓{}", row.behind),
             Style::default().fg(p.red),
         ));
     }
-    let counts_width: usize = counts.iter().map(|span| display_width(&span.content)).sum();
-    let budget = usize::from(width).saturating_sub(3 + counts_width);
-    let branch = truncate_end(row.branch.as_deref().unwrap_or("~"), budget);
-    let mut spans = vec![Span::raw("   "), Span::styled(branch, branch_style)];
-    spans.extend(counts);
+    paren.push(Span::styled(")", paren_style));
+    let paren_width: usize = paren.iter().map(|span| display_width(&span.content)).sum();
+    let head = display_width(glyph.0) + 1;
+    let mut spans = fitted_spans(glyph, (&row.label, title_style), &[], p, max_width);
+    if head + display_width(&row.label) + paren_width <= max_width {
+        spans.extend(paren);
+    }
+    spans
+}
+
+/// The cells `fitted_spans` leaves the title beside `trailing` in
+/// `max_width`: after the glyph, its blank, and every trailing token.
+fn title_budget(trailing: &[(&str, Style)], max_width: usize) -> usize {
+    let tokens: usize = trailing
+        .iter()
+        .filter(|(text, _)| !text.is_empty())
+        .map(|(text, _)| 3 + display_width(text))
+        .sum();
+    max_width.saturating_sub(2 + tokens)
+}
+
+/// The `budget`-cell window of `text` the ticker shows at `ticker`: the
+/// whole text while it fits, else a slice that rests at the start for
+/// `TICKER_PAUSE` steps, walks one cell per `TICKER_STEP` ticks to the end,
+/// rests, and walks back; at tick 0 it is the start of the text. Under
+/// four cells nothing scrolls and the caller's truncation applies.
+pub fn ticker_window(text: &str, budget: usize, ticker: u64) -> String {
+    let width = display_width(text);
+    if width <= budget || budget < 4 {
+        return text.to_string();
+    }
+    let travel = (width - budget) as u64;
+    let step = ticker / TICKER_STEP;
+    let period = 2 * (travel + TICKER_PAUSE);
+    let phase = step % period;
+    let offset = if phase < TICKER_PAUSE {
+        0
+    } else if phase < TICKER_PAUSE + travel {
+        phase - TICKER_PAUSE
+    } else if phase < 2 * TICKER_PAUSE + travel {
+        travel
+    } else {
+        travel - (phase - 2 * TICKER_PAUSE - travel)
+    };
+    let mut skipped = 0;
+    let mut taken = 0;
+    let mut window = String::new();
+    for ch in text.chars() {
+        let cell = ch.width().unwrap_or(0);
+        if skipped < offset as usize {
+            skipped += cell;
+            continue;
+        }
+        if taken + cell > budget {
+            break;
+        }
+        taken += cell;
+        window.push(ch);
+    }
+    window
+}
+
+/// An agent row's second line: its tokens under the label, ` · ` apart, in
+/// herdr's dim `overlay0` agent style, dropped from the right as the width
+/// runs out; a nested row keeps its prefix width. Every other row has one
+/// line.
+pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
+    let p = &chrome.palette;
+    if row.kind != RowKind::Agent {
+        return Line::default();
+    }
+    let Some((first, rest)) = row.tokens.split_first() else {
+        return Line::default();
+    };
+    let token_style = Style::default()
+        .fg(if row.selected { p.mauve } else { p.overlay0 })
+        .add_modifier(Modifier::DIM);
+    let rest: Vec<(&str, Style)> = rest
+        .iter()
+        .map(|token| (token.as_str(), token_style))
+        .collect();
+    // One blank for the marker column and the prefix, then the glyph column
+    // blank, so the tokens start under the label (herdr's three-cell indent).
+    let indent = 1 + display_width(nest_prefix(row));
+    let mut spans = vec![Span::raw(" ".repeat(indent))];
+    spans.extend(fitted_spans(
+        (" ", token_style),
+        (first, token_style),
+        &rest,
+        p,
+        usize::from(width).saturating_sub(indent),
+    ));
     Line::from(spans)
 }
 
@@ -369,184 +525,5 @@ pub fn fitted_spans(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::Workspace;
-    use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
-    use crate::ui::sidebar::agent_rows;
-    use serde_json::json;
-
-    fn scripted_workspace() -> Workspace {
-        let mut ws = Workspace::scripted();
-        let project = |id: &str, name: &str| ProjectRow {
-            id: id.to_string(),
-            name: name.to_string(),
-            display_name: name.to_string(),
-            checkout: Some(Checkout {
-                machine_id: "local".to_string(),
-                root_path: format!("/repos/{name}"),
-            }),
-            ..ProjectRow::default()
-        };
-        ws.daemon_mut().set_sidebar_rows(SidebarRows {
-            projects: vec![project("proj-alpha", "alpha"), project("proj-beta", "beta")],
-            statuses: [(
-                "proj-alpha".to_string(),
-                SourceStatus {
-                    current_branch: Some("main".to_string()),
-                    ahead: Some(2),
-                    behind: Some(1),
-                    ..SourceStatus::default()
-                },
-            )]
-            .into_iter()
-            .collect(),
-            worktrees: vec![WorktreeRow {
-                id: "wt-1".to_string(),
-                project_id: "proj-alpha".to_string(),
-                task_id: Some("#123".to_string()),
-                branch_name: "worktree/feature".to_string(),
-                worktree_path: "/repos/alpha/.worktrees/feature".to_string(),
-                status: "active".to_string(),
-                workspace_role: "task".to_string(),
-                ..WorktreeRow::default()
-            }],
-            ..SidebarRows::default()
-        });
-        ws.daemon_mut().set_roster(json!({
-            "epoch": "e1",
-            "seq": 1,
-            "entries": [{
-                "entry_id": "run:term-alpha",
-                "terminal": {"terminal_id": "term-alpha", "backend": "native"},
-                "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
-            }]
-        }));
-        ws.select_project("proj-alpha");
-        ws.reconcile_subscribe_first().unwrap();
-        ws.open_terminal("term-alpha", "native", "epoch").unwrap();
-        ws.open_terminal("term-beta", "native", "epoch").unwrap();
-        ws
-    }
-
-    fn line_text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
-    #[test]
-    fn project_rows_follow_the_saved_order_and_hide_collapsed_worktrees() {
-        let ws = scripted_workspace();
-        let mut chrome = Chrome::dark();
-        chrome.sidebar.selected = 1;
-        let rows = project_rows(&ws, &chrome);
-        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-        assert_eq!(ids, ["proj-alpha", "wt-1", "proj-beta"]);
-        assert_eq!(rows[0].kind, RowKind::Project);
-        assert_eq!(rows[0].branch.as_deref(), Some("main"));
-        assert_eq!((rows[0].ahead, rows[0].behind), (2, 1));
-        assert_eq!(rows[0].group, Some(false));
-        assert!(rows[0].active && !rows[0].selected);
-        assert_eq!(rows[1].kind, RowKind::Worktree);
-        assert_eq!(rows[1].label, "feature");
-        assert_eq!(rows[1].detail, "#123");
-        assert!(rows[1].last_child && rows[1].selected);
-        assert_eq!(rows[2].branch.as_deref(), Some("~"));
-        assert_eq!(rows[2].group, None);
-        assert!(!rows[2].active);
-
-        chrome.sidebar.project_order = vec!["proj-beta".to_string()];
-        chrome
-            .sidebar
-            .collapsed_projects
-            .insert("proj-alpha".to_string());
-        let rows = project_rows(&ws, &chrome);
-        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-        assert_eq!(ids, ["proj-beta", "proj-alpha"]);
-        assert_eq!(rows[1].group, Some(true));
-    }
-
-    #[test]
-    fn agent_rows_point_at_their_terminal() {
-        let ws = scripted_workspace();
-        let rows = agent_rows(&ws, &Chrome::dark());
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "run:term-alpha");
-        assert_eq!(rows[0].label, "term-alpha");
-        assert_eq!(rows[0].kind, RowKind::Agent);
-        assert_eq!(rows[0].state, RowState::Attention);
-        assert_eq!(rows[0].height(), 2);
-        assert!(rows[0].tokens.is_empty(), "{:?}", rows[0].tokens);
-    }
-
-    #[test]
-    fn project_lines_carry_the_toggle_branch_and_counts() {
-        let chrome = Chrome::dark();
-        let row = SidebarRow {
-            id: "proj-alpha".into(),
-            label: "alpha".into(),
-            branch: Some("main".into()),
-            ahead: 2,
-            behind: 1,
-            group: Some(true),
-            active: true,
-            ..SidebarRow::default()
-        };
-        assert_eq!(line_text(&row_line(&row, 12, &chrome)), " ○ alpha   ▸");
-        assert_eq!(
-            line_text(&row_second_line(&row, 13, &chrome)),
-            "   main ↑2 ↓1"
-        );
-        let worktree = SidebarRow {
-            id: "wt-1".into(),
-            label: "feature".into(),
-            kind: RowKind::Worktree,
-            detail: "#123".into(),
-            last_child: true,
-            selected: true,
-            ..SidebarRow::default()
-        };
-        assert_eq!(
-            line_text(&row_line(&worktree, 30, &chrome)),
-            "▸  └─ ○ feature · #123"
-        );
-    }
-
-    #[test]
-    fn row_line_drops_trailing_tokens_before_truncating_the_title() {
-        let chrome = Chrome::dark();
-        let row = SidebarRow {
-            id: "run:term-alpha".into(),
-            label: "term-alpha".into(),
-            kind: RowKind::Agent,
-            state: RowState::Idle,
-            tokens: vec!["codex".into(), "gpt-5".into(), "#123".into()],
-            selected: true,
-            ..SidebarRow::default()
-        };
-        let wide = line_text(&row_line(&row, 60, &chrome));
-        assert_eq!(wide, "▸○ term-alpha · idle");
-        // The state label no longer fits beside the whole title, so it drops
-        // before the title loses a cell.
-        let narrow = line_text(&row_line(&row, 14, &chrome));
-        assert_eq!(narrow, "▸○ term-alpha");
-        let tiny = line_text(&row_line(&row, 8, &chrome));
-        assert_eq!(tiny, "▸○ term…");
-        // The tokens sit under the label and drop from the right.
-        assert_eq!(
-            line_text(&row_second_line(&row, 60, &chrome)),
-            "   codex · gpt-5 · #123"
-        );
-        assert_eq!(
-            line_text(&row_second_line(&row, 18, &chrome)),
-            "   codex · gpt-5"
-        );
-        let bare = SidebarRow {
-            tokens: Vec::new(),
-            ..row
-        };
-        assert_eq!(line_text(&row_second_line(&bare, 60, &chrome)), "");
-    }
-}
+#[path = "sidebar_rows/tests.rs"]
+mod tests;

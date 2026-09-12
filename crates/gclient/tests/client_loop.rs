@@ -13,6 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use gobby_client::app::run_loop::{
     run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RECONNECT_DELAYS, RENDER_TICK,
 };
+use gobby_client::app::sidebar_model::GIT_REFRESH_INTERVAL;
 use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
@@ -1049,6 +1050,65 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
         workspace.pane_for_terminal("terminal-gobby").is_none(),
         "the killed terminal left the roster"
     );
+    mock.shutdown().await;
+}
+
+/// `close tab` when the daemon refuses the gobby-owned kill: the external
+/// pane still leaves the tab with its lease released, the refused pane keeps
+/// its place, and so the tab stays.
+#[tokio::test]
+async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    mock.enqueue_kill_refusal("terminal_busy");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        websocket_requests(&mock, "terminal_release_control").len(),
+        1,
+        "the external pane's lease is released"
+    );
+    let gobby = workspace
+        .pane_for_terminal("terminal-gobby")
+        .expect("the refused terminal stays in the roster");
+    assert!(
+        !workspace.pane(gobby).is_terminating(),
+        "the pane is no longer marked terminating"
+    );
+    let tab = chrome.active_tab().expect("the tab keeps the refused pane");
+    assert_eq!(tab.slots.len(), 1, "the external pane left the tab");
+    assert!(
+        tab.slot_for(gobby).is_some(),
+        "the refused pane keeps its slot"
+    );
+    let mine = workspace
+        .pane_for_terminal("terminal-mine")
+        .expect("the external session stays in the roster");
+    assert!(workspace.pane(mine).is_observe(), "its lease was released");
     mock.shutdown().await;
 }
 
@@ -3356,7 +3416,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
     let exit_reason = workspace.exit_reason();
     assert_eq!(
         exit_reason,
-        Some("daemon unavailable"),
+        Some("Daemon unavailable."),
         "the shared socket-and-roster retry budget must latch the live-loop exit"
     );
     assert_eq!(mock.websocket_handshakes(), 6);
@@ -3420,7 +3480,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     let mut chrome = Chrome::dark();
     // A request that failed during the outage leaves its banner behind; the
     // recovered handshake must clear it.
-    chrome.status_message = Some("daemon request timed out".to_string());
+    chrome.status_message = Some("Daemon request timed out.".to_string());
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     // More failed handshakes than an unexpected loss is allowed before exiting.
@@ -5395,8 +5455,8 @@ fn sidebar_roster_entry(entry_id: &str, run_id: &str, terminal_id: &str) -> Valu
 
 /// 2.1.3: a `worktree_event` or `project_event` on the live socket refetches
 /// the affected project's status and worktrees once per drain however many
-/// events asked, and an attention refetch drops the roster entries the
-/// daemon no longer returns.
+/// events asked, a `session_event` refetches the attention roster, and an
+/// attention refetch drops the roster entries the daemon no longer returns.
 #[tokio::test]
 async fn sidebar_model_follows_daemon_events() {
     let mock = MockDaemon::start("local-token").await;
@@ -5440,6 +5500,7 @@ async fn sidebar_model_follows_daemon_events() {
             "entries": [
                 sidebar_roster_entry("run:a", "run-a", "terminal-a"),
                 sidebar_roster_entry("run:b", "run-b", "terminal-b"),
+                sidebar_roster_entry("run:c", "run-c", "terminal-c"),
             ],
         }),
     );
@@ -5461,6 +5522,7 @@ async fn sidebar_model_follows_daemon_events() {
             .count()
     };
     assert_eq!(gets(status_path), 1, "reconcile fetched the status once");
+    assert_eq!(gets("/api/attention/roster"), 1);
     assert_eq!(
         gets(worktrees_path),
         1,
@@ -5508,6 +5570,43 @@ async fn sidebar_model_follows_daemon_events() {
         worktrees,
         ["wt-1"],
         "the refetched worktree joined the project"
+    );
+    assert_eq!(
+        gets("/api/attention/roster"),
+        1,
+        "project and worktree events leave the roster alone"
+    );
+
+    // An ended agent run fires no attention event; its session expiring
+    // is what refetches the roster, and the roster no longer lists it.
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1",
+            "seq": 2,
+            "entries": [
+                sidebar_roster_entry("run:a", "run-a", "terminal-a"),
+                sidebar_roster_entry("run:c", "run-c", "terminal-c"),
+            ],
+        }),
+    );
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({"type": "session_event", "event": "session_expired", "project_id": "project-1", "session_id": "session-b"}),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain session event");
+    assert_eq!(gets("/api/attention/roster"), 2);
+    assert_eq!(
+        workspace.attention_entry_ids(),
+        ["run:a", "run:c"],
+        "the session event refetched the roster and dropped the ended run"
     );
 
     mock.enqueue(
@@ -5560,6 +5659,245 @@ async fn sidebar_model_follows_daemon_events() {
         .close(Instant::now() + Duration::from_secs(1))
         .await
         .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// The git refresh is a job: nothing starts before the interval, a run
+/// that fails reports its error and is not retried before the next
+/// interval, and a run that succeeds changes the sidebar only when applied.
+#[tokio::test]
+async fn git_refresh_runs_as_a_deferred_job() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let gets = |path: &str| {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target.starts_with(path))
+            .count()
+    };
+    assert_eq!(gets(status_path), 1, "reconcile fetched the status once");
+
+    workspace.request_git_refresh_if_due();
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "nothing is due right after a fetch"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    mock.enqueue("GET", status_path, 503, json!({"detail": "git is busy"}));
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed");
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "a started refresh is not queued twice"
+    );
+    let error = job.await.expect_err("the daemon refused the status");
+    assert!(
+        matches!(error, DaemonError::Unavailable { .. }),
+        "{error:?}"
+    );
+    assert_eq!(gets(status_path), 2);
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL / 2).await;
+    tokio::time::resume();
+    workspace.request_git_refresh_if_due();
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "a failed refresh waits out the interval"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL / 2).await;
+    tokio::time::resume();
+    mock.enqueue(
+        "GET",
+        status_path,
+        200,
+        json!({"current_branch": "gobby-22160-tick", "ahead": 3, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+    );
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the next interval passed");
+    let fetch = job.await.expect("status refetched");
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        None,
+        "the rows land only when applied"
+    );
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("gobby-22160-tick")
+    );
+    assert_eq!(gets(status_path), 3);
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// A refetch started beside the loop that lands after an inline refetch
+/// of the same rows is stale: the inline rows stay, and the next refetch
+/// still lands.
+#[tokio::test]
+async fn a_late_background_refetch_leaves_the_inline_rows_in_place() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    let status = |branch: &str| json!({"current_branch": branch, "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 0});
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed");
+
+    // The inline refetch runs first and reads the current branch; the job,
+    // not yet polled, then reads the reply queued behind it.
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue("GET", status_path, 200, status("fresh"));
+    mock.enqueue("GET", status_path, 200, status("stale"));
+    workspace
+        .fetch_sidebar_rows()
+        .await
+        .expect("inline refetch");
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("fresh")
+    );
+
+    let fetch = job.await.expect("the late job lands");
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("fresh"),
+        "the late job is stale"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    mock.enqueue("GET", status_path, 200, status("newer"));
+    workspace.request_git_refresh_if_due();
+    let fetch = workspace
+        .start_sidebar_refetch()
+        .expect("the next interval passed")
+        .await
+        .expect("status refetched");
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("newer"),
+        "a newer job still lands"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// The render tick starts the due git refresh beside the loop and applies
+/// it when it lands, without a drain or a reconcile.
+#[tokio::test]
+async fn the_render_tick_applies_a_background_git_refresh() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "GET",
+        status_path,
+        200,
+        json!({"current_branch": "0.5.0", "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+    );
+    // Every later refresh answers with the new branch, however many ticks
+    // run before the loop exits.
+    for _ in 0..8 {
+        mock.enqueue(
+            "GET",
+            status_path,
+            200,
+            json!({"current_branch": "gobby-22160-tick", "ahead": 3, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+        );
+    }
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a"]),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let _home = pin_tabs(&mut workspace, "project-1", &["terminal-a"]);
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", status_path, 1).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        tokio::time::pause();
+        tokio::time::advance(GIT_REFRESH_INTERVAL + RENDER_TICK * 2).await;
+        tokio::time::resume();
+        wait_for_http_requests(&mock, "GET", status_path, 2).await;
+        settle_live_event().await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("gobby-22160-tick"),
+        "the tick's refresh reached the sidebar"
+    );
     mock.shutdown().await;
 }
 
@@ -6664,11 +7002,11 @@ fn project_dialog_keys_produce_daemon_requests() {
     assert!(chrome.dialog.is_none());
 }
 
-/// 5.3.2: the sidebar rows' menus reach the daemon. `new worktree` on the
-/// project card opens the dialog whose submit posts the worktree and opens a
-/// shell tab in it, `delete worktree checkout…` on the child row deletes the
-/// checkout, `open in new tab` on the agent row opens a tab holding its
-/// pane, `mark seen` posts the entry's attention id, and `close` on the card
+/// 5.3.2: the sidebar rows' menus reach the daemon. `open in new tab` on the
+/// agent row opens a tab holding its pane and `mark seen` posts the entry's
+/// attention id; `new worktree` on the project card opens the dialog whose
+/// submit posts the worktree and opens a shell tab in it, `delete worktree
+/// checkout…` on the child row deletes the checkout, and `close` on the card
 /// asks with the group text.
 #[tokio::test]
 async fn row_menus_dispatch_project_and_agent_actions() {
@@ -6757,9 +7095,12 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the card, its child row and the agent row.
+    // Where the loop draws the card, its child row and the agent row. A card
+    // folds by default, so the probe and the loop's chrome both expand it to
+    // list the worktree row.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
+    probe.sidebar.toggle_group("project-1");
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
     let mut hits = None;
@@ -6788,6 +7129,7 @@ async fn row_menus_dispatch_project_and_agent_actions() {
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
+    chrome.sidebar.toggle_group("project-1");
     let (input_tx, input_rx) = mpsc::channel(256);
     let driver = async {
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
@@ -6802,6 +7144,18 @@ async fn row_menus_dispatch_project_and_agent_actions() {
             )
         };
         let key = |code| send_key(&input_tx, code, KeyModifiers::NONE);
+
+        // The agent row's `open in new tab`, then its `mark seen`. These go
+        // first: the sessions list sits right under the project rows, so
+        // the row keeps the probed position only while no worktree row has
+        // come or gone.
+        press(MouseButton::Right, agent_cell).await;
+        press(MouseButton::Left, item_cell(agent_cell, 1)).await;
+        settle_live_event().await;
+        press(MouseButton::Right, agent_cell).await;
+        press(MouseButton::Left, item_cell(agent_cell, 3)).await;
+        wait_for_http_requests(&mock, "POST", "/api/attention/run:a/seen", 1).await;
+        settle_live_event().await;
 
         // The card's `new worktree` opens the dialog; the branch typed there
         // posts the worktree and opens a shell tab in it.
@@ -6843,15 +7197,6 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         key(KeyCode::Enter).await;
         wait_for_http_requests(&mock, "DELETE", "/api/source-control/worktrees/wt-1", 1).await;
         wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
-        settle_live_event().await;
-
-        // The agent row's `open in new tab`, then its `mark seen`.
-        press(MouseButton::Right, agent_cell).await;
-        press(MouseButton::Left, item_cell(agent_cell, 1)).await;
-        settle_live_event().await;
-        press(MouseButton::Right, agent_cell).await;
-        press(MouseButton::Left, item_cell(agent_cell, 3)).await;
-        wait_for_http_requests(&mock, "POST", "/api/attention/run:a/seen", 1).await;
         settle_live_event().await;
 
         // The card's `close` asks with the group text.
@@ -6915,16 +7260,20 @@ async fn row_menus_dispatch_project_and_agent_actions() {
     assert_eq!(
         tabs.len(),
         2,
-        "the worktree shell tab and the agent's new tab: {:?}",
+        "the agent's new tab and the worktree shell tab: {:?}",
         shown_terminals(&workspace, &chrome)
     );
-    assert_eq!(tabs[0].worktree_id.as_deref(), Some("wt-2"));
     assert_eq!(
-        tabs[1].focused_pane(),
+        tabs[0].focused_pane(),
         Some(agent),
         "open in new tab holds the agent's pane"
     );
-    assert_eq!(chrome.tabs().active_tab, 1);
+    assert_eq!(tabs[1].worktree_id.as_deref(), Some("wt-2"));
+    assert_eq!(
+        chrome.tabs().active_tab,
+        1,
+        "the worktree shell tab opened last"
+    );
     assert_eq!(
         chrome.mode,
         Mode::ConfirmClose,

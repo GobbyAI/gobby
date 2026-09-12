@@ -22,7 +22,7 @@ use crate::ui::status::Toast;
 use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 /// Collapsed sidebar width (herdr `COLLAPSED_WIDTH`).
@@ -227,25 +227,30 @@ pub struct SidebarState {
     pub width: u16,
     pub min_width: u16,
     pub max_width: u16,
-    /// Rows given to the projects section before the agents panel.
-    pub section_split: Option<u16>,
-    pub scroll: usize,
-    pub agents_scroll: usize,
+    /// Scroll position of each section, by `SidebarSection::index`.
+    pub scrolls: [usize; 3],
     /// Selected project-section row, worktree rows included (navigate mode).
     pub selected: usize,
     /// Project ids in the order the user dragged them into; projects the
     /// order does not name follow in model order. `session.json` keeps it.
     pub project_order: Vec<String>,
-    /// Projects whose worktree rows are folded under the card.
-    pub collapsed_projects: BTreeSet<String>,
+    /// The one project card whose worktree rows are unfolded; every other
+    /// card is folded. Focusing a project expands its card.
+    pub expanded_project: Option<String>,
     /// Labels the user gave project cards, by project id; a card without
     /// one shows the daemon's name. `session.json` keeps them.
     pub project_labels: BTreeMap<String, String>,
-    /// Machine filter of the agents section, kept by `session.json`: `None`
-    /// lists the focused project's agents on the local machine,
-    /// `Some(ALL_MACHINES)` every agent of every project and machine, and
-    /// `Some(machine_id)` the focused project's agents on that machine.
+    /// Machine filter of the sessions section, kept by `session.json`:
+    /// `None` lists the rows on the local machine, `Some(ALL_MACHINES)` the
+    /// rows on every machine, and `Some(machine_id)` those on that machine;
+    /// `all_sessions` bounds the projects the rows come from.
     pub machine_filter: Option<String>,
+    /// The projects section lists every project instead of the working
+    /// ones (`sidebar_rows::working_projects`). `session.json` keeps it.
+    pub all_projects: bool,
+    /// The sessions section lists every project's rows, grouped by project,
+    /// instead of the focused project's. `session.json` keeps it.
+    pub all_sessions: bool,
 }
 
 impl Default for SidebarState {
@@ -256,32 +261,41 @@ impl Default for SidebarState {
             width: 26,
             min_width: 18,
             max_width: 36,
-            section_split: None,
-            scroll: 0,
-            agents_scroll: 0,
+            scrolls: [0; 3],
             selected: 0,
             project_order: Vec::new(),
-            collapsed_projects: BTreeSet::new(),
+            expanded_project: None,
             project_labels: BTreeMap::new(),
             machine_filter: None,
+            all_projects: false,
+            all_sessions: false,
         }
     }
 }
 
 impl SidebarState {
     /// The scroll position of one list section.
-    pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
-        match section {
-            SidebarSection::Projects => &mut self.scroll,
-            SidebarSection::Agents => &mut self.agents_scroll,
-        }
+    pub fn scroll(&self, section: SidebarSection) -> usize {
+        self.scrolls[section.index()]
     }
 
-    /// Collapse `project_id`'s worktree rows, or expand them again.
+    pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
+        &mut self.scrolls[section.index()]
+    }
+
+    /// Fold `project_id`'s worktree rows when it is the expanded card, else
+    /// expand it (folding whichever card was).
     pub fn toggle_group(&mut self, project_id: &str) {
-        if !self.collapsed_projects.remove(project_id) {
-            self.collapsed_projects.insert(project_id.to_owned());
-        }
+        self.expanded_project = if self.is_expanded(project_id) {
+            None
+        } else {
+            Some(project_id.to_owned())
+        };
+    }
+
+    /// Whether `project_id`'s worktree rows are listed under its card.
+    pub fn is_expanded(&self, project_id: &str) -> bool {
+        self.expanded_project.as_deref() == Some(project_id)
     }
 
     /// herdr `set_manual_sidebar_width`: the pointer column becomes the
@@ -289,18 +303,6 @@ impl SidebarState {
     pub fn set_width_from_column(&mut self, area: Rect, column: u16) {
         let width = column.saturating_sub(area.x).saturating_add(1);
         self.width = width.clamp(self.min_width, self.max_width);
-    }
-
-    /// herdr `set_sidebar_section_split`: the pointer row becomes the first
-    /// agents row, so the projects keep the rows above it and each section
-    /// keeps at least its header. A sidebar under six rows keeps its fixed
-    /// halves.
-    pub fn set_split_from_row(&mut self, area: Rect, row: u16) {
-        if area.height < 6 {
-            return;
-        }
-        let split = row.saturating_sub(area.y).clamp(3, area.height - 3);
-        self.section_split = Some(split);
     }
 }
 
@@ -379,17 +381,24 @@ pub struct ViewState {
     pub group_toggle_hit_areas: Vec<(String, Rect)>,
     pub projects_new_hit_area: Option<Rect>,
     pub projects_menu_hit_area: Option<Rect>,
-    /// Agent rows drawn in the sidebar, by entry id.
+    /// The `[working]`/`[all]` control of the projects band.
+    pub projects_filter_hit_area: Option<Rect>,
+    /// The `[project]`/`[all]` control of the sessions band.
+    pub sessions_scope_hit_area: Option<Rect>,
+    /// Session, agent run and bare terminal rows drawn in the sidebar, by
+    /// entry id.
     pub agent_hit_areas: Vec<(String, Rect)>,
-    pub machine_filter_hit_area: Option<Rect>,
+    /// Machine rows drawn in the sidebar, by machine id.
+    pub machine_hit_areas: Vec<(String, Rect)>,
     pub agent_sort_hit_area: Option<Rect>,
     /// The `│` column between the sidebar and the content column.
     pub sidebar_divider_x: Option<u16>,
-    /// The `─` row between the projects and agents sections.
-    pub sidebar_section_divider_y: Option<u16>,
+    /// The three sections' rects (band and body), by
+    /// `SidebarSection::index`, for the wheel over a bare sidebar cell.
+    pub sidebar_section_rects: [Rect; 3],
     pub sidebar_toggle_hit_area: Option<Rect>,
-    pub projects_scrollbar_hit_area: Option<Rect>,
-    pub agents_scrollbar_hit_area: Option<Rect>,
+    /// Scrollbar lane beside each section, by `SidebarSection::index`.
+    pub sidebar_scrollbar_hit_areas: [Option<Rect>; 3],
     /// Leading control-state span of the status line.
     pub control_indicator_hit_area: Option<Rect>,
     /// Settings popup including its border, while the overlay is drawn.
@@ -425,11 +434,12 @@ impl ViewState {
         self.group_toggle_hit_areas = sidebar.group_toggles;
         self.projects_new_hit_area = sidebar.projects_new;
         self.projects_menu_hit_area = sidebar.projects_menu;
+        self.projects_filter_hit_area = sidebar.projects_filter;
+        self.sessions_scope_hit_area = sidebar.sessions_scope;
         self.agent_hit_areas = sidebar.agents;
-        self.machine_filter_hit_area = sidebar.machine_filter;
+        self.machine_hit_areas = sidebar.machines;
         self.agent_sort_hit_area = sidebar.agent_sort;
-        self.projects_scrollbar_hit_area = sidebar.projects_scrollbar;
-        self.agents_scrollbar_hit_area = sidebar.agents_scrollbar;
+        self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
         self.sidebar_toggle_hit_area = sidebar.toggle;
         self.control_indicator_hit_area = control_indicator;
         self.toast_hit_area = toast;
@@ -483,6 +493,9 @@ pub struct Chrome {
     pub pending_mouse_capture: Option<bool>,
     /// The open right-click menu while `mode` is `ContextMenu`.
     pub menu: Option<ContextMenuState>,
+    /// Render ticks so far; the sidebar's ticker scrolls the selected
+    /// over-long row by it (`sidebar_rows::ticker_window`).
+    pub ticker: u64,
 }
 
 impl Chrome {
@@ -515,6 +528,7 @@ impl Chrome {
             last_focused: None,
             pending_mouse_capture: None,
             menu: None,
+            ticker: 0,
         }
     }
 
@@ -731,7 +745,7 @@ impl Chrome {
         }
         let sidebar_divider_x =
             (sidebar_rect.width > 0).then(|| sidebar_rect.x + sidebar_rect.width - 1);
-        let sidebar_section_divider_y = sidebar::section_divider_y(sidebar_rect, &self.sidebar);
+        let sidebar_section_rects = sidebar::section_rects(ws, self, sidebar_rect);
         self.view = ViewState {
             sidebar_rect,
             tab_bar_rect,
@@ -740,7 +754,7 @@ impl Chrome {
             pane_infos,
             split_borders,
             sidebar_divider_x,
-            sidebar_section_divider_y,
+            sidebar_section_rects,
             ..ViewState::default()
         };
     }

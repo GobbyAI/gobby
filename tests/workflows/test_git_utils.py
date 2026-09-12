@@ -53,6 +53,60 @@ class TestWorktreeRootResolution:
         ] == []
 
 
+class TestWorktreeRootResolutionCache:
+    @pytest.fixture(autouse=True)
+    def fresh_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gobby.workflows import git_utils
+
+        monkeypatch.setattr(git_utils, "_WORKTREE_ROOT_CACHE", {})
+
+    async def test_positive_root_is_cached_per_candidate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.utils.daemon_git import GitOk, daemon_git
+        from gobby.workflows.git_utils import resolve_git_worktree_root_async
+
+        calls: list[str] = []
+
+        async def fake_run(args: list[str], *, cwd: str, timeout: float) -> GitOk:
+            del timeout
+            calls.append(cwd)
+            return GitOk(status="ok", argv=("git", *args), stdout=f"{tmp_path}\n", stderr="")
+
+        monkeypatch.setattr(daemon_git, "run", fake_run)
+
+        first = await resolve_git_worktree_root_async(tmp_path)
+        second = await resolve_git_worktree_root_async(str(tmp_path))
+
+        assert first == second == str(tmp_path)
+        assert calls == [str(tmp_path)]
+
+    async def test_failed_resolution_is_skipped_and_not_cached(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.utils.daemon_git import GitTimeout, daemon_git
+        from gobby.workflows.git_utils import resolve_git_worktree_root_async
+
+        calls: list[str] = []
+
+        async def fake_run(args: list[str], *, cwd: str, timeout: float) -> GitTimeout:
+            calls.append(cwd)
+            return GitTimeout(status="timeout", argv=("git", *args), timeout=timeout)
+
+        monkeypatch.setattr(daemon_git, "run", fake_run)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.git_utils"):
+            first = await resolve_git_worktree_root_async(tmp_path)
+            second = await resolve_git_worktree_root_async(tmp_path)
+
+        assert first is None and second is None
+        assert calls == [str(tmp_path), str(tmp_path)]
+        assert [r for r in caplog.records if "skipping candidate" in r.getMessage()]
+
+
 class TestGetDirtyFilesCategorized:
     def test_parses_porcelain_paths_without_truncation(self, tmp_path) -> None:
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)

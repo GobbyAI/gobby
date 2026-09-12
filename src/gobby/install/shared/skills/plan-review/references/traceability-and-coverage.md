@@ -125,6 +125,26 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
   ONLY that section to do the work. The implementing agent does **not** get
   the full plan document. A section that says "see Phase 1 for context" is a
   blocking finding.
+  Assess Research context proportionally: can the executor locate the work and
+  understand the approach from this section alone? Check observed references,
+  call paths/helpers/fixtures, decisions, and observed versus planned checks.
+  A heading alone proves nothing. Name the concrete missing information and its
+  implementation consequence; copy necessary shared findings into the owner.
+  Approximate line hints stay outside Targets; proposed symbols are labeled new.
+- **Atomic implementation leaves** — apply `plan-draft`'s Task Granularity
+  Guidelines to every deliverable; load them with
+  `get_skill_file(name="plan-draft", path="references/task-structure.md")`.
+  Inspect its behaviors and state machines,
+  including sections below the numeric review triggers. A blocking
+  `bad-sequencing` finding must name independently closeable parts, their
+  contracts and focused checks, the proposed section boundaries, and required
+  dependency edges. Missing required **Granularity:** evidence is a
+  `gobby-format` finding. Counts alone never prove a section must split. Keep
+  justified atomic cross-file changes and one behavior's tests together.
+  Return section-boundary changes as prose for the planner; adding dependency
+  edges alone cannot split an existing section.
+  This checks task boundaries independently of proportionality: all required
+  behavior may be justified while belonging in several implementation leaves.
 
 ---
 

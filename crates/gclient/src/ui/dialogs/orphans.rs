@@ -53,7 +53,7 @@ pub fn render_destroy_orphans(
         render_modal_description(
             frame,
             areas[2],
-            "no orphaned terminals",
+            "No orphaned terminals.",
             Style::default().fg(p.subtext0),
         );
     }

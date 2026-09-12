@@ -56,6 +56,7 @@ def test_execute_hook_dispatches_droid_adapter(session_storage: SessionManager) 
         "hook_type": "PreToolUse",
         "source": "droid",
         "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+        "_enqueued_at": "2026-04-16T12:00:00Z",
     }
 
 

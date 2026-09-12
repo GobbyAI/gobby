@@ -66,6 +66,9 @@ UV_CACHE_DIR = "UV_CACHE_DIR"
 # Cargo home path for Rust validation commands run by sandboxed spawned agents.
 CARGO_HOME = "CARGO_HOME"
 
+# Shared per-project cargo build directory (see gobby.agents.cargo_target).
+CARGO_TARGET_DIR = "CARGO_TARGET_DIR"
+
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""
@@ -132,6 +135,7 @@ def get_terminal_env_vars(
     Returns:
         Dict of environment variable name to value.
     """
+    from gobby.agents.cargo_target import ensure_shared_cargo_target_dir
     from gobby.agents.spawn_cache_policy import build_spawn_cache_env
     from gobby.utils.daemon_url import daemon_url
 
@@ -144,6 +148,7 @@ def get_terminal_env_vars(
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
         **build_spawn_cache_env(session_id),
+        CARGO_TARGET_DIR: ensure_shared_cargo_target_dir(project_id),
     }
     if operator_token:
         env[GOBBY_AGENT_API_TOKEN] = issue_agent_api_token(
@@ -189,4 +194,5 @@ ALL_TERMINAL_ENV_VARS = [
     GOBBY_PROMPT_FILE,
     UV_CACHE_DIR,
     CARGO_HOME,
+    CARGO_TARGET_DIR,
 ]

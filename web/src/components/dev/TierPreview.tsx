@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Card } from "../ui/Card";
 import { SegmentedControl } from "../ui/SegmentedControl";
-import { TIERS, type TierId } from "./tierPreviewConfig";
+import { TIERS, type TierId, tierFrameSrc } from "./tierPreviewConfig";
 
 const TIER_OPTIONS = (Object.keys(TIERS) as TierId[]).map((id) => ({
   value: id,
@@ -78,7 +78,7 @@ export function TierPreview() {
           >
             <iframe
               title="Gobby tier preview"
-              src="/"
+              src={tierFrameSrc(TIERS[tier])}
               data-testid="tier-frame"
             />
           </Card>
@@ -91,7 +91,7 @@ export function TierPreview() {
             <Card asChild className="bg-[color:var(--bg-secondary)]">
               <iframe
                 title="Gobby tier preview"
-                src="/"
+                src={tierFrameSrc(TIERS[tier])}
                 data-testid="tier-frame"
                 style={{
                   width: `${width}px`,

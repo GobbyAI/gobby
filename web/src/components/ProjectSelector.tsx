@@ -11,8 +11,12 @@ import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { SegmentedControl } from "./ui/SegmentedControl";
-import { coarseHitAreaCls } from "./ui/controlStyles";
+import {
+  coarseHitAreaCls,
+  segmentedActiveOptionCls,
+} from "./ui/controlStyles";
 
 type ProjectMode = "personal" | "project";
 type PickerMode = "search" | "compact";
@@ -90,6 +94,7 @@ export function ProjectSelector({
       : Math.min(activeOptionIndex, pickerOptions.length - 1);
   const pickerIdBase = useId();
   const listboxId = `${pickerIdBase}-project-options`;
+  const isLightTheme = useResolvedTheme() === "light";
   const activeOptionId = pickerOptions[boundedActiveOptionIndex]
     ? `${listboxId}-option-${boundedActiveOptionIndex}`
     : undefined;
@@ -305,6 +310,9 @@ export function ProjectSelector({
       {/* No overflow-hidden here: it would clip the coarse-pointer ::before
           hit-area expansion out of hit-testing, capping the tap target at the
           28px row. The trigger rounds itself to match the border instead. */}
+      {/* Mobile tier: the trigger wears the desktop segmented control's
+          selected-segment treatment, so the current scope reads the same
+          way it does in the Personal | project control on desktop. */}
       <div className="hidden h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex">
         <Button
           ref={compactTriggerRef}
@@ -313,7 +321,8 @@ export function ProjectSelector({
           size="sm"
           dense
           className={cn(
-            "w-full rounded-[inherit] py-0 [font-family:inherit]",
+            "w-full rounded-[inherit] py-0 text-[length:var(--text-sm)] [font-family:inherit]",
+            segmentedActiveOptionCls(isLightTheme),
             coarseHitAreaCls,
           )}
           onClick={toggleCompactMenu}

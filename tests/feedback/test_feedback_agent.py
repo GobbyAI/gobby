@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +22,7 @@ from gobby.feedback.agent import (
     FeedbackReviewerRunError,
     FeedbackReviewerTimeoutError,
 )
+from gobby.feedback.storage import FeedbackReviewStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
@@ -60,11 +60,14 @@ def _reviewer(
     *,
     run_status: str = "success",
     run_error: str | None = None,
-    current_state: str = '{"clusters": []}',
+    findings: dict[str, Any] | None = None,
     spawn_result: dict[str, Any] | None = None,
     wait_error: Exception | None = None,
+    has_submission: bool | None = None,
 ) -> tuple[FeedbackReviewerAgent, _FakeRegistry, dict[str, Any]]:
     captured: dict[str, Any] = {}
+    if has_submission is None:
+        has_submission = run_status == "success"
 
     def fake_resolve_agent(
         name: str,
@@ -88,10 +91,16 @@ def _reviewer(
     )
     monkeypatch.setattr(agent_module, "spawn_agent_impl", fake_spawn_agent_impl)
     monkeypatch.setattr(
-        agent_module,
-        "get_agent_end_handoff",
+        FeedbackReviewStore,
+        "assign_reviewer",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        FeedbackReviewStore,
+        "get_run",
         lambda *_args: SimpleNamespace(
-            payload=SimpleNamespace(current_state=current_state),
+            findings=findings if findings is not None else {"clusters": []},
+            digest_md="# Review\nVerified against current source." if has_submission else None,
         ),
     )
 
@@ -113,7 +122,7 @@ def _reviewer(
 
 
 @pytest.mark.asyncio
-async def test_named_reviewer_launches_waits_and_reads_agent_end_result(
+async def test_named_reviewer_launches_waits_and_reads_submitted_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     findings = {
@@ -130,13 +139,17 @@ async def test_named_reviewer_launches_waits_and_reads_agent_end_result(
     }
     reviewer, registry, captured = _reviewer(
         monkeypatch,
-        current_state=json.dumps(findings),
+        findings=findings,
     )
 
-    result = await reviewer.review("rendered observations", timeout_seconds=900.0)
+    result = await reviewer.review(
+        "rendered observations", run_id="review-1", timeout_seconds=900.0
+    )
 
     assert result.agent_run_id == "agent-run-1"
     assert result.findings == findings
+    assert result.summary_md.startswith("# Review")
+    assert result.report_path == "/tmp/gobby-project/.gobby/reports/feedback/review-1.md"
     assert captured["resolved"] == (FEEDBACK_REVIEWER_AGENT_NAME, None, "project-1")
     spawn_args = captured["spawn_args"]
     spawn_kwargs = captured["spawn_kwargs"]
@@ -157,7 +170,7 @@ async def test_named_reviewer_reports_launch_failure(monkeypatch: pytest.MonkeyP
     )
 
     with pytest.raises(FeedbackReviewerLaunchError, match="tmux unavailable") as error:
-        await reviewer.review("observations", timeout_seconds=20.0)
+        await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert error.value.agent_run_id == "agent-run-1"
     assert registry.waits == []
@@ -175,7 +188,7 @@ async def test_serialized_launch_error_preserves_retry_classification(
         spawn_result={"success": False, "run_id": "agent-run-1", "error": detail},
     )
     with pytest.raises(FeedbackReviewerLaunchError) as error:
-        await reviewer.review("frozen run", timeout_seconds=20.0)
+        await reviewer.review("frozen run", run_id="review-1", timeout_seconds=20.0)
     assert error.value.transient is retryable
     assert error.value.agent_run_id == "agent-run-1"
     assert detail in str(error.value)
@@ -193,7 +206,7 @@ async def test_background_boot_error_is_a_retryable_launch_failure(
     assert run is not None
     run.started_at = None
     with pytest.raises(FeedbackReviewerLaunchError) as error:
-        await reviewer.review("frozen run", timeout_seconds=20.0)
+        await reviewer.review("frozen run", run_id="review-1", timeout_seconds=20.0)
     assert error.value.transient
     assert error.value.agent_run_id == "agent-run-1"
 
@@ -209,7 +222,7 @@ async def test_named_reviewer_reports_terminal_agent_failure(
     )
 
     with pytest.raises(FeedbackReviewerRunError, match="reviewer process exited") as error:
-        await reviewer.review("observations", timeout_seconds=20.0)
+        await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert error.value.agent_run_id == "agent-run-1"
 
@@ -223,23 +236,23 @@ async def test_named_reviewer_reports_completion_timeout(monkeypatch: pytest.Mon
     )
 
     with pytest.raises(FeedbackReviewerTimeoutError, match="timed out") as error:
-        await reviewer.review("observations", timeout_seconds=20.0)
+        await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert error.value.agent_run_id == "agent-run-1"
     assert registry.waits == [("agent-run-1", 50.0)]
 
 
 @pytest.mark.asyncio
-async def test_named_reviewer_rejects_malformed_handoff_json(
+async def test_named_reviewer_rejects_malformed_submission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reviewer, _registry, _captured = _reviewer(
         monkeypatch,
-        current_state="not-json",
+        findings={"unexpected": []},
     )
 
-    with pytest.raises(FeedbackReviewerResultError, match="returned invalid JSON") as error:
-        await reviewer.review("observations", timeout_seconds=20.0)
+    with pytest.raises(FeedbackReviewerResultError, match="schema validation") as error:
+        await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert error.value.agent_run_id == "agent-run-1"
 
@@ -253,7 +266,7 @@ async def test_named_reviewer_accepts_evicted_notification_after_durable_success
         wait_error=CompletionResultEvictedError("cleaned after notify"),
     )
 
-    result = await reviewer.review("observations", timeout_seconds=20.0)
+    result = await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert result.findings == {"clusters": []}
 
@@ -281,10 +294,62 @@ def test_feedback_reviewer_agent_requires_both_methodology_skills() -> None:
             "when": "vars.restraint_loaded and vars.proportionality_loaded",
         }
     ]
-    assert review_step["allowed_mcp_tools"] == [
+    assert set(review_step["allowed_mcp_tools"]) >= {
         "gobby-feedback:get_review_observations",
         "gobby-feedback:get_review_results",
+        "gobby-feedback:submit_review",
+        "gobby-tasks:get_task",
         "gobby-skills:get_skill",
         "gobby-skills:get_skill_file",
         "gobby-agents:end_agent_run",
-    ]
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["timeout", "failed", "running"])
+async def test_submitted_report_survives_later_agent_lifecycle_failure(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    reviewer, _registry, _captured = _reviewer(
+        monkeypatch,
+        run_status=status,
+        run_error="Lifecycle failed after submission",
+        wait_error=TimeoutError(),
+        has_submission=True,
+    )
+    result = await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
+    assert result.findings == {"clusters": []}
+    assert result.summary_md == "# Review\nVerified against current source."
+    assert result.report_path == "/tmp/gobby-project/.gobby/reports/feedback/review-1.md"
+
+
+@pytest.mark.asyncio
+async def test_success_without_submission_does_not_consume_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reviewer, _registry, _captured = _reviewer(monkeypatch, has_submission=False)
+    with pytest.raises(FeedbackReviewerResultError, match="did not submit"):
+        await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
+
+
+@pytest.mark.parametrize("evidence", [None, "   "])
+def test_actionable_findings_require_current_verification(evidence: str | None) -> None:
+    findings: dict[str, Any] = {
+        "clusters": [
+            {
+                "observation_ids": ["observation"],
+                "cited_paths": [],
+                "theme": "Prior feedback",
+                "classification": "defect",
+                "proposed_task": {
+                    "title": "Fix concern",
+                    "description": "An observer reported this.",
+                },
+                "digest_note": "No current verification was performed.",
+            }
+        ]
+    }
+    if evidence is not None:
+        findings["clusters"][0]["proposed_task"]["verification_evidence"] = evidence
+    with pytest.raises(FeedbackReviewerResultError, match="verification_evidence"):
+        agent_module.validate_feedback_findings(findings)

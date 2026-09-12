@@ -148,7 +148,7 @@ impl LiveDaemon {
             detail: error.to_string(),
         })?;
         let token = token.into();
-        let rest = RestClient::new(base_url.clone(), token.clone());
+        let rest = RestClient::new(base_url.clone(), token.clone())?;
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (closed_tx, _) = watch::channel(false);
         let daemon = Self {

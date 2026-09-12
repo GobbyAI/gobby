@@ -3,9 +3,17 @@
 use gobby_terminal::protocol::TmuxClientIdentity;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
-/// Parse `$TMUX` and the current pane, or `None` when not inside tmux.
+/// Parse `$TMUX` and the current pane, or `None` when not inside tmux. The
+/// probe forks tmux three times, so it runs once per process: neither the
+/// variable nor the pane the client sits in changes while it runs.
 pub fn current() -> Option<TmuxClientIdentity> {
+    static CURRENT: OnceLock<Option<TmuxClientIdentity>> = OnceLock::new();
+    CURRENT.get_or_init(probe).clone()
+}
+
+fn probe() -> Option<TmuxClientIdentity> {
     let tmux = std::env::var("TMUX").ok()?;
     let socket = tmux.split(',').next()?.to_string();
     if socket.is_empty() {

@@ -161,7 +161,7 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     }
     let lines = vec![
         Line::styled(
-            "no pane open",
+            "No pane open.",
             Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
         ),
         Line::styled(
@@ -561,7 +561,7 @@ mod tests {
             .draw(|frame| render_empty(frame, frame.area(), &chrome))
             .unwrap();
         let text = screen(&terminal);
-        assert!(text.contains("no pane open"));
+        assert!(text.contains("No pane open."));
         assert!(!text.contains('!'));
     }
 }

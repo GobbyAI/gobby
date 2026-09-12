@@ -30,6 +30,7 @@ from gobby.utils.machine_id import get_machine_id
 pytestmark = pytest.mark.unit
 
 TASK_ID = "11111111-2222-4333-8444-555555555555"
+PROJECT_ID = "11111111-1111-4111-8111-111111110001"
 OWNER_SESSION_ID = "owner-session"
 COMMITTED_PATHS = frozenset({"src/gobby/memory/recall.py", "tests/memory/test_recall.py"})
 
@@ -66,6 +67,7 @@ def _task(*, commits: list[str] | None) -> Task:
         SimpleNamespace(
             id=TASK_ID,
             seq_num=20766,
+            project_id=PROJECT_ID,
             commits=commits,
             claimed_by_session_id=OWNER_SESSION_ID,
             is_closed=False,
@@ -74,10 +76,21 @@ def _task(*, commits: list[str] | None) -> Task:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_foreign_owners(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Commit-fallback paths consult live ownership rows; none exist in these tests."""
+    monkeypatch.setattr(
+        close_finalization,
+        "foreign_owned_dirty_paths",
+        lambda *_args, **_kwargs: frozenset(),
+    )
+
+
 def _ctx(variables: dict[str, Any]) -> RegistryContext:
     return cast(
         RegistryContext,
         SimpleNamespace(
+            task_manager=SimpleNamespace(db=None),
             session_var_manager=SimpleNamespace(get_variables=lambda _session: variables),
             session_task_manager=SimpleNamespace(get_task_sessions=lambda _task_id: []),
         ),

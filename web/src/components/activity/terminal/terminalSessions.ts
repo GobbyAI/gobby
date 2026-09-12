@@ -1,11 +1,16 @@
 import type { TmuxSession } from "../../../hooks/useTmuxSessions";
-import { getActivitySessionTitle } from "../../../lib/sessionTitle";
+import { getActivitySessionTitleParts } from "../../../lib/sessionTitle";
 import type { GobbySession } from "../../../types/sessions";
 
 export interface JoinedTerminalSession {
   tmux: TmuxSession;
   gobby: GobbySession | null;
+  /** Full display label: `refLabel: titleText` for Gobby sessions. */
   label: string;
+  /** Static row prefix (`#12856`); null for panes without a Gobby session. */
+  refLabel: string | null;
+  /** The part of the label that may ticker when it overflows the row. */
+  titleText: string;
   provider: string | null;
   paneRef: string;
   /** Terminal backend as the product names it: `tmux` or `gterm`. */
@@ -43,13 +48,32 @@ function paneDirectory(panePath: string | null): string | null {
 
 // Title priority: Gobby session ref+title, then agent run name, then the
 // running app, then cwd basename, then the raw tmux session name.
-function displayLabel(
+type DisplayParts = Pick<
+  JoinedTerminalSession,
+  "label" | "refLabel" | "titleText"
+>;
+
+function displayParts(
   tmuxSession: TmuxSession,
   gobbySession: GobbySession | null,
-): string {
+  currentProjectId: string | null,
+): DisplayParts {
   if (gobbySession !== null) {
-    return getActivitySessionTitle(gobbySession);
+    const { ref, title } = getActivitySessionTitleParts(
+      gobbySession,
+      currentProjectId !== null && gobbySession.project_id === currentProjectId,
+    );
+    return {
+      label: title === null ? ref : `${ref}: ${title}`,
+      refLabel: ref,
+      titleText: title ?? "",
+    };
   }
+  const label = externalLabel(tmuxSession);
+  return { label, refLabel: null, titleText: label };
+}
+
+function externalLabel(tmuxSession: TmuxSession): string {
   if (tmuxSession.agent_managed) {
     return tmuxSession.name;
   }
@@ -74,9 +98,15 @@ function providerFor(
   return null;
 }
 
+/**
+ * Join tmux panes to their Gobby sessions. `currentProjectId` trims that
+ * project's name off session refs (`gobby#12` → `#12`) because the panel is
+ * already scoped to it; refs from other projects keep their name.
+ */
 export function joinTmuxSessions(
   tmuxSessions: TmuxSession[],
   gobbySessions: GobbySession[] | undefined,
+  currentProjectId: string | null = null,
 ): JoinedTerminalSession[] {
   const byId = new Map<string, GobbySession>();
   const byAgentRunId = new Map<string, GobbySession>();
@@ -97,10 +127,13 @@ export function joinTmuxSessions(
       gobby = byAgentRunId.get(tmux.agent_run_id) ?? null;
     }
 
+    const parts = displayParts(tmux, gobby, currentProjectId);
     return {
       tmux,
       gobby,
-      label: displayLabel(tmux, gobby),
+      label: parts.label,
+      refLabel: parts.refLabel,
+      titleText: parts.titleText,
       provider: providerFor(tmux, gobby),
       paneRef: tmux.name,
       backendLabel: tmux.backend === "native" ? "gterm" : "tmux",

@@ -1,9 +1,9 @@
 name: feedback-reviewer
 description: |
   Taskless nightly reviewer that clusters session feedback and returns a
-  validated proposal to the deterministic feedback service.
+  Markdown report and validated findings for human-reviewed tasks.
 
-version: "2.0"
+version: "3.0"
 enabled: true
 priority: 20
 surfaces: [spawn]
@@ -24,7 +24,7 @@ prompts:
     You are the taskless reviewer for Gobby's nightly session-feedback loop.
     The spawn prompt contains the review run ID and instructions. Read the
     frozen observation batch through the paginated gobby-feedback readers. You propose findings only; deterministic daemon code validates the
-    proposal, suppresses resolved or recently fixed findings, files tasks, and
+    proposal, deduplicates against open tasks, files tasks, and
     marks observations reviewed.
 
     Your step workflow requires you to load `restraint` and `proportionality`
@@ -32,13 +32,18 @@ prompts:
     proportionality to reject speculative or needless follow-up machinery while
     preserving fixes justified by concrete evidence.
 
-    Before submitting the handoff, load `handoff-discipline` through gobby-skills.
-    In REVIEW, produce the exact JSON object requested by the spawn prompt. Do
-    not wrap it in Markdown and do not add commentary. Call `end_agent_run` with
-    that exact compact JSON string as `current_state` and one nonblank
-    coordinator-facing `next_steps` item stating that deterministic feedback
-    intake should validate and apply the proposal. Agent termination is separate
-    from turn completion and always requires this call.
+    Investigate whether each actionable concern still exists. Read current source,
+    relevant commits, installed rules, and existing tasks; use read-only Bash/gcode
+    and the task/workflow readers. A later file edit alone does not prove a fix.
+    Record concrete verification evidence in the task description and Markdown
+    summary. Keep uncertain concerns explicit rather than claiming verification.
+
+    Submit findings and your Markdown summary through gobby-feedback:submit_review.
+    This saves the report outside handoff and queues verified findings for task
+    creation with awaiting-human-review. Do not put JSON or the report into handoff.
+    After submission succeeds, load handoff-discipline and call end_agent_run with
+    a brief completion status, the report path in references, and one next_steps
+    item for human review. This call only ends the agent lifecycle.
 
     Lifecycle model:
     - Rules are authored against semantic workflow events such as `turn_start`
@@ -101,10 +106,13 @@ step_workflow:
       mcp_error_policy: stay
       description: "Return the structured feedback proposal and terminate"
       status_message: |
-        Review the supplied observations using the prompt contract. Call
-        end_agent_run with the exact proposal JSON string in current_state and
-        a nonblank next_steps item. Do not mutate tasks or repository state.
+        Verify concerns against current code and existing tasks. Submit findings
+        and a Markdown summary using gobby-feedback:submit_review. Then end the
+        run with a brief status and report reference, never the report body.
+        Use Bash only for read-only inspection; do not edit source or run fixes.
       allowed_tools:
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
@@ -112,6 +120,14 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-feedback:get_review_observations"
         - "gobby-feedback:get_review_results"
+        - "gobby-feedback:submit_review"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:list_tasks"
+        - "gobby-tasks:search_tasks"
+        - "gobby-workflows:get_rule"
+        - "gobby-workflows:get_agent_definition"
+        - "gobby-results:get_tool_result"
+        - "gobby-results:search_tool_result"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-agents:end_agent_run"

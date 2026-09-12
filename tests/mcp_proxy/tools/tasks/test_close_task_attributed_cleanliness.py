@@ -18,7 +18,7 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finali
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_close import register_close_task
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -236,7 +236,6 @@ async def _close_evidence(
         evidence_files=(),
     )
     with (
-        patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(
             close_finalization,

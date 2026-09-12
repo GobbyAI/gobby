@@ -24,11 +24,13 @@ that machine's loopback address. The command also prints the authorization link
 if the browser does not open automatically. Consent times out after 300 seconds;
 use `--timeout SECONDS` to change that deadline or Ctrl-C to cancel.
 
-Daemon connections reuse saved credentials and refresh expired tokens, including
-after a daemon restart. They never open a browser automatically. If consent expires
-or is revoked, run `gobby mcp-proxy auth NAME` again. A changed server URL or a
-recreated instance requires its own authorization. Keep the callback port free
-when signing in again: it is reused from the saved client registration.
+Daemon connections reuse saved credentials and refresh expired access tokens on demand,
+including after a daemon restart. No periodic keepalive is required. When a first tool or
+resource request needs consent, the local daemon opens the browser, waits for authorization,
+and retries the connection once. If the browser cannot open, consent expires, or access is
+revoked, run `gobby mcp-proxy auth NAME` again. A changed server URL or a recreated instance
+requires its own authorization. Keep the callback port free when signing in again: it is reused
+from the saved client registration.
 
 Servers must support dynamic client registration and the authorization-code flow
 for this login command. Provider-specific API keys remain configurable through

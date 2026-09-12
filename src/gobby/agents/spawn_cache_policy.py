@@ -9,6 +9,7 @@ from pathlib import Path
 
 from gobby.agents.constants import (
     CARGO_HOME,
+    CARGO_TARGET_DIR,
     GOBBY_SESSION_ID,
     UV_CACHE_DIR,
     ensure_agent_cargo_home_dir,
@@ -165,6 +166,7 @@ def sandbox_write_paths(env_vars: dict[str, str]) -> list[str]:
     paths = [
         env_vars.get(env_var, "") for env_var in (*SPAWN_CACHE_ENV_VARS, *SANDBOX_CACHE_ENV_VARS)
     ]
+    paths.append(env_vars.get(CARGO_TARGET_DIR, ""))
     paths.append(hook_inbox_dir())
     return _dedupe(paths)
 

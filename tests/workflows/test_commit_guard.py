@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -19,6 +19,7 @@ from gobby.storage.projects import Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.utils.daemon_git import GitResult, GitTimeout, daemon_git
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
@@ -420,13 +421,87 @@ async def test_skipped_mutations_do_not_inspect_dirty_files(
         else guard_harness.edit_event(str(tmp_path / "outside.txt"))
     )
 
-    with patch(
-        "gobby.workflows.git_utils.get_dirty_files_categorized",
-        side_effect=AssertionError("dirty status inspection must be skipped"),
-    ):
+    with patch.object(daemon_git, "status", new_callable=AsyncMock) as mock_status:
         response = await guard_harness.handler._evaluate_rules(event)
 
     assert response.decision == "allow"
+    mock_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_foreign_conflict_verifies_only_candidate_paths(
+    guard_harness: GuardHarness,
+) -> None:
+    """Git is asked about the foreign-claimed path only, never the whole tree."""
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    (guard_harness.repo / "owned.txt").write_text("owned change\n", encoding="utf-8")
+    (guard_harness.repo / "unrelated.txt").write_text("noise\n", encoding="utf-8")
+    real_status = daemon_git.status
+    inspected: list[set[str]] = []
+
+    async def spy_status(
+        cwd: str | Path,
+        paths: Collection[str] = (),
+        *,
+        timeout: float = 10.0,
+        env: Mapping[str, str] | None = None,
+    ) -> GitResult:
+        inspected.append(set(paths))
+        return await real_status(cwd, paths, timeout=timeout, env=env)
+
+    with patch.object(daemon_git, "status", side_effect=spy_status):
+        response = await guard_harness.handler._evaluate_rules(
+            guard_harness.edit_event("foreign.txt")
+        )
+
+    assert response.decision == "block"
+    assert inspected == [{"foreign.txt"}]
+
+
+@pytest.mark.asyncio
+async def test_unverifiable_foreign_candidate_blocks(guard_harness: GuardHarness) -> None:
+    async def timed_out_status(
+        cwd: str | Path,
+        paths: Collection[str] = (),
+        *,
+        timeout: float = 10.0,
+        env: Mapping[str, str] | None = None,
+    ) -> GitTimeout:
+        del cwd, paths, env
+        return GitTimeout(status="timeout", argv=("git", "status"), timeout=timeout)
+
+    with patch.object(daemon_git, "status", side_effect=timed_out_status):
+        response = await guard_harness.handler._evaluate_rules(
+            guard_harness.edit_event("foreign.txt")
+        )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "could not verify" in response.reason
+    assert "foreign.txt" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_shell_git_status_after_external_commit_reconciles_attribution(
+    guard_harness: GuardHarness,
+) -> None:
+    """A commit made outside the hooks is picked up by the next git command the session runs."""
+    (guard_harness.repo / "owned.txt").write_text("committed elsewhere\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "owned.txt")
+    _git(guard_harness.repo, "commit", "-q", "-m", "external commit", "--", "owned.txt")
+    event = guard_harness.event("git status")
+    event.event_type = HookEventType.AFTER_TOOL
+    event.data["tool_output"] = "nothing to commit, working tree clean"
+    event.metadata["is_failure"] = False
+
+    response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "allow"
+    variables = SessionVariableManager(guard_harness.db).get_variables(
+        guard_harness.current_session.id
+    )
+    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
+    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
 
 
 @pytest.mark.asyncio
@@ -699,7 +774,7 @@ async def test_21049_owner_release_reports_later_dirt_as_foreign(
         "foreign.txt": [
             {
                 "task": f"#{guard_harness.current_task.seq_num}",
-                "session": f"#{guard_harness.current_session.seq_num}",
+                "session": guard_harness.current_session.ref,
             }
         ]
     }
