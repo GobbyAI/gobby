@@ -106,6 +106,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/432_bind_tool_chat_overlay_to_session_workspace.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 433,
+        filename: "433_flatten_gcode_read_policy_disjunction.sql",
+        checksum: "06c32298346c003ae4fba342577666418b662fa17f4c4c8e518a15fd0fcdae35",
+        sql: include_str!(
+            "../../assets/schema/migrations/433_flatten_gcode_read_policy_disjunction.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

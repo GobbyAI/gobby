@@ -507,6 +507,36 @@ def test_representative_search_symbol_index_freshness_graph_vector_and_status_sq
         )
 
 
+def test_scoped_content_search_keeps_bm25_pushdown_and_project_isolation(
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    """The gcode read policy must stay one qual so ParadeDB can push the BM25 query down.
+
+    Written as `project_id = a() OR project_id = b()`, the policy gave ParadeDB an
+    OR of two non-constant legs, which it cannot render as a Tantivy filter, so it
+    degraded the query to `"indexed_query":"all"` -- every document in the index.
+    The collapsed scan also lost its row estimate, and the planner then put it on
+    the inner side of a nested loop and re-ran it once per indexed file: 54.5s for
+    a query the table owner answers in 0.06s, which timed out every native Ask
+    bind (#22279). `= ANY (ARRAY[...])` is the same predicate and pushes down.
+
+    Asserting the plan is a real ParadeDB scan first keeps this from passing
+    vacuously on a fixture small enough to prefer a sequential scan.
+    """
+    fixture = authorization_fixture
+    search = (
+        "SELECT c.project_id FROM code_content_chunks c "
+        "WHERE c.content @@@ 'content' ORDER BY pdb.score(c.id) DESC LIMIT 10"
+    )
+    with psycopg.connect(fixture.agent_url, autocommit=True) as agent:
+        agent.execute("SET enable_seqscan = off")
+        plan = "\n".join(row[0] for row in agent.execute(f"EXPLAIN {search}").fetchall())
+        assert "Tantivy Query" in plan, plan
+        assert '"indexed_query":"all"' not in plan, plan
+        # The restriction itself is unchanged: still only the bound project.
+        assert _ids(agent, search) == {fixture.project_id}
+
+
 def test_project_checkouts_are_machine_isolated_lock_only_and_daemon_writable(
     authorization_fixture: AuthorizationFixture,
 ) -> None:
