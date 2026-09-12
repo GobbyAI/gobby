@@ -29,7 +29,7 @@ Use rules when you need behavior that should happen automatically at hook time:
 - inject dynamic context into the next turn
 - seed or mutate session variables
 - trigger MCP side effects when a condition becomes true
-- load a skill automatically for a specific workflow state
+- emit an explicit skill/reference fetch directive for a workflow state
 
 Rules are not the right tool for long-running control flow. Use pipelines or
 agent step workflows for that.
@@ -40,7 +40,7 @@ The `memory-lifecycle` rule group keeps memory use explicit and bounded across
 providers. `search-memories-on-claim` prompts an agent to search for relevant
 project knowledge after a successful task claim. `guard-plan-memory-writes`
 keeps draft findings in the plan artifact unless they are durable preferences
-or finalized decisions. The `review-closed-task-memories-before-compact` and
+or finalized decisions. The `review-closed-task-memories-before-handoff` and
 `review-closed-task-memories-on-stop` gates request one
 `review_task_memories` pass for each closure batch. These rules guide and gate
 agent behavior; they do not inject project memories automatically. See
@@ -135,8 +135,14 @@ Use defensive variable access in block rules:
 when: "variables.get('task_claimed', False) and not variables.get('plan_mode')"
 ```
 
-If a condition raises, block effects fail closed and fire. Other effect types
-fail open and are skipped.
+A rule-level condition error fails closed when any sibling is a `block`, so
+eligible non-block siblings can also execute. A non-block-only rule fails open.
+Per-effect condition errors independently fail closed for blocks and skip other
+effects. Selectors still apply. Database cancellation/deadline errors propagate.
+Within one rule, use `variables.get(...)` after a sibling mutation: flattened
+scalar aliases are captured when the rule context is built. Later rules receive
+fresh context. A block condition is checked when encountered, before its
+application is deferred.
 
 ## Events
 
@@ -185,6 +191,13 @@ timing.
 | `elicitation` | An elicitation request is being evaluated |
 | `elicitation_result` | An elicitation result was received |
 
+### Additional Accepted Events
+
+`RuleTriggerEvent` also accepts `setup`, `user_prompt_expansion`,
+`post_tool_batch`, `message_display`, and `directory_added`. Accepted names do
+not imply every provider emits the event; inspect the adapter payload before
+using a provider-specific event.
+
 ### About `turn_start`
 
 `turn_start` is the portability event you usually want for prompt-entry,
@@ -196,7 +209,11 @@ the raw `before_agent` hook.
 `turn_end` is the portability event you usually want for stop gates and
 turn-final checks. The engine emits it alongside the raw hook when a session
 finishes a turn, so one rule can cover CLIs that surface the boundary as
-`after_agent`, `stop`, or both.
+`after_agent`, `stop`, or `stop_failure`. Separate raw events can each evaluate
+the semantic boundary; do not infer cross-event once-only delivery. Manual
+compaction bypasses one subsequent semantic turn end, while raw rules still run.
+User-interrupt handling suppresses configurable turn-end blocks and keeps
+non-block effects live. Durable agent/task waits consume no ordinary stop count.
 
 `turn_end` is only the rule-authoring boundary for the current turn. Spawned
 agent-run termination is a separate lifecycle action and is signaled through
@@ -219,7 +236,10 @@ Gobby currently supports these effect types:
 | `set_watch_paths` | Update dynamic file watchers |
 | `set_worktree_path` | Override a generated worktree path |
 | `set_elicitation` | Programmatically answer or override elicitation results |
-| `load_skill` | Resolve a skill and inject its contents into context |
+| `load_skill` | Emit an explicit skill/reference fetch directive |
+| `set_display_content` | Set display-content response metadata |
+| `run_command` | Run an argv command with hook JSON on stdin, failing open |
+| `proxy_hook` | Apply a trusted registered input transformation on `before_tool` |
 
 ## Effect Notes
 
@@ -247,12 +267,22 @@ stays attached to its segment. A
 as a whole, so an environment exported in an earlier segment still counts.
 `mask_quoted: true` blanks quoted string data before either pattern runs.
 
-Only one `block` effect is allowed per rule. First matching block wins.
+Only one `block` effect is allowed per rule. With `rules.aggregate_blocks=false`,
+the first blocking rule ends evaluation. With aggregation enabled (the default),
+later matching rules contribute block gates but no non-block side effects.
+
+Native `tools` and `mcp_tools` are alternative selectors. Native shell aliases
+match as shell tools and use command selectors. Non-shell native and MCP tool
+matches do not additionally apply command regexes; with no tool selectors,
+command selectors still apply. Use the selector appropriate to the payload.
 
 ### `set_variable`
 
 `set_variable` mutates the session variables immediately. Later rules in the
-same evaluation pass see the updated value.
+same evaluation pass see the updated value. Expression-like strings evaluate;
+Jinja values render/coerce first. Failed expressions skip the write. Custom rules
+cannot write runtime-reserved variables. The default value is `None`, so specify
+the intended value rather than relying on an omitted field.
 
 ### `inject_context`
 
@@ -270,6 +300,13 @@ effect options include:
 - `block_on_failure`
 - `block_on_success`
 
+Top-level string arguments are templated; nested containers are not recursively
+rendered by this effect. Inline dispatch requires `inject_result=true`,
+`background=false`, and an available dispatcher. `success_variable` requires
+inline result injection. An inline failure can contribute a block reason, but
+does not automatically stop later sibling effects: gate dependent work
+explicitly. Deferred/background calls cannot establish an inline prerequisite.
+
 ### `rewrite_input`
 
 `rewrite_input` changes the pending tool input before it runs. uv enforcement is
@@ -286,9 +323,29 @@ runtime handlers. Use these only when the hook surface expects that metadata.
 
 ### `load_skill`
 
-`load_skill` resolves a Gobby-managed skill and injects it into the session
-context. This keeps skill activation in the workflow layer rather than
-hard-coding it into a single CLI.
+`load_skill` emits a fetch directive. It does not resolve or inject the body and
+does not satisfy a loading gate. The agent must complete the requested skill or
+exact reference retrieval, including every cursor page. Router/menu-only loads
+do not load references.
+
+### Executable and Delivery Effects
+
+`run_command` runs an argv list with hook-event JSON on stdin. A skill and script
+must be supplied together when using a skill asset; script paths are validated.
+Failures, missing executables, timeouts, and unparseable output fail open. Do not
+use it as a blocking safety primitive or assume an installed script is authorized
+for arbitrary execution.
+
+`proxy_hook` is restricted to `before_tool` and registered trusted handlers. It
+cannot configure arbitrary commands, scripts, or background execution. Original
+input is checked before transformation; changed input is checked again against
+agent, step, and declarative block policy.
+
+`delivery` defaults to `eager`. Supported `on_receipt` tracking writes are staged
+with the payload rather than committed before delivery. A block's
+`acknowledge_variable` is consumed only when its block is delivered; a displaced
+block stays armed. Use this mechanism rather than clearing a trigger in a sibling
+`set_variable` effect. See [override precedence](./workflow-rules.md#override-precedence-and-acknowledge-variables).
 
 ## Example: Multi-Effect Rule
 
@@ -321,24 +378,24 @@ The engine evaluates rules like this:
 
 1. Resolve raw and semantic events for the incoming hook.
 2. Load enabled rules for those events.
-3. Apply session overrides and agent-scope filtering.
+3. Apply event-project scope and agent-scope filtering.
 4. Filter by audience and the session's active rule selectors.
 5. Run hard-coded agent and step tool enforcement for `before_tool`.
 6. Evaluate each rule's `tools`, `when`, and effect selectors.
 7. Apply matching non-block effects in order, then apply a deferred block if present.
-8. Stop rule evaluation at the first matching block.
+8. Stop after the first blocking rule, or collect later blocks without their side effects when aggregation is enabled.
 
 Important runtime semantics:
 
 - `set_variable` effects are visible to later rules in the same pass.
 - `inject_context` effects accumulate.
 - `mcp_call` effects are collected and dispatched after evaluation.
-- Inline `mcp_call` effects with `inject_result` can inject formatted results and stop sibling effects on failure.
+- Inline `mcp_call` effects can inject formatted results and contribute a block; later siblings still require explicit dependency conditions.
 - In a multi-effect rule, non-block effects run before the rule's block effect.
 - Rule conditions skip rules; they do not stop evaluation.
 - Some universal safety behavior is hard-coded in the engine, not expressed in YAML.
 - On `turn_start`, the engine resets transient stop/tool-block state and may seed progressive MCP discovery.
-- On `turn_end`, the engine increments `stop_attempts` before configurable rules run.
+- On ordinary `turn_end`, the engine increments `stop_attempts` before configurable rules; active durable waits do not consume attempts.
 
 ## Activation Model
 
@@ -346,13 +403,45 @@ A rule only affects a session when all of the following are true:
 
 1. The definition exists in `rule_definitions`.
 2. The rule is enabled.
-3. Session overrides have not disabled it.
+3. Active `rules.enforcement_enabled` is true, and row scope is global or the event project.
 4. Its `agent_scope`, if present, matches the session's agent type.
 5. Its `audience`, if present, matches the current runtime audience.
 6. The current session's active rule selectors include it.
 
 That means bundled YAML is only the template source. The database plus active
-selectors determine what actually runs.
+selectors determine what actually runs. Current agent-definition selectors take
+precedence over fallback `_active_rule_names`; missing fallback applies no
+additional filter. There is no general per-session rule-override management API.
+
+### Export and Import
+
+`gobby rules export` emits one YAML document, preserving each rule's body, group,
+description, enabled state, priority, tags, and sources. Per-rule tags/sources
+override file defaults; the importer retains its ownership tag. Invalid metadata
+is rejected. Duplicate names from different scopes fail rather than silently
+losing a row. Import uses destination project scope, not original row IDs or
+scope: this is a definition export, not a full database backup.
+
+### Customization and Scope
+
+Keep bundled definitions Gobby-owned: customize using a distinct named rule and
+intentional agent selectors, not by editing an installed bundled body. Public
+low-level updates accepting a body are not authorization to change bundled
+policy. Current rule sync rejects user collisions with bundled names; do not
+assume another domain's `override: true` format enables same-name rule overrides.
+
+Current rule-file roots are `.gobby/workflows/rules/` and
+`~/.gobby/workflows/rules/`. Operator imports within a registered checkout use
+that project's ID; outside one they are global. MCP `create_rule` creates a
+global installed row. Its `project_path` controls export location only, and
+`make_template` selects global export. It is not a scope selector.
+
+Managed sync applies enabled defaults until the user pins a toggle. It refreshes
+managed definitions, protects live custom rows, and prunes absent managed rows
+within scanned scopes. A soft-deleted managed row can return on sync. Read back
+the installed state rather than assuming restore resets every user choice.
+Row changes are read without restart; engine code changes need a coordinated
+restart from the daemon checkout.
 
 ## Public Tooling
 
@@ -368,7 +457,31 @@ Use the `gobby-workflows` MCP server to manage standalone rules:
 The CLI also exposes operator commands under `gobby rules`, including `list`,
 `show`, `enable`, `disable`, `import`, `export`, and `audit`.
 
+Use `create_rule(name, definition)` with `group` inside the definition and a
+nonempty `effects` array. Creation accepts the body, not embedded row metadata;
+use `update_rule` for supported metadata. Updates replace a supplied body rather
+than merging it; explicit metadata wins over embedded update metadata. Read back
+successful writes. Auto-export can be skipped in dev mode or fail after the row
+write succeeds, so verify files separately.
+
+MCP `list_rules` has no public cursor: event takes precedence over group if both
+are supplied. Brief mode returns name/event/group/enabled. Malformed bodies can
+be skipped with a warning; use exact lookup and logs before declaring absence.
+Large proxy results are separately retrievable via `gobby-results` pagination.
+
+`toggle_rule` changes installed state, not one session. `delete_rule` soft-deletes;
+bundled `gobby` tags require `force=true`, and sync can restore them. The CLI is
+operator tooling: enable/disable call the daemon, while list/show/import/export/
+audit access CLI storage. A multi-rule import may partially succeed. Audit output
+is bounded history, not a complete record of every allow or skipped rule.
+
+HTTP has nine rule routes: list/create, groups, tags, bulk-toggle, and per-name
+get/update/delete/toggle. There is no collection `PUT /api/rules`. Bulk-toggle
+filters by source (`installed` or `project`), not project ID; inspect `partial`
+and `failures` even when the response says success. See the
+[HTTP inventory](./http-endpoints.md#memory-skills-workflows-and-rules).
+
 For authoring caveats and engine behavior that matters when designing rules,
 see [Rule Authoring Guide](./workflow-rules.md).
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-09-12_

@@ -42,6 +42,7 @@ def _make_rule_row(
     row.source = source
     row.description = description
     row.tags = tags or []
+    row.sources = None
     row.workflow_type = workflow_type
     row.definition_json = definition_json or json.dumps(
         {
@@ -513,3 +514,107 @@ class TestAuditRules:
             data = json.loads(result.output)
             assert isinstance(data, list)
             assert len(data) == 1
+
+
+def test_export_import_preserves_multiple_groups_and_policy(
+    cli_runner: CliRunner, tmp_path: Path, temp_db: HubDatabase
+) -> None:
+    import yaml
+
+    from gobby.cli.rules import rules
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+
+    manager = RuleDefinitionManager(temp_db)
+    originals = []
+    for name, group, enabled, priority in [
+        ("export-a", "first", False, 17),
+        ("export-b", "second", True, 43),
+    ]:
+        originals.append(
+            manager.create(
+                name=name,
+                definition_json={
+                    "event": "before_tool",
+                    "group": group,
+                    "audience": "interactive",
+                    "agent_scope": ["default"],
+                    "tools": ["Edit"],
+                    "effects": [{"type": "observe", "message": name}],
+                },
+                description=f"Policy {name}",
+                enabled=enabled,
+                priority=priority,
+                tags=["user", name],
+                sources=["codex"],
+            )
+        )
+    with patch("gobby.cli.rules._get_manager", return_value=manager):
+        exported = cli_runner.invoke(rules, ["export"])
+    assert exported.exit_code == 0, exported.output
+    document = yaml.safe_load(exported.output)
+    assert set(document["rules"]) == {row.name for row in originals}
+    for row in originals:
+        manager.hard_delete(row.id)
+    rule_file = tmp_path / "exported.yaml"
+    rule_file.write_text(exported.output, encoding="utf-8")
+    with (
+        patch("gobby.cli.rules.require_cli_database", return_value=temp_db),
+        patch("gobby.cli.installers.shared.registered_project_id", return_value=None),
+    ):
+        imported = cli_runner.invoke(rules, ["import", str(rule_file)])
+    assert imported.exit_code == 0, imported.output
+    for original in originals:
+        restored = manager.get_by_name(original.name)
+        assert restored is not None
+        assert restored.definition_json == original.definition_json
+        assert restored.enabled is original.enabled
+        assert restored.priority == original.priority
+        assert restored.description == original.description
+        assert restored.tags == original.tags
+        assert restored.sources == original.sources
+
+
+@pytest.mark.parametrize("field", ["tags", "sources"])
+@pytest.mark.parametrize("level", ["file", "rule"])
+@pytest.mark.parametrize("invalid_value", ["not-a-list", False, 0])
+def test_import_rejects_invalid_rule_metadata(
+    field: str,
+    level: str,
+    invalid_value: str | bool | int,
+    cli_runner: CliRunner,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    import yaml
+
+    from gobby.cli.rules import rules
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+
+    definition: dict[str, object] = {
+        "event": "turn_start",
+        "effects": [{"type": "observe", "message": "test"}],
+    }
+    document: dict[str, object] = {"rules": {"invalid-metadata": definition}}
+    target = document if level == "file" else definition
+    target[field] = invalid_value
+    rule_file = tmp_path / "invalid.yaml"
+    rule_file.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with (
+        patch("gobby.cli.rules.require_cli_database", return_value=temp_db),
+        patch("gobby.cli.installers.shared.registered_project_id", return_value=None),
+    ):
+        imported = cli_runner.invoke(rules, ["import", str(rule_file)])
+    assert imported.exit_code == 1
+    assert f"{field} must be a list of strings" in imported.output
+    assert RuleDefinitionManager(temp_db).get_by_name("invalid-metadata") is None
+
+
+def test_export_refuses_ambiguous_names(cli_runner: CliRunner, mock_manager: MagicMock) -> None:
+    from gobby.cli.rules import rules
+
+    mock_manager.list_all.return_value = [_make_rule_row("shared"), _make_rule_row("shared")]
+    with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
+        exported = cli_runner.invoke(rules, ["export"])
+    assert exported.exit_code == 1
+    assert "Multiple scoped rules named 'shared'" in exported.output
+    assert "rules:" not in exported.output

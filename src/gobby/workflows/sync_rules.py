@@ -241,9 +241,8 @@ def _sync_rule_file(
         rel_parts = yaml_file.relative_to(current_rules_path).parts
         dir_group = rel_parts[0] if len(rel_parts) > 1 else None
         file_group = data.get("group") or dir_group
-        file_tags = data.get("tags") or []
-        if tag not in file_tags:
-            file_tags = [*file_tags, tag]
+        # Keep raw defaults intact until each effective value is validated.
+        file_tags = data.get("tags", [])
         file_sources = data.get("sources")
         file_audience = data.get("audience")
 
@@ -254,6 +253,24 @@ def _sync_rule_file(
 
             if on_disk is not None:
                 on_disk.add((rule_name, project_id))
+
+            # Exported rows can carry distinct metadata within one grouped file.
+            # Preserve the loader ownership tag even with per-rule tag overrides.
+            rule_tags = rule_data.get("tags", file_tags)
+            rule_sources = rule_data.get("sources", file_sources)
+            if not isinstance(rule_tags, list) or not all(
+                isinstance(value, str) for value in rule_tags
+            ):
+                result["errors"].append(f"Rule '{rule_name}' tags must be a list of strings")
+                continue
+            if rule_sources is not None and (
+                not isinstance(rule_sources, list)
+                or not all(isinstance(value, str) for value in rule_sources)
+            ):
+                result["errors"].append(f"Rule '{rule_name}' sources must be a list of strings")
+                continue
+            if tag not in rule_tags:
+                rule_tags = [*rule_tags, tag]
 
             if _has_gobby_rule_name_collision(manager, rule_name, tag):
                 logger.debug(
@@ -269,8 +286,8 @@ def _sync_rule_file(
                     rule_name=rule_name,
                     rule_data=rule_data,
                     file_group=file_group,
-                    file_tags=file_tags,
-                    file_sources=file_sources,
+                    file_tags=rule_tags,
+                    file_sources=rule_sources,
                     file_audience=file_audience,
                     sync_tag=tag,
                     result=result,

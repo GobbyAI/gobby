@@ -20,9 +20,10 @@ missing variable directly, the expression fails with an evaluation error
 That matters most for `block` rules because a condition failure there can fail
 closed and block the session unexpectedly.
 
-Non-block effects fail open on condition errors and do not fire. `block`
-effects fail closed because the engine prefers a conservative safety block over
-silently allowing an action when the guard cannot be evaluated.
+Per-effect errors skip non-block effects and fail closed for `block`. A
+rule-level condition fails closed if any block exists, so eligible non-block
+siblings may also execute. Non-block-only rules fail open. Database cancellation
+and deadline errors propagate. See [condition semantics](./rules.md#condition-expressions).
 
 ### Risky Pattern
 
@@ -56,7 +57,7 @@ into the rules database and selected for the current session.
 Before telling a user that a rule is enabled, disabled, or absent, inspect the
 installed rule state through `gobby-workflows` or the backing database. A YAML
 file can exist while the installed definition is disabled, filtered out by the
-session's active selectors, or shadowed by a session override.
+session's active selectors, or excluded by the current agent definition's selectors.
 
 ## Author Against Semantic Turn Events
 
@@ -147,8 +148,8 @@ task-close rules in control.
 
 ### Stop Attempt Counting
 
-`stop_attempts` is incremented automatically on `turn_end`, before configurable
-stop-gate rules run. Bundled stop-gate rules pair it with `max_stop_attempts`
+`stop_attempts` increments on ordinary `turn_end` before configurable rules.
+Active durable agent/task waits consume no attempts. Bundled stop-gate rules pair it with `max_stop_attempts`
 to prevent permanent stop blocking.
 
 ### Turn-Start Reset
@@ -169,17 +170,22 @@ agent run, or clear long-lived workflow state.
 
 ### Multi-Effect Ordering
 
-For a matching rule, the engine applies non-block effects before the block
-effect. That lets one rule set variables, inject context, or queue MCP calls and
+For a matching rule, the engine applies eligible non-block effects before the
+selected block. Per-effect conditions are checked in declaration order before
+block application is deferred; use `variables.get(...)` after sibling writes
+because flattened scalar aliases belong to the initial rule context. That lets one rule set variables, inject context, or queue MCP calls and
 then block the event with a rendered reason. Per-effect `when` conditions are
 evaluated separately from the rule-level `when`.
 
-When `rules.aggregate_blocks` is enabled, the first blocking rule runs all of
+When `rules.aggregate_blocks` is enabled (the default), the first blocking rule runs all of
 its matching effects. Later matching rules are evaluated in read-only lookahead
 mode: they can contribute another `block` gate, while their non-block effects
 are suppressed. This keeps aggregation limited to collecting block reasons;
 debug logs and rule-evaluation metrics identify the suppressed effects and
 lookahead gates.
+
+User interrupts are separate: configurable turn-end blocks are suppressed,
+while non-block effects stay live. This is not a task ownership reset.
 
 ### Override Precedence and Acknowledge Variables
 
@@ -187,7 +193,8 @@ Turn-end responses are assembled in a fixed order. The hard-coded overrides
 (`force_allow_stop` → allow; `tool_block_pending` / `edit_write_pending` →
 block) are returned before any rule-level block reason, after the winning
 rule's non-block effects have already run. A block gate's `acknowledge_variable`
-is set only when that gate's block is actually delivered; a gate whose block is
+is set only when that gate's block is actually delivered (`delivery: on_receipt`
+stages persistence until acknowledgment); a gate whose block is
 displaced by an override stays armed for the next turn end.
 
 Consume a gate's trigger state with `acknowledge_variable`, never with a
@@ -212,4 +219,4 @@ contribute only their `block` effects, so the state is consumed twice.
 - Treat hard-coded engine safety as part of the contract when debugging rule
   interactions.
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_
