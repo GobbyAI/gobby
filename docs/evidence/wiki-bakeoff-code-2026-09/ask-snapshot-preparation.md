@@ -886,4 +886,113 @@ unknown, so runtime `/private/tmp/gobby-ap-v_t3et1v` and schema
 The cleanup artifact SHA-256 is
 `00a98570b53866633818b075edf75e010c92d0bccf45b4f62b51b6cfd9e83ce7`.
 
-Attempts 1–17 remain immutable failures. Attempt 18 and all14 remain unrun.
+## Attempt 18: host disk exhaustion rejected preparation
+
+Attempt 18 ran from session `gobby#12858` with output directory
+`/tmp/gobby-ask-native-probe-12858-eighteenth`, starting `13:52` and failing at
+`13:55` local time.
+
+It never reached the SRT policy question. The pipeline failed at its first step:
+
+```
+MCP step prepare failed: gobby-ask:prepare returned error:
+gcode_index_failed:1:Error: db error Caused by: ERROR: could not extend file
+"base/16384/4770513": No space left on device HINT: Check free disk space.
+```
+
+This is an environmental failure of the host, not a defect in Ask. The data
+volume was full because two orphaned cargo build trees held roughly 245 GB — the
+main checkout's `target/` at 226 GB and 1.37M files, and the epic worktree's at
+19 GB. Task #22021 removed both when it moved every checkout onto one shared
+build directory per project (82c58ef83c) and reclaimed the orphans; the volume
+now reports 6.1 TiB available of 7.3 TiB. Attempt 18 carries no evidence about
+launch policy and must not be counted as a policy failure.
+
+Immutable `raw-probe.json` SHA-256 is
+`822d9fdded689c1657e7308c466cc61c959b05cd410b0bc5c62c49a82b7ed41b`;
+`complete=true`, zero receipts, zero excluded receipts, no cleanup errors. The
+runtime root was removed and schema
+`gobby_test_askprobe_6e8066b2b3bd421485d62e749992c750` was dropped, so nothing
+from this attempt is retained.
+
+## Attempt 19: preparation and seed pass; spawn rejects the launch policy
+
+Attempt 19 ran from the same session with output directory
+`/tmp/gobby-ask-native-probe-12858-nineteenth`, starting `14:01` and failing at
+`14:07` local time, with disk pressure no longer present.
+
+Preparation and seed both completed — `ask_runs[0].steps[0]` and `steps[1]`
+record no error. The pipeline failed at `steps[2]`:
+
+```
+MCP step investigate failed: gobby-ask:spawn returned error:
+native Ask launch policy is missing or outside the owned runtime
+```
+
+Agent run `8f09ef3e-2f7c-4cd7-8cc8-3f186eff40e8` separately recorded
+`Ask SRT policy semantics changed after validation`, and capture reported one
+`IncompleteLaunch` error, "native Ask agent run has no child session", for the
+same run. `runtime_identity.control_digest` is
+`b38922fca36491b574448fd752dee104b9285ece1fbcd27fc38ccb16e792ad50`.
+
+Two errors are recorded, and only one of them is causal. The agent-side message
+is the digest comparison in `AskRuntimeProfile.validate_launch`
+(src/gobby/ask/runtime_profile.py:194) and is the real failure. The spawn-side
+message comes from the probe harness at tests/ask/native_probe_harness.py:2387,
+where it tries to copy the rendered policy out of `sandbox["policy_path"]` into
+its own artifact root and finds nothing to copy because the launch had already
+aborted. It is a consequence, not a second defect.
+
+The retained launch sandbox block is in this attempt's `raw-probe.json` under
+`agent_runs[0].agent.resume_metadata_json.sandbox`, carrying `backend: srt`,
+`enforced: true`, its `policy_hash`, and `managed_bootstrap_path`
+`/private/tmp/gobby-ap-cmygt4ow/gobby/runtime/managed-executions/8f09ef3e-2f7c-4cd7-8cc8-3f186eff40e8/grant.json`.
+
+Immutable `raw-probe.json` SHA-256 is
+`76bfba5e3ff5ce8bd36b78f8d131e7475529271cc07e36e1e67cd1fa701b5c81`;
+`complete=false` with 3 excluded receipts and no accepted receipts. Cleanup
+reported three errors: owned native Ask process liveness unknown for run
+`8f09ef3e-2f7c-4cd7-8cc8-3f186eff40e8`, cleanup could not verify every owned
+process is dead, and the evidence export is incomplete so owned state is
+retained. Run root `/private/tmp/gobby-ap-cmygt4ow` therefore remains on disk,
+together with schema `gobby_test_askprobe_122d8ebbbe544508b1ead4c273d91f72`.
+
+## Root cause, established from the retained artifacts
+
+Attempt 19 closed the question that attempt 17 left open. The comparison it
+demanded was reproduced against the retained policy documents rather than
+another probe run.
+
+`gcode_runtime_write_exceptions` (src/gobby/agents/sandbox_policy.py:353) grants
+every sandbox its own generated gcode home,
+`<GOBBY_HOME>/gcode-runtime/<sha256(workspace)[:16]>`, and
+`compute_sandbox_paths` injects it into `allowWrite` and therefore `allowRead`.
+That path sits under `GOBBY_HOME`, outside the source, scratch, run and run-temp
+roots that `normalized_ask_srt_policy_digest` relabels, so it is hashed
+verbatim — while its last segment is a pure function of the sandbox workspace.
+Ask gives every stage and every repair attempt its own workspace
+(`artifacts.run_root / "scratch" / f"{stage}-{attempt}"`), so the digest could
+never be invariant across launches. A perfectly captured receipt would still
+fail the next Ask run, the reviewer stage, and repair attempt 1, each with the
+identical message.
+
+Attempt 15 retains both sides of an exact capture/launch pair, and their
+normalized diff is exactly this entry in `allowRead` and `allowWrite`, plus the
+`hooks/inbox` and package-registry rows that 5f42ce6ef9 had already removed.
+Attempt 19 narrows it to one row: capture digest
+`4e882ae34b95a2428de72f6913693475d0d1299515a309c0892733e878f7df35` against
+launch digest
+`e4486503f5c3220ae6f5850db497e5c6a02fcd34f1ce4aaf777372a70aba1fca`, differing
+only in `/private/tmp/gobby-ap-cmygt4ow/gobby/gcode-runtime/33ac34073d6cee95`
+against `…/gcode-runtime/4f91b29328f09863`. `sha256(workspace_path)[:16]`
+reproduces all four observed directory names arithmetically.
+
+Corrections 5f42ce6ef9, e21e6eabc6 and 8951b60841 each adjusted policy content
+and each left the failure unchanged, because the defect is in the normalizer
+that hashes the policy, not in what goes into it. Commit 16be058101 relabels the
+runtime home like the other roots and carries four regression tests, two of
+which fail on the unpatched normalizer.
+
+Attempts 1–17 and 19 remain immutable policy failures; attempt 18 is an
+immutable host-environment failure carrying no policy evidence. Attempt 20 and
+all 14 cohort questions remain unrun.
