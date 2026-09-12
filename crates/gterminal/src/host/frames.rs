@@ -4,7 +4,7 @@ use std::io::{self, Cursor};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::embed::{self, AttachOutcome};
@@ -14,6 +14,8 @@ use crate::protocol::{
     FramingError, RenderEncoding, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE,
     PROTOCOL_VERSION,
 };
+
+const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let (reader, mut writer) = stream.into_split();
@@ -232,6 +234,18 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     if let Err(error) = writer.shutdown().await {
         tracing::debug!(%error, "frame connection write shutdown failed");
     }
+    // Keep the socket alive until the peer consumes the final frames; dropping both halves can
+    // discard unread bytes even after the write half has shut down.
+    let mut sink = [0_u8; 256];
+    let _ = tokio::time::timeout(PEER_DRAIN_TIMEOUT, async {
+        loop {
+            match reader.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    })
+    .await;
 }
 
 async fn recv_opt(
