@@ -292,6 +292,14 @@ async function openTerminalTab(page: Page): Promise<void> {
     .click();
 
   await expect(tabTrigger).toContainText("Terminal");
+  // The roster filter defaults to agent-managed terminals, and these fixtures are
+  // plain shells, so the list renders empty (and therefore hidden) until "All" is
+  // selected. Take the same route a user does rather than making the fixtures claim
+  // to be agent-managed, which is not what this spec exercises.
+  await page
+    .getByRole("radiogroup", { name: "Terminal sessions shown" })
+    .getByRole("radio", { name: "All", exact: true })
+    .click();
   await expect(
     page.getByRole("list", { name: "Terminal sessions" }),
   ).toBeVisible({ timeout: 15_000 });

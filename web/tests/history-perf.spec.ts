@@ -208,6 +208,13 @@ async function measure(
     .locator(".activity-panel-mobile-menu")
     .getByRole("button", { name: "Terminal", exact: true })
     .click();
+  // The roster filter defaults to agent-managed terminals, and these fixtures are
+  // plain shells, so the list renders empty (and therefore hidden) until "All" is
+  // selected.
+  await page
+    .getByRole("radiogroup", { name: "Terminal sessions shown" })
+    .getByRole("radio", { name: "All", exact: true })
+    .click();
   await expect(
     page.getByRole("list", { name: "Terminal sessions" }),
   ).toBeVisible({ timeout: 60_000 });
