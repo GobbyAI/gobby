@@ -45,7 +45,10 @@ REQUIRED_ZIG = "0.15"
 VENDOR_BUILD_ENABLED = os.environ.get("GOBBY_RUN_VENDOR_BUILD") == "1"
 requires_vendor_build = pytest.mark.skipif(
     not VENDOR_BUILD_ENABLED,
-    reason="set GOBBY_RUN_VENDOR_BUILD=1 to run Zig-dependent vendor builds",
+    reason=(
+        "vendored libghostty-vt build requires a working Zig toolchain; "
+        "set GOBBY_RUN_VENDOR_BUILD=1 to run"
+    ),
 )
 
 
@@ -254,6 +257,7 @@ def test_zig_cases_skip_without_opt_in() -> None:
             "pytest",
             f"{__file__}::test_helper_builds_vendored_libghostty_vt",
             "-q",
+            "-rs",
         ],
         cwd=REPO_ROOT,
         env=env,
@@ -264,6 +268,7 @@ def test_zig_cases_skip_without_opt_in() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1 skipped" in result.stdout
+    assert "working Zig toolchain" in result.stdout
 
 
 @pytest.mark.slow
