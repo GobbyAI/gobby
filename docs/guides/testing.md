@@ -14,14 +14,21 @@ Pytest is run through `uv` so it uses the project environment:
 uv run pytest tests/tasks/test_validation.py -v
 ```
 
-Agents must enable Gobby's test protection switch on every pytest run:
+Agents must enable test protection and explicitly select the isolated test hub
+on every pytest run. `GOBBY_TEST_PROTECT` fences process/home behavior; it does
+not supply a test database:
 
 ```bash
-GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v
 ```
 
 Run a package or marker slice when the affected surface spans more than one
-file. Agents keep the same `GOBBY_TEST_PROTECT=1` prefix:
+file. Export the isolated DSN before the remaining examples, and keep the
+`GOBBY_TEST_PROTECT=1` prefix:
+
+```bash
+export DATABASE_URL="postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+```
 
 ```bash
 GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/ -v
@@ -81,7 +88,7 @@ Sandbox compatibility tests under `tests/integration/sandbox/` are skipped
 unless the run explicitly passes `--run-sandbox`:
 
 ```bash
-uv run pytest tests/integration/sandbox/ --run-sandbox -v
+GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/ --run-sandbox -v
 ```
 
 ## Shared Fixtures
@@ -92,8 +99,9 @@ The root `tests/conftest.py` provides common isolation and test helpers:
 - `repo_root` points to the repository root.
 - `safe_db_dir` and `safe_gobby_home_dir` isolate database and home-directory
   state.
-- `temp_db`, `session_manager`, `project_manager`, and `mcp_manager` provide
-  storage-backed managers on a migrated temporary database.
+- `temp_db` aliases the schema-isolated `postgres_db` fixture on the explicitly
+  selected test hub. `session_manager`, `project_manager`, and `mcp_manager`
+  use it. These are not temporary SQLite databases.
 - `mock_config`, `mock_config_with_websocket`, `default_config`,
   `mock_daemon_config`, `mock_machine_id`, and `mock_llm_service` cover common
   daemon dependencies.
@@ -162,4 +170,4 @@ production-resource fence that agent runs require.
 When a test fails, keep the rerun focused on the failing file or marker until
 the failure is understood. Broaden only when the change touches shared behavior.
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

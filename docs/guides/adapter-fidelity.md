@@ -35,8 +35,8 @@ Each hook capability declares:
 
 | Provider | Hook Contract | Context Routing | Tool / Permission Control | Elicitation | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Claude Code | `claude_contract.py` kebab-case native names | `additionalContext` on supported Claude hooks; startup banner is injected once | `PreToolUse`, `PermissionRequest`, retry, watch paths, worktree create | Supported on Claude elicitation hooks | Pre-tool rule-block reasons are compacted for terminal readability |
-| Codex hooks.json | PascalCase hooks in `CodexHooksAdapter.EVENT_MAP` | `additionalContext` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`; `systemMessage` for `PreToolUse`, `PermissionRequest`, compaction, and stop hooks | `PreToolUse` and `PermissionRequest`; tool-input rewrites are applied by dispatch enforcement where supported | Not supported by terminal hooks.json adapter | Unsupported response fields are dropped with telemetry |
+| Claude Code | `claude_contract.py` kebab-case native names | `additionalContext` on supported Claude hooks; startup banner is injected once | `PreToolUse`, `PermissionRequest`, retry, watch paths, worktree create | Supported on Claude elicitation hooks | Rule-block reasons pass through; capability declarations use `ReasonFormat.PASSTHROUGH` |
+| Codex hooks.json | PascalCase hooks in `CodexHooksAdapter.EVENT_MAP` | `additionalContext` for `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PostToolUse`; `systemMessage` for `PreToolUse`, `PermissionRequest`, compaction, and stop hooks | `PreToolUse` and `PermissionRequest`; tool-input rewrites are applied by dispatch enforcement where supported | Not supported by terminal hooks.json adapter | Unsupported response fields are dropped with telemetry |
 | AGY CLI | Five PascalCase events: `PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop` | `PreInvocation`/`PostInvocation` context via `injectSteps.ephemeralMessage`; system messages via `injectSteps.userMessage` | `PreToolUse` honors `allow`/`deny`/`ask`, `deny_unless_prior_grant`, and argument `overwrite`; `PostInvocation` honors `terminationBehavior`. `force_ask` is schema-present but unmeasured and Gobby never emits it. `permissionOverrides` is not honored (headless auto-deny wins), and `injectSteps.toolCall` is fatal and never emitted. | Not supported | AGY 1.1.18 floor; custom `AgyWebChatBackend` stream-json transport; managed spawn and 6.1 interactive dispatch are proven |
 | Qwen CLI | `qwen_contract.py` current PascalCase hook names | Event-specific `hookSpecificOutput.additionalContext` | `PreToolUse.permissionDecision`, structured `PermissionRequest.decision`, and top-level stop/subagent/todo decisions | Not supported | Dedicated terminal adapter; ACP remains the web-chat transport only |
 | Factory Droid | PascalCase Droid hook names | `additionalContext` on Droid-supported context hooks; no context channel on `PreToolUse` | `PreToolUse.permissionDecision` | Not supported | Current behavior is intentionally standalone, not inherited from Claude |
@@ -56,7 +56,9 @@ Current degradation kinds:
 - `dropped_field`: populated `HookResponse` field has no native destination
 - `rerouted_field`: context is moved to a different native channel
 - `context_truncated`: context exceeds the adapter safety limit
-- `reason_compacted`: Claude rule-block reason was shortened for display
+- `reason_compacted`: retained telemetry vocabulary; current Claude capability
+  declarations use passthrough reasons, so do not infer active compaction from
+  the existence of this metric kind
 - `empty_block_sentinel`: block/deny reached the adapter without a reason
 - `graceful_error`: hook processing failed and returned a provider-shaped non-fatal response
 
@@ -74,4 +76,4 @@ A broader universal response-translation layer is future work. The current
 slice records today's provider facts so that future extraction has a stable
 contract instead of another set of hard-coded special cases.
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-12_

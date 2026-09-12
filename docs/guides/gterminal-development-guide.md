@@ -107,7 +107,10 @@ satisfied, `tmux` remains the default. Roll back a native-default deployment wit
 
 ## Landing worktree
 
-- **worktree registered**: `0.5.0-test` (gobby-worktrees id `d2a661ee`) at
+This is historical landing provenance, not a claim that a worktree or carve-out
+is currently active. Inspect installed worktree/task rows before acting on it.
+
+- **historical worktree**: `0.5.0-test` (gobby-worktrees id `d2a661ee`) at
   `~/.gobby/worktrees/gobby/0.5.0-test`, branched from `0.5.0` at `e19caa9a9f`.
 - **merge provenance**: `wt-task-20255-m4` (`518cec5c41`, 25 commits, merge-base
   `b89f371a15`) was merged once with `git merge --no-ff`; the merge commit's parents
@@ -162,7 +165,7 @@ escapes), and Linux/WSL directory-write and socket-restriction evidence.
 
 ## Guard set G (foundation history)
 
-Every leaf of the landing epic closes against this set, run from the `0.5.0-test`
+The original landing epic used this set, run from the `0.5.0-test`
 root with `DATABASE_URL` pointed at the isolated test hub
 (`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
 `GOBBY_TEST_PROTECT=1`:
@@ -177,7 +180,8 @@ root with `DATABASE_URL` pointed at the isolated test hub
    before, and no surviving `gterm host` references a state directory the run
    created.
 
-Carve-outs are explicit, cumulative, and end when their owner closes. From 1.1
+The following records historical carve-outs, which ended when their owners
+closed; they are not present-day exemptions. From 1.1
 close: group 2 and group 4's schema-identity tests (owner 1.2, until 1.2 closes:
 the installed `gdaemon` is at schema 407, so `agent_runs.terminal_id` and the
 `terminals` table are absent from the test hub —
@@ -271,10 +275,12 @@ export GOBBY_POSTGRES_TEST_DSN="$DATABASE_URL"
 ```
 
 **Groups 1 and 4: separate calls.** Run each command below unpiped in its own
-shell-tool call. Do not execute either group's `&&` chain: the task close gate
-credits only its core (first) command, leaving later clippy, nextest, or Python
-checks uncredited. Leading `cd path &&` and `VAR=value` prefixes are credited
-through; chaining multiple checks is the unsupported boundary.
+shell-tool call so each result has a definitive exit. Leading `cd path &&` and
+`VAR=value` prefixes are credited through. The current evidence parser can also
+credit recognized segments of a successful top-level `&&` validation chain;
+pipes, fallback commands and trailing output remain uncredited. Separate calls
+make a failure's coverage unambiguous. See the task closing reference for the
+current evidence contract.
 
 ```bash
 cargo build --release -p gobby-client
@@ -319,3 +325,5 @@ Record start times to distinguish PID reuse. If the worker sandbox denies proces
 inspection, obtain this evidence from the coordinator; mark the worker check
 unvalidated rather than attempting `ps`/`pgrep` repeatedly. Never stop the
 operator's baseline host to make the sets match.
+
+_Last verified: 2026-09-12_

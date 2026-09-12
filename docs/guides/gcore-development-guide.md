@@ -21,7 +21,10 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `daemon_url` | always | One daemon-URL resolver for all binaries: `GOBBY_DAEMON_URL` → `GOBBY_PORT` → bootstrap endpoint, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1` and bracketing bare IPv6 literals. |
 | `grant` | always | Signed grant handshake, cache, and typed grant errors for daemon-native clients. |
 | `config` | always | Shared configuration-resolution contracts. Environment variables, `config_store`, and defaults are represented here as the foundation expands. |
-| `context` | always | Shared runtime context contracts for project identity, daemon URL, and service configuration. Consumer-specific CLI state stays outside. |
+| `ai_context`, `ai_types` | always | Shared AI context and serializable type contracts; consumer runtime contexts remain in their own crates. |
+| `cli_contract`, `database_concurrency` | always | Shared CLI contract and database concurrency primitives. |
+| `local_token`, `machine` | always | Local client credential and machine identity helpers. |
+| `markdown`, `mermaid`, `progress` | always | Shared presentation parsing and progress primitives. |
 | `degradation` | always | Shared vocabulary for configured-service unavailability, explicit degraded paths, partial search, stale indexes, skipped artifacts, and fatal core errors. |
 | `ai` | `ai` | Shared AI routing, daemon transports, profile tiers, embeddings, and agentic/tool-loop generation primitives. |
 | `schema` | `postgres` | Hub schema apply/verify authority. Runtime commands validate externally managed resources and do not implicitly migrate them. |
@@ -46,7 +49,11 @@ pub fn read_project_id(project_root: &Path) -> anyhow::Result<String>;
 
 `find_project_root` walks up from `start` looking for a `.gobby/project.json` (Gobby-managed) or `.gobby/gcode.json` (gcode-standalone). Returns the directory *containing* `.gobby/`, not `.gobby/` itself. Returns `None` when neither marker is found before hitting the filesystem root.
 
-`read_project_id` reads `<root>/.gobby/project.json` and extracts the `id` field. When `project.json` is absent, it reads the gcode-owned `<root>/.gobby/gcode.json` identity file so standalone gcode roots found by `find_project_root` remain usable. Errors if neither file can be read, the JSON is malformed, or the field isn't present.
+`read_project_id` reads `<root>/.gobby/project.json` and extracts the string `id`
+field. If that file is absent or invalid, it tries an existing
+`<root>/.gobby/gcode.json`. Failure of both reads is an error. This low-level
+fallback is not checkout registration: current gcode runtime resolution rejects
+a root carrying only standalone `gcode.json` with `checkout_required`.
 
 ```rust
 let cwd = std::env::current_dir()?;
@@ -62,14 +69,22 @@ if let Some(root) = gobby_core::project::find_project_root(&cwd) {
 pub const DEFAULT_DAEMON_PORT: u16 = 60887;
 pub const DEFAULT_BIND_HOST: &str = "127.0.0.1";
 
-pub struct DaemonEndpoint { pub host: String, pub port: u16 }
+pub struct DaemonEndpoint {
+    pub daemon_url: Option<String>,
+    pub host: String,
+    pub port: u16,
+}
 
 pub fn bootstrap_path() -> Option<PathBuf>;
 pub fn read_daemon_endpoint() -> DaemonEndpoint;
 pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint;
 ```
 
-`read_daemon_endpoint` is the lookup callers want. `read_daemon_endpoint_at` exists for tests and for callers who already know the path. Both return `DaemonEndpoint::default()` (loopback + 60887) on any failure — missing file, unreadable, malformed YAML, missing fields, no home directory. **No errors are surfaced**; clients should always get *something* usable.
+`read_daemon_endpoint` is the lookup callers want. `read_daemon_endpoint_at`
+accepts an explicit path for tests. Missing/unreadable files and malformed YAML
+return defaults; individual absent or invalid fields use their own defaults,
+preserving valid siblings. The optional full `daemon_url` is preserved for the
+URL resolver. These readers do not surface errors.
 
 `DaemonEndpoint` returns the raw endpoint as written. `0.0.0.0` and `::` are valid listen addresses but invalid dial addresses — normalization is the caller's job, or the `daemon_url` module's, not this one's.
 
@@ -84,11 +99,16 @@ The one daemon-URL resolver every Gobby binary shares. `daemon_url()` applies a 
 
 1. `GOBBY_DAEMON_URL` — full base-URL override; trailing slashes are trimmed, empty values ignored.
 2. `GOBBY_PORT` — port-only override, dialed as `http://127.0.0.1:{port}`; empty or unparseable values ignored.
-3. `bootstrap.yaml` endpoint, with dial normalization.
+3. `GOBBY_DAEMON_PORT` — retained port alias after `GOBBY_PORT`.
+4. Nonempty bootstrap `daemon_url`, with trailing slashes trimmed.
+5. Bootstrap host/port endpoint, with dial normalization.
 
 `daemon_url_at(path)` reads a specific bootstrap file and never consults the env — an explicit path is already an override.
 
-Dial normalization rewrites wildcard listen hosts (`0.0.0.0`, `::`, `::0`, `[::]`) and empty hosts to `127.0.0.1`, and brackets bare IPv6 literals (`::1` → `[::1]`) for URL embedding. Hostnames, named interfaces, and explicit IPv4 literals pass through unchanged.
+Host/port dial normalization rewrites wildcard listen hosts (`0.0.0.0`, `::`,
+`::0`, `[::]`), empty hosts and case-insensitive `localhost` to `127.0.0.1`, and
+brackets bare IPv6 literals (`::1` → `[::1]`). Other hostnames and explicit IPv4
+literals pass through. A full URL override is not rewritten through this helper.
 
 ```rust
 let url = gobby_core::daemon_url::daemon_url();
@@ -108,10 +128,6 @@ grant-issuance bugs and fail typed.
 ### `falkor`
 
 ```rust
-pub struct GraphClient {
-    graph: SyncGraph,
-}
-
 impl GraphClient {
     pub fn from_config(config: &FalkorConfig, graph_name: &str) -> anyhow::Result<Self>;
     pub fn query(
@@ -119,17 +135,16 @@ impl GraphClient {
         cypher: &str,
         params: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Vec<Row>>;
-    pub fn with_sync_graph<T>(
-        &mut self,
-        f: impl FnOnce(&mut ReadOnlySyncGraph<'_>) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T>;
 }
 ```
 
-Consumers provide the graph name through constructor methods such as `GraphClient::from_config`; `gobby-core` must not hardcode code or memory graph defaults. The `graph` field stays private so connection ownership cannot leak across domain crates. Use `query` for normal Cypher reads/writes. `with_sync_graph` is the narrow escape hatch for consumers that need a FalkorDB crate operation not yet represented by the shared adapter.
-The closure receives `&mut ReadOnlySyncGraph<'_>` because the FalkorDB crate
-requires mutable access even for `GRAPH.RO_QUERY`; the wrapper exposes only the
-read-only query builder and selected graph name.
+Consumers supply the graph name through `GraphClient::from_config`;
+`gobby-core` must not hardcode code or memory graph defaults. Connection fields
+stay private. Use `query` for Cypher reads/writes and the explicit node or
+relationship index helpers for index setup. The adapter uses Redis protocol
+commands with bounded socket/query timeouts and typed compact-result parsing;
+the former `with_sync_graph` escape hatch no longer exists. Unavailable graph
+service is an error, not an empty successful result.
 
 ### `degradation`
 
@@ -145,7 +160,7 @@ pub enum DegradationKind;
 
 `DegradationKind` is for successful operations that returned less than the ideal result. A `gobby-code` search can return symbol or content results while marking a configured Qdrant or FalkorDB outage as a `ServiceUnavailable` degradation. It can also report `PartialSearch`, `StaleIndex`, or `SkippedArtifacts` without converting those states into fatal CLI errors.
 
-`Guidance` and `SetupIssue` carry structured remediation. Consumer CLIs render the `problem`, `action`, and optional `command_hint` fields in their own output style; `gobby-core` only provides the serializable contract.
+`Guidance` and `SetupIssue` carry structured remediation. Consumer CLIs render the `problem`, `action`, and optional `command_hint` fields in their own output style; `gobby-core` provides the shared contract.
 
 ## Boundary Rules
 
@@ -167,13 +182,13 @@ The crate's default feature set is empty:
 ```toml
 [features]
 default = []
-postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]
-falkor = ["dep:falkordb", "dep:urlencoding"]
+postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2", "dep:time"]
+falkor = ["dep:redis"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
 graph-analytics = []
-ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "reqwest/multipart"]
+ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "reqwest/multipart"]
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]
 ```
 
@@ -188,8 +203,8 @@ Feature rationale:
 
 | Feature | Enables | Why gated |
 |---------|---------|-----------|
-| `postgres` | `postgres`, `postgres-openssl`, `base64`, `scrypt` | Hub validation, adapter code, and datastore-backed secret/config helpers are only needed by datastore consumers. Lightweight binaries should not inherit PostgreSQL. |
-| `falkor` | `falkordb`, `urlencoding` | Graph helpers need FalkorDB. `urlencoding` is included because FalkorDB connection URLs must encode passwords safely. |
+| `postgres` | `postgres`, `postgres-openssl`, `base64`, `scrypt`, `sha2`, `time` | Hub validation and datastore helpers are opt-in. |
+| `falkor` | `redis` | FalkorDB graph commands use the Redis protocol adapter. |
 | `qdrant` | `reqwest` with `blocking` and `json` | Vector search/storage helpers need HTTP. Other consumers should not pull reqwest. |
 | `indexing` | `ignore`, `sha2` | File walking and content hashing are useful for indexing consumers only. |
 | `search` | no extra dependency today | Search fusion contracts are lightweight, but still opt-in so the public surface remains explicit. |
@@ -207,7 +222,7 @@ Every individual feature must compile in isolation. Do not rely on `--all-featur
 - **Additive minor bumps (for example, 0.7.0 → 0.8.0, marked additive)** — new public API such as functions, structs, fields, or feature-gated modules. Existing consumers stay compatible.
 - **Pre-1.0 breaking minor bumps (for example, 0.8.0 → 0.9.0, marked breaking)** — removals, renames, type changes, feature default changes, or semantic contract changes. Bump the minor and bump *every* consumer crate's `gobby-core` dependency in the same release. Don't strand consumers on an old `gobby-core`.
 
-Consumers that depend only on additive minor-line compatibility can pin to a minor version (`gobby-core = "0.7"`). In-tree crates released with `gobby-core` must move to the new minor when that minor is breaking, and should pin to the current patch floor when they rely on behavior from that patch, for example `gobby-core = "0.7.0"`.
+Consumers that depend only on additive minor-line compatibility can pin to a minor version (`gobby-core = "0.7"`). In-tree crates released with `gobby-core` must move to the new minor when that minor is breaking, and should pin to the current patch floor when they rely on behavior from that patch, for example `gobby-core = "0.10.0"`.
 
 ## How to Consume
 
@@ -215,7 +230,7 @@ Consumers that depend only on additive minor-line compatibility can pin to a min
 
 ```toml
 [dependencies]
-gobby-core = { path = "../gcore", version = "0.7.0" }
+gobby-core = { path = "../gcore", version = "0.10.0" }
 ```
 
 The `path` is for local workspace builds; `version` is required by `cargo publish` and gets used when consumers install the crate from crates.io. Don't drop the `version` field — `cargo publish` will reject the consumer's manifest.
@@ -224,7 +239,7 @@ Opt in to heavier modules explicitly:
 
 ```toml
 [dependencies]
-gobby-core = { path = "../gcore", version = "0.7.0", features = ["postgres", "search"] }
+gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "search"] }
 ```
 
 Small binaries should keep the default empty feature set unless they directly use a feature-gated module.
@@ -233,10 +248,13 @@ Small binaries should keep the default empty feature set unless they directly us
 
 ```toml
 [dependencies]
-gobby-core = "0.7.0"
+gobby-core = "0.10.0"
 ```
 
-Resolves against crates.io. The default crate has no datastore dependencies. It will not pull in PostgreSQL, FalkorDB, Qdrant, reqwest, ignore, sha2, tokio, tracing, or anything else heavy unless the consumer selects the matching feature.
+Resolves against crates.io. The empty default feature set excludes the optional
+PostgreSQL, FalkorDB, Qdrant and indexing integrations. It still includes
+`ureq`, `fernet` and vendored OpenSSL; inspect the current manifest rather than
+assuming every substantial dependency is feature-gated.
 
 ### AI Generation and Secrets
 
@@ -255,8 +273,8 @@ secret markers that reach a client are grant-issuance bugs and fail typed.
 Before adding a module or function to `gobby-core`, check:
 
 1. **Do at least two binaries need it?** If only one does, keep it in that binary.
-2. **Does it belong in an existing boundary?** Prefer `config`, `context`, `degradation`, `grant`, `schema`, `postgres`, `falkor`, `qdrant`, `indexing`, or `search` before adding a new top-level module.
-3. **Is it dependency-light, or properly feature-gated?** New baseline deps propagate to *every* binary. Heavy deps belong behind a narrowly named feature.
+2. **Does it belong in an existing boundary?** Prefer `config`, `ai_context`, `degradation`, `grant`, `schema`, `postgres`, `falkor`, `qdrant`, `indexing`, or `search` before adding a new top-level module.
+3. **Is it dependency-light, or properly feature-gated?** New baseline deps propagate to *every* binary. Heavy deps belong behind a narrowly named feature. The existing baseline includes `ureq`, `fernet`, and vendored OpenSSL; an empty feature set does not mean dependency-free.
 4. **Does it stay daemon-granted?** Runtime helpers consume grant-backed configuration and do not create, alter, drop, or migrate Gobby-owned schema or datastore objects.
 5. **Is it stateless or near-stateless?** `gobby-core` functions are pure or do narrow I/O (read one file, return result). A module that holds connection pools or background workers belongs elsewhere.
 6. **Is the public surface small?** A few focused functions and structs per module is the right order of magnitude. If you find yourself adding a builder, a config object, and an `init()` function, reconsider.
@@ -275,9 +293,13 @@ If yes to all checks, add the helper:
 
 Behavioral modules use `#[cfg(test)] mod tests` with `tempfile::tempdir()` for filesystem isolation:
 
-- **project**: implicitly tested via consumer binaries (`gcode`, `ghook`); the module mirrors `gcode/src/project.rs` line-for-line.
+- **project**: direct unit tests cover non-destructive identity reads, fallback
+  markers and complete foreign isolation markers; consumers add their own
+  stricter checkout-registration tests.
 - **bootstrap**: missing/malformed/empty files all return defaults; custom port/host parsing; out-of-range port falls back to default.
-- **daemon_url**: wildcard IPv4/IPv6 normalize to loopback; localhost passes through; custom host+port composes correctly; bare IPv6 literals get bracketed; `GOBBY_DAEMON_URL`/`GOBBY_PORT` override precedence and garbage-value handling.
+- **daemon_url**: wildcard IPv4/IPv6 and localhost normalize to loopback; custom
+  host+port composes correctly; bare IPv6 literals get bracketed; URL, port,
+  deprecated port alias and explicit bootstrap URL precedence are tested.
 - **public_boundary**: integration test that pins feature gates, `lib.rs` module guards, and this guide's boundary documentation.
 
 ```bash
@@ -307,4 +329,4 @@ Baseline tests are fast, perform no network I/O, and keep filesystem writes insi
 
 There's no `gobby_core::prelude`. The crate is small enough that explicit imports (`use gobby_core::project::find_project_root`) are clearer than a glob. Keep it that way until the public surface grows past ~10 items.
 
-_Last verified: 2026-08-17_
+_Last verified: 2026-09-12_

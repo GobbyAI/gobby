@@ -9,19 +9,19 @@ host AI CLI (Claude Code / Codex / Qwen / Droid / Grok / Agy)
   │  spawns: ghook --gobby-owned --cli=<c> --type=<t> [--detach]
   │  pipes:  stdin = hook payload (JSON object)
   ▼
-main.rs::run_gobby_owned
+dispatch.rs::run_gobby_owned
   │
-  ├─ planned_shutdown::should_skip_dispatch
-  │     ── Stop only; fresh marker + unreachable health endpoint exits 0
+  ├─ cli_config::CliConfig::for_cli(cli)
+  │     ── reject unsupported CLI; disabled hooks continue without dispatch
   │
-  ├─ project::find_project_root + read_project_id      (gobby-core)
+  ├─ project::find_project_root                       (gobby-core)
   │     ── walk-up BEFORE any detach; accepts project.json or gcode.json.
   │
   ├─ stdin → serde_json::from_slice
-  │     ── on malformed: transport::quarantine_malformed → exit
+  │     ── unmanaged malformed input continues; managed errors quarantine
   │
-  ├─ cli_config::CliConfig::for_dispatch(cli)
-  │     ── per-CLI critical-hook registry
+  ├─ managed_context + planned_shutdown::should_skip_dispatch
+  │     ── unmanaged or suppressed Stop returns provider continue action
   │
   ├─ dispatch::inject_machine_identity
   │     ── machine_id + os, or machine_id_error
@@ -38,18 +38,24 @@ main.rs::run_gobby_owned
   └─ transport::post_and_cleanup
         │
         ├─ POST {daemon_url}/api/hooks/execute  (30s timeout)
-        ├─ 2xx     → map action → write + flush stdout → fs::remove_file(envelope)
+        ├─ 2xx     → map action → write + flush stdout → settle envelope/receipt
         │            └─ mapping/stdout failure → retain envelope
         └─ failure → leave envelope               → ExitCode::SUCCESS or 2
                     └─ planned Stop shutdown race may delete envelope + continue
                                                     (drain worker replays)
 ```
 
-Spool-first ordering is load-bearing. The envelope is on disk before anything risky (network I/O, detach) happens, so the daemon's drain worker is the source of truth even if ghook dies mid-POST.
+Normal delivery enqueues before detach and POST. An enqueue failure instead
+attempts a bounded direct POST (unless `--enqueue-only`); no durable replay file
+exists on that fallback. Unsupported CLI names are rejected before dispatch.
+Unmanaged invocations return the provider's continue response without enqueue.
+Planned-shutdown suppression runs after project/input/managed-context resolution,
+before envelope construction. See `dispatch::run_gobby_owned` for the ordering.
 
 ### Why a Separate Binary?
 
-The original Python `hook_dispatcher.py` ran inside the daemon process. That made it sensitive to daemon downtime: hook → daemon socket → daemon process. ghook is a small standalone binary so:
+ghook runs outside the daemon and forwards host-CLI events through a durable
+inbox and HTTP transport:
 
 1. It can run when the daemon is dead. Envelopes spool to disk.
 2. It can survive sandbox FS-read denials that would crash an embedded interpreter.
@@ -64,7 +70,7 @@ The original Python `hook_dispatcher.py` ran inside the daemon process. That mad
 |--------|----------------|
 | `lib.rs` | Crate-level documentation anchor so release-time doctest validation is available; runtime code stays in the binary target. |
 | `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`), orchestrates the dispatch flow. |
-| `cli_config.rs` | Per-CLI registry (claude/codex/qwen/droid/grok/agy) — which hooks are critical. Compile-time frozen. `grok` uses native snake_case hook names (`session_start`, `session_end`, `pre_compact`, `stop`); `agy` uses Antigravity's PascalCase hook names. Codex `Stop` is the only provider Stop hook that fails closed when the daemon is unavailable. |
+| `cli_config.rs` | Per-CLI registry (claude/codex/qwen/droid/grok/agy). Lifecycle start/end/precompact hooks are critical except for AGY, which declares none. Stop is noncritical; host-visible failure output is provider-specific in `action.rs`. |
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
 | `planned_shutdown.rs` | Stop-only planned shutdown markers, daemon health preflight, and post-enqueue daemon-death suppression. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |
@@ -104,17 +110,19 @@ pub struct Envelope {
 | `critical` | Recorded so the daemon knows whether the host CLI was told this hook fail-closed. Influences alerting. |
 | `hook_type` | Opaque — exact identifier the host CLI's hook system uses (`session-start`, `PreToolUse`, etc.). |
 | `input_data` | Original stdin with dispatch-owned enrichment. `machine_id` + `os` are stamped from local Gobby machine identity, or `machine_id_error` is emitted when unavailable. Lifecycle hooks receive captured `terminal_context`; existing provider fields remain, and `gobby_agent_run_id` is replaced with the trusted environment value. |
-| `source` | Recognized CLI → canonical name from `CliConfig::source`. Unknown CLI → the `--cli` value verbatim, so future CLIs route correctly without code changes. |
+| `source` | Supported CLI maps to its canonical dispatch source. The envelope schema permits a string, but current dispatch rejects unknown CLI names before constructing an envelope. |
 | `headers` | Mirrors what ghook sent (or would have sent) on the POST. Omitted headers are absent keys; **empty-string values are never emitted** — enforced by the schema (`additionalProperties.minLength: 1`). |
 
 ### Standard Headers
 
 | Header | When Present | Source |
 |--------|--------------|--------|
-| `X-Gobby-Project-Id` | Project root resolved AND `.gobby/project.json` or `.gobby/gcode.json` has an `id`/`project_id` field | `gobby_core::project::read_project_id` |
-| `X-Gobby-Session-Id` | `input_data.session_id` is a non-empty string | `input_data["session_id"]` |
+| `X-Gobby-Project-Id` | Managed-context project ID resolved | Environment/payload context or `gobby_core::project::read_project_id` (string `id` field) |
+| `X-Gobby-Session-Id` | Nonempty managed environment session, otherwise nonempty payload session | `GOBBY_SESSION_ID`, then `input_data["session_id"]` |
+| `X-Gobby-Agent-Run-Id` | Nonempty managed run identity | `GOBBY_AGENT_RUN_ID` |
 
-Both are inserted only when non-empty. The schema enforces `minLength: 1` on header values to match.
+Headers omit absent values. Managed requests authenticate with a run-bound
+capability and the matching run ID; payload session identity is preserved.
 
 ## Diagnose Output Schema (v2)
 
@@ -138,6 +146,11 @@ pub struct DiagnoseOutput {
     pub cli_recognized: bool,
     pub install_method: Option<String>,           // from .ghook-install.json sidecar
     pub install_source_url: Option<String>,       // from .ghook-install.json sidecar
+    pub local_token_file_present: bool,
+    pub auth_401_remediation: &'static str,
+    pub failure_dir: PathBuf,
+    pub recent_failure_count: usize,
+    pub recent_failures: Vec<diagnostics::RecentFailureMetadata>,
 }
 ```
 
@@ -147,6 +160,11 @@ as null tmux fields, so operators can inspect what the daemon will receive
 without sending a real hook.
 
 `install_method` and `install_source_url` are sourced from the install-provenance sidecar described below. Both fields are `null` when no sidecar is present.
+
+Authentication diagnostics report credential-file presence and remediation,
+not credential content. Recent failure metadata helps distinguish delivery and
+authorization failures without replaying a hook. Inspect the versioned schema
+and `diagnose::DiagnoseOutput` for the complete fields.
 
 ### Install-Provenance Sidecar Contract
 
@@ -216,8 +234,9 @@ atomic_write(final_path, bytes):
 `{daemon_url}/api/hooks/execute` with a 30-second timeout. The envelope's
 `headers` are mirrored as HTTP headers. A 2xx returns the response body to
 `dispatch::delivered_action` for provider mapping. `action::emit_action` writes
-and flushes stdout, and `dispatch::run_gobby_owned` removes the inbox envelope
-only after that emission succeeds. Mapping failure, stdout write/flush failure,
+and flushes stdout; `dispatch::settle_delivered_inbox` removes the envelope or
+replaces it with a pending delivery receipt only after emission succeeds.
+Mapping failure, stdout write/flush failure,
 and transport failure retain the envelope for replay or Grok acknowledgment
 recovery.
 
@@ -226,16 +245,16 @@ The 30s timeout is deliberately generous — the daemon may be doing real work (
 ### Planned Shutdown Stops
 
 `planned_shutdown` handles intentional daemon stop/restart windows without
-changing the envelope schema. Before any project lookup, stdin read,
-terminal-context injection, or enqueue, Stop hooks check
+changing the envelope schema. After project/input and managed-context resolution,
+but before terminal-context injection or enqueue, Stop hooks check
 `shutdown_intent_active.json` under `$GOBBY_HOME` or `~/.gobby`. Fresh markers
 are accepted for `intent` values
 `stop`/`restart` or source prefixes `cli_`, `http_`, `service_`, and `mcp_`.
 
 Accepted markers trigger a short GET to `{daemon_url}/api/health`. Any
 HTTP response means the daemon is reachable; transport failures mean it is
-unreachable. Fresh marker plus unreachable daemon returns `{"continue":true}`
-with exit 0 and no stdin/enqueue side effects.
+unreachable. Fresh marker plus unreachable daemon returns the provider-specific
+continue action with exit 0 and no enqueue side effects.
 
 After enqueue, the same marker rule suppresses only Stop live POST failures
 classified as `Connect` or `Timeout`. `ghook` removes the just-enqueued Stop
@@ -321,7 +340,8 @@ Each module has `#[cfg(test)] mod tests` with comprehensive coverage:
 - **dispatch.rs**: machine identity stamping replaces stale host-provided
   identity and reports stable `machine_id_error` codes when local identity is
   missing or empty.
-- **cli_config.rs**: per-CLI critical-hook membership; case-insensitive CLI lookup; unknown CLIs remain unrecognized for diagnose and fall back to conservative Claude-like config on the live dispatch path.
+- **cli_config.rs**: per-CLI critical-hook membership and case-insensitive lookup;
+  unknown CLIs remain unrecognized for diagnose and are rejected by live dispatch.
 - **terminal_context.rs**: lifecycle alias normalization, tool-hook exclusion,
   tmux socket-path parsing and pane validation, provider-context merging,
   non-object no-op behavior, and complete captured key coverage.
@@ -350,7 +370,8 @@ cargo nextest run -p gobby-hooks
 cargo test --doc -p gobby-hooks
 ```
 
-No integration tests — ghook's I/O is contained (one file write, one HTTP POST), and both are covered by unit tests using `tempfile::tempdir()` and dummy daemon URLs.
+Integration tests under `crates/ghook/tests/` cover CLI schema identity,
+provider contracts and inbox/direct-POST fallback with isolated fixtures.
 
 ## Adding a New Host CLI
 
@@ -374,15 +395,33 @@ The flow to support a new CLI (say, "cursor"):
 
 5. **No transport changes** — same inbox, same daemon endpoint.
 
-Unknown CLIs fall back to conservative Claude-like dispatch behavior on the live path. Diagnose mode still reports them as unrecognized. Adding a registry entry upgrades that path from fallback behavior to first-class parity.
+Unknown CLIs are rejected by live dispatch with exit 2. Diagnose reports them as
+unrecognized. A registry entry is only one part of first-class support: update
+the provider action mapping and Python adapter capabilities, and prove their
+contract together in focused tests.
 
 ## Adding a New Hook Type
 
-Almost always config-only. ghook treats `--type` as opaque. To make a hook critical, add the hook type to the CLI's `critical_hooks` set in `CliConfig`. Terminal-context enrichment is CLI-agnostic and only depends on valid tmux pane env vars.
+Update the provider contract and `CliConfig` when adding a hook. Criticality
+comes from `critical_hooks`; terminal-context enrichment additionally requires
+a supported lifecycle hook, and tmux fields require valid tmux environment.
+Provider response mapping and authentication still need contract tests.
+
+## Diagnostic commands
+
+`ghook --diagnose --cli codex --type SessionStart` inspects resolution without
+dispatching a hook. `ghook schema-identity --json` emits the embedded datastore
+schema contract without applying schema. `--gobby-owned` and `--enqueue-only`
+are provider/operator transport procedures: test them only with temporary state
+and an isolated daemon. Do not replay fabricated lifecycle events into live
+sessions. `--version` is not a pure probe: it writes the runtime stamp described
+below.
 
 ## Versioning
 
-ghook is at `0.7.2`. The envelope `SCHEMA_VERSION` is `1`; the diagnose-output schema is `2`. The three version numbers are independent:
+Read the crate version from `crates/ghook/Cargo.toml` (`0.9.0` at this audit).
+The envelope `SCHEMA_VERSION` is `1`; the diagnose-output schema is `2`.
+The three version numbers are independent:
 
 - **Crate version** bumps for any code change (binary behavior, dependencies, perf, etc.).
 - **Envelope `SCHEMA_VERSION`** bumps only when the inbox envelope shape changes in a way the daemon must explicitly handle.
@@ -393,3 +432,5 @@ ghook is at `0.7.2`. The envelope `SCHEMA_VERSION` is `1`; the diagnose-output s
 ### Release-Time Tag/Version Alignment
 
 The `release-ghook` workflow runs a guard step before publishing that asserts the pushed `ghook-v{X}` tag's version suffix equals the version in `crates/ghook/Cargo.toml`. This prevents the failure mode described in [GobbyAI/gobby-cli#4](https://github.com/GobbyAI/gobby-cli/issues/4): if the tag and the crate version drift, the public installer's `crates.io → ghook-v{version}` GitHub-asset lookup silently misses, which then collapses to slow `cargo install` fallbacks and reproduces as "bare `Blocked by hook` because users are on an old binary." The guard fails the workflow before any artifact reaches crates.io or the GitHub release.
+
+_Last verified: 2026-09-12_

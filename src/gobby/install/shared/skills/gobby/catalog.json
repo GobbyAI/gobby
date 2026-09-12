@@ -676,6 +676,32 @@
           "when": "Checking profile location, prerequisites or injection failures"
         }
       ]
+    },
+    {
+      "name": "development",
+      "description": "Follow contributor obligations and develop channels or native components",
+      "overview": "references/development/overview.md",
+      "when": "Implementing contributor tasks or validating adapter and native boundaries",
+      "topics": [
+        {
+          "name": "obligations",
+          "description": "Preflight, isolate validation and finish owned work",
+          "path": "references/development/obligations.md",
+          "when": "Before developer-agent implementation or completion evidence"
+        },
+        {
+          "name": "channels",
+          "description": "Build and prove communications or provider adapters",
+          "path": "references/development/channels.md",
+          "when": "Developing a channel or validating parity and provider fidelity"
+        },
+        {
+          "name": "native-components",
+          "description": "Select Rust ownership, builds and platform validation",
+          "path": "references/development/native-components.md",
+          "when": "Changing native components or diagnosing installed-binary drift"
+        }
+      ]
     }
   ]
 }

@@ -67,8 +67,8 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `stop` | Stop the daemon. | `src/gobby/cli/daemon.py` |
 | `sync` | Sync bundled content to the database. | `src/gobby/cli/sync.py` |
 | `tasks` | Manage development tasks. | `src/gobby/cli/tasks/` |
-| `test-quality` | Run test quality helpers. | `src/gobby/cli/test_quality.py` |
-| `test-types` | Audit Python test types. | `src/gobby/cli/test_types.py` |
+| `test-quality` | Run test quality helpers. | `src/gobby/test_quality/cli.py` |
+| `test-types` | Audit Python test types. | `src/gobby/test_types/cli.py` |
 | `tokens` | Audit token usage ledgers. | `src/gobby/cli/tokens.py` |
 | `ui` | Manage and launch the web UI. | `src/gobby/cli/ui.py` |
 | `uninstall` | Remove installed hooks and managed tools; never touches Docker or data. | `src/gobby/cli/uninstall.py` |
@@ -1074,3 +1074,30 @@ references where the task tree has a path cache.
 - [worktrees.md](worktrees.md) - worktree guide
 
 _Last verified: 2026-08-14_
+
+## Contributor validation
+
+`gobby test-types` is implemented in `src/gobby/test_types/cli.py` and is
+available to contributors/agents for local validation:
+
+```bash
+uv run gobby test-types audit tests/<touched-file>.py --baseline .gobby/test-types-baseline.json --fail-on-new
+uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json
+```
+
+`audit` defaults to `tests/`, resolves mypy through the local environment, and
+supports text/JSON reports and an output file. `--fail-on-new` requires
+`--baseline`; a missing baseline treats current issues as new. Without the
+ratchet flag, exit zero does not prove the report contains no findings.
+`--write-baseline <file>` is refused when the ratchet fails unless the explicit
+`--allow-failing-baseline` override is given. That override is for reviewed
+acceptance, never ordinary failure recovery. Output and baseline paths must differ.
+
+`suppressions` defaults to the repository root and requires an existing baseline.
+It fails on new/changed sites or stale baseline entries. Its boolean
+`--write-baseline` accepts only strict debt reduction with no new sites; it does
+not grant permission to add suppressions. See [testing](testing.md) and
+[test quality](test-quality.md) for the separate supported-language quality audit.
+
+These commands inspect local source. They do not execute task lifecycle
+transitions or expose an HTTP mutation endpoint.

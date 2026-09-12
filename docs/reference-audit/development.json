@@ -1,0 +1,521 @@
+{
+  "version": 1,
+  "capability": "development",
+  "status": "verified",
+  "source_skills": [
+    "development-discipline",
+    "channel-parity"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/testing.md",
+      "anchors": [
+        "backend-pytest",
+        "pytest-configuration",
+        "shared-fixtures",
+        "frontend-tests",
+        "picking-validation"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/gcode-development-guide.md",
+      "anchors": [
+        "entry-point",
+        "configuration-resolution",
+        "project-identity",
+        "runtime-model",
+        "graph-client-boundary",
+        "indexed-grep-gcode-grep",
+        "graceful-degradation",
+        "output-format",
+        "contributor-database-fixtures"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/gcore-development-guide.md",
+      "anchors": [
+        "module-map",
+        "project",
+        "bootstrap",
+        "daemon_url",
+        "falkor",
+        "feature-gates",
+        "how-to-consume",
+        "adding-a-new-helper",
+        "testing"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/ghook-development-guide.md",
+      "anchors": [
+        "architecture-overview",
+        "standard-headers",
+        "diagnose-output-schema-v2",
+        "post--cleanup",
+        "planned-shutdown-stops",
+        "testing",
+        "adding-a-new-host-cli",
+        "diagnostic-commands",
+        "versioning"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/gterminal-development-guide.md",
+      "anchors": [
+        "build",
+        "rebuild-and-reinstall",
+        "backend-status",
+        "landing-worktree",
+        "sandboxed-validation-by-operating-system",
+        "client-status",
+        "guard-set-h",
+        "operational-notes"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/adapter-fidelity.md",
+      "anchors": [
+        "capability-api",
+        "current-providers",
+        "degradation-telemetry",
+        "adapter-rules"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/one-surface-tab-recipe.md",
+      "anchors": [
+        "1-exemplars",
+        "3-savediscard-convention",
+        "4-kebab-convention",
+        "5-registration",
+        "7-per-surface-verification-recipe"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "contributor-validation"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "contributor-tooling-boundary"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "tool": "add_channel",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/channels.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "add_channel"
+      },
+      "verification": [
+        "source-audit",
+        "schemas",
+        "python-contracts",
+        "focused-final"
+      ],
+      "audience": "agent",
+      "primary_capability": "communications",
+      "server": "gobby-communications"
+    },
+    {
+      "surface": "mcp",
+      "tool": "list_channels",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/channels.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "list_channels"
+      },
+      "verification": [
+        "source-audit",
+        "schemas",
+        "python-contracts",
+        "focused-final"
+      ],
+      "audience": "agent",
+      "primary_capability": "communications",
+      "server": "gobby-communications"
+    },
+    {
+      "surface": "mcp",
+      "tool": "send_message",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/channels.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "send_message"
+      },
+      "verification": [
+        "source-audit",
+        "schemas",
+        "python-contracts",
+        "focused-final"
+      ],
+      "audience": "agent",
+      "primary_capability": "communications",
+      "server": "gobby-communications"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby test-types audit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/obligations.md",
+      "implementation": {
+        "path": "src/gobby/test_types/cli.py",
+        "symbol": "audit"
+      },
+      "verification": [
+        "source-audit",
+        "python-validation",
+        "cli-help"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby test-types suppressions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/obligations.md",
+      "implementation": {
+        "path": "src/gobby/test_types/cli.py",
+        "symbol": "suppressions"
+      },
+      "verification": [
+        "source-audit",
+        "python-validation",
+        "cli-help"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby test-quality audit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/obligations.md",
+      "implementation": {
+        "path": "src/gobby/test_quality/cli.py",
+        "symbol": "audit"
+      },
+      "verification": [
+        "source-audit",
+        "python-validation"
+      ],
+      "audience": "agent",
+      "primary_capability": "review"
+    },
+    {
+      "surface": "cli",
+      "command": "ghook --diagnose",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "crates/ghook/src/main.rs",
+        "symbol": "run_diagnose"
+      },
+      "verification": [
+        "source-audit",
+        "hook-contracts"
+      ],
+      "audience": "agent",
+      "primary_capability": "integrations"
+    },
+    {
+      "surface": "cli",
+      "command": "ghook schema-identity --json",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "crates/ghook/src/main.rs",
+        "symbol": "main"
+      },
+      "verification": [
+        "source-audit",
+        "hook-contracts"
+      ],
+      "audience": "agent",
+      "primary_capability": "admin"
+    },
+    {
+      "surface": "cli",
+      "command": "ghook --version",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "crates/ghook/src/runtime.rs",
+        "symbol": "write_runtime_stamp"
+      },
+      "verification": [
+        "source-audit",
+        "hook-contracts"
+      ],
+      "audience": "agent",
+      "primary_capability": "admin"
+    },
+    {
+      "surface": "cli",
+      "command": "ghook --gobby-owned",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "crates/ghook/src/dispatch.rs",
+        "symbol": "run_gobby_owned"
+      },
+      "verification": [
+        "source-audit",
+        "hook-contracts"
+      ],
+      "audience": "operator",
+      "primary_capability": "integrations"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode init",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/init.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "gcode-config"
+      ],
+      "audience": "agent",
+      "primary_capability": "code-index"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/hooks/execute",
+      "reference": "src/gobby/install/shared/skills/gobby/references/development/native-components.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/hooks.py",
+        "symbol": "execute_hook"
+      },
+      "verification": [
+        "source-audit",
+        "hook-contracts"
+      ],
+      "audience": "operator",
+      "primary_capability": "integrations"
+    }
+  ],
+  "scope_notes": [
+    "No dedicated development MCP registry exists: internal.py defines registry infrastructure. Three shared communications tools are mapped for channel bring-up; full service coverage belongs to communications.",
+    "test-types audit/suppressions are local contributor CLI operations with no MCP or HTTP equivalent. Shared quality, native hook/schema and code-index initialization entries preserve primary ownership.",
+    "Native guides supply contributor navigation and current entry/ownership/recovery contracts. Detailed code-index search/index/graph operations retain the code-index audit; terminal operator workflows retain sessions/agents/admin ownership.",
+    "No installed rule/profile/workflow/backend is asserted active. Template defaults and historical landing records are explicitly source/history evidence; actual installed/effective rows must be inspected when operating.",
+    "No Rust/Python/TS production or test implementation changed. Native builds here are test builds, not a deployment; no binary reinstall or daemon restart is required by this documentation-only leaf.",
+    "No live channel parity, physical remote-client deployment, full terminal Guard H, or platform socket-policy acceptance is claimed. Those remain required for their implementation tasks, not blanket gates introduced by this library."
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "inspection",
+      "command": "gcode outline/symbol-at/grep of registry infrastructure, test_types CLI and fixtures, provider capabilities/contract tests, communications registry/responder, Rust core project/bootstrap/daemon_url/falkor/manifests, ghook dispatch/action/diagnose/runtime/args, gcode identity/init/config, terminal config and activity catalog/draft/menu consumers",
+      "result": "Verified contributor loading obligations, local audit semantics, provider context/reasons, channel schema and turn policy, native ownership and recovery. Corrected removed APIs, stale identity/grant instructions, hook ordering/fallback/headers, test isolation and derived UI registration."
+    },
+    {
+      "id": "schemas",
+      "kind": "inspection",
+      "command": "gobby-communications get_tool_schema for add_channel, list_channels, send_message",
+      "result": "2026-09-12 registered schemas inspected; add_channel requires type/name/config and accepts secrets; list_channels has no arguments; send_message requires channel/content. No channel, message, credential or installed configuration mutation performed."
+    },
+    {
+      "id": "python-contracts",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/adapters/test_capabilities.py tests/adapters/test_provider_contract_fixtures.py tests/communications/test_responder.py tests/fixtures/test_postgres_safety.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "150 passed in 1.05s. Isolated fixtures; no external channel traffic."
+    },
+    {
+      "id": "python-validation",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_test_types.py tests/cli/test_test_types_suppressions.py tests/cli/test_test_quality.py tests/tasks/test_close_checklist.py tests/config/test_terminal_config.py -q --tb=short",
+      "result": "137 passed in 1.04s; validates missing/failed baselines, suppression reductions, quality CLI, command evidence chains and terminal source default."
+    },
+    {
+      "id": "core-boundary",
+      "kind": "test",
+      "command": "cargo test -p gobby-core --no-default-features --test public_boundary",
+      "result": "3 passed; current Cargo features and guide boundary text."
+    },
+    {
+      "id": "core-url",
+      "kind": "test",
+      "command": "cargo test -p gobby-core --no-default-features --lib daemon_url::tests",
+      "result": "17 passed, 223 filtered; URL/port/alias/bootstrap precedence and normalization."
+    },
+    {
+      "id": "hook-contracts",
+      "kind": "test",
+      "command": "cargo test -p gobby-hooks --test contract --test inbox_fallback --test cli_schema_identity",
+      "result": "48 passed in 3 suites (1.37s), isolated provider delivery/inbox fallback/schema fixtures."
+    },
+    {
+      "id": "activity-contracts",
+      "kind": "test",
+      "command": "cd web && npx vitest run src/components/activity/__tests__/useActivityPanel.test.tsx src/components/activity/__tests__/QuickMenu.test.tsx src/components/activity/fields/__tests__/useDetailDraft.test.tsx --maxWorkers=4",
+      "result": "3 files, 49 tests passed in 777ms. Derived registration, menu and draft contracts; no UI implementation changed, so no new visual acceptance claimed."
+    },
+    {
+      "id": "cli-help",
+      "kind": "inspection",
+      "command": "uv run gobby test-types --help; uv run gobby test-types audit --help; uv run gobby test-types suppressions --help; gcode blast-radius --help (separate shell calls)",
+      "result": "Current command/flag shapes verified without mutation."
+    },
+    {
+      "id": "review-recall",
+      "kind": "inspection",
+      "command": "gobby-review-learning:recall_review_context for stale development guide ownership/transport guidance",
+      "result": "No directly applicable contradictory lesson. Existing cleanup/idempotency/provider-factory matches were not used to override current source evidence."
+    },
+    {
+      "id": "preliminary-review",
+      "kind": "review",
+      "command": "code-review skill/OCR delegate review by review_reference_identity, 15 owned paths",
+      "result": "15 reviewed, zero skipped. Restored mandatory repository-maintenance loading for package creation/cross-package dependencies and corrected unconditional core dependency prose."
+    },
+    {
+      "id": "gcode-config",
+      "kind": "test",
+      "command": "GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_ref_22260_a4d23827_test GOBBY_HOME=/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-ref-22260-v3jd7c0t GOBBY_TEST_PROTECT=1 cargo test -p gobby-code --lib config::tests",
+      "result": "36 passed, zero ignored in 0.53s after provisioning a dedicated disposable test database with pg_search and a temporary machine identity. Initial no-DSN run had 35 passed/1 ignored; enabling the shared Python test database failed on public schema lineage; a fresh database without its extension failed before assertions. Dedicated database + enabled extension resolves both fixture prerequisites without modifying shared public schema."
+    },
+    {
+      "id": "links",
+      "kind": "validation",
+      "command": "uv run python local Markdown destination/heading and implementation-symbol validators over development references, nine affected guides and audit anchors",
+      "result": "69 reference/audit-anchor checks plus 38 guide links and 12 implementation path/symbol checks passed before adding the tested database-fixture section; final link pass follows."
+    },
+    {
+      "id": "focused-final",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/adapters/test_capabilities.py tests/adapters/test_provider_contract_fixtures.py tests/communications/test_responder.py tests/fixtures/test_postgres_safety.py tests/skills/test_capability_catalog.py tests/cli/test_test_types.py tests/cli/test_test_types_suppressions.py tests/cli/test_test_quality.py tests/tasks/test_close_checklist.py tests/config/test_terminal_config.py tests/mcp_proxy/tools/test_mcp_proxy_tools_communications.py -q --tb=short",
+      "result": "311 passed in 3.11s. No test/production implementation changed."
+    },
+    {
+      "id": "fixture-cleanup",
+      "kind": "validation",
+      "command": "uv run python psycopg DROP DATABASE for the exact owned gobby_ref_22260_a4d23827_test and removal of its temporary GOBBY_HOME",
+      "result": "Owned database and fixture home removed after passing Rust test; shared test hub public schema and user daemon state preserved."
+    },
+    {
+      "id": "final-links",
+      "kind": "validation",
+      "command": "uv run python local Markdown destination/heading, audit anchor, operation symbol and evidence-ID validator over all development references and nine guides",
+      "result": "109 local links/audit anchors and all 12 operation implementation paths/symbols valid; all evidence IDs resolve."
+    },
+    {
+      "id": "staged-review",
+      "kind": "review",
+      "command": "code-review skill/OCR staged review by review_reference_identity (Mendel), 16 owned paths",
+      "result": "16 reviewed, zero skipped; all documentation explicitly included. No remaining critical/high/medium findings. Final hook diagram/receipt clarification reviewed separately."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Core guide listed removed context/with_sync_graph APIs, stale Cargo features and incomplete URL/identity fallback.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Corrected module/API ownership, Redis graph adapter, current features, unconditional dependencies and exact URL/identity resolution.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "gcode guide promised standalone generated identities and daemon-free runtime, rejected supported grep --limit, and described retired graph escape hatch.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Corrected checkout_required recovery, grant requirement, current config module and supported pagination/graph boundary.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Hook guide described unknown-CLI fallback, wrong Stop criticality/order, omitted managed headers, direct POST fallback and current diagnostics.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Corrected provider rejection, ordering/failure branches, session/run header precedence, diagnose/schema probes, tests and version source.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Testing guide omitted explicit isolated PostgreSQL DSN and described a migrated temporary database.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Documented schema-isolated hub fixture and safety environment for all agent examples.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Activity recipe required manual VALID_TABS edits and called existing components future work.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Documented derived catalog IDs and present draft/menu primitives.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Adapter guide claimed Claude reason compaction and omitted Codex SubagentStart context.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Corrected passthrough reasons, dormant metric vocabulary and context table from capabilities and tests.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Terminal guide treated historical worktree/carve-outs and old command-chain limitations as current.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Marked history explicitly and documented current successful top-level segment evidence behavior without changing normative Guard H obligations.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Channel skill required a new bug task for each gap, conflicting with current found-work ownership.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Preserved existing task/epic ownership and authorized isolated external validation boundaries.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Shared command guide linked retired CLI facade paths and omitted contributor audit semantics.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Corrected source locations and documented exact audit/suppression flags, baseline failures and absent HTTP counterpart.",
+      "relevant_memory": "No directly applicable recalled lesson; current implementation and focused tests are authoritative."
+    },
+    {
+      "finding": "Rust gcode database fixture applies schema to public and cannot reuse the Python test hub public lineage; fresh databases also require pg_search enabled per database.",
+      "evidence": [
+        "gcode-config"
+      ],
+      "resolution": "Used and removed an owned disposable database with its extension and temporary machine identity. Documented exact prerequisite/recovery, preserving the shared test hub public state.",
+      "relevant_memory": "No applicable recalled lesson; direct failure and passing isolated rerun establish the prerequisite."
+    }
+  ],
+  "verified_at": "2026-09-12"
+}

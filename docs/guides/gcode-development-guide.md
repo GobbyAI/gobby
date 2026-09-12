@@ -6,13 +6,13 @@ Technical internals for developers and agents working in the gcode codebase.
 
 ```
 CLI (main.rs, clap)
-  → Context::resolve (config.rs)
+  → Context::resolve (config/context.rs)
     → detect_project_root / resolve_database_url / resolve_services
-  → Command dispatch (main.rs match)
+  → Command dispatch (dispatch.rs / dispatch_navigation.rs)
     → commands/{search,symbols,graph,index,status,init}.rs
       → search/ pipeline (pg_search BM25 + semantic + graph sources → RRF)
       → index/ pipeline (walker → parser → chunker → hasher → indexer)
-      → falkor (FalkorDB graph queries)
+      → graph::code_graph + gobby_core::falkor (FalkorDB queries)
       → db (PostgreSQL hub connections)
       → output (JSON/text formatting)
 ```
@@ -21,8 +21,8 @@ CLI (main.rs, clap)
 
 `main.rs` parses CLI args via clap, resolves a `config::Context` (project root, PostgreSQL DSN, service configs), and dispatches to the appropriate command handler. Commands that work without a project context (`init`, `projects`, `prune`) are dispatched before `Context::resolve()`.
 
-`--verbose` is currently only consumed by `commands::symbols::outline()`, which
-switches outline output from the slim projection to the full `Symbol` payload.
+`--verbose` restores identifiers and diagnostic details omitted by compact
+navigation output, including search and outline. It is not outline-only.
 
 `gcode graph clear` and `gcode graph rebuild` are nested under a `graph`
 subcommand group, but the existing read-side graph queries remain top-level:
@@ -32,7 +32,7 @@ symbol queries (`--max-depth` caps the hop count, default `8`).
 
 ## Configuration Resolution
 
-**File:** `src/config.rs`
+**Files:** `crates/gcode/src/config/context.rs`, `layers.rs`, `services.rs`
 
 `Context::resolve(project_override, quiet)` orchestrates the full resolution flow:
 
@@ -48,19 +48,31 @@ The walk-up and `project.json` reading steps use `gobby_core::project::find_proj
 
 ### Project Identity
 
-**File:** `src/config.rs` — `ProjectIdentity`, `ProjectIdentitySource`, `resolve_project_identity()`. **Companion type:** `IsolationMarker` (in `src/project.rs`).
+**File:** `src/config/context.rs` — `ProjectIdentity`, `ProjectIdentitySource`,
+`resolve_project_identity()`. The shared `IsolationMarker` belongs to
+`gobby_core::project`.
 
-After the project root is detected, `resolve_project_identity()` decides which `project_id` to use and which identity source produced it. This replaces the old "either `.gobby/project.json` or `.gobby/gcode.json`" binary with the five sources enumerated by `ProjectIdentitySource`:
+After root detection, `resolve_project_identity()` selects one of four identity
+sources. A marker discovered by low-level project walking does not itself grant
+the machine permission to write an index; checkout registration remains required.
 
 | Source | Trigger | `project_id` derived from | Writes `.gobby/gcode.json`? |
 |--------|---------|---------------------------|-----------------------------|
 | `IsolatedRoot` / `IsolatedOverlay` | `IsolationMarker` present in `.gobby/isolation.json` (`parent_project_path` and `parent_project_id`), read via `project::read_isolation_marker` | UUID5 of canonical root path (`project::code_index_id_for_root`) | No |
 | `LinkedWorktree` | `git::worktree_info()` reports `WorktreeKind::Linked` | UUID5 of the worktree top-level path | No |
-| `ProjectJson` | `.gobby/project.json` exists, no `IsolationMarker` fields | `project_id` field from the file | No |
-| `GcodeJson` | `.gobby/gcode.json` exists | `project_id` field from the file | No |
-| `Generated` | None of the above | UUID5 of canonical root path | Only when caller passes `MissingIdentity::Generate` (i.e. `gcode init`) |
+| `ProjectJson` | `.gobby/project.json` exists, no foreign isolation marker | String `id` from the identity reader | No |
 
-`MissingIdentity::Error` is the default for non-init commands — they fail with "Run `gcode init`" instead of silently creating a generated id. The `IsolationMarker` struct (`{parent_project_path: Option<String>, parent_project_id: Option<String>}`) is read from `.gobby/isolation.json`. Both fields together select `IsolatedOverlay` (parent index + overlay); an incomplete sidecar is rejected. Parent keys inside tracked `.gobby/project.json` are not isolation markers. Linked-worktree resolution without a sidecar uses `LinkedWorktree` + `Single` scope.
+Roots with no Gobby identity, including standalone-only `.gobby/gcode.json`,
+fail with `checkout_required`. `gcode init` uses the same resolver; it does not
+generate an unregistered standalone identity. Follow the error's checkout
+registration recovery before indexing.
+
+`.gobby/isolation.json` owns parent path/ID and optional `snapshot_commit`.
+Both parent fields together select an overlay; one alone is invalid. A snapshot
+requires a distinct parent and a 40- or 64-character hexadecimal commit OID.
+Self-referential markers fall back to normal identity resolution. Parent keys
+inside tracked `project.json` are not isolation markers. Linked worktrees without
+a sidecar use `LinkedWorktree` with `Single` scope.
 
 ### `git` module — worktree detection
 
@@ -101,7 +113,23 @@ are grant-issuance bugs and fail typed.
 
 gcode requires an acquired daemon grant and a configured PostgreSQL hub.
 Project identity still comes from `.gobby/project.json`, `.gobby/gcode.json`,
-isolated roots, linked worktrees, or generated identity during `gcode init`.
+isolated roots and linked worktrees; standalone-only identity is rejected.
+
+### Contributor database fixtures
+
+`crates/gcode/src/test_env.rs` applies the current schema in the selected test
+database's `public` namespace. This differs from Python's per-test schema
+isolation. Use an owned disposable database on the isolated test hub, with a name
+ending in `_test`, and set `GCODE_POSTGRES_TEST_DATABASE_URL` explicitly.
+Provision `pg_search` in that database before the test; an extension available in
+the server image is not automatically enabled in each newly created database.
+Use a temporary `GOBBY_HOME` containing a fixture `machine_id`.
+
+If provisioning reports unrecognized lineage, do not reset a shared test
+database. Create a fresh owned test database and remove it after validation.
+If `pg_search` is missing, distinguish an available-but-not-enabled extension
+from an image lacking it. Count database-gated tests only after an enabled,
+passing run; an ignored test is not coverage.
 
 ## Indexing Pipeline
 
@@ -318,8 +346,8 @@ access. Behavior tests cover the current graph contract:
 - graph read APIs surface typed unavailable-service errors;
 - query helpers preserve safe literal rendering, numeric clamping, and project
   scoping through returned query/param behavior;
-- `gobby-core` exposes `GraphClient::with_sync_graph` for rare raw
-  `SyncGraph` operations without duplicating connection setup.
+- `gobby-core` owns the Redis protocol transport, timeout handling and compact
+  response parsing behind `GraphClient`; the old `with_sync_graph` API is gone.
 
 Do not reintroduce direct FalkorDB builder/result imports in `gobby-code`.
 
@@ -379,12 +407,12 @@ with either regex or `-F/--fixed-strings` matching, de-duplicates overlapping
 chunks by `(file_path, line)`, and returns stable `file_path`, then line-number
 ordering.
 
-`-m/--max-count` caps matching lines globally. Context lines from `-C/-A/-B` do
+`-m/--limit` (alias `--max-count`) bounds the match page. Context lines from `-C/-A/-B` do
 not count toward that cap. JSON output is an envelope with `project_id`,
 `pattern`, flags, `paths`, `globs`, `max_count`, `matched_lines`, `truncated`,
 `scanned_chunks`, and matches containing `path`, `line`, `text`, `spans`,
-`before`, and `after`. `--limit` is rejected so callers do not confuse ranked
-search pagination with grep-style matching-line caps.
+`before`, and `after`. Follow the emitted continuation command for remaining
+matches; `--limit` is supported.
 
 ### RRF Merge (rrf.rs)
 
@@ -628,13 +656,14 @@ Each external service degrades independently:
 
 | Service | When Unavailable | Impact |
 |---------|-----------------|--------|
-| FalkorDB | No config or connection refused | Graph commands return `[]` with hint; search loses graph boost |
+| FalkorDB | No config or connection refused | Graph operations return typed unavailable-service errors; hybrid search can lose graph sources with explicit degradation |
 | Qdrant | No URL configured | Search loses semantic source; BM25 still works |
 | Embeddings API | No API base, auth failure, or request error | Semantic search disabled for that query |
-| Daemon | Not running | Normal index/search and configured graph/vector lifecycle still work; daemon automation is unavailable |
+| Daemon | Cannot acquire the required grant/config | Runtime index/search initialization fails with recovery guidance |
 | PostgreSQL hub | Missing bootstrap, non-postgres backend, unreachable DB, or missing schema | Runtime index/search commands fail clearly |
 
-The system always works without the daemon process once the PostgreSQL hub is configured with the required schema.
+Runtime operations require daemon-issued grants and configured hub resources.
+Local help/schema identity probes do not prove runtime service availability.
 
 ## Output Format
 
@@ -698,4 +727,4 @@ Qdrant cleanup targets only `code_symbols_{project_id}`.
 Schema application belongs to `gdaemon apply`. `gcode invalidate` remains the
 project-scoped reset for indexed facts.
 
-_Last verified: 2026-08-09_
+_Last verified: 2026-09-12_

@@ -68,7 +68,7 @@ The runtime layout is consistent across surfaces:
 ## 3. Save/Discard Convention
 
 New detail panes are draft-based. Use `useDetailDraft` from
-`web/src/components/activity/fields/` once the shared field family lands.
+`web/src/components/activity/fields/`.
 
 The detail pane owns a draft derived from the latest fetched canonical detail.
 Edits update draft state only. They do not write on blur, row change, segment
@@ -100,7 +100,7 @@ must not add their own second confirm dialog.
 ## 4. Kebab Convention
 
 Row actions live behind the shared `QuickMenu` primitive at
-`web/src/components/activity/QuickMenu.tsx` once it lands. The trigger is a
+`web/src/components/activity/QuickMenu.tsx`. The trigger is a
 three-vertical-dot button with a 44px target.
 
 Menus must never render off-screen:
@@ -114,18 +114,19 @@ Menus must never render off-screen:
 Do not copy older ad-hoc `position: fixed` coordinate menus. They are the thing
 the shared primitive replaces.
 
-## 5. Registration: Exactly Three Edits
+## 5. Registration
 
-Register a new activity tab with exactly these three code edits:
+Register a new activity tab through the shared catalog and content switch:
 
 1. Add the id to the `ActivityTab` union and `ACTIVITY_PANEL_TABS` in
    `web/src/components/activity/ActivityPanelTabs.tsx`. Use a 24x24 outline
    icon that matches the existing selector weight.
-2. Add the id to `VALID_TABS` in
-   `web/src/components/activity/useActivityPanel.ts` so localStorage restore
-   accepts it.
-3. Add the `tabContent` case in
+2. Add the `tabContent` case in
    `web/src/components/activity/ActivityPanel.tsx`.
+
+`useActivityPanel.ts` derives `VALID_TABS` from `ACTIVITY_PANEL_TABS`; do not
+introduce a second hand-maintained list. Verify persisted selection restoration
+for the new ID in the activity-panel tests.
 
 Keep the existing `gobby-activity-panel-tab-v2` storage key stable. Add ids; do
 not rename existing ids.
@@ -212,3 +213,5 @@ Avoid these recurring failures:
 - Relying on color alone for state. Use icon, text, position, and lightness.
 - Adding raw colors where tokens already exist.
 - Treating `.impeccable.md` as optional. It is the design contract for this epic.
+
+_Last verified: 2026-09-12_

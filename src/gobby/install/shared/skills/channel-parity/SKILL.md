@@ -37,7 +37,9 @@ Per-channel deltas (threads/topics, reactions, inline buttons, voice replies, pa
 
 ## Per-Channel Workflow
 
-Work top to bottom. Create a per-channel epic in gobby-tasks mirroring the Telegram tree (#17888) before touching code.
+Work top to bottom. For a new channel effort, establish a per-channel epic and
+acceptance criteria before code. When executing an existing task/epic, preserve
+that ownership and plan rather than creating a duplicate tree.
 
 ### 1. Competitor research
 Fetch both competitors' docs for this channel. Enumerate: inbound types, outbound capabilities (formatting, streaming, typing), group/room model, auth model, session model, commands, media limits, transport (webhook vs polling vs socket). Cite URLs in the epic description. Mark anything unverifiable as UNVERIFIED — never guess.
@@ -52,7 +54,10 @@ Read the Gobby adapter (`src/gobby/communications/adapters/<channel>.py`) and tr
 - **Fixed secret names** — does the adapter resolve channel-scoped `$secret:` refs from `config_json`, or hardcoded global names? (Slack/Teams/SMS historically hardcoded `SLACK_BOT_TOKEN` etc.)
 - **Surface drift** — CLI/HTTP/MCP claims vs actual routes.
 
-File one bug task per confirmed gap, parented to the channel epic, with file:line evidence and validation criteria.
+Fix confirmed gaps in the current owned task, recording path/symbol evidence
+and validation in the implementation tracker. Hand foreign active work to its
+owner; use the repository found-work ladder for genuine decision, planning or
+clean-window blockers. Do not file a separate bug for routine in-scope fixes.
 
 ### 3. Bring-up
 Add the channel with secrets separated from config: `add_channel(channel_type, name, config, secrets={...})` (gobby-communications MCP). Secrets store encrypted as `COMMS_<TYPE>_<KEY>_<NAME>` with `$secret:` refs in config. Verify: `list_channels` shows `active` (+ `is_polling` where relevant), no `init_error`, daemon log confirms adapter init. Never proceed on a silently-failed activation.
@@ -95,7 +100,10 @@ Update the matrix, file backlog tasks, record memories (see Reporting).
 
 ## Live Validation Protocol
 
-Use a throwaway credential the owner revokes afterward. Do not restart the daemon before the reliability step — restarts are part of that test, not incidental.
+Use an authorized test account and a throwaway credential the owner revokes
+afterward, with isolated daemon state and ports. Sending external test messages
+requires authorization for that channel setup. Coordinate restarts; perform the
+reliability restart on the test daemon, never the user's running daemon.
 
 1. **Bring-up**: channel `active`, polling/webhook confirmed, clean init.
 2. **Sanity**: inbound stored; identity/session created; owner's platform ID captured from the first message's metadata → `allow_from`; session-scoped reply arrives; CLI send works.

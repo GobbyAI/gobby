@@ -847,3 +847,13 @@ acknowledged with a response that lets the caller continue, because CLI hooks
 must not crash the calling agent runtime.
 
 _Last verified: 2026-08-14_
+
+## Contributor tooling boundary
+
+Python test-type and suppression audits are local CLI operations in
+`src/gobby/test_types/cli.py`; there is no corresponding test-types HTTP API.
+Provider hook execution uses the existing hooks route and authentication
+contract, not a general contributor test endpoint. Exercise synthetic hooks
+only through temporary state and an isolated daemon. See
+[contributor validation](cli-commands.md#contributor-validation) and
+[ghook development](ghook-development-guide.md#diagnostic-commands).
