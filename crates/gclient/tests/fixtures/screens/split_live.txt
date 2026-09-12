@@ -10,8 +10,8 @@
 03 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 04 | ⍾ alpha (main ↑2 ↓1)   ▸││                                             ││                                             │|
 04 : -/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 overlay0/surface_dim+d*2 subtext0/surface_dim*4 green/surface_dim*3 red/surface_dim*3 overlay0/surface_dim+d*1 -/surface_dim*3 accent/surface_dim*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
-05 | Sessions      [project] ││                                             ││                                             │|
-05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*6 overlay0/surface0*9 -/surface0*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+05 | Sessions         [view] ││                                             ││                                             │|
+05 : -/surface0*1 subtext0/surface0+b*8 -/surface0*9 overlay0/surface0*6 -/surface0*1 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 06 | ⍾ term-alpha · needs you││                                             ││                                             │|
 06 : -/panel_bg*1 yellow/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg+b*10 overlay0/panel_bg+d*3 yellow/panel_bg+d*9 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 07 |   alpha                 ││                                             ││                                             │|

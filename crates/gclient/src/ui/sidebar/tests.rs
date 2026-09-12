@@ -140,8 +140,9 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert_eq!(lines[4], " ⍾ alpha (main ↑2 ↓1)   ▸│");
     assert!(!text.contains("○ beta"), "{text}");
     assert!(!text.contains("feature"), "{text}");
-    // The sort control does not fit beside the whole title at this width.
-    assert_eq!(lines[5], " Sessions      [project] │");
+    // One control, so the band fits the default width; the scope and the
+    // order live in its menu.
+    assert_eq!(lines[5], " Sessions         [view] │");
     assert_eq!(lines[6], " ⍾ term-alpha · needs you│");
     assert_eq!(lines[7].trim_end_matches('│').trim(), "");
     assert_eq!(lines[8], " ○ term-beta             │");
@@ -165,8 +166,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
         hits.group_toggles,
         vec![("proj-alpha".to_string(), Rect::new(24, 4, 1, 1))]
     );
-    assert_eq!(hits.sessions_scope, Some(Rect::new(15, 5, 9, 1)));
-    assert_eq!(hits.agent_sort, None);
+    assert_eq!(hits.sessions_view, Some(Rect::new(18, 5, 6, 1)));
     assert_eq!(
         hits.agents,
         vec![
@@ -179,7 +179,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
 }
 
 #[test]
-fn wider_sidebar_shows_the_sort_control_and_the_expanded_card() {
+fn wider_sidebar_shows_the_expanded_card() {
     let ws = scripted_workspace();
     let mut chrome = Chrome::dark();
     chrome.sidebar.toggle_group("proj-alpha");
@@ -192,9 +192,8 @@ fn wider_sidebar_shows_the_sort_control_and_the_expanded_card() {
     let text = screen(&terminal);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[5], "   └─ ○ feature · #123        │");
-    assert_eq!(lines[6], " Sessions [project] [grouped] │");
-    assert_eq!(hits.sessions_scope, Some(Rect::new(10, 6, 9, 1)));
-    assert_eq!(hits.agent_sort, Some(Rect::new(20, 6, 9, 1)));
+    assert_eq!(lines[6], " Sessions              [view] │");
+    assert_eq!(hits.sessions_view, Some(Rect::new(23, 6, 6, 1)));
     assert_eq!(
         hits.worktrees,
         vec![("wt-1".to_string(), Rect::new(0, 5, 30, 1))]

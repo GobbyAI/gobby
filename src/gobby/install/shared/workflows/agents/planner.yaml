@@ -7,9 +7,9 @@ version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: claude
-model: fable
-reasoning_effort: xhigh
+provider: codex
+model: gpt-5.6-sol
+reasoning_effort: medium
 isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"

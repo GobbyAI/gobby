@@ -383,14 +383,13 @@ pub struct ViewState {
     pub projects_menu_hit_area: Option<Rect>,
     /// The `[working]`/`[all]` control of the projects band.
     pub projects_filter_hit_area: Option<Rect>,
-    /// The `[project]`/`[all]` control of the sessions band.
-    pub sessions_scope_hit_area: Option<Rect>,
+    /// The `[view]` control of the sessions band.
+    pub sessions_view_hit_area: Option<Rect>,
     /// Session, agent run and bare terminal rows drawn in the sidebar, by
     /// entry id.
     pub agent_hit_areas: Vec<(String, Rect)>,
     /// Machine rows drawn in the sidebar, by machine id.
     pub machine_hit_areas: Vec<(String, Rect)>,
-    pub agent_sort_hit_area: Option<Rect>,
     /// The `│` column between the sidebar and the content column.
     pub sidebar_divider_x: Option<u16>,
     /// The three sections' rects (band and body), by
@@ -435,10 +434,9 @@ impl ViewState {
         self.projects_new_hit_area = sidebar.projects_new;
         self.projects_menu_hit_area = sidebar.projects_menu;
         self.projects_filter_hit_area = sidebar.projects_filter;
-        self.sessions_scope_hit_area = sidebar.sessions_scope;
+        self.sessions_view_hit_area = sidebar.sessions_view;
         self.agent_hit_areas = sidebar.agents;
         self.machine_hit_areas = sidebar.machines;
-        self.agent_sort_hit_area = sidebar.agent_sort;
         self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
         self.sidebar_toggle_hit_area = sidebar.toggle;
         self.control_indicator_hit_area = control_indicator;

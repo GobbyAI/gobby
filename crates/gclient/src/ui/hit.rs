@@ -66,10 +66,9 @@ pub enum Hit {
     ProjectsMenu,
     /// The `[working]`/`[all]` control of the projects band.
     ProjectsFilter,
-    /// The `[project]`/`[all]` scope control of the sessions band.
-    SessionsScope,
-    /// The `[grouped]`/`[priority]` sort control of the sessions band.
-    AgentSort,
+    /// The `[view]` control of the sessions band, which opens the menu
+    /// carrying the scope and the order.
+    SessionsView,
     SidebarToggle,
     /// The `│` column between sidebar and content.
     SidebarDivider,
@@ -219,8 +218,7 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
         (view.projects_new_hit_area, Hit::ProjectsNew),
         (view.projects_menu_hit_area, Hit::ProjectsMenu),
         (view.projects_filter_hit_area, Hit::ProjectsFilter),
-        (view.sessions_scope_hit_area, Hit::SessionsScope),
-        (view.agent_sort_hit_area, Hit::AgentSort),
+        (view.sessions_view_hit_area, Hit::SessionsView),
     ];
     if let Some((_, hit)) = controls
         .into_iter()

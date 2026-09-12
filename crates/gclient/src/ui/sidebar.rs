@@ -31,7 +31,7 @@ pub use machines::{local_hostname, machine_rows};
 pub use projects::{project_list_metrics, projects_filter_label};
 pub use sessions::{
     agent_blocked, agent_label, attention_order, machine_admits, next_machine_filter, session_rows,
-    sessions_scope_label, ALL_MACHINES, TERMINAL_ROW,
+    ALL_MACHINES, TERMINAL_ROW, VIEW_LABEL,
 };
 
 /// Rows the machines section lists before it scrolls.
@@ -64,10 +64,8 @@ pub struct SidebarHits {
     pub projects_menu: Option<Rect>,
     /// The projects band's `[working]`/`[all]`.
     pub projects_filter: Option<Rect>,
-    /// The sessions band's `[project]`/`[all]`.
-    pub sessions_scope: Option<Rect>,
-    /// The sessions band's `[grouped]`/`[priority]`.
-    pub agent_sort: Option<Rect>,
+    /// The sessions band's `[view]`.
+    pub sessions_view: Option<Rect>,
     /// Session, agent run and bare terminal rows, by entry id (both lines).
     pub agents: Vec<(String, Rect)>,
     /// Scrollbar lane beside each section that overflowed, by

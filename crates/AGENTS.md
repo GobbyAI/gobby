@@ -45,6 +45,13 @@ directory is left alone; move it aside to join the share. On macOS also raise
 the vnode ceiling once per machine, or the daemon's Git commands time out
 while cargo runs: see `docs/guides/system-requirements.md`, Troubleshooting.
 
+Because the directory is shared, `target/debug/<bin>` is whatever checkout built
+it last, and every worktree sees that same file. Cargo rebuilds when it notices
+the sources changed, so building is safe; reading is not. Anything that execs a
+binary by path — a test, a script, a probe — must build the crate it needs first
+in the checkout it means to test, or it silently runs another branch's build.
+Never assume a binary present under `target/` came from the branch you are on.
+
 Inline `#[cfg(test)]` modules count toward the owning production file's
 1,000-line ceiling. Keep large unit-test modules out of production Rust files.
 Place the tests at `<module>/tests.rs` and declare them from `<module>.rs` with:

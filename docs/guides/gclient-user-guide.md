@@ -55,7 +55,7 @@ Logs go to `~/.gobby/logs/gclient.log`.
 │ Projects [working] │                                             │
 │ ▶ gobby (0.5.0 ↑2)▾│                                             │
 │   ├─ ○ fix-y · #12 │                                             │
-│ Sessions [project] │                                             │
+│ Sessions    [view] │                                             │
 │ ⍾ #123: fix y      │                                             │
 │   codex · gpt-5    │                                             │
 │ ○ zsh %3           │                                             │
@@ -89,12 +89,12 @@ top half of the sidebar (each scrolls inside its cap); Sessions takes the rest.
 - *Sessions* lists sessions as two-line rows: `glyph #ref: title` over
   `provider · model-effort · task ref or pane title · remote machine`. Bare
   terminals with no session are listed by pane name with their backend. The
-  band's first control toggles `[project]` (the focused project only) and
-  `[all]` (every project, grouped under dim project rows); the second toggles
-  `[grouped]` (tab order, with agent runs nested under the session that spawned
-  them) and `[priority]` (flattened urgency order). The sort control appears
-  only when the sidebar is at least 31 columns wide; the default 26 shows the
-  scope control alone.
+  band's `[view]` control opens a menu with both axes: the scope, `this
+  project` (the focused project only) or `all projects` (every project,
+  grouped under dim project rows), and the order, `grouped` (tab order, with
+  agent runs nested under the session that spawned them) or `priority`
+  (flattened urgency order). A `✓` marks the value in force, and choosing it
+  again closes the menu unchanged.
 - *Footer band*: `[«]` collapses the sidebar.
 
 State glyphs, on machine, project, and session rows alike:
@@ -221,8 +221,8 @@ and only work after you bind them; every action also appears in the help popup
 | *unset* | Collapse or expand the project's worktrees | `toggle_group` |
 | *unset* | Cycle the machine filter (`local`, `all`, each machine) | `cycle_machine_filter` |
 | *unset* | Toggle `[working]` / `[all]` projects | `toggle_projects_filter` |
-| *unset* | Toggle `[project]` / `[all]` sessions | `toggle_sessions_scope` |
-| *unset* | Toggle `[grouped]` / `[priority]` session order | `toggle_agent_sort` |
+| *unset* | Toggle the sessions scope (this project / all projects) | `toggle_sessions_scope` |
+| *unset* | Toggle the session order (grouped / priority) | `toggle_agent_sort` |
 
 `up`, `down`, `h`, `j`, `k`, and `l` are direct chords: they act only when the
 client is already in navigate mode. In terminal mode every unprefixed key goes to
@@ -433,8 +433,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Drag a project card | Reorder projects |
 | Click a `▸`/`▾` fold mark | Fold or unfold the card's worktrees |
 | Click `[working]` / `[all]` on the Projects band | Switch the projects filter |
-| Click `[project]` / `[all]` on the Sessions band | Switch the sessions scope |
-| Click `[grouped]` / `[priority]` on the Sessions band | Switch the session order |
+| Click `[view]` on the Sessions band | Open the menu holding the sessions scope and order |
 | Click a session row | Focus its pane (a needs-you row's question is already on screen) |
 | Click `[«]` on the footer band | Collapse the sidebar |
 | Click the control indicator | Take, release, or take back control |
@@ -457,6 +456,7 @@ to keep a gesture for the client instead.
 | Worktree row | rename, close, delete worktree checkout… |
 | Session row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
 | Empty tab bar, empty sidebar, or `[Menu]` | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
+| `[view]` on the Sessions band (left click) | this project / all projects, grouped / priority |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane
