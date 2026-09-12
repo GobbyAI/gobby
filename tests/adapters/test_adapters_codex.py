@@ -1898,7 +1898,7 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["mcp_tool"] == "get_tool_schema"
         assert hook_event.data["tool_output"] == {"success": True}
 
-    async def test_item_completed_file_change_out_of_repo_does_not_mark_had_edits(
+    def test_item_completed_file_change_out_of_repo_does_not_mark_had_edits(
         self, tmp_path: Path
     ) -> None:
         """Synthetic Codex AFTER_TOOL edits outside cwd should not mark had_edits."""
@@ -1934,11 +1934,11 @@ class TestCodexAdapterTranslateToHookEvent:
         task_manager.list_tasks.return_value = [MagicMock()]
         handlers = EventHandlers(session_storage=session_storage, task_manager=task_manager)
 
-        await handlers.handle_after_tool(hook_event)
+        handlers.handle_after_tool(hook_event)
 
         session_storage.mark_had_edits.assert_not_called()
 
-    async def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path: Path) -> None:
+    def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path: Path) -> None:
         """Synthetic Codex AFTER_TOOL edits inside cwd should still mark had_edits."""
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
@@ -1972,7 +1972,7 @@ class TestCodexAdapterTranslateToHookEvent:
         task_manager.list_tasks.return_value = [MagicMock()]
         handlers = EventHandlers(session_storage=session_storage, task_manager=task_manager)
 
-        await handlers.handle_after_tool(hook_event)
+        handlers.handle_after_tool(hook_event)
 
         session_storage.mark_had_edits.assert_called_once_with("sess-123")
 

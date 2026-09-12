@@ -243,14 +243,15 @@ async def test_paths_committed_after_reports_only_strictly_later_commits(tmp_pat
     )
     paths = {"landed.py", "never.py"}
 
-    assert await task_dirty_state.paths_committed_after(
+    landed = await task_dirty_state.paths_committed_after_async(
         paths, str(tmp_path), committed_at - 5.0
-    ) == {"landed.py"}
+    )
+    assert landed == {"landed.py"}
     assert (
-        await task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 0.9)
+        await task_dirty_state.paths_committed_after_async(paths, str(tmp_path), committed_at + 0.9)
         == set()
     )
     assert (
-        await task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 5.0)
+        await task_dirty_state.paths_committed_after_async(paths, str(tmp_path), committed_at + 5.0)
         == set()
     )

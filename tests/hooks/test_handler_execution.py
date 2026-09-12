@@ -157,7 +157,7 @@ class TestNoManagerDependencies:
 
         assert response.decision == "allow"
 
-    async def test_after_tool_no_dependencies(self) -> None:
+    def test_after_tool_no_dependencies(self) -> None:
         """Test AFTER_TOOL works without dependencies."""
         handlers = EventHandlers()
         event = make_event(
@@ -165,7 +165,7 @@ class TestNoManagerDependencies:
             data={"tool_name": "Read"},
         )
 
-        response = await handlers.handle_after_tool(event)
+        response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
 
