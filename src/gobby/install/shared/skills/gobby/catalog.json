@@ -262,6 +262,56 @@
           "when": "Monitoring or terminating agent execution"
         }
       ]
+    },
+    {
+      "name": "memory",
+      "description": "Recall, capture, and maintain durable project knowledge",
+      "overview": "references/memory/overview.md",
+      "when": "Working with persistent knowledge or review lessons",
+      "topics": [
+        {
+          "name": "search",
+          "description": "Recall and navigate durable knowledge",
+          "path": "references/memory/search.md",
+          "when": "Searching before work or capture"
+        },
+        {
+          "name": "capture",
+          "description": "Create, revise, and supersede durable knowledge",
+          "path": "references/memory/capture.md",
+          "when": "Writing or correcting memory"
+        },
+        {
+          "name": "scope",
+          "description": "Resolve ownership and global visibility",
+          "path": "references/memory/scope.md",
+          "when": "Changing visibility or project ownership"
+        },
+        {
+          "name": "maintenance",
+          "description": "Back up, restore, and repair secondary stores",
+          "path": "references/memory/maintenance.md",
+          "when": "Maintaining memory data or diagnostics"
+        },
+        {
+          "name": "review-lessons",
+          "description": "Preserve verified review outcomes",
+          "path": "references/memory/review-lessons.md",
+          "when": "Triaging findings or recording review lessons"
+        },
+        {
+          "name": "post-task",
+          "description": "Review knowledge after completed work",
+          "path": "references/memory/post-task.md",
+          "when": "Responding to a worked-leaf post-close review"
+        },
+        {
+          "name": "dream",
+          "description": "Preview, inspect, and recover hygiene runs",
+          "path": "references/memory/dream.md",
+          "when": "Operating or diagnosing memory dream"
+        }
+      ]
     }
   ]
 }

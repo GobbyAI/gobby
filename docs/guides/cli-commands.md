@@ -710,7 +710,7 @@ gobby clones delete CLONE
 ### Memory
 
 ```bash
-gobby memory create CONTENT [--type TYPE] [--project PROJECT]
+gobby memory create CONTENT --rationale REASON [--type TYPE] [--project PROJECT]
 gobby memory recall [QUERY] [--project PROJECT] [--limit N] [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
 gobby memory list [--type TYPE] [--limit N] [--project PROJECT] [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
 gobby memory show MEMORY [--project PROJECT]
@@ -719,6 +719,11 @@ gobby memory delete MEMORY [--project PROJECT]
 gobby memory export [--output PATH]
 gobby memory stats
 ```
+
+Memory also provides backup/restore, graph/index maintenance, dream run
+observation/revert, and recall-signal diagnostics. See the audited
+[Memory CLI reference](memory.md#cli-reference) and
+[Dream operations](memory.md#dream-operations) for scope and recovery boundaries.
 
 ### Skills
 

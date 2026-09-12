@@ -1,0 +1,1490 @@
+{
+  "version": 1,
+  "capability": "memory",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "memory",
+    "review-learning"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/memory.md",
+      "anchors": [
+        "memory-system-guide",
+        "quick-start",
+        "what-belongs-in-memory",
+        "concepts",
+        "memory-types",
+        "scope",
+        "tags",
+        "cli-reference",
+        "create-recall-list",
+        "inspect-and-update",
+        "markdown-export",
+        "backup-and-restore",
+        "maintenance",
+        "mcp-tools",
+        "common-calls",
+        "post-task-review",
+        "review-lessons",
+        "dream-operations",
+        "http-routes",
+        "architecture",
+        "search",
+        "knowledge-graph",
+        "configuration",
+        "lifecycle-rules",
+        "retrieval-is-agent-driven",
+        "backup-format",
+        "maintenance-checklist",
+        "troubleshooting",
+        "a-search-returns-nothing-useful",
+        "search-quality-is-poor",
+        "backup-file-is-missing",
+        "graph-views-are-empty",
+        "file-locations",
+        "related-documentation"
+      ],
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "memory"
+      ],
+      "evidence": [
+        "source-audit",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "memory-skills-workflows-and-rules"
+      ],
+      "scope": "Memory rows only",
+      "evidence": [
+        "source-audit",
+        "cli-http-dream"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.search_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "search_memories"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/scope.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.promote_memory_to_global"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "promote_memory_to_global"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/scope.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.demote_memory_from_global"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "demote_memory_from_global"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/scope.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.move_memory"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "move_memory"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.list_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "list_memories"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.get_memory"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "get_memory"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.get_related_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "get_related_memories"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.memory_stats"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "memory_stats"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.search_knowledge_graph"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "search_knowledge_graph"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.recluster_knowledge_graph_entities"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "recluster_knowledge_graph_entities"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.densify_knowledge_graph_cooccurrence"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "densify_knowledge_graph_cooccurrence"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.rebuild_crossrefs"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "rebuild_crossrefs"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.rebuild_knowledge_graph"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "rebuild_knowledge_graph"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.reindex_embeddings"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "reindex_embeddings"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.restore_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "backup-supersession"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "restore_memories"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.backup_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "backup-supersession"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "backup_memories"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory.py",
+        "symbol": "create_memory_registry.judge_shadow_relevance_tool"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "judge_shadow_relevance"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_write.py",
+        "symbol": "register_memory_write_tools.create_memory"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "backup-supersession"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "create_memory"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_write.py",
+        "symbol": "register_memory_write_tools.update_memory"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "update_memory"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_write.py",
+        "symbol": "register_memory_write_tools.delete_memory"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "delete_memory"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_write.py",
+        "symbol": "register_memory_write_tools.restore_memory"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "restore_memory"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/post-task.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_review.py",
+        "symbol": "register_memory_review_tools.review_task_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "review_task_memories"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_dream.py",
+        "symbol": "register_memory_dream_tools.memory_dream"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "memory_dream"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_dream.py",
+        "symbol": "register_memory_dream_tools.memory_dream_status"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "memory_dream_status"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_dream.py",
+        "symbol": "register_memory_dream_tools.memory_dream_decisions"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "memory_dream_decisions"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_dream.py",
+        "symbol": "register_memory_dream_tools.memory_dream_revert"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "memory_dream_revert"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/review_learning.py",
+        "symbol": "create_review_learning_registry.recall_review_lessons_for_files"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-review-learning",
+      "tool": "recall_review_lessons_for_files"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/review_learning.py",
+        "symbol": "create_review_learning_registry.recall_review_lessons_by_class"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-review-learning",
+      "tool": "recall_review_lessons_by_class"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/review_learning.py",
+        "symbol": "create_review_learning_registry.list_check_keys"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-review-learning",
+      "tool": "list_check_keys"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/review_learning.py",
+        "symbol": "create_review_learning_registry.retire_review_lesson"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-review-learning",
+      "tool": "retire_review_lesson"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/review_learning.py",
+        "symbol": "create_review_learning_registry.record_review_lesson"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-review-learning",
+      "tool": "record_review_lesson"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/review-lessons.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/review_learning.py",
+        "symbol": "create_review_learning_registry.recall_review_context"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-review-learning",
+      "tool": "recall_review_context"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "backfill_events"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals backfill-events"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "backfill_labels"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals backfill-labels"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "gate"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals gate"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "audit_labels"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals audit-labels"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "supersede_legacy_cohort"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals supersede-legacy-cohort"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "drift"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals drift"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/signals.py",
+        "symbol": "replay_candidate_filter_command"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall-signals replay-candidate-filter"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/maintenance.py",
+        "symbol": "dedupe_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory dedupe"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/graph.py",
+        "symbol": "clear_graph"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory clear-graph"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/graph.py",
+        "symbol": "graph_counts"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory graph-counts"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/graph.py",
+        "symbol": "rebuild_graph"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory rebuild-graph"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/graph.py",
+        "symbol": "invalidate"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory invalidate"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/dream.py",
+        "symbol": "memory_dream"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory dream"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/dream.py",
+        "symbol": "memory_dream_status"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory dream status"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/dream.py",
+        "symbol": "memory_dream_revert"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory dream revert"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/export.py",
+        "symbol": "export_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory export"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/export.py",
+        "symbol": "backup_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory backup"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/export.py",
+        "symbol": "restore_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory restore"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/indices.py",
+        "symbol": "reindex_embeddings"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory reindex-embeddings"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/indices.py",
+        "symbol": "reconcile"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory reconcile"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/indices.py",
+        "symbol": "rebuild_crossrefs"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory rebuild-crossrefs"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "list_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "show_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "update_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory update"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "backfill_unscoped_lessons_command"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory backfill-unscoped-lessons"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "memory_stats"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory stats"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.list_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.create_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.search_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/search"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.memory_stats"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/stats"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.entity_graph"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/graph/entities"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.entity_neighbors"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/graph/entities/{entity_key}/neighbors"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.graph_counts"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/graph/counts"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.memory_graph"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/graph"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.rebuild_crossrefs"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/crossrefs/rebuild"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.clear_knowledge_graph"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/graph/clear"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.rebuild_knowledge_graph"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/graph/rebuild"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.rebuild_knowledge_graph_status"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/graph/rebuild/status"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.reconcile_memory_stores"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/reconcile"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.reindex_embeddings"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/embeddings/reindex"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.invalidate_memories"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/invalidate"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.get_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/memories/{memory_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.update_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "PUT /api/memories/{memory_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.restore_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/{memory_id}/restore"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/scope.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.promote_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/{memory_id}/promote"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/scope.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.demote_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/{memory_id}/demote"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/scope.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.move_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/memories/{memory_id}/move"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory.py",
+        "symbol": "create_memory_router.delete_memory"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "DELETE /api/memories/{memory_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory_dream.py",
+        "symbol": "create_memory_dream_router.memory_dream"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /memory/dream"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory_dream.py",
+        "symbol": "create_memory_dream_router.memory_dream_status"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "GET /memory/dream/{run_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/memory_dream.py",
+        "symbol": "create_memory_dream_router.memory_dream_revert"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "route": "POST /memory/dream/{run_id}/revert"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "create"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory create"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "recall"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory recall"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
+      "implementation": {
+        "path": "src/gobby/cli/memory/crud.py",
+        "symbol": "delete"
+      },
+      "verification": [
+        "source-audit",
+        "cli-http-dream"
+      ],
+      "audience": "operator/client",
+      "command": "gobby memory delete"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-schema",
+      "command": "gcode outline/symbol-at/grep: memory registries, facade/lifecycle, scope/write/review, CLI/HTTP, Dream service/apply/decisions and memory/embedding configuration; live list_tools(gobby-memory), schemas create_memory/memory_dream; gobby memory --help",
+      "result": "Current registrations, ownership, caps, provenance, defaults and recovery traced. No live mutating probes."
+    },
+    {
+      "id": "installed-memory",
+      "kind": "installed-registry",
+      "command": "list_rules(group=memory-lifecycle,brief=true); get_rule(queue-task-memory-review-after-close); get_rule(review-closed-task-memories-before-handoff); get_rule(bootstrap-default-agent-core-skills)",
+      "result": "2026-09-12: ten lifecycle rows enabled. Global installed queue e141d6d9-31ba-4c6e-8099-c378c4a10ab0, handoff f5f76498-4f26-4b25-8d78-097a0f4ca069, bootstrap 25756d0a-6911-4e11-9871-69efdb9aa5a7 enabled. Old initial-turn loader absent; switched to group inventory. No mutation."
+    },
+    {
+      "id": "core-memory",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_memory.py tests/mcp_proxy/tools/test_memory_tools.py tests/mcp_proxy/tools/test_memory_review.py tests/mcp_proxy/tools/test_memory_write_cap.py tests/mcp_proxy/test_memory_tools_kg.py tests/review_learning tests/workflows/test_memory_lifecycle_rules.py tests/workflows/test_memory_review_conditions.py -q",
+      "result": "338 passed in 35.99s; one async-marker warning fixed and affected file rerun clean in cli-http-dream."
+    },
+    {
+      "id": "cli-http-dream",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_memory.py tests/cli/test_memory_cli.py tests/cli/test_memory_coverage.py tests/cli/test_cli_memory_signals.py tests/cli/test_memory_dream_publication.py tests/servers/routes/test_memory_routes.py tests/memory/test_dream.py tests/memory/test_dream_coordinator.py tests/memory/test_dream_options.py tests/memory/test_dream_reports.py tests/config/test_memory_config.py tests/config/test_memory_feature_configs.py tests/docs/test_memory_guides.py tests/skills/test_capability_catalog.py -q",
+      "result": "410 passed in 5.60s, no warnings; isolated fixtures."
+    },
+    {
+      "id": "test-types",
+      "kind": "ratchet",
+      "command": "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new",
+      "result": "Final rerun after both test edits:2180 files,zero new errors,8463 known baseline errors; passed."
+    },
+    {
+      "id": "suppressions",
+      "kind": "ratchet",
+      "command": "uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "4205 files;217 baseline suppressions,zero new/stale; passed."
+    },
+    {
+      "id": "test-style",
+      "kind": "lint",
+      "command": "uv run ruff check src/gobby/mcp_proxy/tools/memory_write.py src/gobby/mcp_proxy/tools/memory_dream.py tests/mcp_proxy/tools/test_memory.py tests/skills/test_memory_skill.py; uv run ruff format --check <same four paths>",
+      "result": "Final lint and format passed after formatting amended assertion. Production changes are description/docstring only; tests enforce current-task guidance and remove stale version pin."
+    },
+    {
+      "id": "backup-supersession",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/sync/test_memory_backup.py tests/sync/test_memory_sync.py tests/memory/test_create_supersedes.py tests/docs/test_memory_guides.py tests/skills/test_capability_catalog.py -q",
+      "result": "74 passed in 16.08s; isolated backup/restore/supersession fixtures and final guide/catalog checks."
+    },
+    {
+      "id": "library-checks",
+      "kind": "local-validation",
+      "command": "uv run Python: load_capability_catalog, AST qualified symbol identities, unique operation IDs, Markdown paths and anchors",
+      "result": "Final validation passed:6 capabilities,86 qualified operation symbols,25 composed HTTP routes,9 Markdown link sets and fence-aware guide anchors. Initial reviewer findings corrected."
+    },
+    {
+      "id": "final-guidance",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_memory.py tests/mcp_proxy/tools/test_memory_tools.py tests/skills/test_memory_skill.py tests/memory/test_dream_coordinator.py tests/docs/test_memory_guides.py tests/skills/test_capability_catalog.py -q",
+      "result": "140 passed in0.44s. Initial run138pass/2fail identified stale version1.2.1 assertion and old new-task guidance; both corrected."
+    },
+    {
+      "id": "source-types",
+      "kind": "mypy",
+      "command": "uv run mypy src/gobby/mcp_proxy/tools/memory_write.py src/gobby/mcp_proxy/tools/memory_dream.py",
+      "result": "No issues found."
+    },
+    {
+      "id": "test-quality",
+      "kind": "ratchet",
+      "command": "uv run gobby test-quality audit tests/mcp_proxy/tools/test_memory.py tests/skills/test_memory_skill.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "2files,38tests,zero issues."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Create examples lacked rationale and claimed unrestricted durable types.",
+      "resolution": "Add mandatory rationale and canonical types; describe implementation_note skipping.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "CLI create described unscoped ownership.",
+      "resolution": "Trace facade personal-project normalization; separate broad list/search scope.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Public scope, restore, graph, Dream decisions, review lessons and CLI maintenance omitted.",
+      "resolution": "Map current registries and author distinct topics and guide entries.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Removed fix-null-project CLI and absent initial-turn loader documented.",
+      "resolution": "Remove command; installed bootstrap supplies guidance; ten current lifecycle rules inventoried.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Dream schema suggests polling despite agent event-driven contract.",
+      "resolution": "Correct tool description to bounded status diagnostics. Preserve normative event-driven contract, independent work/yield and operator CLI observation; no invented wait or wake.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Successful revert implied complete restoration.",
+      "resolution": "Document conflicts, forfeited snapshots, revert_failed and secondary reconciliation.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Source skill/schema prescribe new claimed task for every discovered bug.",
+      "resolution": "Correct existing memory source skill and create tool description/docstring to follow current-task found-work ladder; update focused description assertion.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Synchronous test marked asyncio emitted warning.",
+      "resolution": "Remove that marker; affected file passes without warnings in final broad run.",
+      "evidence": [
+        "source-audit",
+        "core-memory",
+        "cli-http-dream"
+      ]
+    },
+    {
+      "finding": "Audit duplicated Dream router prefix.",
+      "resolution": "Compose /memory router prefix with /dream decorators once; three audit records corrected.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Heading extraction included comments in fenced code.",
+      "resolution": "Strip fenced code before auditing Markdown anchors.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Skill test pinned stale version1.2.1 and old new-task capture wording.",
+      "resolution": "Remove irrelevant version pin; enforce search timing and current-task found-work priority.",
+      "evidence": [
+        "final-guidance"
+      ]
+    }
+  ]
+}

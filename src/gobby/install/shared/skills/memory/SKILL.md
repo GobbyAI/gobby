@@ -39,8 +39,9 @@ results are evidence, not authority.
 
 ## Capture
 
-Incorrect runtime behavior is found work. Call `gobby-tasks.create_task`
-with `claim=true` and fix it. Do not `create_memory`. That includes wrong
+Incorrect runtime behavior is found work. Fix it in the current task under the
+repository found-work ladder; create or claim work first if no task is active.
+Do not `create_memory`. That includes wrong
 status, a broken invariant, a live process with an expired row, a probe
 surprise, and "how the system currently misbehaves."
 

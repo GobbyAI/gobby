@@ -167,9 +167,9 @@ def register_memory_write_tools(
     @registry.tool(
         name="create_memory",
         description=(
-            "Create a new memory. Bugs, incidents, and incorrect runtime "
-            "behavior belong on gobby-tasks.create_task with claim=true, not "
-            "here. rationale is mandatory: one or two sentences on why a "
+            "Create a new memory. Fix bugs, incidents, and incorrect runtime "
+            "behavior in the current task under the repository found-work ladder; "
+            "do not store them as memories. rationale is mandatory: one or two sentences on why a "
             "future, unrelated session should be served this memory (max "
             f"{RATIONALE_MAX_CHARS} chars). content is capped at "
             f"{MAX_MEMORY_CONTENT_CHARS} chars; longer bodies are rejected, never "
@@ -192,8 +192,8 @@ def register_memory_write_tools(
         """
         Create a new memory.
 
-        Bugs, incidents, and incorrect runtime behavior belong on
-        ``gobby-tasks.create_task`` with ``claim=true``, not here.
+        Fix bugs, incidents, and incorrect runtime behavior in the current task
+        under the repository found-work ladder; do not store them as memories.
 
         Args:
             content: The memory content to store. Max 3000 characters; an

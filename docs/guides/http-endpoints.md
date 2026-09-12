@@ -502,12 +502,20 @@ Build profile operator/client routes are:
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/memories` | List memories. |
-| `POST` | `/api/memories` | Create a memory. |
+| `POST` | `/api/memories` | Create with required content and rationale. |
 | `GET` | `/api/memories/search` | Search memories. |
 | `GET` | `/api/memories/stats` | Memory statistics. |
 | `GET` | `/api/memories/{memory_id}` | Get a memory. |
 | `PUT` | `/api/memories/{memory_id}` | Update a memory. |
 | `DELETE` | `/api/memories/{memory_id}` | Delete a memory. |
+| `POST` | `/api/memories/{memory_id}/restore` | Restore a soft-hidden memory. |
+| `POST` | `/api/memories/{memory_id}/promote` | Expose an owned memory globally. |
+| `POST` | `/api/memories/{memory_id}/demote` | Restrict visibility to its owner project. |
+| `POST` | `/api/memories/{memory_id}/move` | Transfer ownership to another project. |
+| `GET` | `/api/memories/graph/counts` | Count graph entities and edges. |
+| `POST` | `/memory/dream` | Admit or coalesce an asynchronous dream run. |
+| `GET` | `/memory/dream/{run_id}` | Read checkpoint and outcome. |
+| `POST` | `/memory/dream/{run_id}/revert` | Revert a run from snapshots. |
 | `GET` | `/api/memories/graph` | Memory graph overview. |
 | `GET` | `/api/memories/graph/entities` | Knowledge-graph entities. |
 | `GET` | `/api/memories/graph/entities/{entity_key}/neighbors` | Entity neighbors. |
