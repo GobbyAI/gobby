@@ -429,7 +429,10 @@ def _normalize_target_path(value: str) -> str | None:
     if (
         not candidate
         or candidate.endswith("/")
-        or any(character.isspace() for character in candidate)
+        or any(
+            (character.isspace() and character != " ") or ord(character) < 32
+            for character in candidate
+        )
         or ":" in candidate
         or "\\" in candidate
     ):

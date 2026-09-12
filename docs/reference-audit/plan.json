@@ -1,0 +1,990 @@
+{
+  "version": 1,
+  "capability": "plan",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "plan",
+    "plan-draft",
+    "plan-enhance",
+    "plan-mechanic",
+    "plan-review",
+    "expand",
+    "expansion-agent-selection"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/plans-and-plan-mode.md",
+      "anchors": [
+        "mental-model",
+        "quick-start",
+        "plan-mode",
+        "optional-enhancement",
+        "optional-adversarial-review",
+        "plan-records",
+        "archive-and-delete",
+        "cli",
+        "http",
+        "mcp",
+        "file-locations"
+      ],
+      "evidence": [
+        "source-inspection",
+        "focused-runtime"
+      ]
+    },
+    {
+      "path": "docs/guides/spec-writing.md",
+      "anchors": [
+        "plan-shape",
+        "canonical-template",
+        "section-kinds",
+        "acceptance-items",
+        "dependencies",
+        "categories-and-tdd",
+        "coverage-records",
+        "task-manifest",
+        "build-and-lifecycle-notes",
+        "validation"
+      ],
+      "evidence": [
+        "source-inspection",
+        "focused-runtime"
+      ]
+    },
+    {
+      "path": "docs/guides/task-expansion.md",
+      "anchors": [
+        "overview",
+        "the-expand-task-pipeline",
+        "expansion-runs",
+        "compiled-spec-shape",
+        "validation",
+        "applying-the-run",
+        "plans---expansion",
+        "tdd-integration",
+        "invoking-expansion",
+        "resume-and-reuse",
+        "file-locations"
+      ],
+      "evidence": [
+        "source-inspection",
+        "focused-runtime"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "expansion",
+        "plan-coverage-and-plan-records"
+      ],
+      "evidence": [
+        "source-inspection",
+        "focused-runtime"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "tasks-and-stages",
+        "agents-and-build-automation"
+      ],
+      "evidence": [
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "scope": "Plan registry has no standalone HTTP routes; build planning-seed fields delegated to build."
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "create_plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "create_plan"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "get_plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "get_plan"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "list_plans",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "list_plans"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "archive_plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "archive_plan"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "update_plan_hash",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "update_plan_hash"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "delete_plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "delete_plan"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "regenerate_coverage_manifest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/coverage.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "regenerate_coverage_manifest"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "validate_plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/drafting.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/__init__.py",
+        "symbol": "validate_plan"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "prepare_plan_review_round",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "prepare_plan_review_round"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "get_plan_review_snapshot",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "get_plan_review_snapshot"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "bind_evidence_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "bind_evidence_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "verify_plan_unchanged",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "verify_plan_unchanged"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "derive_plan_review_manifest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "derive_plan_review_manifest"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "validate_plan_review_coverage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/review.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "validate_plan_review_coverage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "expire_plan_review_evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/repair.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "expire_plan_review_evidence"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "apply_plan_review_repairs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/repair.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "apply_plan_review_repairs"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "derive_plan_handoff_manifest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "derive_plan_handoff_manifest"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "apply_plan_handoff_manifest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "apply_plan_handoff_manifest"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "apply_plan_review_manifest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "apply_plan_review_manifest"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "render_plan_changelog_round",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "render_plan_changelog_round"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "append_plan_changelog_round",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "append_plan_changelog_round"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "finalize_plan_review_evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "finalize_plan_review_evidence"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-plans",
+      "tool": "checkpoint_plan_review_lesson_mint",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/plans/review_evidence.py",
+        "symbol": "checkpoint_plan_review_lesson_mint"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "start_expansion_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "start_expansion_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "reset_expansion_output",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "reset_expansion_output"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "get_expansion_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "get_expansion_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "get_latest_expansion_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "get_latest_expansion_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "resume_expansion_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "resume_expansion_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "cancel_expansion_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "cancel_expansion_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "validate_expansion_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "validate_expansion_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "save_expansion_qa_result",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "save_expansion_qa_result"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "run_expansion_qa_coverage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "run_expansion_qa_coverage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "check_expansion_qa_result",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "check_expansion_qa_result"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "validate_plan_file",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py",
+        "symbol": "validate_plan_file"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "wire_affected_files_from_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_affected_files.py",
+        "symbol": "wire_affected_files_from_run"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "record_plan_enhancement",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/enhancement.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "record_plan_enhancement"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "backfill_plan_review_lessons",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/approval.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_plan_review_backfill.py",
+        "symbol": "backfill_plan_review_lessons"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plan coverage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/coverage.md",
+      "implementation": {
+        "path": "src/gobby/cli/plan.py",
+        "symbol": "coverage"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans review-evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/repair.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "review_evidence_command"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans review-runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "review_runs_command"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks expand compile",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/expand.py",
+        "symbol": "compile_cmd"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks expand apply",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/expand.py",
+        "symbol": "apply_cmd"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks expand reset",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/expand.py",
+        "symbol": "reset_cmd"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks expand status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/expand.py",
+        "symbol": "status_cmd"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks expand resume",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/expansion.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/expand.py",
+        "symbol": "resume_cmd"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks expand validate-plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/coverage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/expand.py",
+        "symbol": "validate_plan_cmd"
+      },
+      "verification": [
+        "source-inspection"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "delegated_operations": {
+    "tasks": [
+      "gobby-tasks-ops:approve_review",
+      "gobby-tasks-ops:reject_review",
+      "gobby-tasks-ops:set_artifact",
+      "gobby-tasks-ops:set_artifacts_atomic"
+    ],
+    "build": [
+      "gobby-tasks-ops:build_task"
+    ],
+    "pipelines": [
+      "gobby-workflows:run_pipeline",
+      "gobby-workflows:get_pipeline_status"
+    ],
+    "agents": [
+      "gobby-agents:spawn_agent",
+      "gobby-agents:wait_for_agent"
+    ],
+    "memory": [
+      "gobby-review-learning:recall_review_lessons_by_class"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "registered-inventory",
+      "kind": "live-read-only",
+      "command": "list_tools(gobby-plans); list_tools(gobby-tasks-ops)",
+      "result": "23 plan tools and50 task-ops tools inspected;14 task-ops tools assigned to plan.",
+      "schemas_read": [
+        "gobby-plans:create_plan",
+        "gobby-plans:apply_plan_handoff_manifest",
+        "gobby-tasks-ops:start_expansion_run",
+        "gobby-tasks-ops:record_plan_enhancement",
+        "gobby-plans:validate_plan_review_coverage",
+        "gobby-agents:end_agent_run"
+      ],
+      "negative_schema": "gobby-tasks-ops:update_plan_hash returns404; use gobby-plans:update_plan_hash"
+    },
+    {
+      "id": "source-inspection",
+      "kind": "source",
+      "command": "gcode outline/symbol-at on operation implementation files, Click declarations/help, source skills and guides",
+      "result": "Public operation signatures, authority and state transitions mapped; representative tests are not per-operation mutation probes."
+    },
+    {
+      "id": "installed-state",
+      "kind": "live-read-only",
+      "command": "get_rule(block-edits-plan-mode); get_pipeline(expand-task)",
+      "result": "Rule8852ac43-6e3f-44c0-9218-0970fd01776e enabled, installed/global, before_tool priority20. Pipeline expand-task enabled v2.0 with7steps through coverage_check, provider claude, model null, wait_timeout600, run_coveragefalse."
+    },
+    {
+      "id": "severity-rollback",
+      "kind": "decision-and-source",
+      "command": "get_task(#19368); git show a2b779f60f; git log -S quality_ledger -- src/gobby/plans/",
+      "result": "User-approved baseline restoration deliberately removed four-severity convergence experiment/ledger. Corrected surviving contract text to blocking/nit, preserving newer approved decision."
+    },
+    {
+      "id": "focused-runtime",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/plans/test_parser_manifest.py tests/plans/test_deferral.py tests/plans/test_handoff_manifest_service.py tests/plans/test_review_coverage.py tests/plans/test_review_evidence.py tests/plans/test_review_repairs_apply.py tests/plans/test_review_repairs_service.py tests/mcp_proxy/test_plans_tools.py tests/mcp_proxy/test_stage_review_schema.py tests/mcp_proxy/tools/test_task_expansion_new.py tests/tasks/test_expansion_service_compile_manifest_driven.py tests/tasks/test_expansion_qa_coverage.py tests/storage/test_plans_manager.py tests/cli/test_cli_plans.py tests/skills/test_capability_catalog.py -q",
+      "result": "268 passed in18.19s; isolated test hub and fixtures, no live mutations."
+    },
+    {
+      "id": "cli-help",
+      "kind": "read-only",
+      "command": "uv run gobby plans validate --help; uv run gobby plans register --help; uv run gobby plans review-evidence --help",
+      "result": "Verified project/mode flags, root registration and review-evidence options."
+    },
+    {
+      "id": "focused-supplement",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_record_plan_enhancement.py tests/mcp_proxy/tools/test_plan_review_backfill.py tests/plans/test_coverage_cli.py tests/mcp_proxy/tools/tasks/test_mcp_proxy_tools_tasks_expansion.py tests/skills/test_capability_catalog.py -q",
+      "result": "56 passed in6.16s"
+    },
+    {
+      "id": "library-validation",
+      "kind": "local-validation",
+      "command": "uv run python: load_capability_catalog; AST-resolve every operation symbol; validate Markdown links and audit anchors",
+      "result": "2 capabilities;46 operation symbols;15 Markdown files and audit anchors valid"
+    },
+    {
+      "id": "diagrams",
+      "kind": "isolated-browser",
+      "command": "Node with installed Mermaid and Playwright; ephemeral localhost asset server and headless Chromium",
+      "result": "2 diagrams rendered; coverage QA and expansion labels verified. Initial plain Node parse lacked DOM; JSDOM parse passed, then real Chromium render passed. No daemon access."
+    },
+    {
+      "id": "independent-review",
+      "kind": "review",
+      "command": "code-review OCR delegate by review_reference_identity",
+      "result": "16/16files reviewed,100% coverage,no material findings. Taskless-only task-state wording clarified after review."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Four-severity quality ledger survives approved removal",
+      "evidence": [
+        "severity-rollback"
+      ],
+      "resolution": "Corrected contract to baseline protocol with decision provenance."
+    },
+    {
+      "finding": "Guides allow adversary M1 writes and omit checkpoint authority",
+      "evidence": [
+        "registered-inventory",
+        "focused-runtime"
+      ],
+      "resolution": "Documented coordinator apply paths and checkpoint order."
+    },
+    {
+      "finding": "Expansion guide omits contract coverage step",
+      "evidence": [
+        "installed-state"
+      ],
+      "resolution": "Replaced incomplete YAML copy with verified installed workflow."
+    },
+    {
+      "finding": "Expansion guide allows research/planning automated leaves",
+      "evidence": [
+        "focused-runtime"
+      ],
+      "resolution": "Restricted to five automated categories."
+    },
+    {
+      "finding": "Spec guide rejects completed deferral owners and has incomplete Targets",
+      "evidence": [
+        "focused-runtime"
+      ],
+      "resolution": "Corrected completion reasons and illustrative targets/research context."
+    },
+    {
+      "finding": "Old expand skill calls nonexistent task-ops:update_plan_hash",
+      "evidence": [
+        "registered-inventory"
+      ],
+      "resolution": "New reference uses registry hash refresh plus QA artifact refresh; obsolete source entrypoint retires in P5."
+    },
+    {
+      "finding": "Enhancer implies record tool accepts structured suggestion objects",
+      "evidence": [
+        "registered-inventory"
+      ],
+      "resolution": "Reference requires serialized strings per schema."
+    },
+    {
+      "finding": "Agent-selection source lacks deterministic typed fullstack/domain routing",
+      "evidence": [
+        "source-inspection",
+        "focused-runtime"
+      ],
+      "resolution": "Separated typed routing from ad-hoc fallback."
+    },
+    {
+      "finding": "CLI guide omits review-evidence and root inference constraints",
+      "evidence": [
+        "cli-help"
+      ],
+      "resolution": "Added current inspection and validation guidance."
+    },
+    {
+      "finding": "Old plan-review/enhance exits call end_agent_run without required fields",
+      "evidence": [
+        "registered-inventory"
+      ],
+      "resolution": "References require current_state and next_steps structured handoff; obsolete source skills retire in P5."
+    },
+    {
+      "finding": "Spec guide calls Plan ID optional despite approval precondition",
+      "evidence": [
+        "source-inspection"
+      ],
+      "resolution": "Require explicit real Plan ID before approval and reject covers:unknown labels."
+    }
+  ],
+  "cutover_dependencies": [
+    "P4 migrates plan/review/expansion requirements to exact references.",
+    "P5 removes folded entrypoints and stale source-skill instructions without wrappers."
+  ],
+  "planned_checks": [
+    "P3 executable public-tool/CLI coverage checker not yet implemented."
+  ]
+}

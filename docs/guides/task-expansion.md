@@ -26,6 +26,7 @@ flowchart LR
         START["start_expansion_run"] --> WAIT["wait for run completion"]
         WAIT --> LOAD["get_expansion_run"]
         LOAD --> VALIDATE["validate_expansion_run"]
+        VALIDATE --> COVERAGE["contract coverage QA"]
     end
 
     PIPELINE --> TREE["Task tree<br/>stage manifests + dependencies"]
@@ -62,67 +63,23 @@ that are instructed to finish must call `gobby-agents:end_agent_run`.
 The canonical pipeline is
 `src/gobby/install/shared/workflows/pipelines/expand-task.yaml`.
 
-```yaml
-name: expand-task
-type: pipeline
-version: "2.0"
+The pipeline starts a background run with `auto_apply: true` and
+`subscribe_caller: false`, waits on the run's completion ID, loads it, rejects
+failed runs, validates compiled/applied output, and calls
+`run_expansion_qa_coverage` for every contract plan (or when `run_coverage` is
+explicitly enabled). Its outputs include `run_id`, `status`,
+`created_task_ids`, `validation`, and `coverage`.
 
-inputs:
-  task_id:
-    type: string
-    required: true
-  plan_file:
-    type: string
-    required: false
-  provider: "claude"
-  model: null
-  wait_timeout: 600
+The installed `expand-task` row was inspected on 2026-09-12: enabled, version
+2.0, provider `claude`, model null, wait_timeout 600, run_coverage false, with
+all seven steps through `coverage_check`. These are observed installed values,
+not permanent defaults for every project; use `get_pipeline` before relying on
+them. The YAML above the registry is a template, not live configuration.
 
-outputs:
-  run_id: "${{ steps.start_run.output.run_id }}"
-  status: "${{ steps.wait_run.output.status }}"
-  created_task_ids: "${{ steps.get_run.output.run.created_task_ids }}"
-  validation: "${{ steps.validate_run.output }}"
-
-steps:
-  - id: start_run
-    mcp:
-      server: gobby-tasks-ops
-      tool: start_expansion_run
-      arguments:
-        task_id: "${{ inputs.task_id }}"
-        plan_file: "${{ inputs.plan_file }}"
-        provider: "${{ inputs.provider }}"
-        model: "${{ inputs.model }}"
-        auto_apply: true
-
-  - id: wait_run
-    wait:
-      completion_id: "${{ steps.start_run.output.run_id }}"
-      timeout: "${{ inputs.wait_timeout }}"
-
-  - id: get_run
-    mcp:
-      server: gobby-tasks-ops
-      tool: get_expansion_run
-      arguments:
-        run_id: "${{ steps.start_run.output.run_id }}"
-
-  - id: validate_run
-    mcp:
-      server: gobby-tasks-ops
-      tool: validate_expansion_run
-      arguments:
-        run_id: "${{ steps.start_run.output.run_id }}"
-```
-
-The bundled pipeline also has explicit `fail_run` and `fail_validation` steps.
-If the run does not complete, or if validation reports an invalid compiled or
-applied result, the pipeline fails with the validation payload.
-
-`gobby-workflows:run_pipeline` always returns immediately with an
-`execution_id`; callers inspect completion with
-`gobby-workflows:get_pipeline_status`.
+`gobby-workflows:run_pipeline` returns immediately with an `execution_id`.
+Retain it and yield for the durable completion notification, then inspect
+`gobby-workflows:get_pipeline_status`. A completed run with failing coverage is
+not finished: correct the task-tree evidence and rerun coverage QA.
 
 ---
 
@@ -135,6 +92,8 @@ applied result, the pipeline fails with the validation payload.
 | `task_id` | Task ref to expand; required |
 | `plan_file` | Optional plan path relative to the project root |
 | `auto_apply` | Apply the compiled spec after compile; default `true` |
+| `subscribe_caller` | Register the direct caller for completion; default `true`; pipeline uses `false` |
+| `stage_pipeline_mode` | Optional internal stage-pipeline behavior; inspect caller context before overriding |
 | `force_new` | Create a new run even if another run is active |
 | `reset_output` | Delete existing generated output before starting |
 | `provider` / `model` | Optional LLM provider/model overrides |
@@ -145,6 +104,10 @@ The run is the durable unit of state. Compiled output, apply results,
 results live on the expansion run. The parent task receives task-tree output and
 an `expansion_run_id` artifact; it is not the source of truth for a standalone
 spec blob.
+
+Registered-plan binding resolves descendant requests to the owning ancestor
+root and canonical plan. Conflicting registrations fail explicitly; a conflicting
+path needs a deliberate audited reset, not a duplicate expansion tree.
 
 Reuse behavior:
 
@@ -290,12 +253,14 @@ free-form `## Phase 1` / `### 1.1` outline style. The full contract is
 `docs/contracts/plan-coverage.md`; the authoring surface is
 `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
 
-The planning stage runs a constructive `plan-enhancer` pass before the
-`plan-adversary` gate. The enhancer proposes ranked Better/Bigger suggestions;
-the planner (autonomous) or coordinator (interactive) folds in accepted ones,
-then the unchanged adversary reviews and writes the manifest on approval. In
-autonomous `gobby build`, enhancement is opt-in via `--plan-enhancement-rounds`
-(default `0`); interactive `/gobby plan` runs one round by default.
+Interactive enhancement and adversarial review are optional and each requires
+approval; selected enhancement is capped at one round unless changed. The
+coordinator folds accepted suggestions into the plan, validates, and processes
+any selected adversary review. The adversary returns server-derived manifest
+entries; only the coordinator applies M1 through the approved API. Base validation,
+explicit implementation approval and expansion-mode validation remain mandatory.
+Build controls enhancement through `--plan-enhancement-rounds`; inspect the
+selected profile and stage settings in the [orchestration guide](./orchestration.md#build-lifecycle).
 
 ```mermaid
 sequenceDiagram
@@ -308,17 +273,20 @@ sequenceDiagram
     participant XS as ExpansionService
 
     U->>P: "Plan dark mode support"
-    P->>P: Write typed plan + coverage ledger
-    P->>N: Enhance plan (Better/Bigger, x N rounds)
+    P->>P: Write typed plan narrative
+    P->>N: Optional authorized enhancement
     N-->>P: Ranked suggestions (advisory only)
     P->>P: Fold accepted suggestions, re-validate
-    P->>R: Review plan
-    R->>R: Append M1 Task Manifest on approval
-    U->>E: "/gobby expand #42 .gobby/plans/dark-mode.md"
+    P->>R: Optional authorized review
+    R-->>P: Return server-derived manifest and attestation
+    U->>P: Approve implementation
+    P->>P: Apply M1 and validate expansion mode
+    U->>E: Expand approved plan
     E->>EP: run_pipeline(name="expand-task")
     EP->>XS: start_expansion_run
     XS->>XS: compile_run -> apply_run
-    EP->>EP: get_expansion_run -> validate_expansion_run
+    EP->>EP: Inspect and validate run
+    EP->>EP: Run contract coverage QA
     EP-->>E: completion notification
     E-->>U: report created tasks
 ```
@@ -338,17 +306,25 @@ Scope and sequencing context.
 ## A1: Create User Model
 `kind: deliverable`
 
-Target: `src/models/user.py`
+Targets:
+- `src/models/user.py`
+- `tests/models/test_user.py`
+
+**Research context:** These illustrative files are new; inspect the repository
+and replace bare Targets with indexed symbols when they already exist.
 
 **Acceptance:**
 
 - A1.1 - User model exists. file: `src/models/user.py`.
 - A1.2 - Model behavior is covered. test: `tests/models/test_user.py`.
 
-## A2: Add Authentication
+## A2: Add Authentication (depends: A1)
 `kind: deliverable`
 
-Depends on A1.
+Target: `src/auth/handler.py`
+
+**Research context:** This illustrative example assumes a new handler file;
+resolve existing symbols and consumers before finalizing a real plan.
 
 **Acceptance:**
 
@@ -390,8 +366,8 @@ Manifest rules:
 - `implementation_domain` is required for `category: code` and drives
   deterministic developer routing.
 - `tdd: true` is valid only for `code` and `config` categories.
-- Plan authors write narrative sections; plan review writes the final manifest
-  before expansion.
+- Plan authors write narrative sections; the coordinator applies the final
+  server-derived manifest through approval tools before expansion.
 
 ### What Plans Should Not Contain
 
@@ -437,8 +413,8 @@ Rules worth knowing:
   unsupported-language fallback evidence.
 - Code leaves require `implementation_domain`, which routes to
   `backend-developer`, `frontend-developer`, or `fullstack-developer`.
-- Non-TDD categories such as `docs`, `refactor`, `test`, `research`, and
-  `planning` expand as single tasks.
+- Non-TDD categories `docs`, `refactor`, and `test` expand as single tasks.
+  Automated manifests reject `research`, `planning`, and `manual`.
 - Dependencies follow manifest `depends_on` edges directly between leaves.
 
 See [TDD Enforcement](./tdd-enforcement.md) for the runtime rule layer.
@@ -485,8 +461,7 @@ call_tool("gobby-workflows", "get_pipeline_status", {
 It accepts an `input_ref` pointing at a plan file, epic, or automated leaf, plus
 automation options such as `quick`, `stage`, `isolation`, `workspace_backend`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`, and
-`max_retries`. Prefer `isolation` (`none`, `worktree`, or `clone`) for new
-callers; `workspace_backend` remains available for compatibility.
+`max_retries`. Use the registered build schema for isolation and workspace options.
 
 Build automation can run docs leaf work inside the parent epic's isolation
 context. After expansion, dispatch routes stage rows by manifest policy; docs
@@ -540,4 +515,4 @@ Use:
 - [Pipelines](./pipelines.md) — Pipeline system reference
 - [Agents](./agents.md) — Agent definitions and step workflows
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

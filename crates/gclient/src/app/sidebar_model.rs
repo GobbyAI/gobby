@@ -361,7 +361,13 @@ pub fn pane_state(pane: &Pane) -> RowState {
 pub(super) struct PendingSidebar {
     pub(super) projects: bool,
     pub(super) project_rows: BTreeSet<String>,
+    /// Every tracked project's sessions and runs, for the events that name
+    /// no project and the paths that change which projects are tracked.
     pub(super) sessions: bool,
+    /// The projects named session events asked for. A session event carries
+    /// its `project_id`, so one session changing costs one project's
+    /// refetch rather than a sweep over every checkout.
+    pub(super) session_rows: BTreeSet<String>,
     /// The attention roster: a session ending is the only signal that an
     /// agent run left it, since attention events never remove an entry.
     pub(super) roster: bool,

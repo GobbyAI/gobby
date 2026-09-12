@@ -568,6 +568,28 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
 
 
 @pytest.mark.asyncio
+async def test_unverifiable_scoped_commit_names_the_git_failure(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    # `-F <file>` written after `--` is a pathspec, so a message file outside
+    # the checkout makes the ownership query's `git ls-files` fail. The block
+    # has to name that: "retry once the daemon is available" on its own sends
+    # the caller round a loop no retry can break.
+    outside_message = tmp_path / "outside-message.txt"
+    outside_message.write_text("subject\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(f"git commit --only -- owned.txt -F {outside_message}")
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "could not verify staged-path ownership" in response.reason
+    assert "outside repository" in response.reason
+
+
+@pytest.mark.asyncio
 async def test_unscoped_commit_blocks_awaiting_handoff_owner(
     guard_harness: GuardHarness,
 ) -> None:

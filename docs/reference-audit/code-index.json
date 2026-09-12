@@ -1,0 +1,1100 @@
+{
+  "version": 1,
+  "capability": "code-index",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "code-index"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/code-index.md",
+      "anchors": [
+        "code-index",
+        "quick-start",
+        "how-it-works",
+        "cli-reference",
+        "index-lifecycle",
+        "search-and-retrieval",
+        "graph-queries",
+        "indexed-data",
+        "languages-and-content",
+        "configuration",
+        "daemon-integration",
+        "session-start",
+        "post-edit-incremental-indexing",
+        "background-maintenance",
+        "http-endpoints",
+        "rules",
+        "typical-workflow",
+        "see-also",
+        "postgresql-bm25-recovery"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/gcode-user-guide.md",
+      "anchors": [
+        "gcode-user-guide",
+        "getting-started",
+        "install",
+        "initialize-and-index",
+        "first-search",
+        "search",
+        "hybrid-search-gcode-search",
+        "symbol-search-gcode-search-symbol",
+        "text-search-gcode-search-text",
+        "indexed-grep-gcode-grep",
+        "content-search-gcode-search-content",
+        "symbol-retrieval",
+        "outline",
+        "symbol-by-id",
+        "symbol-by-location",
+        "batch-retrieve",
+        "symbol-kinds",
+        "file-tree",
+        "dependency-graph",
+        "graph-overview",
+        "graph-lifecycle",
+        "scoped-views-and-reports",
+        "callers",
+        "callees",
+        "usages",
+        "imports",
+        "shortest-path",
+        "blast-radius",
+        "project-management",
+        "status",
+        "list-projects",
+        "repair",
+        "prune-and-projection-cleanup",
+        "exact-content-retirement",
+        "cross-project-queries",
+        "re-indexing",
+        "operating-model",
+        "isolated-and-worktree-derived-identities",
+        "configuration",
+        "output-formats",
+        "verbose-output",
+        "read-time-freshness",
+        "troubleshooting",
+        "no-gcode-project-found",
+        "project-foo-not-found",
+        "empty-search-results",
+        "graph-commands-return-empty-results",
+        "gcode-graph-clear--gcode-graph-rebuild-fail-immediately",
+        "slow-first-index",
+        "contract-schema-and-embedding-diagnostics"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/gcode-graph-core.md",
+      "anchors": [
+        "gcode-graph-core-migration-contract",
+        "target-integration",
+        "transitional-python-shims",
+        "current-implementation-and-target-gap",
+        "required-migration-integration",
+        "ownership-boundaries",
+        "lifecycle-boundaries",
+        "report-and-degradation-contract"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/search.md",
+      "anchors": [
+        "search-surfaces",
+        "unified-search-modes",
+        "configuration",
+        "embedding-providers",
+        "embedding-search-falls-back"
+      ],
+      "scope": "Code-index lanes and shared embedding configuration only",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "native-code-index"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "code-index-metrics-pipelines-and-other-feature-apis"
+      ],
+      "scope": "Code-index rows only",
+      "evidence": [
+        "source-audit",
+        "python-maintenance-http"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "cli",
+      "command": "gcode contract",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/contract.rs",
+        "symbol": "contract"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode schema-identity",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/cli.rs",
+        "symbol": "Command"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode init",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/init.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode index",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/cli.rs",
+        "symbol": "Command"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode repair",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/repair.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/navigation.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/status/current.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode invalidate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/cli.rs",
+        "symbol": "Command"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/search.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/search.rs",
+        "symbol": "search"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode search-symbol",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/search.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/search.rs",
+        "symbol": "search_symbol"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode search-text",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/search.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/search.rs",
+        "symbol": "search_text"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode search-content",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/search.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/search.rs",
+        "symbol": "search_content"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode grep",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/search.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/grep.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode outline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/retrieval.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/symbols.rs",
+        "symbol": "outline"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode symbol",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/retrieval.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/symbols.rs",
+        "symbol": "symbol"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode symbol-at",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/retrieval.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/symbol_at.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode symbols",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/retrieval.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/symbols/batch.rs",
+        "symbol": "symbols"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode kinds",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/navigation.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/symbols.rs",
+        "symbol": "kinds"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode tree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/navigation.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/symbols.rs",
+        "symbol": "tree"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode callers",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/impact.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/reads.rs",
+        "symbol": "callers"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode callees",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/impact.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/reads.rs",
+        "symbol": "callees"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode usages",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/impact.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/reads.rs",
+        "symbol": "usages"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode imports",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/impact.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/reads.rs",
+        "symbol": "imports"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode path",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/impact.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/reads.rs",
+        "symbol": "path"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode blast-radius",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/impact.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/reads.rs",
+        "symbol": "blast_radius"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph sync-file",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/lifecycle.rs",
+        "symbol": "sync_file"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph overview",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/payload.rs",
+        "symbol": "overview"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph file",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/payload.rs",
+        "symbol": "file"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph neighbors",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/payload.rs",
+        "symbol": "neighbors"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph blast-radius",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/payload.rs",
+        "symbol": "graph_blast_radius"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph view",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/view/mod.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph clear",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/lifecycle.rs",
+        "symbol": "clear"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph rebuild",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/lifecycle.rs",
+        "symbol": "rebuild"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph cleanup-orphans",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/lifecycle.rs",
+        "symbol": "cleanup_orphans"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode graph report",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/graph/payload.rs",
+        "symbol": "report"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode vector sync-file",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/vector.rs",
+        "symbol": "sync_file"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode vector clear",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/vector.rs",
+        "symbol": "clear"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode vector rebuild",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/vector.rs",
+        "symbol": "rebuild"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode vector cleanup-orphans",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/vector.rs",
+        "symbol": "cleanup_orphans"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode embeddings doctor",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/embeddings_doctor.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode repo-outline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/navigation.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/status/repo_outline.rs",
+        "symbol": "repo_outline"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode projects",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/navigation.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/status/projects.rs",
+        "symbol": "projects"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode retire-files",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/status/retire_files.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode prune",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/status/prune.rs",
+        "symbol": "prune"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/code-index/graph",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.graph_overview"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/code-index/graph/file/{file_path:path}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.graph_file"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/code-index/graph/symbol/{symbol_id}/neighbors",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.graph_symbol_neighbors"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/code-index/graph/blast-radius",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.graph_blast_radius"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/code-index/graph/path",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.graph_path"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/code-index/graph/search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.graph_search"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/code-index/graph/clear",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.clear_graph"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/code-index/graph/rebuild",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/graphs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.rebuild_graph"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/code-index/prune",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.global_prune"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/code-index/invalidate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/code_index.py",
+        "symbol": "create_code_index_router.invalidate_index"
+      },
+      "verification": [
+        "source-audit",
+        "python-maintenance-http"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "status_cmd"
+      },
+      "verification": [
+        "bm25-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres repair-code-index",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "repair_code_index_cmd"
+      },
+      "verification": [
+        "bm25-recovery"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-registry",
+      "command": "gcode outline/symbol-at/grep for CLI enums, command implementations, grant identity, freshness, projection ownership, gateway, trigger, sync worker, repair/config and HTTP router; list_mcp_servers; get_rule(require-code-index-skill)",
+      "result": "43 main-checkout native command leaves and 10 composed HTTP routes. No code-index MCP service among 21 internal services. Guides read against implementations and isolated tests. Installed require-code-index-skill row 2a6895ac-52c3-4dbb-8e3a-a582891ec612 enabled=true, source=installed, project_id=null. Native direct calls exempt; no blanket reference gate added."
+    },
+    {
+      "id": "python-sync",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_sync_worker.py tests/code_index/test_sync_worker_breaker.py tests/code_index/test_gcode_gateway.py -q",
+      "result": "112 passed in 22.01s; eight graph/vector degraded response cases preserve pending state and original error detail."
+    },
+    {
+      "id": "python-maintenance-http",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_trigger.py tests/code_index/test_nightly_repair.py tests/code_index/test_code_index_maintenance.py tests/code_index/test_code_index_context.py tests/servers/routes/test_code_index_routes.py tests/servers/routes/test_code_index_prune_route.py tests/docs/test_gcode_guidance.py tests/skills/test_capability_catalog.py -q",
+      "result": "100 passed in 0.81s."
+    },
+    {
+      "id": "rust-capability",
+      "kind": "tests",
+      "command": "GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(commands::) | test(cli::) | test(freshness::) | test(config::) | test(graph::report)' --status-level fail --final-status-level fail",
+      "result": "Initial run: 352 passed, five failures from noncanonical macOS test roots. Canonicalized postgres_context_with_root; freshness rerun 11 passed. Final integrated run: 357 passed in 11.101s, 702 filtered out. Isolated gobby_gcode_test database; no live state mutations."
+    },
+    {
+      "id": "native-help",
+      "kind": "build-and-cli",
+      "command": "cargo build --release -p gobby-code; target/release/gcode --help; cargo nextest run -p gobby-code -E test(cli::tests::top_level)",
+      "result": "Release build succeeded; corrected -F example observed; 23 top-level tests passed. Reinstall coordinated with active native Ask owner #12858 rather than overwriting its epic binary. Config-key example now consistently places -F before the literal; no argument behavior changed."
+    },
+    {
+      "id": "quality",
+      "kind": "lint-and-types",
+      "command": "uv run ruff check src/gobby/code_index/sync_worker.py tests/code_index/test_sync_worker.py; uv run ruff format src/gobby/code_index/sync_worker.py tests/code_index/test_sync_worker.py; uv run mypy src/gobby/code_index/sync_worker.py; cargo clippy -p gobby-code -- -D warnings; cargo fmt -p gobby-code -- --check",
+      "result": "Ruff, source mypy and Clippy passed. Final Rust formatting identified a long fixture line; cargo fmt applied. Python type audit: 2180 files, 8463 baseline errors, zero new. Suppression ratchet: 4205 files, 217 baseline, zero new/stale. Test-quality: 1 file, 32 tests, zero findings. Final cargo fmt --check passed."
+    },
+    {
+      "id": "native-contract",
+      "kind": "tests",
+      "command": "cargo nextest run -p gobby-code -E 'binary(contract)' --status-level fail --final-status-level fail",
+      "result": "13 passed in 0.038s; compiled contract matches native pinned fixture. Python-side stale fixture regenerated from same built contract."
+    },
+    {
+      "id": "library-check",
+      "kind": "validation",
+      "command": "uv run python: load_capability_catalog; fence-aware Markdown link/anchor validation; gcode --allow-stale outline for each Rust operation symbol; AST compose APIRouter prefix plus decorators; compare CLI names to built contract",
+      "result": "7 capability entries, 13 Markdown files and their anchors, 43 CLI implementations and 10 composed HTTP routes verified."
+    },
+    {
+      "id": "diagram",
+      "kind": "render",
+      "command": "npm exec --yes --package @mermaid-js/mermaid-cli -- mmdc --input /tmp/gobby-22252-code-index.mmd --output /tmp/gobby-22252-code-index.svg",
+      "result": "Initial render exposed pre-existing unquoted slash label syntax; quoted label and rendered SVG successfully."
+    },
+    {
+      "id": "independent-review",
+      "kind": "review",
+      "command": "OCR delegate staged review by review_reference_identity (code-review skill)",
+      "result": "22/22 owned files reviewed, zero skipped, 100% coverage; no critical/high/medium findings. Foreign staged paths excluded."
+    },
+    {
+      "id": "installation-coordination",
+      "kind": "active-owner-handoff",
+      "command": "gobby-agents owner receipt 3c02e708-a893-4622-8bc6-0612283d3689 from gobby#12858",
+      "result": "Owner installed the six help/comment lines after pinned probe 27 finished; epic commit 2131bc8fb7. New-inode cp/mv binary sha256 da047a21de879c82a7dd34003d33e35f3496afd474cd578b8a8c7bd25938964a. Owner verified both literal -F examples, 24 top-level tests, format and Clippy clean; epic contract unchanged (45 commands). Main binary deliberately not installed over foreign Ask/evidence operations. Native help cutover complete; integrated Python/template live cutover remains P5."
+    },
+    {
+      "id": "bm25-recovery",
+      "kind": "implementation-and-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_bm25_health.py tests/cli/test_postgres_bm25.py tests/test_bm25_startup.py -q",
+      "result": "13 passed in 0.90s. CLI help confirms only --json and --help. Inspected repair_code_index_cmd/status_cmd, repair_bm25_indexes/_verify_index/_required_index_names and startup repair. Swept CLI code-index/BM25 mentions: other hits are init/install/git-hook integration or plan expansion consumers, not additional dedicated recovery commands. No live repair invoked."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "CLI help used a literal parenthesis without -F.",
+      "resolution": "Fixed CLI example and existing help assertion; coordinated live install with #12858.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Init guide advertised standalone gcode.json generation and cargo install of the private workspace crate.",
+      "resolution": "Document registered checkout setup, daemon grants, workspace build, and new-inode installation; correct init source comment.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Guide claimed nightly full indexing and Python-owned vector writes.",
+      "resolution": "Document repair version gate, native projection delegates, busy requeue and maintenance argv.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Graph-core synchronous trigger target contradicts current asynchronous gateway.",
+      "resolution": "Preserve normative target verbatim and explicitly identify current implementation gap; no new dispatch behavior introduced. Failure-preservation obligation remains active.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Worker accepted degraded graph cleanup and vector failures reported with exit zero.",
+      "resolution": "Shared projection-result check keeps graph/vector state pending and logs original native error detail; eight isolated storage regression cases pass.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Configuration YAML breaker key was outside code_index; shared embedding keys used obsolete root.",
+      "resolution": "Fix indentation and canonical ai.embeddings namespace; distinguish native search from Python UnifiedSearcher.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "HTTP inventory lacked path/prune and overstated mandatory explicit project on writes.",
+      "resolution": "Map all ten composed routes, claim-derived write scope, 403 conflict, 404 project miss, 207 partial invalidation, and distinct defaults.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "User guide omitted callees, repair, retirement and diagnostics; used fake UUIDs and unquoted globs.",
+      "resolution": "Add operating instructions, actual-ID discovery, quoted glob examples, and explicit operator boundaries.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Client FalkorDB env and internal freshness recursion flag were presented as recovery configuration.",
+      "resolution": "Use daemon/grant configuration and explicit --allow-stale; preserve service errors/degradation.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Freshness PostgreSQL fixtures compared /var roots with canonical /private/var registration.",
+      "resolution": "Canonicalize root in shared test context; eleven freshness tests pass.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Checked-in CLI contract fixture omitted retire-files and retained stale search/outline descriptions.",
+      "resolution": "Regenerate from built current-checkout contract; preserve contract version and schema.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Installed gcode exposes ask/evidence absent from this checkout.",
+      "resolution": "Owner #12858 confirms epic-22010-native-ask scope until #22010 merges. Exclude these unmerged operations from main library; do not overwrite its pinned native binary.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Code-index Mermaid diagram used an unquoted slash-leading node label that failed parsing.",
+      "resolution": "Quote the label and verify SVG rendering.",
+      "evidence": [
+        "diagram"
+      ]
+    },
+    {
+      "finding": "Post-close review exposed omitted operator BM25 health/repair commands; installation evidence still described a pending owner install.",
+      "resolution": "Added status and selective repair coverage, active-schema/lock/error/startup recovery boundaries, and completed owner install receipt.",
+      "evidence": [
+        "bm25-recovery",
+        "installation-coordination"
+      ]
+    }
+  ]
+}

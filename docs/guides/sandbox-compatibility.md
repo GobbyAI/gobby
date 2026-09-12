@@ -92,10 +92,13 @@ hook protocol and installed binary contract:
 - `tests/integration/sandbox/run_{claude,codex,qwen}_sandbox.py`
 - `tests/integration/sandbox/test_public_ghook_install.py`
 
+These are operator-only host checks. Use isolated daemon state and the test hub;
+they are not routine agent documentation-validation commands.
+
 Run it explicitly:
 
 ```bash
-GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/ -v --run-sandbox
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/ -v --run-sandbox
 ```
 
 Without `--run-sandbox`, pytest skips the package so local validation does not
@@ -104,8 +107,8 @@ invoke installed provider CLIs or public artifact downloads accidentally.
 Useful focused commands:
 
 ```bash
-GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/test_runner_infrastructure.py -v --run-sandbox
-GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/run_codex_sandbox.py --collect-only
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/test_runner_infrastructure.py -v --run-sandbox
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/run_codex_sandbox.py --collect-only
 uv run mypy tests/integration/sandbox
 ```
 
@@ -118,7 +121,7 @@ version and installation source. For example:
 ```bash
 GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
 GOBBY_INSTALL_GHOOK_METHOD=github \
-GOBBY_TEST_PROTECT=1 uv run pytest \
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest \
   tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
 ```
 
@@ -144,4 +147,4 @@ SRT 0.0.66 cannot restrict loopback by destination port. A future pin must keep
 that limitation documented or add a test proving exact port enforcement before
 claiming it.
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-12_

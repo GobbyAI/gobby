@@ -675,14 +675,15 @@ class TestSpawnAgentParamOverrides:
             assert mock_execute.call_args[0][0].provider == "claude"
 
     @pytest.mark.asyncio
-    async def test_provider_override_omits_agent_definition_model(
+    async def test_provider_override_substitutes_same_tier_model(
         self, mock_runner: MagicMock
     ) -> None:
+        """The agent's model cannot cross providers, but the target CLI must not choose one."""
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
-            model="gpt-5.4",
+            model="gpt-5.6-sol",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -695,7 +696,7 @@ class TestSpawnAgentParamOverrides:
         )
 
         assert spawn_request.provider == "claude"
-        assert spawn_request.model is None
+        assert spawn_request.model == "opus"
 
     @pytest.mark.asyncio
     async def test_provider_override_preserves_explicit_model(self, mock_runner: MagicMock) -> None:
@@ -720,14 +721,15 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "opus"
 
     @pytest.mark.asyncio
-    async def test_provider_override_blank_model_uses_provider_default(
+    async def test_provider_override_blank_model_still_substitutes_same_tier(
         self, mock_runner: MagicMock
     ) -> None:
+        """A blank model is not a choice, so the tier substitution still applies."""
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
-            model="gpt-5.4",
+            model="gpt-5.6-sol",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -741,7 +743,7 @@ class TestSpawnAgentParamOverrides:
         )
 
         assert spawn_request.provider == "claude"
-        assert spawn_request.model is None
+        assert spawn_request.model == "opus"
 
     @pytest.mark.asyncio
     async def test_no_provider_override_keeps_agent_definition_model(

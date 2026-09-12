@@ -25,8 +25,9 @@ settings, register inline step workflows, receive task/session variables, and
 publish completion state back to waiting parents. Every spawn mode uses the
 complete `prompts.agent` preamble.
 
-Bundled `memory-lifecycle` rules apply consistently to personas and spawned
-agents; agent definitions do not need to duplicate them. In task work,
+Bundled `memory-lifecycle` templates provide shared policy for personas and spawned
+agents; inspect installed enabled rows and selectors before assuming enforcement.
+Agent definitions do not need to duplicate that policy. In task work,
 `search-memories-on-claim` prompts search before editing. During planning,
 `guard-plan-memory-writes` keeps provisional findings in plan evidence. After
 closure, `review-closed-task-memories-before-compact` and
@@ -49,9 +50,10 @@ Bundled definitions live in:
 src/gobby/install/shared/workflows/agents/
 ```
 
-The bundled directory includes enabled definitions for planning, review,
+The bundled directory includes templates for planning, review,
 writing, analysis, image generation, maintenance, merge work, and default
-interactive use. Retired bundled agents are removed from this tree; sync
+interactive use. Inspect installed rows for effective enablement and overrides.
+Retired bundled agents are removed from this tree; sync
 soft-deletes existing installed bundled rows when their YAML no longer exists.
 
 Use these tools to inspect or change definitions:
@@ -261,6 +263,11 @@ Run tools:
 - `apply_persona`
 - `get_agent_result`
 - `get_agent_capture`
+- `get_agent_live_output`
+- `wait_for_agent`
+- `wait_for_output`
+- `checkpoint_agent_worktree`
+- `cancel_stale_helpers`
 - `list_agent_runs`
 - `list_running_agents`
 - `get_running_agent`
@@ -311,14 +318,28 @@ send_message(
 
 ## Blocked Child Communication
 
-Sending the parent a `task_blocker` message ends the child run after delivery;
-the parent respawns the child with the answer, reusing the worktree. For a question
-that needs a reply while the child run stays alive, use `message_type=message`; the
-reply arrives in a later tool result.
+A `task_blocker` message must identify the assigned task in `metadata.task_id`
+and target the parent session. In configured worker step workflows, successful
+delivery sets `blocker_handed_off` and advances to the termination step. The worker
+still calls `end_agent_run` with a structured blocker handoff; sending a message
+alone is not a universal process-exit operation. Inspect the installed definition
+and active step for the applicable transition. The parent reads the handoff and
+retained work before respawning with the answer and reusing the worktree. For a
+question that keeps the child alive, use `message_type="message"`.
 
 Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
 overrides, reasoning fields, runtime limits, parent session, and project path.
 `dispatch_batch` uses the same spawn machinery for multiple task suggestions.
+
+## Recovery Checkpoints
+
+The original parent can call `checkpoint_agent_worktree(run_id=...)` after its
+child run is terminal. The task must remain open, with no active task/worktree
+writer. The registered isolated task worktree must match its linked branch and
+machine; foreign owners, foreign-attributed paths, and unattributed paths are
+rejected. A successful checkpoint returns commit/path evidence and releases the
+temporary worktree claim while preserving the task claim. It does not validate
+or close the task. If a release error includes a commit, inspect it before retrying.
 
 ## Isolation
 
@@ -357,4 +378,4 @@ provides the concrete worktree or clone context.
 - [Pipelines](./pipelines.md) for deterministic automation
 - [Orchestration](./orchestration.md) for stage dispatch and review flow
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-09-12_

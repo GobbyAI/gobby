@@ -6,6 +6,7 @@ import {
 } from "../components/chat/planPendingSurface";
 import { normalizeChatMode, type ChatMode } from "../types/chat";
 import { configurationClient } from "../api/config";
+import { setTickerSpeed } from "../lib/tickerClock";
 
 export type Theme = "dark" | "light" | "system";
 export type VoiceInputMode = "ptt" | "vad";
@@ -16,6 +17,13 @@ export type VoiceInputMode = "ptt" | "vad";
  * silent no-op. Kept out of PERSISTABLE_KEYS for exactly that reason.
  */
 export type Density = "comfortable" | "compact";
+/**
+ * Row-title scrolling for the activity panel — off, or the direction a
+ * too-long title travels to reveal its tail. Client-only for the same reason
+ * as Density: the ui_settings API has no field for it.
+ */
+export type TickerDirection = "off" | "left" | "right";
+export type TickerSpeed = "slow" | "normal" | "fast";
 
 export interface Settings {
   fontSize: number; // Base font size in pixels (12-24)
@@ -28,6 +36,8 @@ export interface Settings {
   voiceInputMode: VoiceInputMode;
   planPendingVariant: PlanPendingVariant;
   density: Density;
+  tickerDirection: TickerDirection;
+  tickerSpeed: TickerSpeed;
 }
 
 export const MODEL_OPTIONS = [
@@ -48,6 +58,8 @@ const DEFAULT_SETTINGS: Settings = {
   voiceInputMode: "ptt",
   planPendingVariant: DEFAULT_PLAN_PENDING_VARIANT,
   density: "comfortable",
+  tickerDirection: "left",
+  tickerSpeed: "normal",
 };
 
 const STORAGE_KEY = "gobby-settings";
@@ -105,6 +117,21 @@ function normalizeDensity(value: unknown): Density {
     : "comfortable";
 }
 
+const TICKER_DIRECTIONS: readonly TickerDirection[] = ["off", "left", "right"];
+const TICKER_SPEEDS: readonly TickerSpeed[] = ["slow", "normal", "fast"];
+
+function normalizeTickerDirection(value: unknown): TickerDirection {
+  return TICKER_DIRECTIONS.includes(value as TickerDirection)
+    ? (value as TickerDirection)
+    : DEFAULT_SETTINGS.tickerDirection;
+}
+
+function normalizeTickerSpeed(value: unknown): TickerSpeed {
+  return TICKER_SPEEDS.includes(value as TickerSpeed)
+    ? (value as TickerSpeed)
+    : DEFAULT_SETTINGS.tickerSpeed;
+}
+
 const FONT_SIZE_MIN = 12;
 const FONT_SIZE_MAX = 24;
 
@@ -136,6 +163,17 @@ function normalizePersistedSettings(value: unknown): Partial<Settings> {
   }
   if (settings.density !== undefined && settings.density !== null) {
     normalized.density = normalizeDensity(settings.density);
+  }
+  if (
+    settings.tickerDirection !== undefined &&
+    settings.tickerDirection !== null
+  ) {
+    normalized.tickerDirection = normalizeTickerDirection(
+      settings.tickerDirection,
+    );
+  }
+  if (settings.tickerSpeed !== undefined && settings.tickerSpeed !== null) {
+    normalized.tickerSpeed = normalizeTickerSpeed(settings.tickerSpeed);
   }
   return normalized;
 }
@@ -288,6 +326,19 @@ export function useSettings() {
     document.documentElement.setAttribute("data-density", settings.density);
   }, [settings.density]);
 
+  // Row-title scrolling rides the same client-only path as density: CSS reads
+  // the direction off the root, and the clock needs the pace in px/s.
+  useEffect(() => {
+    document.documentElement.setAttribute(
+      "data-ticker",
+      settings.tickerDirection,
+    );
+  }, [settings.tickerDirection]);
+
+  useEffect(() => {
+    setTickerSpeed(settings.tickerSpeed);
+  }, [settings.tickerSpeed]);
+
   // Persist settings on change (localStorage + API)
   useEffect(() => {
     if (!initialized.current) return;
@@ -376,6 +427,20 @@ export function useSettings() {
     [updateSettings],
   );
 
+  const updateTickerDirection = useCallback(
+    (tickerDirection: TickerDirection) => {
+      updateSettings({ tickerDirection });
+    },
+    [updateSettings],
+  );
+
+  const updateTickerSpeed = useCallback(
+    (tickerSpeed: TickerSpeed) => {
+      updateSettings({ tickerSpeed });
+    },
+    [updateSettings],
+  );
+
   const resetSettings = useCallback(() => {
     updateSettings(DEFAULT_SETTINGS);
   }, [updateSettings]);
@@ -392,6 +457,8 @@ export function useSettings() {
     updateVoiceInputMode,
     updatePlanPendingVariant,
     updateDensity,
+    updateTickerDirection,
+    updateTickerSpeed,
     resetSettings,
   };
 }

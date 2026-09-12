@@ -1392,3 +1392,54 @@ async def test_sync_graph_delegates_to_gcode_without_python_relation_reads(tmp_p
     assert await _sync_graph(gcode_gateway, tmp_path, file) is True
 
     assert gcode_gateway.synced_files == [(tmp_path, "a.py")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store", ["graph", "vector"])
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"success": False, "error": "native failure"},
+        {"success": True, "status": "degraded"},
+        {"success": True, "status": "failed"},
+        {
+            "success": True,
+            "status": "skipped",
+            "reason": "indexed_file_not_found",
+            "degraded": True,
+            "error": {"kind": "projection_reconcile_failed", "message": "backend unavailable"},
+        },
+    ],
+)
+async def test_degraded_projection_stays_pending(
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    store: str,
+    result: dict[str, Any],
+) -> None:
+    """Zero-exit native failures cannot certify a clean graph or vector sync."""
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=store != "vector", graph_synced=store != "graph")
+    code_storage.upsert_project_stats(_indexed_project(tmp_path), mode=IndexWriteMode.OVERLAY)
+    code_storage.upsert_file(pending, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
+    gateway = RecordingGcodeGateway(result=result, vector_result=result)
+
+    did_work = await _sync_file(
+        storage=code_storage,
+        gcode_gateway=gateway,
+        config=CodeIndexConfig(embedding_enabled=store == "vector", graph_enabled=store == "graph"),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    current = code_storage.get_file(PROJECT_ID, pending.file_path)
+    assert current is not None
+    assert did_work is False
+    assert current.graph_synced is (store != "graph")
+    assert current.vectors_synced is (store != "vector")
+    assert f"gcode {store} sync-file incomplete" in caplog.text
+    if result.get("degraded"):
+        assert "projection_reconcile_failed" in caplog.text
+        assert "backend unavailable" in caplog.text

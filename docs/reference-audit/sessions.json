@@ -1,0 +1,978 @@
+{
+  "version": 1,
+  "capability": "sessions",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "handoff-discipline"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/sessions.md",
+      "anchors": [
+        "quick-start",
+        "mental-model",
+        "what-a-session-stores",
+        "session-sources",
+        "cli-commands",
+        "mcp-tools",
+        "finding-your-own-session",
+        "reading-session-data",
+        "creating-and-reading-handoffs",
+        "hookless-registration",
+        "terminal-tools",
+        "handoff-flow",
+        "compaction-is-in-place",
+        "event-driven-waits",
+        "handoff-boundaries",
+        "lifecycle-events",
+        "troubleshooting",
+        "data-storage"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-sessions",
+        "installed-rules"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "sessions"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "sessions",
+        "post-apisessionsregister",
+        "post-apisessionsfind_current"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "path": "docs/contracts/session-boundary.md",
+      "anchors": [
+        "titles"
+      ],
+      "evidence": [
+        "title-provenance",
+        "focused-sessions"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_actions.py",
+        "symbol": "register_action_tools.capture_baseline_dirty_files_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "capture_baseline_dirty_files"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_commits.py",
+        "symbol": "register_commits_tools.get_session_commits"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_session_commits"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/relationships.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_commits.py",
+        "symbol": "register_commits_tools.mark_loop_complete"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "mark_loop_complete"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_crud.py",
+        "symbol": "register_crud_tools.get_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_session"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_crud.py",
+        "symbol": "register_crud_tools.get_current_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_current_session"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_crud.py",
+        "symbol": "register_crud_tools.list_sessions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "list_sessions"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_crud.py",
+        "symbol": "register_crud_tools.session_stats"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "session_stats"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_crud.py",
+        "symbol": "register_crud_tools.get_usage_breakdown"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_usage_breakdown"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_handoff.py",
+        "symbol": "register_handoff_tools.get_handoff"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_handoff"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_handoff.py",
+        "symbol": "register_handoff_tools.feedback"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "feedback"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_handoff.py",
+        "symbol": "register_handoff_tools.set_title"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "set_title"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_messages.py",
+        "symbol": "register_message_tools.get_session_messages"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_session_messages"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_messages.py",
+        "symbol": "register_message_tools.search_session_messages"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "search_session_messages"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_registration.py",
+        "symbol": "register_registration_tools.register_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "register_session"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
+        "symbol": "register_terminal_tools.send_keys"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "send_keys"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
+        "symbol": "register_terminal_tools.set_handoff"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "set_handoff"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
+        "symbol": "register_terminal_tools.capture_output"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "capture_output"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_transcripts.py",
+        "symbol": "register_transcript_tools.restore_session_transcript"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "restore_session_transcript"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_transcripts.py",
+        "symbol": "register_transcript_tools.get_transcript_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "get_transcript_status"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "list_sessions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "show_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "show_messages"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions messages"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "delete_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions delete"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "session_stats"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions stats"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "renumber_sessions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions renumber"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "summarize_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions summarize"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "restore_transcript"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions restore"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/context.md",
+      "implementation": {
+        "path": "src/gobby/cli/sessions.py",
+        "symbol": "backfill_context_windows"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "command": "gobby sessions backfill-context-windows"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/relationships.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/acp.py",
+        "symbol": "register_acp_routes.close_acp_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions",
+        "secondary-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/acp/close"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/relationships.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/acp.py",
+        "symbol": "register_acp_routes.delete_acp_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions",
+        "secondary-focused"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/acp/delete"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/analytics.py",
+        "symbol": "register_analytics_routes.update_session_summary"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/update_summary"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/analytics.py",
+        "symbol": "register_analytics_routes.generate_session_summary"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/generate-summary"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/relationships.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/analytics.py",
+        "symbol": "register_analytics_routes.stop_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/stop"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/relationships.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/analytics.py",
+        "symbol": "register_analytics_routes.get_stop_signal"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/stop"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/relationships.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/analytics.py",
+        "symbol": "register_analytics_routes.clear_stop_signal"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "DELETE /api/sessions/{session_id}/stop"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/changes.py",
+        "symbol": "register_changes_routes.session_changes"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions",
+        "secondary-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/changes"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/changes.py",
+        "symbol": "register_changes_routes.session_change_diff"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions",
+        "secondary-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/changes/diff"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/core.py",
+        "symbol": "register_core_routes.create_web_chat_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/web-chat"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/core.py",
+        "symbol": "register_core_routes.register_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/register"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/core.py",
+        "symbol": "register_core_routes.get_usage_breakdown"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/usage"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/core.py",
+        "symbol": "register_core_routes.get_session_token_events"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/token-events"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/core.py",
+        "symbol": "register_core_routes.list_sessions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.bulk_move_sessions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/bulk-move"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.sessions_get"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.find_current_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/find_current"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.find_session_by_terminal_context"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/find_by_terminal_context"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.update_session_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/update_status"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.expire_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/expire"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.rename_session"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/rename"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/messages.py",
+        "symbol": "register_message_routes.sessions_get_messages"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/messages"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/messages.py",
+        "symbol": "register_message_routes.transcript_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/transcript/status"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/messages.py",
+        "symbol": "register_message_routes.get_transcript"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/sessions/{session_id}/transcript"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/messages.py",
+        "symbol": "register_message_routes.restore_transcript_endpoint"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/restore-transcript"
+    }
+  ],
+  "delegated_operations": {
+    "agents": [
+      "gobby-agents:wait_for_agent",
+      "gobby-agents:wait_for_output",
+      "gobby-agents:send_message",
+      "gobby-agents:end_agent_run"
+    ],
+    "variables": [
+      "POST /api/sessions/{session_id}/variables/set",
+      "POST /api/sessions/{session_id}/variables/get"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-schema",
+      "command": "gcode outline/symbol-at/grep: src/gobby/mcp_proxy/tools/sessions, agents_query_tools.py, src/gobby/cli/sessions.py, src/gobby/servers/routes/sessions, servers/models.py; schemas: get_handoff, get_current_session, get_session_messages, get_session_commits, register_session, send_keys, capture_output; uv run gobby sessions --help and delete/renumber/backfill-context-windows --help",
+      "result": "19 public session tools, 9 CLI commands and current public session HTTP routes inventoried. Full transcript bodies are windowed; get_handoff consumes only a pending marker, with separate idempotent parent-authorized agent_run_id reads. Managed terminal writes enforce scope and autonomous-agent refusal. Register assigns daemon machine identity; find_current does not require machine_id. HTTP cursors disabled under resumability filtering. No live mutation probes."
+    },
+    {
+      "id": "installed-rules",
+      "kind": "installed-registry",
+      "command": "gobby-workflows:list_rules(group=context-handoff,brief=true); get_rule(require-handoff-at-context-limit)",
+      "result": "2026-09-12: all 14 context-handoff group rows enabled. Global installed pressure rule a9a56953-24b4-4f2c-8ee8-34d8bbca05fb enabled; permits handoff/feedback/retrieval, review_task_memories, send_message/end_agent_run, handoff-discipline loading and schema/list discovery. Plan/pipeline/mode-level-zero exemptions retained. No rule mutations."
+    },
+    {
+      "id": "title-provenance",
+      "kind": "completed-task-contract",
+      "command": "get_task(#22163,brief=false); git show a833a68b25 -- src/gobby/storage/sessions/_title_defaults.py",
+      "result": "Closed valid task explicitly requires project#ref: Provider or Task suffix without parentheses; activity panels suppress provisional provider text. Correct stale test literals and contract examples, preserving sticky manual titles."
+    },
+    {
+      "id": "focused-sessions",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/sessions tests/sessions/test_handoff.py tests/sessions/test_compact_continuation.py tests/sessions/test_handoff_identity.py tests/sessions/test_handoff_limits.py tests/sessions/test_handoff_shutdown.py tests/sessions/test_transcript_search.py tests/cli/test_cli_sessions.py tests/cli/test_cli_sessions_coverage.py tests/cli/test_sessions_coverage.py tests/servers/routes/test_servers_routes_sessions_routes.py tests/skills/test_capability_catalog.py -q",
+      "result": "356 passed in 16.34s after correcting five stale-test failures. Two title tests predated #22163; three summary tests patched retired LocalProjectManager instead of require_root. No production validation weakened."
+    },
+    {
+      "id": "library-checks",
+      "kind": "local-validation",
+      "command": "uv run Python: load_capability_catalog, AST-qualified symbol resolution, JSON parse and Markdown local path/anchor validation; uv run ruff check and ruff format --check on the two changed tests",
+      "result": "Four capabilities valid; 53 operation references and AST symbols resolve; 12 Markdown files and all audit guide anchors checked; Ruff lint/format pass."
+    },
+    {
+      "id": "secondary-focused",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_sessions_acp_routes.py tests/servers/routes/test_session_changes_routes.py tests/mcp_proxy/tools/test_tool_verbosity.py tests/mcp_proxy/tools/test_agent_live_output.py tests/mcp_proxy/tools/test_agent_capture_results.py tests/workflows/test_context_handoff_rules.py tests/workflows/test_handoff_discipline_rules.py -q",
+      "result": "129 passed in 42.12s. Corrected one worktree async mock failure and four obsolete plan-mode reason assertions; isolated worktree sidecar/hooks/events."
+    },
+    {
+      "id": "plan-mode-provenance",
+      "kind": "installed-registry-and-git",
+      "command": "get_rule(block-clear-session-in-plan-mode); git log on its bundled YAML",
+      "result": "Global installed row 6dc2eece-d1f0-4bcf-bd42-b489922d741d enabled, priority13, plan_mode and clear_session=true condition. Current action-first reason requires clear_session=false; wording changed in b91e348ffb #22003."
+    },
+    {
+      "id": "review",
+      "kind": "bounded-code-review",
+      "command": "code-review skill; OCR delegate preview/rule; review_reference_identity read-only review",
+      "result": "Initial16 files reviewed, zero skipped,100% coverage; shell quoting finding corrected. Additional two test-file follow-up reviewed before commit; final transcript is authoritative."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Recovery passed removed session_id lookup and treated summary/status as handoff availability.",
+      "resolution": "Document pending-marker consumption, expected empty results, separate parent-authorized agent_end reads.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Guide described summarize as handoff creation and retained digest fields.",
+      "resolution": "Separate archival summary from authored handoff; remove retired digest claims.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Guide omitted protected states/runtime fallback; full_content=false suggested clipping.",
+      "resolution": "Describe supported states, ownership checks, snapshot provenance, and full-body windowing.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Shared CLI guide omitted restore/maintenance; HTTP claimed caller machine_id.",
+      "resolution": "Add operator commands and accurate daemon-owned registration/lookup semantics.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Contract and two tests retained superseded automatic title formats.",
+      "resolution": "Follow completed #22163; keep sticky manual title and successor identity checks.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Three CLI summary tests failed reading a MagicMock checkout.",
+      "resolution": "Patch current require_root dependency, preserving real checkout validation.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Shell Quick Start left #42 unquoted.",
+      "resolution": "Quote session references so shells do not discard required arguments as comments.",
+      "evidence": [
+        "source-audit",
+        "focused-sessions"
+      ]
+    },
+    {
+      "finding": "Four plan-mode tests asserted superseded explanatory wording.",
+      "evidence": [
+        "plan-mode-provenance",
+        "secondary-focused"
+      ],
+      "resolution": "Assert the current actionable compact instruction while retaining all wrapper forms and block decisions."
+    },
+    {
+      "finding": "Worktree verbosity test returned a plain tuple from an awaited Git method.",
+      "evidence": [
+        "secondary-focused"
+      ],
+      "resolution": "Use AsyncMock for has_unpushed_commits/create_worktree, assert awaited calls, and isolate sidecar/hooks/event effects; no production change."
+    }
+  ],
+  "cutover_dependencies": [
+    "P4 migrates handoff-discipline gates/bootstrap after references exist; source skill retirement belongs to P5."
+  ],
+  "planned_checks": [
+    "P3 cross-capability coverage checker remains pending."
+  ]
+}

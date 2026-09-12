@@ -3,7 +3,7 @@ description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   Markdown report and validated findings for human-reviewed tasks.
 
-version: "3.0"
+version: "4.0"
 enabled: true
 priority: 20
 surfaces: [spawn]
@@ -38,7 +38,12 @@ prompts:
     Record concrete verification evidence in the task description and Markdown
     summary. Keep uncertain concerns explicit rather than claiming verification.
 
-    Submit findings and your Markdown summary through gobby-feedback:submit_review.
+    Read the shared daily report path from the spawn prompt if it exists. Submit
+    one revised cumulative synthesis through gobby-feedback:submit_review so all
+    reviewers write the same gobby-feedback-YYYYMMDD.md. Preserve earlier findings,
+    task references, and uncertainties; never append separate batch reports.
+    Findings JSON covers only your frozen batch. The daemon rebuilds the combined
+    evidence and outcomes section; omit that generated section from summary_md.
     This saves the report outside handoff and queues verified findings for task
     creation with awaiting-human-review. Do not put JSON or the report into handoff.
     After submission succeeds, load handoff-discipline and call end_agent_run with
@@ -75,7 +80,10 @@ step_workflow:
         Load both required methodology skills through the Gobby proxy:
         1. get_skill(name="restraint") on gobby-skills
         2. get_skill(name="proportionality") on gobby-skills
-        Use only mcp__gobby__call_tool in this step. Native skill tools bypass
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "restraint"}) and
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's observable skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
@@ -108,8 +116,15 @@ step_workflow:
       status_message: |
         Verify concerns against current code and existing tasks. Submit findings
         and a Markdown summary using gobby-feedback:submit_review. Then end the
-        run with a brief status and report reference, never the report body.
+        run with gobby-agents:end_agent_run, passing current_state as a brief
+        completion status, the report path in references, and one next_steps
+        entry naming the coordinator's next action — never the report body.
         Use Bash only for read-only inspection; do not edit source or run fixes.
+        Any further skill this review needs loads through the Gobby proxy with
+        mcp__gobby__call_tool. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's observable skill tracking.
       allowed_tools:
         - Bash
         - Read

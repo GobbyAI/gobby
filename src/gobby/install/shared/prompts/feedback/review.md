@@ -1,6 +1,6 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
-version: "5.0"
+version: "6.0"
 required_variables:
   - run_id
   - max_tasks
@@ -110,9 +110,15 @@ invent observation ids, task refs, paths, or behavior beyond the evidence.
 
 Call `gobby-feedback:submit_review` with `run_id="{{ run_id }}"`, the JSON
 object above as `findings`, and your Markdown report as `summary_md`. The report
-should explain what you reviewed, which concerns remain valid and why, which were
-resolved or duplicates, and any uncertainty. The tool saves a standalone `.md`
-document; deterministic task intake appends actual task references and outcomes.
+is one cumulative synthesis for the day. Read the shared report path supplied in
+the spawn prompt before writing. Integrate this batch into the existing narrative,
+preserving earlier verified findings, task references, resolved concerns, and
+uncertainties; do not append separate batch reports. Keep findings JSON limited to
+this frozen batch. The tool writes the same `gobby-feedback-YYYYMMDD.md` for every
+review on that local start date. Deterministic task intake replaces the combined
+evidence and outcomes section with actual task references from all contributions.
+Omit that generated section (starting at `<!-- gobby-feedback-outcomes -->`) from
+your `summary_md`.
 This submission is independent of handoff. Fix any rejected submission and retry.
 
 Only after submission succeeds, end your agent run with a short completion status

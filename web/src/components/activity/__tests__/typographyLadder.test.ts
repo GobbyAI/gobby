@@ -175,7 +175,9 @@ describe("activity-panel typography ladder (#14245)", () => {
     expect(source).toContain("text-[length:var(--text-base)]");
     expect(source).toContain("font-[var(--font-weight-medium)]");
     expect(source).toContain("text-[length:var(--text-sm)]");
-    expect(source).toContain("pointer-coarse:min-h-11");
+    // #22163 moved the row off a visual 44px floor onto hit-area
+    // expansion; the token lives in ui/controlStyles now.
+    expect(source).toContain("coarseHitAreaCls");
   });
 
   it("keeps high/critical priority tasks bold while raising the default to medium", () => {

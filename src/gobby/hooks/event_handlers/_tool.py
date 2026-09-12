@@ -11,6 +11,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 )
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
+from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
@@ -21,7 +22,7 @@ from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
     task_edited_file_set_for_checkout,
 )
-from gobby.workflows.task_dirty_state import paths_committed_after
+from gobby.workflows.task_dirty_state import paths_committed_after_async
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -346,8 +347,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         self._mark_session_had_edits_if_claimed(session_id)
 
-    @staticmethod
     def _paths_landed_before_edit(
+        self,
         variables: dict[str, Any],
         task_id: str,
         checkout_root: str,
@@ -360,12 +361,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
         outage-queued envelope: its content is already landed, so attributing it
         would re-open the task ledger for committed work. Paths the task already
         holds are left to ``record_edited_files``, which keeps the newest stamp.
+
+        This runs on a hook worker thread, so the supervised Git query is driven
+        through the daemon loop. A bridge failure yields ``None``; keeping the
+        attribution is the safe direction, the same as a Git timeout.
         """
         attributed = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
         candidates = {path for path in paths if path not in attributed}
         if not candidates:
             return set()
-        return paths_committed_after(candidates, checkout_root, edited_at)
+        landed = run_coro_blocking(
+            paths_committed_after_async(candidates, checkout_root, edited_at),
+            self._event_loop,
+            self.logger,
+            label="paths_committed_after",
+        )
+        return landed if isinstance(landed, set) else set()
 
     def _notify_code_index(self, repo_root: Path, repo_relative_path: str) -> None:
         if self._code_index_trigger is None:

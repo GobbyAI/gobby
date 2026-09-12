@@ -92,6 +92,9 @@ variables:
   loaded_skills:
     value: []
     description: "Skill names the agent has fetched with gobby-skills:get_skill this session"
+  loaded_skill_references:
+    value: []
+    description: "Exact skill:references/path.md identities completely fetched in the current context"
   code_index_navigation_used_this_turn:
     value: false
     description: "True after successful gcode navigation in the current turn"

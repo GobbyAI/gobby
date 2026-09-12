@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -175,7 +175,16 @@ class FeedbackReviewStore:
             report_path = actions.get("report_path")
             if not isinstance(report_path, str) or not report_path:
                 raise ValueError("Feedback review has no Markdown destination")
-            write_review_report(report_path, summary_md)
+            from gobby.feedback.digest import render_digest
+            from gobby.feedback.report import combine_report
+
+            report_rows, report_findings, report_actions = self.report_inputs(
+                run_id, findings, actions
+            )
+            digest = render_digest(
+                report_rows, report_findings, report_actions, dry_run=run.dry_run
+            )
+            write_review_report(report_path, combine_report(summary_md, digest))
             conn.execute(
                 "UPDATE feedback_review_runs SET findings = %s, digest_md = %s WHERE id = %s",
                 (_json(findings), summary_md, run_id),
@@ -292,6 +301,24 @@ class FeedbackReviewStore:
                 (run_id, feedback_ids),
             )
             return int(result.rowcount or 0)
+
+    def report_inputs(
+        self, run_id: str, findings: dict[str, Any], actions: dict[str, Any]
+    ) -> tuple[list[FeedbackRow], dict[str, Any], dict[str, Any]]:
+        """Read the shared report's durable contributions, overlaying this run once."""
+        from gobby.feedback.report import merge_report_inputs
+
+        current = self.get_run(run_id)
+        if current is None:
+            raise ValueError(f"Unknown feedback review run: {run_id}")
+        rows = self.db.fetchall(
+            f"SELECT {_RUN_COLUMNS} FROM feedback_review_runs "
+            "WHERE actions->>'report_path' = %s AND id != %s AND dry_run = %s "
+            "AND findings IS NOT NULL ORDER BY created_at, id",
+            (actions.get("report_path"), run_id, current.dry_run),
+        )
+        current = replace(current, findings=findings, actions=actions)
+        return merge_report_inputs([*(_run_from_row(row) for row in rows), current])
 
     def get_run(self, run_id: str) -> FeedbackReviewRun | None:
         row = self.db.fetchone(

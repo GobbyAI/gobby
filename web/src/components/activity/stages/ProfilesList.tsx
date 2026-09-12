@@ -6,6 +6,7 @@ import { Chip } from "../../ui/Chip";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { BuildProfile } from "./StagesTabData";
 import { profileKey } from "./StagesTabData";
+import { TickerText } from "../../ui/TickerText";
 
 interface ProfilesListProps {
   profiles: BuildProfile[];
@@ -86,9 +87,9 @@ export function ProfilesList({
                 label={profile.enabled ? "Profile enabled" : "Profile disabled"}
                 pulse={profile.enabled}
               />
-              <span className="activity-row-title">
+              <TickerText className="activity-row-title">
                 {profile.display_label}
-              </span>
+              </TickerText>
               <Chip>{profile.source}</Chip>
               <Chip>{profile.isolation}</Chip>
               {profile.name === "default" && <Chip tone="accent">default</Chip>}

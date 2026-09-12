@@ -65,15 +65,15 @@ async def _collect_skill_pages(tool: Any, **arguments: Any) -> tuple[list[dict[s
     return pages, "".join(page["skill"]["content"] for page in pages)
 
 
-def _collect_file_pages(tool: Any, **arguments: Any) -> tuple[list[dict[str, Any]], str]:
+async def _collect_file_pages(tool: Any, **arguments: Any) -> tuple[list[dict[str, Any]], str]:
     pages: list[dict[str, Any]] = []
-    response = tool(**arguments)
+    response = await tool(**arguments)
     while True:
         pages.append(response)
         cursor = response["page"]["next_cursor"]
         if cursor is None:
             break
-        response = tool(cursor=cursor)
+        response = await tool(cursor=cursor)
     return pages, "".join(page["file"]["content"] for page in pages)
 
 
@@ -228,7 +228,9 @@ async def test_get_skill_file_pages_reassemble_exact_content(
     storage.set_skill_files(skill.id, [_skill_file(skill.id, "references/topic.md", content)])
     tool = _required_tool(create_skills_registry(db), "get_skill_file")
 
-    pages, reconstructed = _collect_file_pages(tool, name=skill.name, path="references/topic.md")
+    pages, reconstructed = await _collect_file_pages(
+        tool, name=skill.name, path="references/topic.md"
+    )
 
     assert len(pages) > 1
     assert reconstructed.encode("utf-8") == content.encode("utf-8")
@@ -254,7 +256,7 @@ async def test_cursor_errors_are_structured_and_tool_bound(
 
     malformed = await skill_tool(cursor="not-a-cursor")
     mixed = await skill_tool(name=skill.name, cursor=cursor)
-    wrong_tool = file_tool(cursor=cursor)
+    wrong_tool = await file_tool(cursor=cursor)
 
     for response in (malformed, mixed, wrong_tool):
         assert response["success"] is False
@@ -321,6 +323,56 @@ async def test_skill_tracking_occurs_only_after_final_entrypoint_page(
     assert row is not None and row["skill_name"] == skill.name
     assert variables["loaded_skills"] == [skill.name]
     assert variables["tracked_pages_level"] == "max"
+
+
+@pytest.mark.integration
+async def test_reference_contract_1_2_2(
+    isolated_checkout_factory: IsolatedCheckoutFactory, db: HubDatabase, storage: LocalSkillManager
+) -> None:
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+    from gobby.utils.session_context import session_context_for_test
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    project = isolated_checkout_factory(db, "reference-paging").project
+    session = SessionManager(db).register(
+        external_id="reference-paging", machine_id=None, source="codex", project_id=project.id
+    )
+    skill = storage.create_skill(name="gobby", description="Router", content="# Router")
+    path = "references/tasks/closing.md"
+    content = "Reference content 🙂\n\n" * 2_000
+    storage.set_skill_files(skill.id, [_skill_file(skill.id, path, content)])
+    registry = create_skills_registry(db)
+    tool = _required_tool(registry, "get_skill_file")
+    variables = SessionVariableManager(db)
+
+    with session_context_for_test(session.id):
+        await _required_tool(registry, "get_skill")(name=skill.name)
+        await _required_tool(registry, "get_skill_files")(name=skill.name)
+        first = await tool(name=skill.name, path=path)
+        assert first["page"]["complete"] is False
+        assert "loaded_skill_references" not in variables.get_variables(session.id)
+
+        storage.set_skill_files(skill.id, [_skill_file(skill.id, path, content + "changed")])
+        stale = await tool(cursor=first["page"]["next_cursor"])
+        missing = await tool(name=skill.name, path="references/missing.md")
+        invalid = await tool(cursor="invalid")
+        assert [result["error_code"] for result in (stale, missing, invalid)] == [
+            "stale_cursor",
+            "not_found",
+            "invalid_cursor",
+        ]
+        assert "loaded_skill_references" not in variables.get_variables(session.id)
+
+        pages, reconstructed = await _collect_file_pages(tool, skill_id=skill.id, path=path)
+        assert len(pages) > 1
+        assert reconstructed == content + "changed"
+        assert variables.get_variables(session.id) == {
+            "loaded_skills": ["gobby"],
+            "loaded_skill_references": [f"gobby:{path}"],
+        }
+
+        await _collect_file_pages(tool, name=skill.name, path=path, brief=False)
+        assert variables.get_variables(session.id)["loaded_skill_references"] == [f"gobby:{path}"]
 
 
 @pytest.mark.asyncio

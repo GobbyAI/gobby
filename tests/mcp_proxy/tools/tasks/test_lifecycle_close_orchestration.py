@@ -125,6 +125,60 @@ async def test_close_persists_and_launches_one_taskless_validator(
 
 
 @pytest.mark.asyncio
+async def test_launch_moves_down_the_candidate_list_after_a_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A quota-exhausted validator never judged the evidence, and the error it
+    # delivers tells the caller to close again. Relaunching onto the same
+    # provider makes that instruction unfollowable, so the ordered candidate
+    # list has to advance.
+    store = _Store(_review(status="launching", run_id=None), unjudged_attempts=1)
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(
+            candidates=["codex/gpt-5.6-terra", "claude/sonnet"],
+        ),
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(ctx, evaluation=_evaluation(), close_arguments=_arguments())
+
+    launch_args = registry.call.call_args.args[1]
+    assert launch_args["provider"] == "claude"
+    assert launch_args["model"] == "sonnet"
+    assert result["validator_provider"] == "claude"
+    assert result["validator_model"] == "sonnet"
+
+
+@pytest.mark.asyncio
+async def test_launch_wraps_to_the_head_once_every_candidate_has_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Running off the end is not a reason to stay on the tail. A quota lifts on
+    # its own, so after every candidate has died the one that failed longest ago
+    # is the next worth trying; stopping at the last entry would pin the task to
+    # whichever provider stays down longest.
+    store = _Store(_review(status="launching", run_id=None), unjudged_attempts=2)
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(
+            candidates=["codex/gpt-5.6-terra", "claude/sonnet"],
+        ),
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(ctx, evaluation=_evaluation(), close_arguments=_arguments())
+
+    launch_args = registry.call.call_args.args[1]
+    assert launch_args["provider"] == "codex"
+    assert launch_args["model"] == "gpt-5.6-terra"
+    assert result["validator_provider"] == "codex"
+    assert result["validator_model"] == "gpt-5.6-terra"
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_task_update_before_review_launch_returns_stale_without_spawning(
     temp_db: HubDatabase,
@@ -537,6 +591,22 @@ def test_validator_spawn_overrides_follow_first_validation_candidate(
     overrides = agentic_close_review_module.validator_spawn_overrides(config)
 
     assert overrides == expected
+
+
+def test_validator_spawn_overrides_carry_the_reached_candidates_pinned_effort() -> None:
+    # Each candidate brings its own reasoning pin; skipping to the second one
+    # has to bring the second one's effort, not the head's.
+    config = TaskValidationConfig(
+        candidates=[
+            {"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"},
+            {"candidate": "claude/opus", "reasoning_effort": "high"},
+        ],
+        profile="feature_high",
+    )
+
+    overrides = agentic_close_review_module.validator_spawn_overrides(config, unjudged_attempts=1)
+
+    assert overrides == {"provider": "claude", "model": "opus", "reasoning_effort": "high"}
 
 
 def test_validator_spawn_overrides_are_empty_without_config() -> None:
@@ -1036,7 +1106,13 @@ async def test_wrong_validator_run_is_rejected_without_transition(
 
 
 class _Store:
-    def __init__(self, review: TaskCloseReview, *, created: bool = True) -> None:
+    def __init__(
+        self,
+        review: TaskCloseReview,
+        *,
+        created: bool = True,
+        unjudged_attempts: int = 0,
+    ) -> None:
         self.review = review
         self.created = created
         self.created_arguments: dict[str, Any] | None = None
@@ -1044,6 +1120,10 @@ class _Store:
         self.finished_status: str | None = None
         self.claimed = False
         self.restored = False
+        self.unjudged_attempts = unjudged_attempts
+
+    def count_unjudged_attempts(self, _task_id: str) -> int:
+        return self.unjudged_attempts
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
         self.created_arguments = dict(kwargs["close_arguments"])

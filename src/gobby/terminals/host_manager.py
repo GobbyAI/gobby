@@ -205,7 +205,7 @@ class TerminalHostManager:
             await self.close_clients()
             return
         self.host_drained = True
-        await self._drain_if_spawned_or_stop()
+        await self._drain_host()
         await self.close_clients()
         self.running = False
         self.host_pid = None
@@ -294,7 +294,11 @@ class TerminalHostManager:
             return
         client = self._client
         if client is None:
+            # A connection this daemon just opened is unauthenticated, and the
+            # host refuses `spawn_commit` on one; handshake before commanding,
+            # and publish the client only once it is usable (#22232).
             client = await self._connect()
+            await self._handshake(client)
             self._client = client
         await client.spawn_commit(terminal_id, spawn_key)
 
@@ -376,14 +380,7 @@ class TerminalHostManager:
             return _Adopt.ABSENT
         self.host_mismatch = None
         try:
-            token = self.ensure_control_token()
-            hello = await client.hello(CONTROL_PROTOCOL_VERSION, token)
-            if int(hello.protocol_version) < CONTROL_PROTOCOL_VERSION:
-                raise HostControlError(
-                    f"host speaks control protocol {hello.protocol_version}, "
-                    f"daemon needs {CONTROL_PROTOCOL_VERSION}"
-                )
-            ping = await client.ping()
+            hello, ping = await self._handshake(client)
             if not pid_matches_ping(
                 socket_dir=self.socket_dir,
                 host_pid=ping.host_pid,
@@ -499,22 +496,86 @@ class TerminalHostManager:
             return await self._connector()
         return await HostClient.connect(control_socket_path(self.socket_dir))
 
+    async def _handshake(self, client: Any) -> tuple[Any, Any]:
+        """Authenticate a fresh control connection and probe it.
+
+        The host answers every verb but ``hello`` with ``unauthenticated`` and
+        hangs up, so a connection this daemon just opened is useless until this
+        runs. Returns the hello and ping payloads.
+        """
+        token = self.ensure_control_token()
+        hello = await client.hello(CONTROL_PROTOCOL_VERSION, token)
+        if int(hello.protocol_version) < CONTROL_PROTOCOL_VERSION:
+            raise HostControlError(
+                f"host speaks control protocol {hello.protocol_version}, "
+                f"daemon needs {CONTROL_PROTOCOL_VERSION}"
+            )
+        return hello, await client.ping()
+
     async def _host_shutdown(self) -> None:
+        """Ask the host to drain and exit, then say whether it actually did.
+
+        ``self._client`` is already authenticated when this daemon adopted or
+        spawned the host. When it is not — the host is alive but was not
+        adoptable, which is the case `gobby stop --terminals` exists for — the
+        connection opened here has to handshake first, or the host refuses the
+        shutdown as ``unauthenticated`` and the drain silently does nothing
+        (#22232).
+        """
         client = self._client
+        pid = self.host_pid
         if client is None:
             try:
                 client = await self._connect()
-                self._client = client
-            except Exception:
+            except (OSError, ConnectionError) as exc:
+                logger.info("no gterm host answered the control socket: %s", exc)
                 return
+            try:
+                _, ping = await self._handshake(client)
+            except (
+                OSError,
+                ConnectionError,
+                HostControlError,
+                HostCommandError,
+                PermissionError,
+            ) as exc:
+                self.last_error = str(exc)
+                logger.warning("cannot authenticate to the gterm host to drain it: %s", exc)
+                await self._close_client(client)
+                return
+            self._client = client
+            pid = ping.host_pid
         grace_ms = int(self.config.shutdown_grace_seconds * 1000)
         try:
             await client.host_shutdown(grace_ms)
         except (ConnectionError, HostControlError, HostCommandError, OSError) as exc:
             logger.info("host_shutdown response lost; verifying death: %s", exc)
-        pid = self.host_pid or read_pidfile(self.socket_dir)
-        if pid and not self._process_alive(pid):
-            return
+        if pid is None:
+            pid = read_pidfile(self.socket_dir)
+        if pid and not await self._await_host_exit(pid):
+            self.last_error = f"gterm host {pid} is still running after host_shutdown"
+            logger.warning(
+                "gterm host %s did not exit within %.1fs of host_shutdown; it and its "
+                "native terminals are still running",
+                pid,
+                self._host_exit_deadline_seconds(),
+            )
+
+    def _host_exit_deadline_seconds(self) -> float:
+        # The host spends up to the same grace reaping its own children before
+        # it exits, so waiting exactly the grace would call a healthy drain a
+        # survivor. One second past it is the margin the reaping tests use.
+        return self.config.shutdown_grace_seconds + 1.0
+
+    async def _await_host_exit(self, pid: int) -> bool:
+        """Poll for ``pid`` to leave before the drain gives up on it."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._host_exit_deadline_seconds()
+        while self._process_alive(pid):
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(0.05)
+        return True
 
     def _process_alive(self, pid: int) -> bool:
         try:
@@ -547,7 +608,11 @@ class TerminalHostManager:
             if asyncio.iscoroutine(result):
                 await result
 
-    async def _drain_if_spawned_or_stop(self) -> None:
+    async def _drain_host(self) -> None:
+        # Both rungs run for every host: the RPC is the only one that reaches a
+        # host this daemon did not spawn, and `_reap_process` is a no-op unless
+        # it did. The old name read as a condition and is why #22232 was first
+        # diagnosed as a drain that skips adopted hosts.
         await self._host_shutdown()
         self._reap_process()
 

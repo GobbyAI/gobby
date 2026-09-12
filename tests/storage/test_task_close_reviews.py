@@ -8,11 +8,14 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import ensure_system_session, system_session_id
 from gobby.storage.task_close_reviews import (
     VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
     TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
+    TerminalTaskCloseReviewStatus,
 )
 
 
@@ -329,6 +332,65 @@ def test_memo_rows_stay_out_of_the_agentic_review_lifecycle(temp_db: HubDatabase
     launched, created = store.create_or_get_active(**_intent())
     assert created is True
     assert store.get_active_for_task(_TASK_ID) == launched
+
+
+def test_unjudged_attempts_count_every_review_that_never_reached_a_verdict(
+    temp_db: HubDatabase,
+) -> None:
+    # The count decides how far along the validator candidate list the next
+    # attempt starts, so it must separate "the validator never answered" from
+    # "the validator judged the evidence and said no".
+    ensure_system_session(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    store = TaskCloseReviewStore(temp_db)
+
+    def attempt(
+        *,
+        status: TerminalTaskCloseReviewStatus,
+        run_failed: bool,
+        terminal_reason: AgentRunTerminalReason | None = None,
+    ) -> None:
+        review, _ = store.create_or_get_active(**_intent())
+        run = runs.create(
+            parent_session_id=system_session_id(),
+            provider="codex",
+            prompt="validate",
+        )
+        store.bind_run(review.id, run.id)
+        if run_failed:
+            runs.fail(run.id, error="run ended", terminal_reason=terminal_reason)
+        else:
+            runs.complete(run.id, result="verdict")
+        store.finish(
+            review.id,
+            status=status,
+            result_payload={"event": "task_close_review_completed", "status": status},
+            error="ended" if run_failed else None,
+        )
+
+    assert store.count_unjudged_attempts(_TASK_ID) == 0
+
+    attempt(status="error", run_failed=True, terminal_reason="provider_quota_exhausted")
+    assert store.count_unjudged_attempts(_TASK_ID) == 1
+
+    attempt(status="error", run_failed=True, terminal_reason="provider_error")
+    assert store.count_unjudged_attempts(_TASK_ID) == 2
+
+    # A provider that dies before its first turn leaves nothing behind to
+    # classify, so the reason stays NULL. That is the case the count exists
+    # for; an unclassified end has to move the next attempt on exactly like a
+    # named provider error.
+    attempt(status="error", run_failed=True, terminal_reason=None)
+    assert store.count_unjudged_attempts(_TASK_ID) == 3
+
+    # A validator that ran and rejected the close is evidence about the work,
+    # not about the runtime — it must not push the next attempt elsewhere.
+    attempt(status="invalid", run_failed=False)
+    assert store.count_unjudged_attempts(_TASK_ID) == 3
+
+    # Nor does a run we stopped ourselves.
+    attempt(status="error", run_failed=True, terminal_reason="user_cancelled")
+    assert store.count_unjudged_attempts(_TASK_ID) == 3
 
 
 _TASK_ID = "00000000-0000-4000-8000-000000000801"

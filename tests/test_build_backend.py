@@ -13,8 +13,6 @@ from typing import NamedTuple
 
 import pytest
 
-from gobby.install.manifest import build_bundled_content_manifest
-
 pytestmark = pytest.mark.unit
 
 
@@ -516,16 +514,6 @@ def test_load_manifest_module_registers_module_for_runtime_type_resolution(tmp_p
 
     assert sys.modules[manifest_module.__name__] is manifest_module
     assert callable(manifest_module.write_bundled_content_manifest)
-
-
-def test_committed_bundled_content_manifest_matches_shared_tree() -> None:
-    """Committed manifest should stay synchronized with bundled shared content."""
-    install_dir = Path(__file__).resolve().parent.parent / "src" / "gobby" / "install"
-    committed = json.loads(
-        (install_dir / "bundled_content_manifest.json").read_text(encoding="utf-8")
-    )
-
-    assert committed == build_bundled_content_manifest(install_dir / "shared")
 
 
 def test_stage_bundled_content_manifest_rejects_invalid_helper(

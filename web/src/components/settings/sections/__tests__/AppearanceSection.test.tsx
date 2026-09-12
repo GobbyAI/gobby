@@ -28,6 +28,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     voiceInputMode: "ptt",
     planPendingVariant: "info",
     density: "comfortable",
+    tickerDirection: "left",
+    tickerSpeed: "normal",
     ...overrides,
   };
 }
@@ -43,6 +45,8 @@ function makeClient(settings: Settings): UseSettingsReturn {
     updateSttEnabled: vi.fn(),
     updateTtsEnabled: vi.fn(),
     updateVoiceInputMode: vi.fn(),
+    updateTickerDirection: vi.fn(),
+    updateTickerSpeed: vi.fn(),
     updatePlanPendingVariant: vi.fn(),
     updateDensity: vi.fn(),
     resetSettings: vi.fn(),

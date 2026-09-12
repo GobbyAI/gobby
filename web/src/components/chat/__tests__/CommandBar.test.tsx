@@ -15,7 +15,8 @@ describe("CommandBar", () => {
       />,
     );
 
-    expect(screen.getByText("#42")).toHaveClass("command-bar-ref");
+    // The ref span carries the separator too, so its text is "#42:".
+    expect(screen.getByText(/^#42/)).toHaveClass("command-bar-ref");
     expect(screen.getByText("Viewed web chat")).toHaveClass(
       "command-bar-title",
     );

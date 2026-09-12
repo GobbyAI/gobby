@@ -63,6 +63,10 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 
 ## Unified Search Modes
 
+This shared Python searcher does not configure native `gcode search`, whose
+symbol BM25/vector/graph ranking is a separate Rust pipeline. Select gcode lanes
+using the [code search guide](gcode-user-guide.md#search).
+
 The shared `UnifiedSearcher` supports four modes:
 
 | Mode | Behavior | Fallback | Use case |
@@ -90,11 +94,12 @@ Embedding settings are shared by memory, skill search, MCP tool search, and code
 indexing:
 
 ```yaml
-embeddings:
-  model: nomic-embed-text
-  dim: 768
-  api_base: http://localhost:11434/v1  # Ollama or another OpenAI-compatible endpoint
-  api_key: null                        # Optional; can use ${ENV_VAR}
+ai:
+  embeddings:
+    model: nomic-embed-text
+    dim: 768
+    api_base: http://localhost:11434/v1
+    api_key: null
 ```
 
 Unified search behavior is configured separately:
@@ -122,11 +127,11 @@ Gobby uses an OpenAI-compatible embedding client. Common configurations:
 
 | Provider | Model | Required config |
 |----------|-------|-----------------|
-| Ollama | `nomic-embed-text` | `embeddings.api_base: http://localhost:11434/v1` |
-| LM Studio | `nomic-embed-text` | `embeddings.api_base: http://localhost:1234/v1` |
-| OpenAI | `text-embedding-3-small` | `OPENAI_API_KEY` or `embeddings.api_key` |
+| Ollama | `nomic-embed-text` | `ai.embeddings.api_base: http://localhost:11434/v1` |
+| LM Studio | `nomic-embed-text` | `ai.embeddings.api_base: http://localhost:1234/v1` |
+| OpenAI | `text-embedding-3-small` | Configure the endpoint and `ai.embeddings.api_key` through daemon config |
 
-Set `embeddings.dim` to match the model output. The default `nomic-embed-text`
+Set `ai.embeddings.dim` to match the model output. The default `nomic-embed-text`
 uses `768`; `text-embedding-3-small` uses `1536`.
 
 ## Memory Search
@@ -304,7 +309,7 @@ and `ranking_mode`.
 
 ### Embedding search falls back
 
-1. Check `embeddings.model`, `embeddings.dim`, and `embeddings.api_base`.
+1. Check `ai.embeddings.model`, `ai.embeddings.dim`, and `ai.embeddings.api_base` in daemon configuration; gcode receives runtime settings through its grant. Use `gcode embeddings doctor` for native diagnostics.
 2. Confirm the endpoint exposes `/models`.
 3. Set an API key for cloud providers, or use a local OpenAI-compatible server.
 4. Use `search.mode: keyword` when offline behavior matters more than semantic quality.
@@ -325,4 +330,4 @@ and `ranking_mode`.
 - [code-index.md](./code-index.md) - Source code search
 - [configuration.md](./configuration.md) - Full config reference
 
-_Last verified: 2026-06-11_
+_Code-index surfaces and shared embedding keys verified: 2026-09-12. Other search surfaces last verified: 2026-06-11._

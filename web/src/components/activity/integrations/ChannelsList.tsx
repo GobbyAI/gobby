@@ -11,6 +11,7 @@ import {
   statusKindForChannel,
   statusLabelForChannel,
 } from "./IntegrationsTabModel";
+import { TickerText } from "../../ui/TickerText";
 
 interface ChannelsListProps {
   channels: Channel[];
@@ -69,7 +70,9 @@ export function ChannelsList({
                 kind={statusKindForChannel(channel)}
                 label={statusLabelForChannel(channel)}
               />
-              <span className="activity-row-title">{channel.name}</span>
+              <TickerText className="activity-row-title">
+                {channel.name}
+              </TickerText>
               <Chip className="gap-1">
                 <IntegrationPlatformIcon
                   type={channel.channel_type}

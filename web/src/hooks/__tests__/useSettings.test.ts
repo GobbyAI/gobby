@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configurationClient } from "../../api/config";
+import { TICKER_SPEED_PX_PER_SEC } from "../../lib/tickerClock";
 import { cacheBustedIconHref, useSettings } from "../useSettings";
 
 function iconLink() {
@@ -23,6 +24,9 @@ describe("useSettings", () => {
     `;
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-density");
+    document.documentElement.removeAttribute("data-ticker");
+    document.documentElement.removeAttribute("data-ticker-active");
+    document.documentElement.style.removeProperty("--ticker-cycle");
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: false })),
@@ -33,6 +37,9 @@ describe("useSettings", () => {
     document.head.innerHTML = "";
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-density");
+    document.documentElement.removeAttribute("data-ticker");
+    document.documentElement.removeAttribute("data-ticker-active");
+    document.documentElement.style.removeProperty("--ticker-cycle");
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -219,6 +226,59 @@ describe("useSettings", () => {
     expect(body.values.ui_settings).not.toHaveProperty("density");
     expect(body.values.ui_settings).toHaveProperty("theme");
   });
+
+  it("defaults row-title scrolling on, leftward, at the normal pace", () => {
+    const { result } = renderHook(() => useSettings());
+
+    expect(result.current.settings.tickerDirection).toBe("left");
+    expect(result.current.settings.tickerSpeed).toBe("normal");
+  });
+
+  it("applies the ticker direction and pace to the document without sending either to the API", async () => {
+    const { result } = renderHook(() => useSettings());
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-ticker", "left");
+    });
+
+    // The clock only publishes a cycle once something actually overflows, so
+    // drive it from a registered ticker rather than the preference alone.
+    act(() => {
+      result.current.updateTickerSpeed("fast");
+    });
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem("gobby-settings") ?? "{}");
+      expect(stored.tickerSpeed).toBe("fast");
+      expect(stored.tickerDirection).toBe("left");
+    });
+
+    act(() => {
+      result.current.updateTickerDirection("off");
+    });
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-ticker", "off");
+    });
+    expect(TICKER_SPEED_PX_PER_SEC.fast).toBeGreaterThan(
+      TICKER_SPEED_PX_PER_SEC.normal,
+    );
+  });
+
+  it.each([
+    ["tickerDirection", "sideways", "left"],
+    ["tickerSpeed", "instant", "normal"],
+  ])(
+    "normalizes an unknown persisted %s to the default",
+    (key, persisted, expected) => {
+      localStorage.setItem(
+        "gobby-settings",
+        JSON.stringify({ [key]: persisted }),
+      );
+
+      const { result } = renderHook(() => useSettings());
+
+      expect(result.current.settings[key as "tickerDirection"]).toBe(expected);
+    },
+  );
 
   it("normalizes an out-of-range persisted density to comfortable", () => {
     localStorage.setItem(

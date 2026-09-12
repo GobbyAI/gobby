@@ -777,6 +777,7 @@ def _scope_summaries(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "status": run.get("status") or ("completed" if run.get("success") else "failed"),
             "error": run.get("error"),
             "narrative": normalize_summary((run.get("decision_summary") or {}).get("narrative")),
+            "report_path": (run.get("decision_summary") or {}).get("report_path"),
         }
         for run in runs
     ]

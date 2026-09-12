@@ -6,6 +6,7 @@ import type { ChangedFile } from "../../hooks/useFileChanges";
 import { ActivityPanelEmpty, ChangesEmptyIcon } from "./ActivityPanelEmpty";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
+import { TickerText } from "../ui/TickerText";
 
 interface FileChangesTabProps {
   changedFiles: ChangedFile[];
@@ -194,9 +195,9 @@ export const FileChangesTab = memo(function FileChangesTab({
             >
               {statusBadge(file.status)}
               <div className="flex min-w-0 flex-1 items-baseline gap-1">
-                <span className="activity-row-title truncate">
+                <TickerText className="activity-row-title truncate">
                   {fileName(file.path)}
-                </span>
+                </TickerText>
                 <span className="activity-row-meta truncate">
                   {fileDir(file.path)}
                 </span>

@@ -20,6 +20,7 @@ import { KebabIcon } from "./QuickMenu";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
+import { TickerText } from "../ui/TickerText";
 
 interface TaskTreeRowProps {
   row: VisibleTaskRow;
@@ -168,13 +169,13 @@ function TaskTreeRowComponent({
           {ref}
         </span>
       )}
-      <span
-        className="min-w-0 flex-1 truncate text-[length:var(--text-base)] leading-[1.3] font-[var(--font-weight-medium)] text-[var(--text-primary)]"
+      <TickerText
+        className="min-w-0 flex-1 text-[length:var(--text-base)] leading-[1.3] font-[var(--font-weight-medium)] text-[var(--text-primary)]"
         data-task-row-title
         style={{ color: textColor, fontWeight: textWeight }}
       >
         {task.title}
-      </span>
+      </TickerText>
       <span className="inline-flex shrink-0 items-center gap-[0.3rem]">
         <TypeBadge type={task.task_type} />
       </span>

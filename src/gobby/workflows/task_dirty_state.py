@@ -69,22 +69,28 @@ async def task_dirty_paths_async(paths: set[str], cwd: str) -> set[str] | None:
     }
 
 
-def paths_committed_after(paths: set[str], cwd: str, edited_at: float) -> set[str]:
+async def paths_committed_after_async(paths: set[str], cwd: str, edited_at: float) -> set[str]:
     """Return the paths whose last commit in ``cwd`` is strictly newer than ``edited_at``.
 
     Such an edit was already landed when its hook was observed: an outage-queued
     envelope replayed after the owner commit. ``%ct`` is second-resolution, so an
     edit in the same second as the commit stays attributable.
+
+    Omission is the safe direction, so a timeout or a failed command leaves the
+    path attributed and the task ledger open rather than dropping the edit.
     """
     edited_second = int(edited_at)
     committed: set[str] = set()
     for path in sorted(paths):
-        output = run_git_command(
-            ["git", "--literal-pathspecs", "log", "-1", "--format=%ct", "--", path],
+        result = await daemon_git.run(
+            ["--literal-pathspecs", "log", "-1", "--format=%ct", "--", path],
             cwd=cwd,
-            timeout=10,
+            timeout=10.0,
         )
-        if output and output.isdigit() and int(output) > edited_second:
+        if not isinstance(result, GitOk):
+            continue
+        output = result.stdout.strip()
+        if output.isdigit() and int(output) > edited_second:
             committed.add(path)
     return committed
 

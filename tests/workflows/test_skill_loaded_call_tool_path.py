@@ -84,7 +84,10 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
             },
             "tool_output": {
                 "success": True,
-                "result": {"skill": {"name": "build-coordinator"}},
+                "result": {
+                    "skill": {"name": "build-coordinator", "content": "instructions"},
+                    "page": {"complete": True, "next_cursor": None},
+                },
             },
         },
     )
@@ -153,6 +156,7 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
     oversized_skill = {
         "success": True,
         "skill": {"name": "tasks", "content": oversized_content},
+        "page": {"complete": True, "next_cursor": None},
     }
 
     def get_oversized_skill(name: str) -> dict[str, object]:
@@ -197,7 +201,7 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
             {"name": "tasks"},
             wrapper_originated=True,
         )
-        assert full_result == {"skill": oversized_skill["skill"]}
+        assert full_result == {"skill": oversized_skill["skill"], "page": oversized_skill["page"]}
         assert full_result["skill"]["content"] == oversized_content
         assert "offloaded" not in full_result
         event = _event(

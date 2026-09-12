@@ -1,0 +1,423 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "name": "tasks",
+      "description": "Discover, own, verify, and complete task work",
+      "overview": "references/tasks/overview.md",
+      "when": "Organizing or performing task work",
+      "topics": [
+        {
+          "name": "creation",
+          "description": "Create, claim, categorize, and label work",
+          "path": "references/tasks/creation.md",
+          "when": "Creating or claiming tasks and changing metadata"
+        },
+        {
+          "name": "dependencies",
+          "description": "Order work and diagnose readiness",
+          "path": "references/tasks/dependencies.md",
+          "when": "Adding dependency edges or investigating blockers"
+        },
+        {
+          "name": "implementation",
+          "description": "Implement, handle found work, and validate",
+          "path": "references/tasks/implementation.md",
+          "when": "Editing task-owned files or preparing verification"
+        },
+        {
+          "name": "closing",
+          "description": "Commit and close with verified evidence",
+          "path": "references/tasks/closing.md",
+          "when": "Closing any task or handling close blockers"
+        },
+        {
+          "name": "reviews",
+          "description": "Manage stages and review transitions",
+          "path": "references/tasks/reviews.md",
+          "when": "Submitting or reviewing autonomous stage work"
+        },
+        {
+          "name": "artifacts",
+          "description": "Manage task evidence and artifact pointers",
+          "path": "references/tasks/artifacts.md",
+          "when": "Attaching commits, retrieving diffs, or changing artifact scope"
+        },
+        {
+          "name": "backups",
+          "description": "Back up, restore, import, and maintain tasks",
+          "path": "references/tasks/backups.md",
+          "when": "Recovering task data or importing external issues"
+        },
+        {
+          "name": "live-work",
+          "description": "Run an interactive umbrella task",
+          "path": "references/tasks/live-work.md",
+          "when": "Starting, resuming, or finishing live interactive work"
+        }
+      ]
+    },
+    {
+      "name": "plan",
+      "description": "Draft, verify, approve, and expand implementation plans",
+      "overview": "references/plan/overview.md",
+      "when": "Investigating or operating a Gobby plan",
+      "topics": [
+        {
+          "name": "drafting",
+          "description": "Author atomic, self-contained plan deliverables",
+          "path": "references/plan/drafting.md",
+          "when": "Writing or revising a plan narrative"
+        },
+        {
+          "name": "coverage",
+          "description": "Apply coverage grammar, targets, and evidence",
+          "path": "references/plan/coverage.md",
+          "when": "Authoring targets, acceptance, manifests, or deferrals"
+        },
+        {
+          "name": "enhancement",
+          "description": "Run optional constructive enhancement",
+          "path": "references/plan/enhancement.md",
+          "when": "Enhancing a plan or processing suggestions"
+        },
+        {
+          "name": "repair",
+          "description": "Repair validator residue and recover checkpoints",
+          "path": "references/plan/repair.md",
+          "when": "Validation, evidence, or manifest application fails"
+        },
+        {
+          "name": "review",
+          "description": "Review immutable plan evidence and findings",
+          "path": "references/plan/review.md",
+          "when": "Preparing or performing adversarial review"
+        },
+        {
+          "name": "approval",
+          "description": "Apply approved manifests and hand off implementation",
+          "path": "references/plan/approval.md",
+          "when": "Accepting review or handing a plan to implementation"
+        },
+        {
+          "name": "expansion",
+          "description": "Compile, apply, verify, and recover task trees",
+          "path": "references/plan/expansion.md",
+          "when": "Expanding plans or repairing expansion output"
+        },
+        {
+          "name": "lifecycle",
+          "description": "Register, refresh, archive, and delete plan metadata",
+          "path": "references/plan/lifecycle.md",
+          "when": "Changing plan registry state or coverage artifacts"
+        }
+      ]
+    },
+    {
+      "name": "build",
+      "description": "Start, coordinate, monitor, and recover stage automation",
+      "overview": "references/build/overview.md",
+      "when": "Operating or diagnosing Gobby build automation",
+      "topics": [
+        {
+          "name": "starting",
+          "description": "Launch an authorized plan or task build",
+          "path": "references/build/starting.md",
+          "when": "Starting automation or changing launch options"
+        },
+        {
+          "name": "profiles",
+          "description": "Resolve and manage scoped build presets",
+          "path": "references/build/profiles.md",
+          "when": "Selecting, authoring, or recovering build profiles"
+        },
+        {
+          "name": "stages",
+          "description": "Inspect lifecycle shape, caps, and registry defaults",
+          "path": "references/build/stages.md",
+          "when": "Inspecting or changing build stage configuration"
+        },
+        {
+          "name": "coordination",
+          "description": "Coordinate and verify unattended automation",
+          "path": "references/build/coordination.md",
+          "when": "Assigned coordinator work or unattended build validation"
+        },
+        {
+          "name": "monitoring",
+          "description": "Diagnose progress, eligibility, and history",
+          "path": "references/build/monitoring.md",
+          "when": "Inspecting a running or stalled build"
+        },
+        {
+          "name": "recovery",
+          "description": "Stop, resume, clean, and restart safely",
+          "path": "references/build/recovery.md",
+          "when": "Cancelling automation or recovering failed builds"
+        }
+      ]
+    },
+    {
+      "name": "sessions",
+      "description": "Discover session work, preserve context, and inspect terminals",
+      "overview": "references/sessions/overview.md",
+      "when": "Operating session identity, history, or continuation",
+      "topics": [
+        {
+          "name": "discovery",
+          "description": "Resolve identity, browse sessions, and register clients",
+          "path": "references/sessions/discovery.md",
+          "when": "Finding sessions or changing session metadata"
+        },
+        {
+          "name": "transcripts",
+          "description": "Read, search, and restore conversation evidence",
+          "path": "references/sessions/transcripts.md",
+          "when": "Retrieving transcripts, commits, or archives"
+        },
+        {
+          "name": "handoffs",
+          "description": "Author and consume structured continuation records",
+          "path": "references/sessions/handoffs.md",
+          "when": "Preparing or recovering a handoff"
+        },
+        {
+          "name": "context",
+          "description": "Select and recover compact or clear boundaries",
+          "path": "references/sessions/context.md",
+          "when": "Context pressure or session resets"
+        },
+        {
+          "name": "relationships",
+          "description": "Trace agent parentage and continuation ownership",
+          "path": "references/sessions/relationships.md",
+          "when": "Inspecting session, task, or run relationships"
+        },
+        {
+          "name": "terminals",
+          "description": "Inspect and control session terminals",
+          "path": "references/sessions/terminals.md",
+          "when": "Diagnosing prompts or sending terminal input"
+        },
+        {
+          "name": "waits",
+          "description": "Wait for agent work and terminal conditions",
+          "path": "references/sessions/waits.md",
+          "when": "Progress depends on another operation"
+        }
+      ]
+    },
+    {
+      "name": "agents",
+      "description": "Define, launch, coordinate, and recover agent work",
+      "overview": "references/agents/overview.md",
+      "when": "Operating agent definitions, personas, or worker runs",
+      "topics": [
+        {
+          "name": "definitions",
+          "description": "Inspect, author, and diagnose installed definitions",
+          "path": "references/agents/definitions.md",
+          "when": "Changing definitions, selectors, or inline steps"
+        },
+        {
+          "name": "spawning",
+          "description": "Start and verify assigned worker runs",
+          "path": "references/agents/spawning.md",
+          "when": "Launching a managed worker or task batch"
+        },
+        {
+          "name": "providers",
+          "description": "Resolve provider, model, and reasoning settings",
+          "path": "references/agents/providers.md",
+          "when": "Selecting or diagnosing execution backends"
+        },
+        {
+          "name": "isolation",
+          "description": "Bound workspaces and external write grants",
+          "path": "references/agents/isolation.md",
+          "when": "Selecting isolation or recovering sandbox failures"
+        },
+        {
+          "name": "personas",
+          "description": "Switch conversational guidance",
+          "path": "references/agents/personas.md",
+          "when": "Applying a persona to the current session"
+        },
+        {
+          "name": "messaging",
+          "description": "Coordinate through durable messages",
+          "path": "references/agents/messaging.md",
+          "when": "Sending work, questions, blockers, or repository notices"
+        },
+        {
+          "name": "checkpoints",
+          "description": "Preserve terminal child worktree changes",
+          "path": "references/agents/checkpoints.md",
+          "when": "Recovering uncommitted work after a child terminates"
+        },
+        {
+          "name": "lifecycle",
+          "description": "Inspect, wait for, cancel, and end runs",
+          "path": "references/agents/lifecycle.md",
+          "when": "Monitoring or terminating agent execution"
+        }
+      ]
+    },
+    {
+      "name": "memory",
+      "description": "Recall, capture, and maintain durable project knowledge",
+      "overview": "references/memory/overview.md",
+      "when": "Working with persistent knowledge or review lessons",
+      "topics": [
+        {
+          "name": "search",
+          "description": "Recall and navigate durable knowledge",
+          "path": "references/memory/search.md",
+          "when": "Searching before work or capture"
+        },
+        {
+          "name": "capture",
+          "description": "Create, revise, and supersede durable knowledge",
+          "path": "references/memory/capture.md",
+          "when": "Writing or correcting memory"
+        },
+        {
+          "name": "scope",
+          "description": "Resolve ownership and global visibility",
+          "path": "references/memory/scope.md",
+          "when": "Changing visibility or project ownership"
+        },
+        {
+          "name": "maintenance",
+          "description": "Back up, restore, and repair secondary stores",
+          "path": "references/memory/maintenance.md",
+          "when": "Maintaining memory data or diagnostics"
+        },
+        {
+          "name": "review-lessons",
+          "description": "Preserve verified review outcomes",
+          "path": "references/memory/review-lessons.md",
+          "when": "Triaging findings or recording review lessons"
+        },
+        {
+          "name": "post-task",
+          "description": "Review knowledge after completed work",
+          "path": "references/memory/post-task.md",
+          "when": "Responding to a worked-leaf post-close review"
+        },
+        {
+          "name": "dream",
+          "description": "Preview, inspect, and recover hygiene runs",
+          "path": "references/memory/dream.md",
+          "when": "Operating or diagnosing memory dream"
+        }
+      ]
+    },
+    {
+      "name": "code-index",
+      "description": "Search, navigate, and verify source and dependency evidence",
+      "overview": "references/code-index/overview.md",
+      "when": "Locating implementation or diagnosing code-index state",
+      "topics": [
+        {
+          "name": "search",
+          "description": "Choose search lanes and interpret matches",
+          "path": "references/code-index/search.md",
+          "when": "Locating symbols or repository text"
+        },
+        {
+          "name": "retrieval",
+          "description": "Retrieve exact source from hits and locations",
+          "path": "references/code-index/retrieval.md",
+          "when": "Reading source bodies or recovering stale IDs"
+        },
+        {
+          "name": "navigation",
+          "description": "Survey structure and preserve scope and pagination",
+          "path": "references/code-index/navigation.md",
+          "when": "Exploring files, projects, and complete result pages"
+        },
+        {
+          "name": "impact",
+          "description": "Trace callers and dependencies",
+          "path": "references/code-index/impact.md",
+          "when": "Assessing effects before implementation"
+        },
+        {
+          "name": "graphs",
+          "description": "Inspect and maintain native code projections",
+          "path": "references/code-index/graphs.md",
+          "when": "Using structural views, reports, or projection lifecycle"
+        },
+        {
+          "name": "recovery",
+          "description": "Diagnose freshness and repair index state",
+          "path": "references/code-index/recovery.md",
+          "when": "Indexing, repairing, or operating cleanup"
+        }
+      ]
+    },
+    {
+      "name": "skills",
+      "description": "Discover, load, author and manage installed skills",
+      "overview": "references/skills/overview.md",
+      "when": "Working with reusable instruction bundles",
+      "topics": [
+        {
+          "name": "discovery",
+          "description": "Discover installed skills",
+          "path": "references/skills/discovery.md",
+          "when": "Selecting installed guidance or diagnosing missing names"
+        },
+        {
+          "name": "loading",
+          "description": "Load complete instructions",
+          "path": "references/skills/loading.md",
+          "when": "Applying installed instructions or implementing delivery consumers"
+        },
+        {
+          "name": "levels",
+          "description": "Select and preserve skill levels",
+          "path": "references/skills/levels.md",
+          "when": "Selecting or preserving a declared standalone skill level"
+        },
+        {
+          "name": "references",
+          "description": "Discover and load reference files",
+          "path": "references/skills/references.md",
+          "when": "Loading topic files or checking exact reference requirements"
+        },
+        {
+          "name": "hubs",
+          "description": "Search and configure skill hubs",
+          "path": "references/skills/hubs.md",
+          "when": "Searching external skill sources or configuring providers"
+        },
+        {
+          "name": "installation",
+          "description": "Install instruction bundles",
+          "path": "references/skills/installation.md",
+          "when": "Installing or refreshing a selected instruction bundle"
+        },
+        {
+          "name": "authoring",
+          "description": "Author verified skill instructions",
+          "path": "references/skills/authoring.md",
+          "when": "Creating or changing skill instructions and verification scenarios"
+        },
+        {
+          "name": "scripts",
+          "description": "Materialize and use skill scripts",
+          "path": "references/skills/scripts.md",
+          "when": "Preparing files and runtime dependencies for skill scripts"
+        },
+        {
+          "name": "lifecycle",
+          "description": "Manage installed skill state",
+          "path": "references/skills/lifecycle.md",
+          "when": "Changing scope, metadata, visibility, deletion or restoration"
+        }
+      ]
+    }
+  ]
+}

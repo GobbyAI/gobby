@@ -9,6 +9,8 @@ Tests use Click's CliRunner and mock external dependencies.
 
 import json
 from collections.abc import Iterator
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -21,6 +23,32 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.tasks._utils import config as task_config_utils
 from gobby.config import DaemonConfig
+from gobby.storage.session_models import Session
+
+
+def _owner_session_row(session_id: str, seq_num: int) -> dict[str, Any]:
+    """Supply the real session-row contract used by the batch owner lookup."""
+    return asdict(
+        Session(
+            id=session_id,
+            external_id=session_id,
+            machine_id="test-machine",
+            source="codex",
+            project_id="test-project",
+            project_name="gobby",
+            seq_num=seq_num,
+            title=None,
+            status="active",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch=None,
+            parent_session_id=None,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    )
+
 
 pytestmark = pytest.mark.unit
 
@@ -2325,22 +2353,22 @@ class TestFormatTaskList:
         unclaimed = self._make_task(seq_num=101, title="unclaimed work")
         mock_db = MagicMock()
         mock_db.fetchall.return_value = [
-            {"id": "sess-owner-uuid", "seq_num": 2572},
+            _owner_session_row("sess-owner-uuid", 2572),
         ]
 
         rendered = format_task_list([claimed, unclaimed], db=mock_db, term_width=120)
         plain_lines = [self._strip_ansi(line) for line in rendered.split("\n")]
 
-        # Session ref appears only on the claimed row, and is a seq_num (#2572)
-        assert "#2572" in plain_lines[0]
-        assert "#2572" not in plain_lines[1]
+        # Canonical project-qualified ref appears only on the claimed row.
+        assert "gobby#2572" in plain_lines[0]
+        assert "gobby#2572" not in plain_lines[1]
         # Both lines are the same length — the session column is reserved on
         # both rows so #NNNN aligns vertically. rstrip() would collapse the
         # blank padding on the unclaimed row, so we don't rstrip here.
         assert len(plain_lines[0]) == len(plain_lines[1])
 
-    def test_orphaned_session_falls_back_to_uuid_prefix(self) -> None:
-        """If the session row is missing, the owner UUID prefix is shown."""
+    def test_orphaned_session_falls_back_to_full_uuid(self) -> None:
+        """If the session row is missing, the full owner UUID is shown."""
         from gobby.cli.tasks._utils import format_task_list
 
         task = self._make_task(seq_num=7, title="orphan work", owner="orphaned-session-uuid")
@@ -2350,8 +2378,7 @@ class TestFormatTaskList:
         rendered = format_task_list([task], db=mock_db, term_width=120)
         plain = self._strip_ansi(rendered)
 
-        # Fallback is the first 8 chars of the owner UUID
-        assert "orphaned" in plain
+        assert "orphaned-session-uuid" in plain
 
     def test_active_session_claim_owner_map_resolves_session_ref(self) -> None:
         """Active workflow-state claims populate the session column."""
@@ -2360,7 +2387,7 @@ class TestFormatTaskList:
         task = self._make_task(seq_num=8, title="active claim")
         mock_db = MagicMock()
         mock_db.fetchall.return_value = [
-            {"id": "active-session-uuid", "seq_num": 7061},
+            _owner_session_row("active-session-uuid", 7061),
         ]
 
         rendered = format_task_list(
@@ -2372,7 +2399,7 @@ class TestFormatTaskList:
         )
         plain = self._strip_ansi(rendered)
 
-        assert "#7061" in plain
+        assert "gobby#7061" in plain
 
     def test_title_truncates_to_terminal_width(self) -> None:
         from gobby.cli.tasks._utils import format_task_list

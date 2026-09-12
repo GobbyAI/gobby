@@ -13,7 +13,7 @@ from gobby.memory.dream.cron import (
     MEMORY_DREAM_CRON_JOB_NAME,
     register_memory_dream_cron,
 )
-from gobby.memory.dream.service import DreamRunOptions
+from gobby.memory.dream.options import DreamRunOptions
 from gobby.storage.cron import CronJobStorage
 
 pytestmark = pytest.mark.unit
@@ -220,7 +220,7 @@ def test_register_memory_dream_cron_tolerates_missing_job_during_disable(
     )
 
     assert registered == 0
-    assert cron_storage.updated_jobs == [("job-1", {"enabled": False, "next_run_at": None})]
+    assert cron_storage.updated_jobs == [("job-1", {"enabled": False})]
     assert "already disappeared during disable" in caplog.text
 
 
@@ -278,7 +278,7 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate() -> No
 
     message = await handler(SimpleNamespace())
 
-    assert message == "memory dream: 3 target(s), 4 mutation(s) total"
+    assert message == "memory dream: 3 target(s), 4 mutation(s) total; 0 noops, 0 skipped, 0 errors"
     # Nightly runs stay cooldown-throttled (full_sweep is not forced).
     assert captured["call"].get("full_sweep", False) is False
     # Nightly mutating maintenance is the default: the cron never dry-runs.
@@ -360,7 +360,10 @@ async def test_memory_dream_cron_handler_reports_failed_targets() -> None:
 
     message = await handler(SimpleNamespace())
 
-    assert message == "memory dream: 2 target(s), 4 mutation(s) total, 1 failed"
+    assert (
+        message
+        == "memory dream: 2 target(s), 4 mutation(s) total, 1 failed; 0 noops, 0 skipped, 0 errors"
+    )
 
 
 @pytest.mark.asyncio
@@ -393,7 +396,10 @@ async def test_memory_dream_cron_handler_reports_window_exhaustion_without_warni
     message = await handler(SimpleNamespace())
 
     # A window-exhausted partial is a normal outcome: reported, never warned.
-    assert message == "memory dream: 2 target(s), 5 mutation(s) total, stopped: window_exhausted"
+    assert (
+        message
+        == "memory dream: 2 target(s), 5 mutation(s) total, stopped: window_exhausted; 0 noops, 0 skipped, 0 errors"
+    )
     warnings = [record for record in caplog.records if record.levelname == "WARNING"]
     assert warnings == []
 
@@ -414,5 +420,5 @@ async def test_memory_dream_cron_handler_raises_when_aggregate_failed() -> None:
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
-    with pytest.raises(RuntimeError, match="failed for all targets"):
+    with pytest.raises(RuntimeError, match="0 target.*2 failed; 0 noops, 0 skipped, 0 errors"):
         await handler(SimpleNamespace())

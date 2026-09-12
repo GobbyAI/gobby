@@ -1334,7 +1334,7 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
 ) -> None:
     session = _registered_session(session_manager)
     assert session.seq_num is not None
-    assert session.title == f"(handoff-test#{session.seq_num}): Codex"
+    assert session.title == f"handoff-test#{session.seq_num}: Codex"
 
     update_title_for_claim(
         session_manager,
@@ -1342,7 +1342,7 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
         SimpleNamespace(seq_num=42, title="Implement handoffs"),
     )
     assert _title(session_manager, session.id) == (
-        f"(handoff-test#{session.seq_num}): Task #42 - Implement handoffs"
+        f"handoff-test#{session.seq_num}: Task #42 - Implement handoffs"
     )
 
     session_manager.update_title(session.id, "Sticky", title_source="manual")
@@ -1389,7 +1389,7 @@ def test_clear_successor_task_title_uses_successor_session_ref(
         successor_seq_num=99,
     )
 
-    assert title == (f"(handoff-test#99): Task #{task.seq_num} - Continue claimed work")
+    assert title == (f"handoff-test#99: Task #{task.seq_num} - Continue claimed work")
     assert title_source == "task"
 
 

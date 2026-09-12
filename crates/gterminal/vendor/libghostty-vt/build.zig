@@ -114,20 +114,26 @@ pub fn build(b: *std.Build) !void {
     }
 
     // libghostty-vt
-    const libghostty_vt_shared = shared: {
-        if (config.target.result.cpu.arch.isWasm()) {
-            break :shared try buildpkg.GhosttyLibVt.initWasm(
+    //
+    // GOBBY DIVERGENCE (crates/gterminal): not upstream. The shared library is
+    // skipped under -Demit-lib-vt-shared=false; see the option definition in
+    // src/build/Config.zig for why gobby-terminal opts out.
+    if (config.emit_lib_vt_shared) {
+        const libghostty_vt_shared = shared: {
+            if (config.target.result.cpu.arch.isWasm()) {
+                break :shared try buildpkg.GhosttyLibVt.initWasm(
+                    b,
+                    &mod,
+                );
+            }
+
+            break :shared try buildpkg.GhosttyLibVt.initShared(
                 b,
                 &mod,
             );
-        }
-
-        break :shared try buildpkg.GhosttyLibVt.initShared(
-            b,
-            &mod,
-        );
-    };
-    libghostty_vt_shared.install(b.getInstallStep());
+        };
+        libghostty_vt_shared.install(b.getInstallStep());
+    }
 
     // libghostty-vt static lib
     const libghostty_vt_static = try buildpkg.GhosttyLibVt.initStatic(

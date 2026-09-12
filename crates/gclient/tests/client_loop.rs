@@ -5662,6 +5662,113 @@ async fn sidebar_model_follows_daemon_events() {
     mock.shutdown().await;
 }
 
+fn sidebar_two_project_rows() -> Value {
+    json!([
+        {
+            "id": "project-1",
+            "name": "gobby",
+            "display_name": "gobby",
+            "checkout": {"machine_id": "m-local", "root_path": "/repo"},
+            "session_count": 1,
+            "last_activity_at": null,
+        },
+        {
+            "id": "project-2",
+            "name": "other",
+            "display_name": "other",
+            "checkout": {"machine_id": "m-local", "root_path": "/other"},
+            "session_count": 1,
+            "last_activity_at": null,
+        },
+    ])
+}
+
+/// A session event names the project whose session changed, and only that
+/// project's sessions and runs are refetched. An event that names none —
+/// a deleted session leaves no row to read it from — still sweeps every
+/// tracked project, which is what every session event used to cost.
+#[tokio::test]
+async fn a_named_session_event_refetches_only_its_project() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_two_project_rows());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let gets = |path: &str| {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target.starts_with(path))
+            .count()
+    };
+    let sessions_of = |project: &str| format!("/api/sessions?project_id={project}");
+    let runs_of = |project: &str| format!("/api/agents/runs?project_id={project}");
+    assert_eq!(
+        (gets(&sessions_of("project-1")), gets(&runs_of("project-1"))),
+        (1, 1),
+        "reconcile fetched the first project's rows once"
+    );
+    assert_eq!(
+        (gets(&sessions_of("project-2")), gets(&runs_of("project-2"))),
+        (1, 1),
+        "reconcile fetched the second project's rows once"
+    );
+
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({"type": "session_event", "event": "session_updated", "project_id": "project-2", "session_id": "session-b"}),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain the named session event");
+    assert_eq!(
+        (gets(&sessions_of("project-1")), gets(&runs_of("project-1"))),
+        (1, 1),
+        "the project the event did not name was left alone"
+    );
+    assert_eq!(
+        (gets(&sessions_of("project-2")), gets(&runs_of("project-2"))),
+        (2, 2),
+        "the named project was refetched"
+    );
+
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({"type": "session_event", "event": "session_deleted", "session_id": "session-b"}),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain the unnamed session event");
+    assert_eq!(
+        (gets(&sessions_of("project-1")), gets(&runs_of("project-1"))),
+        (2, 2),
+        "an event naming no project swept the first project too"
+    );
+    assert_eq!(
+        (gets(&sessions_of("project-2")), gets(&runs_of("project-2"))),
+        (3, 3),
+        "and the second"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
 /// The git refresh is a job: nothing starts before the interval, a run
 /// that fails reports its error and is not retried before the next
 /// interval, and a run that succeeds changes the sidebar only when applied.

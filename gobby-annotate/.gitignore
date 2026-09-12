@@ -1,0 +1,10 @@
+node_modules/
+!package-lock.json
+test-results/
+playwright-report/
+dist/
+*.tgz
+.DS_Store
+safari/build/
+*.xcuserstate
+xcuserdata/

@@ -175,7 +175,8 @@ cases, and share the same per-client rate limit.
 | `GET` | `/api/sessions` | List sessions with query filters and resumability metadata. |
 | `POST` | `/api/sessions/register` | Register CLI/session metadata. |
 | `POST` | `/api/sessions/web-chat` | Create a durable web-chat session row. |
-| `POST` | `/api/sessions/find_current` | Find a session by `external_id`, `machine_id`, `source`, and project. |
+| `POST` | `/api/sessions/find_current` | Find a session by external identity, source, and project. |
+| `POST` | `/api/sessions/find_by_terminal_context` | Resolve a session from terminal context. |
 | `POST` | `/api/sessions/update_status` | Update a session status. |
 | `POST` | `/api/sessions/update_summary` | Update a session summary path. |
 | `GET` | `/api/sessions/usage` | Return session usage breakdowns. |
@@ -184,7 +185,7 @@ cases, and share the same per-client rate limit.
 | `POST` | `/api/sessions/{session_id}/expire` | Expire a session. |
 | `POST` | `/api/sessions/{session_id}/rename` | Rename a session. |
 | `POST` | `/api/sessions/{session_id}/generate-summary` | Generate a session summary. |
-| `GET` | `/api/sessions/{session_id}/messages` | Read persisted session messages. |
+| `GET` | `/api/sessions/{session_id}/messages` | Read rendered transcript windows. |
 | `GET` | `/api/sessions/{session_id}/transcript/status` | Inspect transcript availability. |
 | `GET` | `/api/sessions/{session_id}/transcript` | Read transcript content. |
 | `POST` | `/api/sessions/{session_id}/restore-transcript` | Restore an archived transcript. |
@@ -195,19 +196,30 @@ cases, and share the same per-client rate limit.
 | `POST` | `/api/sessions/{session_id}/variables/set` | Set a live session variable. |
 | `POST` | `/api/sessions/{session_id}/variables/get` | Get a live session variable. |
 
+These are operator/client APIs. Agents use the corresponding MCP tools; raw
+status, summary, and project moves are not handoff or task-ownership repair.
+The list endpoint uses paired `cursor_updated_at`/`cursor_id` values from
+`next_cursor`. With `include_resumability=true`, cursor pagination is disabled.
+
+Additional session APIs expose `GET /{session_id}/changes` and `/changes/diff`
+under this prefix. ACP clients can `POST /{session_id}/acp/close` or `/acp/delete`;
+these affect provider conversation lifecycle. Session-variable routes are covered
+by the variables capability.
+
 ### `POST /api/sessions/register`
 
-Required body field: `external_id`.
+Required body field: `external_id`. Resolve the project with `project_id` or
+`cwd`. Machine ownership is assigned by the daemon; a caller-supplied
+`machine_id` is not part of this request model. The accepted `status` field is
+not forwarded by registration; use the lifecycle interface for status changes.
 
 ```json
 {
   "external_id": "session-abc123",
-  "machine_id": "machine-xyz",
   "transcript_path": "/path/to/transcript.jsonl",
   "title": "Session Title",
   "source": "Claude Code",
   "parent_session_id": "uuid-of-parent",
-  "status": "active",
   "project_id": "project-uuid",
   "project_path": "/path/to/project",
   "git_branch": "main",
@@ -229,13 +241,12 @@ Response:
 
 ### `POST /api/sessions/find_current`
 
-Required body fields: `external_id`, `machine_id`, `source`, and either
+Required body fields: `external_id`, `source`, and either
 `project_id` or `cwd`.
 
 ```json
 {
   "external_id": "session-abc123",
-  "machine_id": "machine-xyz",
   "source": "Claude Code",
   "cwd": "/current/working/dir"
 }
@@ -374,6 +385,10 @@ and still requires `end_agent_run`.
 
 ## Tasks And Stages
 
+These routes support operator/client interfaces. Agents use the `gobby-tasks`
+and `gobby-tasks-ops` MCP lifecycle tools so session attribution and workflow
+gates remain in the agent call path; HTTP claim/release is not an agent workaround.
+
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/tasks` | List tasks. |
@@ -396,7 +411,11 @@ and still requires `end_agent_run`.
 | `GET` | `/api/tasks/{task_id}/stages` | Read a task stage manifest. |
 | `PATCH` | `/api/tasks/{task_id}/stages/{stage_name}` | Apply a stage transition or stage manifest mutation. |
 | `GET` | `/api/stages/registry` | List stage registry entries. |
+| `PUT` | `/api/stages/registry/{name}` | Update stage registry metadata. |
+| `POST` | `/api/stages/registry/{name}/restore` | Restore a bundled stage definition. |
+| `DELETE` | `/api/stages/registry/{name}` | Delete an unused stage definition. |
 | `GET` | `/api/task-types/{task_type}/default-stages` | Read default stages for a task type. |
+| `PUT` | `/api/task-types/{task_type}/default-stages` | Replace default stages for a task type. |
 
 `PATCH /api/tasks/{task_id}` accepts metadata fields such as `title`,
 `description`, `priority`, `task_type`, `labels`, `parent_task_id`, `category`,
@@ -428,7 +447,7 @@ exist.
 | `POST` | `/api/agents/spawn/batch` | Spawn multiple agents. |
 | `POST` | `/api/agents/spawn/prompt-preview` | Preview a spawn prompt. |
 | `GET` | `/api/agents/launch-defaults` | Read agent launch defaults. |
-| `PUT` | `/api/agents/launch-defaults` | Save agent launch defaults. |
+| `POST` | `/api/agents/cleanup` | Reconcile stale runs using timeout criteria. |
 | `POST` | `/api/build` | Start lifecycle automation. |
 | `POST` | `/api/build/stop` | Stop lifecycle automation. |
 | `POST` | `/api/build/resume` | Resume lifecycle automation. |
@@ -438,11 +457,17 @@ exist.
 | `GET` | `/api/build/dispatch/explain` | Explain dispatcher eligibility without mutation. |
 | `GET` | `/api/build/history` | List recent build run and event history. |
 
-`POST /api/build` accepts `input_ref`, `quick`, `skip_stages`, `stage`,
+Agent HTTP routes are operator/client interfaces. Spawn requires `task_id` and
+uses `agent_name`; MCP spawn requires `prompt` and uses `agent`. HTTP batches
+contain individual spawn requests. `GET /api/agents/launch-defaults` is read-only;
+there is no corresponding PUT route. Use configuration management for changes.
+
+`POST /api/build` accepts `input_ref`, `profile`, `project_id`, `coordinator`,
+`dry_run`, `unattended`, delivery fields, `quick`, `skip_stages`, `stage`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
 `max_retries`, the planning-seed fields, and build isolation fields. `isolation`
 accepts `none`, `worktree`, or `clone`; `workspace_backend` (`worktree` or
-`clone`) and `clone` remain backward-compatible aliases. Contradictory isolation
+`clone`) and `clone` are supported aliases. Contradictory isolation
 inputs return `400` instead of silently choosing one value.
 
 The planning-seed fields are `planning_seed_state` (`drafted`, `needs_review`,
@@ -452,17 +477,45 @@ rounds, `>= 0`), and `plan_enhancement_rounds` (target constructive
 in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 `0` overrides the build profile default.
 
+Build control requests accept `project_id`; stop/resume omit `input_ref` for
+project-wide control. A task stop also cancels agents and resets stoppable work;
+it is broader than project tick pause. Clean/restart require a target and
+`yes=true` unless previewing with `dry_run=true`. Clean accepts
+`delete_dirty_worktrees`; restart accepts `no_resume`. Control previews may
+record history. Use the current request model for restart-specific overrides.
+
+Build profile operator/client routes are:
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/profiles` | List scoped profiles. |
+| `POST` | `/api/profiles` | Create a profile. |
+| `GET` | `/api/profiles/{name}` | Show a profile in the selected source/project scope. |
+| `PUT` | `/api/profiles/{name}` | Update mutable profile fields. |
+| `POST` | `/api/profiles/{name}/restore` | Restore an installed bundled profile. |
+| `DELETE` | `/api/profiles/{name}` | Soft-delete, or purge a project profile. |
+| `POST` | `/api/profiles/{name}/enable` | Enable a profile. |
+| `POST` | `/api/profiles/{name}/disable` | Disable a profile. |
+
 ## Memory, Skills, Workflows, And Rules
 
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/memories` | List memories. |
-| `POST` | `/api/memories` | Create a memory. |
+| `POST` | `/api/memories` | Create with required content and rationale. |
 | `GET` | `/api/memories/search` | Search memories. |
 | `GET` | `/api/memories/stats` | Memory statistics. |
 | `GET` | `/api/memories/{memory_id}` | Get a memory. |
 | `PUT` | `/api/memories/{memory_id}` | Update a memory. |
 | `DELETE` | `/api/memories/{memory_id}` | Delete a memory. |
+| `POST` | `/api/memories/{memory_id}/restore` | Restore a soft-hidden memory. |
+| `POST` | `/api/memories/{memory_id}/promote` | Expose an owned memory globally. |
+| `POST` | `/api/memories/{memory_id}/demote` | Restrict visibility to its owner project. |
+| `POST` | `/api/memories/{memory_id}/move` | Transfer ownership to another project. |
+| `GET` | `/api/memories/graph/counts` | Count graph entities and edges. |
+| `POST` | `/memory/dream` | Admit or coalesce an asynchronous dream run. |
+| `GET` | `/memory/dream/{run_id}` | Read checkpoint and outcome. |
+| `POST` | `/memory/dream/{run_id}/revert` | Revert a run from snapshots. |
 | `GET` | `/api/memories/graph` | Memory graph overview. |
 | `GET` | `/api/memories/graph/entities` | Knowledge-graph entities. |
 | `GET` | `/api/memories/graph/entities/{entity_key}/neighbors` | Entity neighbors. |
@@ -485,11 +538,14 @@ in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 | `POST` | `/api/skills/restore-defaults` | Restore default skills. |
 | `GET` | `/api/skills/{skill_id}` | Get a skill. |
 | `PUT` | `/api/skills/{skill_id}` | Update a skill. |
-| `DELETE` | `/api/skills/{skill_id}` | Delete a skill. |
-| `GET` | `/api/skills/{skill_id}/export` | Export a skill. |
+| `DELETE` | `/api/skills/{skill_id}` | Soft-delete; a repeated delete of a deleted row permanently purges it. |
+| `GET` | `/api/skills/{skill_id}/export` | Export SKILL.md only, without attached files. |
 | `POST` | `/api/skills/{skill_id}/move-to-project` | Move a skill to project scope. |
 | `POST` | `/api/skills/{skill_id}/move-to-installed` | Move a project skill to installed scope. |
-| `POST` | `/api/skills/{skill_id}/restore` | Restore a deleted skill. |
+| `POST` | `/api/skills/{skill_id}/restore` | Restore a soft-deleted skill. |
+| `GET` | `/api/skills/{skill_id}/files` | List attached-file metadata; optional `path_prefix`. |
+| `GET` | `/api/skills/{skill_id}/files/{file_path}` | Read an attached file; the path can contain `/`. |
+| `PUT` | `/api/skills/{skill_id}/files/{file_path}` | Update an existing file with JSON `content`. |
 | `GET` | `/api/pipelines/definitions` | List pipeline definitions. |
 | `POST` | `/api/pipelines/definitions` | Create a pipeline definition. |
 | `POST` | `/api/pipelines/definitions/import` | Import a pipeline definition. |
@@ -520,6 +576,17 @@ in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 | `PUT` | `/api/rules/{name}` | Update a rule. |
 | `DELETE` | `/api/rules/{name}` | Delete a rule. |
 | `PUT` | `/api/rules/{name}/toggle` | Toggle one rule. |
+
+Skill HTTP management does not record instruction loads. List uses `limit=50`
+and `offset=0`; search uses `q` and `limit=20`. Local/ZIP imports require
+`project_id` and remain inside its registered local checkout (escape: `403`).
+Import responses contain per-item `errors`; hub search includes `hub_errors`.
+Create returns `201`, with metadata errors `422` and name conflicts `409`;
+missing skills/files generally return `404`. Hub download failures return `502`.
+Restore-defaults invokes bundled sync and preserves genuine custom sources.
+Stats category/source breakdowns inspect at most 1000 rows; do not treat those
+breakdowns as an exhaustive inventory. See the
+[skills lifecycle guide](skills.md#lifecycle-and-http-management).
 
 ## Source Control, Files, Projects, And Config
 
@@ -587,10 +654,12 @@ in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 | `GET` | `/api/code-index/graph/file/{file_path:path}` | `gcode graph file` shim. |
 | `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | `gcode graph neighbors` shim. |
 | `GET` | `/api/code-index/graph/blast-radius` | `gcode graph blast-radius` shim. |
+| `GET` | `/api/code-index/graph/path` | Shortest CALLS path; `project_id`, `symbol_a`, `symbol_b`, `max_depth` (default 6). |
 | `GET` | `/api/code-index/graph/search` | Daemon PostgreSQL symbol autocomplete. |
 | `POST` | `/api/code-index/graph/clear` | `gcode graph clear --project-id` shim. |
 | `POST` | `/api/code-index/graph/rebuild` | `gcode graph rebuild --project` shim. |
 | `POST` | `/api/code-index/invalidate` | Invalidate code index data. |
+| `POST` | `/api/code-index/prune` | Operator-only global maintenance; optional JSON `force`, `retention_days`. |
 | `GET` | `/api/metrics/current` | Current metrics snapshot. |
 | `GET` | `/api/metrics/snapshots` | Historical metric snapshots. |
 | `GET` | `/api/pipelines/executions` | List pipeline executions. |

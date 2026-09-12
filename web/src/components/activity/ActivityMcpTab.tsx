@@ -47,6 +47,7 @@ import {
   type McpSelection,
   type McpTypeFilter,
 } from "./mcp/mcpShared";
+import { TickerText } from "../ui/TickerText";
 
 export interface ActivityMcpTabProps {
   servers: McpServer[];
@@ -647,7 +648,9 @@ export function ActivityMcpTab({
                       kind={healthToStatusKind(health)}
                       title={`Health: ${health}`}
                     />
-                    <span className="activity-row-title">{server.name}</span>
+                    <TickerText className="activity-row-title">
+                      {server.name}
+                    </TickerText>
                     <Chip tone={serverType === "internal" ? "accent" : "info"}>
                       {serverType === "internal" ? "Internal" : "External"}
                     </Chip>
@@ -708,9 +711,9 @@ export function ActivityMcpTab({
                             onClick={() => selectRow(toolId)}
                             onKeyDown={(event) => handleKeyDown(toolId, event)}
                           >
-                            <span className="activity-row-title flex-[0_1_auto]">
+                            <TickerText className="activity-row-title flex-[0_1_auto]">
                               {tool.name}
-                            </span>
+                            </TickerText>
                             {tool.brief && (
                               <span
                                 className="activity-row-meta min-w-0 flex-[1_1_auto] truncate"

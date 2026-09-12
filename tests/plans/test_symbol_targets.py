@@ -197,6 +197,21 @@ def test_parse_exact_python_rust_bare_and_wildcard_targets(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
+    "reference",
+    [
+        "safari/iOS (Extension)/Info.plist",
+        "safari/GobbyAnnotate (macOS).xcscheme",
+        "src/My Project/example.py::Worker.run",
+    ],
+)
+def test_parse_paths_with_spaces(tmp_path: Path, reference: str) -> None:
+    targets, issues = parse_symbol_targets(_parse(tmp_path, f"- `{reference}`"))
+
+    assert issues == ()
+    assert [target.reference for target in targets] == [reference]
+
+
+@pytest.mark.parametrize(
     ("target", "expected_code"),
     [
         ("- `src/example.py::`", MALFORMED_REFERENCE),
@@ -207,6 +222,8 @@ def test_parse_exact_python_rust_bare_and_wildcard_targets(tmp_path: Path) -> No
         ),
         ("- `123e4567-e89b-42d3-a456-426614174000`", UUID_REFERENCE),
         ("- `../src/example.py::run`", MALFORMED_REFERENCE),
+        ("- `src/bad\tpath.py::run`", MALFORMED_REFERENCE),
+        ("- `src/bad\x00path.py::run`", MALFORMED_REFERENCE),
         ("- `src/example.py::Worker run`", MALFORMED_REFERENCE),
         (
             "- `src/example.py::run — scope-reason: exact scope`",

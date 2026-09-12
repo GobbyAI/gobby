@@ -5,6 +5,7 @@ import { Button } from "../../ui/Button";
 import { Chip } from "../../ui/Chip";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { StageEntry } from "./StagesTabData";
+import { TickerText } from "../../ui/TickerText";
 
 interface StagesListProps {
   stages: StageEntry[];
@@ -73,7 +74,9 @@ export function StagesList({
                     : "Automated stage"
                 }
               />
-              <span className="activity-row-title">{stage.display_label}</span>
+              <TickerText className="activity-row-title">
+                {stage.display_label}
+              </TickerText>
               <Chip>{stage.category}</Chip>
               <Chip>{stage.name}</Chip>
             </Button>

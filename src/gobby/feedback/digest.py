@@ -95,7 +95,8 @@ def render_digest(
 
     lines.append("## Actions")
     for filed in actions.get("filed", []):
-        lines.append(f"- Filed #{filed.get('task_id', '?')}: {filed.get('title', '')}")
+        task_ref = filed.get("task_ref") or f"#{filed.get('task_id', '?')}"
+        lines.append(f"- Filed {task_ref}: {filed.get('title', '')}")
     for suppressed in actions.get("suppressed", []):
         matched = suppressed.get("matched_task_ref")
         matched_suffix = f" ({matched})" if matched else ""

@@ -477,7 +477,7 @@ class TestToolHandlerEdgeCases:
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
             ) as record_files,
-            patch("gobby.hooks.event_handlers._tool.paths_committed_after") as commit_check,
+            patch("gobby.hooks.event_handlers._tool.run_coro_blocking") as commit_check,
         ):
             response = handlers.handle_after_tool(event)
 

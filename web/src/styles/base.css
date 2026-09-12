@@ -102,39 +102,65 @@ body {
   }
 }
 
-/* TickerText (ui/TickerText.tsx): overflowing single-line text slides to
-   reveal its tail and back instead of truncating. The component measures the
-   overflow into --ticker-distance / --ticker-duration; the trailing 20px
-   mask matches TICKER_MASK_PX there. */
-.ticker {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
+/* TickerText (ui/TickerText.tsx): overflowing single-line titles slide to
+   reveal their tail. One registered property carries the whole panel's clock —
+   a single animation on the panel root drives --ticker-progress, every ticker
+   inherits it, and each clamps at its own --ticker-overflow. So they start
+   together, each stops when it has finished, and the loop restarts only once
+   the longest is done. lib/tickerClock.ts publishes --ticker-span (the widest
+   overflow) and --ticker-cycle; the 20px mask matches TICKER_MASK_PX there.
+   Base box styles live on the component; only the clock is here. */
+@property --ticker-progress {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
 }
 
-.ticker__inner {
-  display: inline-block;
-}
-
-.ticker--overflow {
-  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
-}
-
-.ticker--overflow .ticker__inner {
-  animation: ticker-slide var(--ticker-duration, 8s) ease-in-out infinite
-    alternate;
-}
-
-@keyframes ticker-slide {
+@keyframes ticker-clock {
   0%,
-  20% {
-    transform: translateX(0);
+  10% {
+    --ticker-progress: 0px;
   }
 
-  80%,
+  50%,
+  60% {
+    --ticker-progress: var(--ticker-span, 0px);
+  }
+
   100% {
-    transform: translateX(var(--ticker-distance, 0px));
+    --ticker-progress: 0px;
+  }
+}
+
+/* Off and reduced-motion share one fallback: no promotion, no mask, so the
+   component's own text-overflow renders a plain ellipsis. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-ticker-active]:not([data-ticker="off"]) .activity-panel {
+    animation: ticker-clock var(--ticker-cycle, 10s) linear infinite;
+    /* Longhand, and in this block: the shorthand resets the direction, and it
+       out-specifies any rule keyed on [data-ticker] alone. */
+    animation-direction: var(--ticker-direction, normal);
+  }
+
+  /* Rightward reveal is the same path played backwards — it opens on the tail
+     and travels back to the head. The fade stays on the right for both: the
+     inner span only ever sits between 0 and -overflow, so the right edge is
+     the clipped one, and the overshoot clears the tail at the far stop. */
+  html[data-ticker="right"] {
+    --ticker-direction: reverse;
+  }
+
+  html[data-ticker-active]:not([data-ticker="off"]) .ticker--overflow {
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  }
+
+  html[data-ticker-active]:not([data-ticker="off"])
+    .ticker--overflow
+    .ticker__inner {
+    display: inline-block;
+    transform: translateX(
+      calc(-1 * min(var(--ticker-overflow, 0px), var(--ticker-progress)))
+    );
   }
 }
 

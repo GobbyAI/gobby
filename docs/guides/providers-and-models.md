@@ -153,23 +153,16 @@ that 6.3 collector cannot produce a fresh snapshot.
 
 ### Speed Is Model Selection, Not A Mode
 
-Gobby has no speed axis. Of the six supported CLIs only Droid offers an
-invocation-time speed choice, and there it is an ordinary model id:
+Gobby spawn and chat request schemas carry model and reasoning fields, with no
+separate speed parameter. Select an accelerated model only when its exact ID is
+present in the current provider catalog. Droid's `-fast` entries are ordinary
+model IDs: collectors preserve them and launch code passes them through model
+selection. Do not infer acceleration from a suffix or copy a historical list of
+model IDs into a launch request.
 
-| CLI | Version checked | Speed control at invocation |
-| --- | --- | --- |
-| droid | 0.190.0 | `-m/--model <id>-fast` — fast is a **model id**, not a mode |
-| codex | 0.149.1 | None. `service_tier` is a session/app-server parameter, absent from the `config.toml` key set, so `-c` cannot carry it to a spawned CLI |
-| claude | 2.1.258 | None. `/fast` is a session slash command; `--effort` is reasoning |
-| grok | 1.0.13 | None |
-| qwen | 0.22.0 | None |
-| agy | 1.1.24 | None |
-
-Droid's `-fast` ids — `claude-opus-5-fast`, `gpt-5.5-fast`,
-`gpt-5.3-codex-fast`, `glm-5.2-fast` — are therefore ordinary selectable models.
-They appear in `/api/providers/models` and reach `--model` like any other id.
-Collectors never fold a `-fast` id into a base model and never infer accelerated
-behavior from a model-name suffix.
+Provider CLI releases can change their own flags independently. The Gobby
+request schema and current provider capability rows determine what a managed
+launch supports; a CLI-only option is not automatically a Gobby option.
 
 No request surface takes a speed parameter: spawn, WebSocket chat,
 chat-completions, and tool-chat carry model and reasoning effort only.
@@ -191,7 +184,9 @@ The web chat provider controls use:
 - `/api/providers/models` for grouped model choices.
 - Chat session state for selected provider, model, and reasoning effort.
 
-Configured `ai.generation.endpoints` appear as `endpoint:<name>` groups. Web-chat
+Configured `ai.generation.endpoints` expose protocol-specific model entries.
+Local discovery uses `endpoint:<name>` groups; configured Responses endpoints
+are also presented under Codex with explicit endpoint-qualified model values. Web-chat
 routability is protocol-specific and always requires the Codex CLI:
 
 | Protocol | Transport | Picker |
@@ -235,9 +230,11 @@ Provider HTTP routes:
 ```text
 GET /api/providers
 GET /api/providers/models
+GET /api/providers/{provider}/usage
 ```
 
-These routes are the source for Web UI provider controls. They should return
+The usage route reports normalized capacity from the shared capacity service;
+see [observability](observability.md). These routes are the source for Web UI provider controls. They should return
 explicit provider grouping and must not rely on model-name inference.
 
 ## MCP
@@ -275,4 +272,4 @@ resolution.
 - [llm-features.md](llm-features.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-12_

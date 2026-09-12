@@ -740,6 +740,37 @@ describe("mobile chrome CSS", () => {
     );
   });
 
+  it("collapses labelled chat-column buttons to the shared 28px glyph square", () => {
+    const mainColumnSource = readSource(
+      "src/components/chat/ChatMainColumn.tsx",
+    );
+
+    // Derive the markers from the components that actually render them, so
+    // renaming or adding one fails here instead of leaving a dead selector:
+    // the rule keys on the label class, not on a list kept in this test.
+    const markers = new Set<string>();
+    for (const owner of ["CommandBar.tsx", "AgentStatusBar.tsx"]) {
+      const source = readSource(`src/components/chat/${owner}`);
+      for (const [, marker] of source.matchAll(/([a-z][a-z-]*)__label\b/g)) {
+        markers.add(marker);
+      }
+    }
+    expect(markers).toEqual(
+      new Set(["command-bar-btn", "chat-new-chat-btn", "chat-action-btn"]),
+    );
+
+    // A button whose label just collapsed is a glyph button, so it takes the
+    // same square the header cog and the activity panel's own chrome use —
+    // width and horizontal padding go with the label, at the same breakpoint.
+    for (const marker of markers) {
+      for (const property of ["w-7", "gap-0", "px-0"]) {
+        expect(mainColumnSource).toContain(
+          `@max-[479px]/chat-column:[&_button:has(>.${marker}\\_\\_label)]:${property}`,
+        );
+      }
+    }
+  });
+
   it("keeps the minimum-width chat input toolbar controls to one row", () => {
     const chatInputSource = readSource("src/components/chat/ChatInput.tsx");
     const toolbarSource = readSource(

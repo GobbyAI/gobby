@@ -75,12 +75,16 @@ Each candidate includes `rationale` (the writer's own claim about why the memory
 
 ## Output
 
-Update this scope's previous narrative while examining this cohort's full evidence:
+Update this scope's shared daily synthesis while examining this cohort's full evidence.
+The previous narrative includes earlier cohorts and runs on the same local date:
 
 {{ previous_summary | default('(first cohort)') }}
 
 Include a brief `summary` of at most 1,000 characters describing cumulative themes and
-decision reasoning across cohorts. Preserve relevant earlier themes. Describe proposed
+decision reasoning across cohorts and runs. Integrate earlier themes and uncertainties
+into one synthesis; do not append separate batch reports. The daemon writes every
+contribution to the same `.gobby/reports/dream/gobby-dream-YYYYMMDD.md` and rebuilds
+its combined decision evidence and actual outcomes from durable records. Describe proposed
 decisions, not claims of successful mutations or counts: the daemon records actual
 mutations, no-ops, skips, and errors separately after applying the actions.
 

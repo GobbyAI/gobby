@@ -1,0 +1,22 @@
+{
+  "name": "@gobby/annotate-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@gobby/annotate-core": "0.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@radix-ui/react-slot": "^1.2.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.0.0",
+    "lucide-react": "^0.468.0",
+    "@fontsource-variable/geist": "^5.2.0",
+    "@fontsource-variable/jetbrains-mono": "^5.2.0"
+  }
+}

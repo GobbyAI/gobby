@@ -66,6 +66,33 @@ def _bundled_agent_body(name: str, repo_root: Path) -> AgentDefinitionBody:
     return AgentDefinitionBody.model_validate(data)
 
 
+@pytest.mark.parametrize("completed", [False, True])
+def test_spawn_instruction_requirements_use_reference_ledger(completed: bool) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._step_state import (
+        _transition_condition_met,
+        initial_step_state_for_spawn,
+    )
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
+
+    reference = "gobby:references/tasks/closing.md"
+    snapshot = AgentStepWorkflowBody.model_validate(
+        {
+            "steps": [{"name": "load_skills"}],
+            "variables": {
+                "additional_skills": [reference],
+                "loaded_skills": ["gobby", reference],
+                "loaded_skill_references": [reference] if completed else [],
+            },
+        }
+    )
+    step, variables = initial_step_state_for_spawn(
+        snapshot, agent_name="backend-developer", task_owned_by_child=False
+    )
+    assert step == "load_skills"
+    assert variables["additional_skills_loaded"] is completed
+    assert _transition_condition_met(f"skill_loaded('{reference}')", variables) is completed
+
+
 def test_initial_transition_condition_value_error_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

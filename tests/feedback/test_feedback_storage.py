@@ -277,7 +277,8 @@ async def test_submit_large_markdown_review_through_api(
     )
     assert result["success"] is True
     assert result["report_path"] == str(report)
-    assert report.read_text() == summary
+    assert report.read_text().startswith(summary)
+    assert report.read_text().count("<!-- gobby-feedback-outcomes -->") == 1
     saved = store.get_run(run_id)
     assert saved is not None
     assert saved.findings == findings
@@ -296,7 +297,8 @@ async def test_submit_large_markdown_review_through_api(
     )
     assert rejected["success"] is False
     assert "assigned reviewer" in rejected["error"]
-    assert report.read_text() == summary
+    assert report.read_text().startswith(summary)
+    assert report.read_text().count("<!-- gobby-feedback-outcomes -->") == 1
 
     monkeypatch.setattr(tools_module, "get_current_session_id", lambda: session_id)
     invalid = await registry.call(
@@ -309,5 +311,34 @@ async def test_submit_large_markdown_review_through_api(
     )
     assert invalid["success"] is False
     assert "exactly once" in invalid["error"]
-    assert report.read_text() == summary
+    assert report.read_text().startswith(summary)
+    assert report.read_text().count("<!-- gobby-feedback-outcomes -->") == 1
     assert len(store.list_unreviewed(200)) == 1
+
+    store.mark_reviewed([observation_id], run_id)
+    store.finalize_run(
+        run_id,
+        status="completed",
+        findings=findings,
+        actions={
+            "report_path": str(report),
+            "filed": [
+                {"task_id": "task-one", "task_ref": "#111", "title": "Prior verified concern"}
+            ],
+        },
+        digest_md=summary,
+    )
+    second_id = _insert_feedback(temp_db, session_id)
+    second_batch = store.freeze_batch(200, dry_run=False)
+    assert second_batch is not None
+    second_run_id, _ = second_batch
+    store.assign_reviewer(second_run_id, agent.id, str(report))
+    second_findings = {"clusters": [{**findings["clusters"][0], "observation_ids": [second_id]}]}
+    cumulative_summary = "# Daily synthesis\nBoth concerns were verified."
+    store.submit_review(second_run_id, session_id, second_findings, cumulative_summary)
+    shared = report.read_text()
+    assert shared.startswith(cumulative_summary)
+    assert "Rows considered: 2" in shared
+    assert "Filed #111: Prior verified concern" in shared
+    store.submit_review(second_run_id, session_id, second_findings, cumulative_summary)
+    assert report.read_text() == shared

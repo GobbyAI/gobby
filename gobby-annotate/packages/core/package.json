@@ -1,0 +1,15 @@
+{
+  "name": "@gobby/annotate-core",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "exports": "./src/index.ts",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=neutral --outfile=dist/index.js"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "zod": "^3.25.0"
+  }
+}

@@ -5,6 +5,7 @@ import { Button } from "../../ui/Button";
 import { Chip } from "../../ui/Chip";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { PipelineDefinition } from "./PipelinesDefsActions";
+import { TickerText } from "../../ui/TickerText";
 
 interface PipelinesDefsListProps {
   definitions: PipelineDefinition[];
@@ -86,7 +87,9 @@ export function PipelinesDefsList({
                   definition.enabled ? "Enabled pipeline" : "Disabled pipeline"
                 }
               />
-              <span className="activity-row-title">{definition.name}</span>
+              <TickerText className="activity-row-title">
+                {definition.name}
+              </TickerText>
               <Chip tone="accent" uppercase>
                 PIPELINE
               </Chip>

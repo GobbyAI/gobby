@@ -8,11 +8,13 @@ files.
 ## Quick Start
 
 ```bash
-# Store a user-authored memory. Without --project this creates an unscoped memory.
-gobby memory create "Use focused pytest files for task validation" --type preference
+# Store a user-authored memory. Without --project this uses the personal project.
+gobby memory create "Use focused pytest files for task validation" --type preference \
+  --rationale "The user wants future sessions to keep validation proportional to the change."
 
 # Store a memory for a specific Gobby project.
-gobby memory create "This project uses uv for Python commands" --type fact --project gobby
+gobby memory create "This project uses uv for Python commands" --type fact --project gobby \
+  --rationale "An explicitly requested convention for future sessions in this project."
 
 # Recall memories with semantic or FTS-backed search.
 gobby memory recall "validation commands" --limit 5
@@ -24,11 +26,11 @@ gobby memory show MEMORY_ID_OR_PREFIX
 
 ```python
 # MCP tools are project-scoped by the current session context.
-call_tool(server_name="gobby-memory", tool_name="create_memory", arguments={
+call_tool(server_name="gobby-memory", tool_name="create_memory", session_id="CURRENT_SESSION", arguments={
     "content": "User prefers task-linked commits.",
+    "rationale": "The user explicitly requested this convention for future project work.",
     "memory_type": "preference",
-    "tags": ["workflow", "commits"],
-    "session_id": "#4767"
+    "tags": ["workflow", "commits"]
 })
 
 call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
@@ -52,7 +54,7 @@ derive from code or git history.
 
 | Store as memory | Use another system |
 | --- | --- |
-| User preferences and workflow conventions | Bugs, failures, and work to do: create a Gobby task |
+| User preferences and workflow conventions | Bugs and failures: fix under the current task and repository found-work ladder |
 | Design rationale that is not obvious in code | Current implementation state: read the code |
 | External references that are hard to rediscover | Recent changes: use git log or linked commits |
 | Stable cross-session facts about a project | One-turn instructions or temporary task notes |
@@ -70,7 +72,7 @@ facts, or facts that are already obvious from source files.
 
 ### Memory Types
 
-The storage model accepts these common types:
+The public durable memory types are:
 
 | Type | Use for |
 | --- | --- |
@@ -79,9 +81,10 @@ The storage model accepts these common types:
 | `pattern` | Repeated conventions or design patterns |
 | `context` | Broader project context that should be injected as prose |
 
-The MCP and CLI accept a string `memory_type`, so additional values may be
-stored; search results carry the type so an agent can weigh a preference
-differently from a fact.
+MCP validates these values even where the exposed schema says string. The
+special `implementation_note` create path skips ephemeral notes and normalizes
+durable ones to context; it is not an additional durable type. Search results
+carry the type so an agent can distinguish preferences from facts.
 
 ### Scope
 
@@ -89,10 +92,17 @@ Scope differs by surface:
 
 | Surface | Scope behavior |
 | --- | --- |
-| MCP `gobby-memory` tools | Use the current project context from the MCP proxy. |
+| MCP create/search/list | Use current project context, or the personal project if absent. |
+| MCP maintenance | Scope is tool-specific; pass an explicit project where supported. Reindexing has no project parameter. |
 | HTTP `/api/memories` routes | Accept explicit `project_id` query/body fields where supported. |
 | CLI `gobby memory ...` | Use `--project` when you want project-scoped create, list, recall, show, delete, or stats behavior. |
-| CLI without `--project` | Creates unscoped memories or lists/searches without a project filter, depending on command. |
+| CLI without `--project` | Creates memories owned by the personal project; list/search can omit the project filter. |
+
+Global visibility (`is_global`) is independent of project ownership (`project_id`).
+Use `promote_memory_to_global`, `demote_memory_from_global`, or `move_memory`
+for intentional changes. Seeing a foreign global memory does not grant mutation
+rights; these MCP tools require current-project ownership. CLI and HTTP scope
+are separate contracts, not agent ownership bypasses.
 
 ### Tags
 
@@ -112,7 +122,7 @@ Use tags for stable concepts such as `workflow`, `testing`, `security`,
 ### Create, Recall, List
 
 ```bash
-gobby memory create "CONTENT" [--type TYPE] [--project REF]
+gobby memory create "CONTENT" --rationale "DURABLE VALUE" [--type TYPE] [--project REF]
 gobby memory recall [QUERY] [--project REF] [--limit N] \
   [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
 gobby memory list [--type TYPE] [--project REF] [--limit N] \
@@ -156,8 +166,9 @@ remains the source of truth.
 ### Maintenance
 
 ```bash
-gobby memory dedupe [--dry-run]
-gobby memory fix-null-project [--dry-run]
+gobby memory dedupe [--dry-run] [--yes]
+gobby memory backfill-unscoped-lessons [--project REF]
+gobby memory graph-counts [--project REF] [--json]
 gobby memory reindex-embeddings
 gobby memory reconcile [--dry-run]
 gobby memory rebuild-crossrefs [--project REF]
@@ -168,6 +179,21 @@ gobby memory invalidate [--project REF] [--yes]
 
 Daemon-backed commands require the Gobby daemon because they call HTTP routes
 for vector, graph, and index maintenance.
+
+These are operator surfaces. Agents use the MCP memory tools. `dedupe` groups
+trimmed identical content within each project, keeps the earliest row, and
+hard-deletes later copies after confirmation (or `--yes`). Preview with
+`--dry-run`. `backfill-unscoped-lessons` stamps scope metadata on eligible review
+lessons; it does not transfer project ownership. `invalidate` rebuilds secondary
+indices rather than deleting authoritative hub memories.
+
+Recall telemetry maintenance lives under `gobby memory recall-signals`:
+`backfill-events`, `backfill-labels`, `gate`, `audit-labels`,
+`supersede-legacy-cohort`, `drift`, and `replay-candidate-filter`. Use each
+subcommand's `--help` for required input paths, cohort selectors, and output
+options. Backfills and cohort supersession mutate telemetry. Filter by caller,
+label provenance, and dates when evaluating results; historical automatic recall
+is a different cohort from current explicit agent search.
 
 ## MCP Tools
 
@@ -182,6 +208,12 @@ for the authoritative signature before calling a tool.
 | `get_memory` | Read one memory by ID. |
 | `update_memory` | Update `content`, `tags`, `rationale`, or `memory_type` for one memory. A content change requires a fresh `rationale`; content and rationale edits re-embed the vector. |
 | `delete_memory` | Hard-delete one memory by ID (unrecoverable). Prefer `create_memory(..., supersedes=[id])` when a replacement exists. |
+| `restore_memory` | Restore an owned soft-hidden row and its indices; cannot undo hard deletion. |
+| `promote_memory_to_global` | Expose an owned memory globally without removing its owner. |
+| `demote_memory_from_global` | Restrict visibility to the owning project. |
+| `move_memory` | Transfer ownership to a concrete project. |
+| `recluster_knowledge_graph_entities` | Offline HDBSCAN entity clustering; defaults to caller project. |
+| `densify_knowledge_graph_cooccurrence` | Materialize derived co-occurrence support edges; defaults to caller project. |
 | `get_related_memories` | Return cross-reference neighbors for one memory. |
 | `memory_stats` | Return counts and summary stats. |
 | `search_knowledge_graph` | Search extracted FalkorDB memory entities. |
@@ -193,8 +225,19 @@ for the authoritative signature before calling a tool.
 | `backup_memories` | Back up current live project memories to the machine-local project backup path. |
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
 | `memory_dream_status` | Return status and summary for a memory dream run. |
+| `memory_dream_decisions` | Page proposed and effective actions, outcomes, and historical snapshots by run ID. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
 | `judge_shadow_relevance` | System lifecycle tool for independent turn-end shadow-relevance judging. |
+
+MCP content updates require a fresh rationale. The operator CLI update
+exposes content/tags; HTTP also accepts memory type. Both preserve existing rationale. This is a
+surface distinction, not an agent escape from the MCP capture contract. Content
+is capped at 3,000 characters; rationale at 500; overlong writes are rejected.
+
+`rebuild_crossrefs` and `rebuild_knowledge_graph` accept an explicit project and
+default to at most 500 memories. Omitted project is not automatically the caller
+scope for these tools. `reindex_embeddings` has no MCP project selector. Inspect
+the result counts and per-operation errors before claiming complete repair.
 
 When a memory call exceeds the inline MCP result budget, the proxy returns an
 offload envelope containing a `result_id`. Page the raw result with
@@ -214,7 +257,7 @@ call_tool(server_name="gobby-memory", tool_name="list_memories", arguments={
 
 ```python
 call_tool(server_name="gobby-memory", tool_name="update_memory", arguments={
-    "memory_id": "mm-abc123",
+    "memory_id": "MEMORY_UUID_OR_PREFIX",
     "content": "Use task-linked commits for Gobby work.",
     "rationale": "Closing a leaf requires a linked commit; sessions re-derive this every week.",
     "tags": ["workflow", "commits"]
@@ -226,8 +269,107 @@ call_tool(server_name="gobby-memory", tool_name="memory_dream", arguments={
     "dry_run": True,
     "memory_type": "fact"
 })
-# Returns the run ID immediately; poll memory_dream_status for progress.
+# Returns a run ID immediately. Read status for bounded diagnostics; see Dream Operations.
 ```
+
+## Post-Task Review
+
+After a worked leaf closes, call `review_task_memories` with the task reference,
+a concrete changes summary, and caller identity through outer `session_id`.
+It requires a task closed by that session or one of its spawned descendants in
+the caller project. It searches project/global candidates and records the closure
+review; the caller still evaluates each candidate and updates or deletes stale
+knowledge. Zero candidates is a valid complete review. Most tasks need no new
+memory. Use the returned canonical `source_task_id` if capture is justified.
+
+`pending_reviews_complete` and `pending_reviews` describe outstanding closures.
+The closure queue can retain already-reviewed entries until a later close cleans
+them up; do not repeatedly review just to empty a stored variable. The one-shot
+memory review acknowledgement is separate from the feedback context-epoch latch.
+
+## Review Lessons
+
+The `gobby-review-learning` server exposes `recall_review_context`,
+`recall_review_lessons_for_files`, `recall_review_lessons_by_class`,
+`list_check_keys`, `record_review_lesson`, and `retire_review_lesson`.
+Before final triage, recall findings and proposed fixes and include a Relevant
+memory/lesson column in the finding table. Prefer established project knowledge
+unless current code disproves it. Sweep sibling code for the same pattern before
+declaring the fix complete.
+
+Record only verified reusable outcomes. `confirmed` and `no-fix-policy` require
+a finding title/message and principle/prevention. `stale` and `invalid` are
+no-ops. Prefer `pattern_id` and `root_cause`; optional `query_hints`,
+`lesson_type`, fingerprint, guardrail target, rule identity, severity, path/line,
+symbol, and suggestion describe the diagnostic. `diagnostic_format` can be
+`raw`, `sarif`, `rdjson`, or `review_comment`. CI, static-analysis, and
+test-failure lessons require a verified fix reference in evidence. Include the
+commit, changed files, validation command, review link, or no-fix rationale that
+actually proves the outcome. A guardrail target is metadata and causes no task
+or repository mutation. Retire an injected obsolete pattern only with nonempty
+verification evidence and caller identity.
+
+Plan-domain lessons use closed classes `reviewer-miss` and
+`fixer-induced-defect`. Call `list_check_keys` for the target plan class before
+minting a key; reuse an existing equivalent check. Identity is
+`plan-review:<lesson_type>:<adversary-category>:<check_key>`, with explicit
+`check_key`, `guardrail_target=checklist`, and
+`rule_id=plan-review:<adversary-category>`. Omit a plan-file path.
+
+| Adversary category | Starter check key |
+| --- | --- |
+| `missing-requirement` | `requirement-coverage` |
+| `bad-sequencing` | `dependency-order` |
+| `unhandled-edge` | `edge-case-coverage` |
+| `weak-testability` | `acceptance-observability` |
+| `traceability` | `requirement-traceability` |
+| `over-engineering` | `proportionality` |
+| `gobby-format` | `plan-contract` |
+
+Reviewer-miss proof supplies all `participating_section_ids`, the earlier and
+approval evidence IDs, and missed completed-round count; every participating
+section must remain hash-unchanged. Fixer-induced-defect proof supplies all
+`causal_section_ids`, causal finding, introduced round, and causal/approval
+evidence IDs; every causal section must have changed. Evidence services compare
+immutable manifests. Unknown IDs, empty required sets, or partial proof fail.
+Dual-class lessons need both independent bundles, while one proven class remains
+recordable if the other is unproven. The reviser records after final approval is
+checkpointed; the adversary supplies attestations and never records its own round.
+
+## Dream Operations
+
+`memory_dream` returns a run ID immediately. `dry_run` defaults false; set true
+for a report-only preview of memory actions. Dry runs still record diagnostic
+run state. `full_sweep` broadens candidate selection. With caller project context
+MCP starts a scoped run; without it the coordinator starts all due project scopes,
+each with its own truth digest. Equivalent active work may coalesce; conflicting
+work is rejected. Do not start another run to observe the first.
+
+Use `memory_dream_status` for checkpoints, outcome, and publication summary.
+`memory_dream_decisions` returns proposed versus effective actions and outcomes;
+follow `next_offset` until null for complete review (limit 1–100). Older runs can
+report `historical_rationale_missing` and fall back to snapshots. Do not infer a
+proposal was applied. Inspect snapshots and retention before `memory_dream_revert`.
+Revert reports conflicts separately from success and can defer secondary-store
+reconciliation. Inspect `conflicts` and `secondary_sync_failures`; snapshot errors
+produce `revert_failed`, and forfeited snapshots cannot be restored. A successful
+envelope does not prove every action-owned column was reverted.
+
+There is no dedicated Dream MCP wait tool. Agents must preserve the event-driven
+wait contract: use status for
+bounded diagnostics, do independent work, or yield; do not run an unbounded
+polling loop or invent an automatic wake. Operators can use:
+
+```bash
+gobby memory dream --dry-run [--full-sweep] [--timeout SECONDS]
+gobby memory dream status RUN_ID
+gobby memory dream revert RUN_ID
+```
+
+The CLI observer polls internally. Its timeout or interruption stops only client
+observation; the daemon run continues. Recover unavailable dependencies from the
+durable checkpoint before retrying. Coordinate stop/restart with active sessions
+and honor restart-protected dream cron work.
 
 ## HTTP Routes
 
@@ -238,15 +380,20 @@ with `/api/memories`.
 | Method and route | Purpose |
 | --- | --- |
 | `GET /api/memories` | List memories with `project_id`, `memory_type`, `limit`, and `offset`. |
-| `POST /api/memories` | Create a memory from `content`, `memory_type`, `project_id`, `source_type`, `source_session_id`, and `tags`. |
+| `POST /api/memories` | Create with required `content` and `rationale`; supports type, scope, provenance, tags, and supersession. |
 | `GET /api/memories/search` | Search memories with required query parameter `q`, plus `project_id` and `limit`. |
 | `GET /api/memories/stats` | Return memory counts, optionally scoped by `project_id`. |
 | `POST /memory/dream` | Start an asynchronous memory dream run; returns the run ID immediately (202 admitted, 200 coalesced, 409 conflicting active run). |
 | `GET /memory/dream/{run_id}` | Return dream run status, durable checkpoint, and summary. |
 | `POST /memory/dream/{run_id}/revert` | Revert a dream run from snapshots. |
 | `GET /api/memories/{memory_id}` | Read one memory, optionally scoped by `project_id`. |
-| `PUT /api/memories/{memory_id}` | Update memory `content` and/or `tags`. |
+| `PUT /api/memories/{memory_id}` | Update memory `content`, `tags`, or `memory_type`. |
 | `DELETE /api/memories/{memory_id}` | Delete one memory. |
+| `POST /api/memories/{memory_id}/restore` | Restore a soft-hidden memory. |
+| `POST /api/memories/{memory_id}/promote` | Set global visibility for an owned memory. |
+| `POST /api/memories/{memory_id}/demote` | Restrict an owned memory to its project. |
+| `POST /api/memories/{memory_id}/move` | Move ownership to another project. |
+| `GET /api/memories/graph/counts` | Return actual graph counts. |
 | `GET /api/memories/graph` | Return recent memories and cross-reference edges for graph views. |
 | `GET /api/memories/graph/entities` | Search extracted knowledge-graph entities. |
 | `GET /api/memories/graph/entities/{entity_key}/neighbors` | Return entity neighbors. |
@@ -404,11 +551,16 @@ sequenceDiagram
     RuleEngine->>Memory: judge_shadow_relevance on turn_end
 ```
 
+The installed `bootstrap-default-agent-core-skills` rule requests memory guidance
+with the other core skills in each context epoch. It replaces the old separate
+initial-turn loader. Installed registry inspection on 2026-09-12 found that
+bootstrap rule and all ten rules below enabled globally. Re-check installed rows
+for the current session before inferring active enforcement from this table.
+
 Current bundled memory rules:
 
 | Rule | Event | Behavior |
 | --- | --- | --- |
-| `load-memory-guidance-on-initial-turn` | `turn_start` | Loads the `memory` skill until the first turn-end check passes. |
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until the `memory` skill is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
 | `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
@@ -528,4 +680,4 @@ gobby memory rebuild-graph --wait
 - [MCP Tools](./mcp-tools.md) - Progressive discovery and internal MCP tool usage.
 - [Workflow Rules](./workflow-rules.md) - Semantic lifecycle events and rule effects.
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-09-12_

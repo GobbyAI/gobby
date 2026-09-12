@@ -44,9 +44,12 @@ describe("MemoryTabList", () => {
     );
 
     const row = screen.getByRole("listitem");
-    expect(
-      within(row).getByText(preview, { selector: ".activity-row-title" }),
-    ).toBeInTheDocument();
+    // The row title is a ticker, so the text node sits on its inner span
+    // while the row-typography class stays on the wrapper.
+    const title = within(row).getByText(preview, {
+      selector: ".ticker__inner",
+    });
+    expect(title.parentElement).toHaveClass("activity-row-title");
     expect(screen.queryByText(fullContent)).not.toBeInTheDocument();
   });
 });

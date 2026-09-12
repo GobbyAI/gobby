@@ -37,7 +37,7 @@ def storage(db: HubDatabase) -> LocalSkillManager:
 
 
 @pytest.fixture(autouse=True)
-def _clear_serve_cache() -> None:
+def _clear_serve_cache() -> Iterator[None]:
     from gobby.skills.scanner import reset_serve_scan_cache
 
     reset_serve_scan_cache()
@@ -73,6 +73,7 @@ class TestGetSkillServeScan:
             source_path="owner/repo",
         )
         tool = create_skills_registry(db).get_tool("get_skill")
+        assert tool is not None
 
         result = await tool(name="ext-bad")
 
@@ -93,6 +94,7 @@ class TestGetSkillServeScan:
             source_path="owner/repo",
         )
         tool = create_skills_registry(db).get_tool("get_skill")
+        assert tool is not None
 
         result = await tool(name="ext-good")
 
@@ -115,6 +117,7 @@ class TestGetSkillServeScan:
             source_path="/tmp/x",
         )
         tool = create_skills_registry(db).get_tool("get_skill")
+        assert tool is not None
 
         with patch("gobby.skills.scanner.scan_served_content") as scan:
             result = await tool(name="local-skill")
@@ -136,6 +139,7 @@ class TestGetSkillServeScan:
             source_path="owner/repo",
         )
         tool = create_skills_registry(db).get_tool("get_skill")
+        assert tool is not None
 
         first = await tool(name="ext-good")
         assert first["success"] is True
@@ -160,6 +164,7 @@ class TestGetSkillServeScan:
             source_path="owner/repo",
         )
         tool = create_skills_registry(db).get_tool("get_skill")
+        assert tool is not None
 
         with patch(
             "gobby.skills.scanner.scan_served_content", side_effect=ImportError("no clawcare")
@@ -186,8 +191,9 @@ class TestGetSkillFileServeScan:
         )
         storage.set_skill_files(skill.id, [_skill_file(skill.id, "references/x.md", MALICIOUS_MD)])
         tool = create_skills_registry(db).get_tool("get_skill_file")
+        assert tool is not None
 
-        result = tool(name="ext-files", path="references/x.md")
+        result = await tool(name="ext-files", path="references/x.md")
 
         assert result["success"] is False
         assert "failed security scan" in result["message"]
@@ -207,8 +213,9 @@ class TestGetSkillFileServeScan:
         )
         storage.set_skill_files(skill.id, [_skill_file(skill.id, "references/x.md", BENIGN_MD)])
         tool = create_skills_registry(db).get_tool("get_skill_file")
+        assert tool is not None
 
-        result = tool(name="ext-files-ok", path="references/x.md")
+        result = await tool(name="ext-files-ok", path="references/x.md")
 
         assert result["success"] is True
         assert result["file"]["content"] == BENIGN_MD

@@ -91,7 +91,8 @@ def _record_merge_result(temp_db):
     return tool
 
 
-def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
+@pytest.mark.asyncio
+async def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
     task, manager = make_task_with_manifest(
         temp_db,
         sample_project,
@@ -183,7 +184,7 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
     assert isinstance(merge_spawn, SpawnAgentAction)
     assert merge_spawn.agent_slug == "merge-orchestrator"
 
-    _record_merge_result(temp_db)(
+    await _record_merge_result(temp_db)(
         task_id=task.id,
         merge_sha="merge-final123",
         report_ref="merge-report.md",
@@ -331,7 +332,7 @@ async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
     assert spawned[-1] == "merge-orchestrator"
     TaskDispatchMutexManager(temp_db).force_release(parent.id)
-    _record_merge_result(temp_db)(
+    await _record_merge_result(temp_db)(
         task_id=parent.id,
         merge_sha="merge-parent123",
         report_ref="merge-report.md",

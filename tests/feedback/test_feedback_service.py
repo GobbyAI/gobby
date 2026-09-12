@@ -1173,3 +1173,44 @@ async def test_review_report_contains_summary_and_actual_task_refs(
     assert markdown.startswith("# Verified review")
     assert task_ref in markdown
     assert "awaiting-human-review" in saved.actions["filed"][0]["labels"]
+
+
+async def test_successive_reviews_share_synthesis_and_preserve_all_task_outcomes(
+    temp_db: HubDatabase, session_id: str, tmp_path: Path
+) -> None:
+    report = tmp_path / "gobby-feedback-20260911.md"
+
+    class SharedReviewer(_FakeLLM):
+        async def review(
+            self, prompt: str, *, run_id: str, timeout_seconds: float
+        ) -> FeedbackReviewerResult:
+            result = await super().review(prompt, run_id=run_id, timeout_seconds=timeout_seconds)
+            return FeedbackReviewerResult(
+                agent_run_id=result.agent_run_id,
+                findings=result.findings,
+                summary_md="# Daily synthesis\nBoth verified concerns need attention.",
+                report_path=str(report),
+            )
+
+    manager = _FakeTaskManager()
+    task_refs = []
+    for title in ("Repair terminal resize synchronization", "Document snapshot retention limits"):
+        observation_id = _insert_feedback(temp_db, session_id)
+        reviewer = SharedReviewer(
+            {"clusters": [_cluster([observation_id], title=title, theme=title)]}
+        )
+        service = FeedbackReviewService(temp_db, reviewer, FeedbackReviewConfig(), manager)
+        result = await service.run_review()
+        saved = service.store.get_run(result["run_id"])
+        assert saved is not None and saved.actions is not None
+        task_refs.append(saved.actions["filed"][0]["task_ref"])
+        assert saved.rows_considered == 1
+        assert result["report_path"] == str(report)
+    markdown = report.read_text()
+    assert markdown.count("# Daily synthesis") == 1
+    assert markdown.count("<!-- gobby-feedback-outcomes -->") == 1
+    assert "Rows considered: 2" in markdown
+    assert all(f"Filed {ref}:" in markdown for ref in task_refs)
+    assert "Repair terminal resize synchronization" in markdown
+    assert "Document snapshot retention limits" in markdown
+    assert list(tmp_path.glob("*.md")) == [report]

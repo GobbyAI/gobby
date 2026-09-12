@@ -1169,7 +1169,13 @@ class TestDetectMcpCall:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
-            tool_output={"result": {"success": True, "skill": {"name": "plan"}}},
+            tool_output={
+                "result": {
+                    "success": True,
+                    "skill": {"name": "plan", "content": "instructions"},
+                    "page": {"complete": True, "next_cursor": None},
+                }
+            },
         )
 
         detect_mcp_call(event, variables, SESSION_ID)
@@ -1182,7 +1188,13 @@ class TestDetectMcpCall:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
-            tool_output={"result": {"success": True, "skill": {"name": "brevity"}}},
+            tool_output={
+                "result": {
+                    "success": True,
+                    "skill": {"name": "brevity", "content": "instructions"},
+                    "page": {"complete": True, "next_cursor": None},
+                }
+            },
         )
 
         detect_mcp_call(event, variables, SESSION_ID)
@@ -1196,7 +1208,11 @@ class TestDetectMcpCall:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
-            tool_output={"success": True, "skill": {"name": "plan"}},
+            tool_output={
+                "success": True,
+                "skill": {"name": "plan", "content": "instructions"},
+                "page": {"complete": True, "next_cursor": None},
+            },
         )
 
         detect_mcp_call(event, variables, SESSION_ID)

@@ -1,0 +1,1237 @@
+{
+  "version": 1,
+  "capability": "agents",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "persona"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/agents.md",
+      "anchors": [
+        "usage-surfaces",
+        "definition-storage",
+        "definition-shape",
+        "strict-execution-fields",
+        "minimal-definition",
+        "inline-step-workflows",
+        "lifecycle-model",
+        "runtime-tools",
+        "blocked-child-communication",
+        "recovery-checkpoints",
+        "isolation",
+        "recommended-patterns",
+        "related-guides"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "path": "docs/guides/providers-and-models.md",
+      "anchors": [
+        "mental-model",
+        "quick-start",
+        "provider-configuration",
+        "capability-matrix",
+        "web-chat-backends",
+        "qwen-and-local-endpoints",
+        "cli",
+        "http",
+        "mcp",
+        "file-locations",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models",
+        "followup-focused"
+      ]
+    },
+    {
+      "path": "docs/guides/sandboxing.md",
+      "anchors": [
+        "explicit-external-workspace-grants",
+        "direct-provider-launches",
+        "backends",
+        "managed-srt-installation",
+        "configuration",
+        "project-level-write-paths",
+        "default-filesystem-policy",
+        "network-and-credentials",
+        "launch-and-lifecycle",
+        "provider-native-rollout-backend",
+        "security-boundary"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models",
+        "followup-focused"
+      ]
+    },
+    {
+      "path": "docs/guides/sandbox-compatibility.md",
+      "anchors": [
+        "current-contract",
+        "runtime-matrix",
+        "policy-coverage",
+        "tmux-and-process-tree-invariants",
+        "hook-binary-compatibility",
+        "public-ghook-artifact-validation",
+        "compatibility-gate"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models",
+        "followup-focused"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "agents"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models",
+        "followup-focused"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "agents-and-build-automation"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.get_agent_result"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "get_agent_result"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.get_agent_capture"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "get_agent_capture"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.get_agent_live_output"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "get_agent_live_output"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.wait_for_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "wait_for_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.wait_for_output"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "wait_for_output"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.list_agent_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "list_agent_runs"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.list_running_agents"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "list_running_agents"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.get_running_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "get_running_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.unregister_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "unregister_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.running_agent_stats"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "running_agent_stats"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+        "symbol": "register_agent_query_tools.can_spawn_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "can_spawn_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
+        "symbol": "register_agent_spawn_tools.evaluate_spawn_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "evaluate_spawn"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
+        "symbol": "register_agent_spawn_tools.apply_persona"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "apply_persona"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/checkpoints.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py",
+        "symbol": "register_agent_checkpoint_tools.checkpoint_agent_worktree"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "checkpoint_agent_worktree"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
+        "symbol": "register_agent_lifecycle_tools.stop_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "stop_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
+        "symbol": "register_agent_lifecycle_tools.cancel_stale_helpers"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "cancel_stale_helpers"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
+        "symbol": "register_agent_lifecycle_tools.end_agent_run"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "end_agent_run"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
+        "symbol": "register_agent_lifecycle_tools.kill_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "kill_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agent_messaging.py",
+        "symbol": "add_messaging_tools.send_message"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "send_message"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agent_messaging.py",
+        "symbol": "add_messaging_tools.get_inter_session_message"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "get_inter_session_message"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agent_messaging.py",
+        "symbol": "add_messaging_tools.get_inter_session_messages"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "get_inter_session_messages"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/spawn_agent/_factory.py",
+        "symbol": "create_spawn_agent_registry.spawn_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "spawn_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/spawn_agent/_factory.py",
+        "symbol": "create_spawn_agent_registry.dispatch_batch"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "dispatch_batch"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._list_agent_definitions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "list_agent_definitions"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._get_agent_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "get_agent_definition"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._create_agent_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "create_agent_definition"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._toggle_agent_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "toggle_agent_definition"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._delete_agent_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "delete_agent_definition"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._update_agent_rules"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "update_agent_rules"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._update_agent_variables"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "update_agent_variables"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._update_agent_step_workflow"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "update_agent_step_workflow"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._evaluate_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "evaluate_agent"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "create_workflows_registry._get_step_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "tool": "get_step_status"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "list_agent_definitions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "show_agent_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "spawn_agent_cmd"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents spawn"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "list_agent_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents runs list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "show_agent_run"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents runs show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "agent_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents status"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "stop_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents stop"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "kill_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents kill"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "agent_stats"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents stats"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents.py",
+        "symbol": "cleanup_agents"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents cleanup"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents_steps.py",
+        "symbol": "list_agent_steps"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents steps"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/cli/agents_steps.py",
+        "symbol": "check_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "sandbox-cli-models"
+      ],
+      "audience": "operator/client",
+      "command": "gobby agents check"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.list_definitions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/definitions"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.export_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/definitions/{name}/export"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.get_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/definitions/{name}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.create_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/definitions"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.update_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "PUT /api/agents/definitions/{definition_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.delete_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "DELETE /api/agents/definitions/{definition_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.restore_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/definitions/{definition_id}/restore"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.patch_rules"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "PATCH /api/agents/definitions/{definition_id}/rules"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.patch_rule_selectors"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "PATCH /api/agents/definitions/{definition_id}/rule-selectors"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.patch_variables"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "PATCH /api/agents/definitions/{definition_id}/variables"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.list_running_agents"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/running"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.list_agent_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/runs"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.get_agent_run_detail"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/runs/{run_id}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.cleanup_agent_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/cleanup"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.cancel_agent_run"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/runs/{run_id}/cancel"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.import_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/definitions/import/{name}"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agent_spawn.py",
+        "symbol": "create_agent_spawn_router.spawn_agent"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/spawn"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agent_spawn.py",
+        "symbol": "create_agent_spawn_router.spawn_batch"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/spawn/batch"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agent_spawn.py",
+        "symbol": "create_agent_spawn_router.get_launch_defaults"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/launch-defaults"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agent_spawn.py",
+        "symbol": "create_agent_spawn_router.preview_spawn_prompt"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/agents/spawn/prompt-preview"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/providers.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/providers.py",
+        "symbol": "create_providers_router.list_providers"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/providers"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/providers.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/providers.py",
+        "symbol": "create_providers_router.list_provider_models"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents",
+        "followup-focused"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/providers/models"
+    }
+  ],
+  "delegated_operations": {
+    "observability": [
+      "GET /api/providers/{provider}/usage"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-schema",
+      "command": "gcode outline/symbol-at/grep on agent MCP registry, workflow definitions/models, CLI agents/steps, agent/provider HTTP routes, sandbox policy/cache/grants and ghook cli_config; current schemas spawn_agent, apply_persona, list/get_agent_definition; gobby agents --help and spawn --help",
+      "result": "Public operations inventoried from current registrations. Effective sandbox policy, lifecycle handoff, ownership and persona-only boundary checked. No live mutating probes."
+    },
+    {
+      "id": "installed-agent",
+      "kind": "installed-registry",
+      "command": "get_agent_definition(tech-writer); get_rule(block-direct-provider-launch)",
+      "result": "2026-09-12: global installed tech-writer b1009cbf-c959-4c21-81c9-7354cdb91475 enabled; matching blocker message advances to terminate requiring end_agent_run. Global installed direct-provider guard 2c26ef1c-810d-4e12-9859-4a719c31e4ce enabled priority10 with default/worker-safety tags. No row mutations."
+    },
+    {
+      "id": "focused-agents",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_persona.py tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py tests/mcp_proxy/tools/test_agent_messaging.py tests/mcp_proxy/tools/test_agent_messaging_broadcast.py tests/mcp_proxy/tools/test_agents_termination.py tests/mcp_proxy/tools/test_agent_cancellation.py tests/workflows/test_agent_definitions_v2.py tests/servers/routes/test_agents_routes.py tests/servers/routes/test_agent_spawn_routes.py -q",
+      "result": "242 passed in 41.18s; isolated fixtures, no live mutation probes."
+    },
+    {
+      "id": "sandbox-cli-models",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/agents/test_srt_runtime.py tests/agents/test_srt_spawn.py tests/agents/test_external_write_grants.py tests/agents/test_worktree_checkpoint.py tests/config/test_daemon_sandbox.py tests/cli/test_cli_agents.py tests/cli/test_agents_coverage.py tests/cli/test_agents_steps.py tests/providers/capabilities tests/mcp_proxy/tools/test_agents.py tests/mcp_proxy/tools/test_agents_spawn_evaluation.py tests/skills/test_capability_catalog.py -q",
+      "result": "Final rerun:530 passed,1skipped in10.67s. Initial run found obsolete generated pyc directory under retired src/gobby/cli/workflows; removed only six pyc files and empty directories. No production/test source changed."
+    },
+    {
+      "id": "followup-focused",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_agents_steps.py tests/servers/routes/test_servers_routes_providers.py tests/agents/test_reasoning.py tests/hooks/test_provider_launch_guard.py tests/mcp_proxy/tools/test_agent_capture_results.py tests/mcp_proxy/tools/test_agent_live_output.py tests/mcp_proxy/tools/test_agent_live_stats.py tests/skills/test_capability_catalog.py -q",
+      "result": "439 passed in15.67s, including the previously failing retired-package assertion, provider routes, reasoning, direct-launch guard, capture/live outputs and catalog."
+    },
+    {
+      "id": "library-checks",
+      "kind": "local-validation",
+      "command": "uv run Python: load_capability_catalog, AST qualified symbols, Markdown local paths/anchors; git diff --cached --check",
+      "result": "5 capabilities valid;67 operation paths and qualified implementation symbols resolve;15 Markdown files and all audit guide anchors valid; staged whitespace clean."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Blocker message described as universal child exit.",
+      "resolution": "Document installed transition then explicit end_agent_run.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "Base package-registry default described as effective spawn policy.",
+      "resolution": "Document private caches and scoped egress enabled for managed spawns.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "CLI listed removed max-turns/context flags.",
+      "resolution": "Match current help; add terminal backend and maintenance distinctions.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "HTTP listed removed PUT launch-defaults and omitted cleanup.",
+      "resolution": "Correct routes and HTTP/MCP argument distinctions.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "Provider grouping omitted Responses endpoint models under Codex.",
+      "resolution": "Describe endpoint-qualified values and actual grouping.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "Runtime inventory omitted waits, live output, checkpoints and helper cancellation.",
+      "resolution": "Add complete operating references.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "Bundled templates presented as enabled policy.",
+      "resolution": "Require installed row and selector inspection.",
+      "evidence": [
+        "source-audit",
+        "focused-agents"
+      ]
+    },
+    {
+      "finding": "Lifecycle hook failure statement omitted AGY and native provider casing.",
+      "resolution": "Describe provider-specific registered critical sets; AGY has none, based on CliConfig::for_cli in crates/ghook/src/cli_config.rs. No Rust change.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Speed section listed historical external CLI versions and model IDs as current choices.",
+      "resolution": "Use current managed request schemas and provider-scoped model discovery; retain no invented speed parameter or model-name inference.",
+      "evidence": [
+        "source-audit",
+        "sandbox-cli-models"
+      ]
+    }
+  ],
+  "cutover_dependencies": [
+    "P4 migrates persona consumers; P5 removes source entrypoint. P4 also corrects retained tech-writer skill source-location pointers."
+  ],
+  "planned_checks": [
+    "P3 integrated coverage checker pending.",
+    "Host SRT/provider/public-artifact integration not rerun for this documentation-only leaf; compatibility guide remains operator runtime-change gate."
+  ]
+}

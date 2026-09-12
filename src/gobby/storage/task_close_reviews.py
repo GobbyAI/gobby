@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from psycopg.errors import UniqueViolation
 
+from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS
 from gobby.storage.hub.protocol import HubDatabase
 
 ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
@@ -298,6 +299,33 @@ class TaskCloseReviewStore:
                 (task_id, caller_session_id),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
+
+    def count_unjudged_attempts(self, task_id: str) -> int:
+        """Count this task's reviews whose validator never judged the evidence.
+
+        A validator that died instead of answering says nothing about the close,
+        so the next attempt has to move along the configured candidate list;
+        relaunching onto the same runtime just reproduces the failure. The
+        classification cannot be trusted to name the cause — a provider that
+        stops mid-launch often leaves ``terminal_reason`` NULL — so every
+        unfinished review counts except the ones we ended deliberately.
+        """
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT count(*) AS failures
+                FROM task_close_reviews AS review
+                JOIN agent_runs AS run ON run.id = review.agent_run_id
+                WHERE review.task_id = %s
+                  AND review.status = 'error'
+                  AND (
+                    run.terminal_reason IS NULL
+                    OR run.terminal_reason <> ALL(%s)
+                  )
+                """,
+                (task_id, list(DELIBERATE_STOP_TERMINAL_REASONS)),
+            ).fetchone()
+        return int(row["failures"]) if row is not None else 0
 
     def bind_run(self, review_id: str, run_id: str) -> TaskCloseReview | None:
         """Bind a successful launch and move the review to running."""

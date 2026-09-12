@@ -108,6 +108,11 @@ gate, and the rule never rewrites task validation criteria.
 These rules are supporting guardrails; task metadata and transcript-backed
 completion evidence remain authoritative at close.
 
+The rule files are bundled templates, not evidence of active enforcement.
+Inspect installed rows with `gobby-workflows:get_rule` before diagnosing a live
+session. The audit on 2026-09-12 found both named rules installed and enabled;
+their conditions still determine whether a particular task activates them.
+
 ## Verification Checklist
 
 When auditing this guide, verify:
@@ -132,4 +137,4 @@ When auditing this guide, verify:
 - [Variables](./variables.md)
 - [Orchestration](./orchestration.md)
 
-_Last verified: 2026-09-08_
+_Last verified: 2026-09-12_

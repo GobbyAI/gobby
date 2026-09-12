@@ -634,6 +634,18 @@ async def _sync_file(
     return did_work
 
 
+def _require_projection_success(result: dict[str, Any], store: str) -> None:
+    """Keep degraded native results pending even when the command exits zero."""
+    if (
+        result.get("success") is False
+        or result.get("status") in ("degraded", "failed", "error", "busy")
+        or result.get("degraded")
+        or result.get("error")
+    ):
+        detail = result.get("error") or result.get("status") or "degraded projection"
+        raise RuntimeError(f"gcode {store} sync-file incomplete: {detail}")
+
+
 async def _sync_vector_file(
     gcode_gateway: GcodeGateway,
     project_root: Path,
@@ -643,8 +655,7 @@ async def _sync_vector_file(
 ) -> bool:
     """Delegate one file's vector projection sync to gcode."""
     result = await gcode_gateway.vector_sync_file(project_root, file.file_path, timeout=timeout)
-    if not result.get("success", True):
-        raise RuntimeError(result.get("error", "gcode vector sync-file failed"))
+    _require_projection_success(result, "vector")
     return True
 
 
@@ -657,8 +668,6 @@ async def _sync_graph(
 ) -> bool:
     """Ask gcode to sync one indexed file into the code graph projection."""
     result = await gcode_gateway.graph_sync_file(project_root, file.file_path, timeout=timeout)
-    # Treat stale gcode skip responses as terminal for the daemon queue. gcode
-    # owns index eligibility; the daemon should not retry a file gcode skipped.
-    if result.get("status") == "skipped" and result.get("reason") == "indexed_file_not_found":
-        return True
+    _require_projection_success(result, "graph")
+    # Clean stale-work skips are terminal; degraded cleanup must stay pending.
     return True

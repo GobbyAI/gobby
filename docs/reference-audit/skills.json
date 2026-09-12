@@ -1,0 +1,940 @@
+{
+  "version": 1,
+  "capability": "skills",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "loading-skills",
+    "writing-skills"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/skills.md",
+      "anchors": [
+        "skills-guide",
+        "what-a-skill-is",
+        "skillmd-format",
+        "required-fields",
+        "optional-fields",
+        "metadata",
+        "metadataskillport",
+        "metadatagobby",
+        "internal-skills",
+        "directory-structure",
+        "minimal-skill",
+        "multi-file-skill",
+        "complete-loading-and-levels",
+        "reference-files",
+        "cli-commands",
+        "mcp-tools",
+        "skill-hubs",
+        "installation-and-update-boundaries",
+        "script-materialization",
+        "lifecycle-and-http-management",
+        "instruction-selection",
+        "behavioral-skill-validation",
+        "best-practices",
+        "see-also"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "skills"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "memory-skills-workflows-and-rules"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "get_skill",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/loading.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/get_skill.py",
+        "symbol": "get_skill"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "delivery-and-consumers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "get_skill_files",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/references.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/get_skill.py",
+        "symbol": "get_skill_files_tool"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "delivery-and-consumers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "get_skill_file",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/references.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/get_skill.py",
+        "symbol": "get_skill_file_tool"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "delivery-and-consumers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "list_hubs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/hub_tools.py",
+        "symbol": "list_hubs"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "hubs-and-storage"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "search_hub",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/hub_tools.py",
+        "symbol": "search_hub"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "hubs-and-storage"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "install_skill",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/install_skill.py",
+        "symbol": "install_skill"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "list_skills",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/list_skills.py",
+        "symbol": "list_skills"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "materialize_skill_scripts",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/scripts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/materialize_skill_scripts.py",
+        "symbol": "materialize_tool"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "move_skill_to_project",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/move_skill.py",
+        "symbol": "move_skill_to_project"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "hubs-and-storage"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "move_skill_to_installed",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/move_skill.py",
+        "symbol": "move_skill_to_installed"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "hubs-and-storage"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "remove_skill",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/remove_skill.py",
+        "symbol": "remove_skill"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "hubs-and-storage"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "restore_skill",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/restore_skill.py",
+        "symbol": "restore_skill"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills",
+        "hubs-and-storage"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "search_skills",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/search_skills.py",
+        "symbol": "search_skills"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-skills",
+      "tool": "update_skill",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/skills/update_skill.py",
+        "symbol": "update_skill"
+      },
+      "verification": [
+        "registered-schemas",
+        "focused-skills"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/discovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "list_skills"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/loading.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "show"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "install"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills remove",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "remove"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills update",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "update"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills validate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "validate"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills meta get",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "meta_get"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills meta set",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "meta_set"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills meta unset",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "meta_unset"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills init",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "init"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills new",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "new"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills doc",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "doc"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills enable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "enable"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills disable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "disable"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "search"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills hub list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "hub_list"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby skills hub add",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/cli/skills.py",
+        "symbol": "hub_add"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "list_skills"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "create_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "search_skills"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/discovery.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "skill_stats"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/restore-defaults",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "restore_defaults"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "import_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/scan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "scan_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/hubs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "list_hubs"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/hubs/search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/hubs.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "search_hubs"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/hubs/install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/installation.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "install_from_hub"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/{skill_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/loading.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "get_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "path": "/api/skills/{skill_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "update_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "path": "/api/skills/{skill_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "delete_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/{skill_id}/move-to-project",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "move_to_project"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/{skill_id}/move-to-installed",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "move_to_installed"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "path": "/api/skills/{skill_id}/restore",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "restore_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/{skill_id}/export",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "export_skill"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/{skill_id}/files",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/references.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "list_skill_files"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "path": "/api/skills/{skill_id}/files/{file_path:path}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/references.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "read_skill_file"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "path": "/api/skills/{skill_id}/files/{file_path:path}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/skills/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/skills.py",
+        "symbol": "write_skill_file"
+      },
+      "verification": [
+        "focused-skills",
+        "source-audit"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "registered-schemas",
+      "kind": "registered-tools",
+      "command": "list_tools(gobby-skills), followed by get_tool_schema for each of the 14 returned tools",
+      "result": "14 public tools; exact schema inventory matches AST registry decorators. Confirmed bootstrap exceptions, brief defaults, separate file-list keyset and content cursors, declared level argument and script materializer."
+    },
+    {
+      "id": "source-audit",
+      "kind": "implementation",
+      "command": "gcode outline/symbol-at/grep across skills tools, storage, loader/updater/parser, hooks, CLI helpers and HTTP routes; gobby skills --help and skills hub --help",
+      "result": "14 MCP tools, 17 CLI command leaves and 20 composed /api/skills routes. Verified project-first lookup and template-path rejection, scope conflicts, updater skip/rollback, selective bundled sync, script readiness, external-source boundaries, bounded metadata, complete content delivery and independent tracking. Source default hubs include gobby-topic; no universal audience/depth/step format-selection implementation found in current hooks/skills consumers."
+    },
+    {
+      "id": "installed-hubs",
+      "kind": "installed-configuration",
+      "command": "gobby-skills.list_hubs() on session #12910",
+      "result": "Four active providers returned: anthropic-skills/github-collection, claude-plugins/claude-plugins, clawdhub/clawdhub, skillsmp/skillsmp. SkillsMP auth_required=true/auth_configured=true; no secret value read. Source default gobby-topic is not assumed active. No rule/profile activation claim inferred from templates."
+    },
+    {
+      "id": "focused-skills",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/skills tests/skills/test_materialization.py tests/skills/test_skills_parser.py tests/skills/test_skills_loader.py tests/skills/test_updater.py tests/skills/test_updater_rescan.py tests/servers/routes/test_skills_routes.py tests/cli/test_skills_cli.py tests/cli/test_cli_skills_coverage.py -q",
+      "result": "546 passed in 58.83s. Isolated fixtures exercise install/update/removal/scope, file serving/scanning, script preparation, and HTTP management. No live install, hub network install, deletion or script execution used as a probe."
+    },
+    {
+      "id": "delivery-and-consumers",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_skill_manager.py tests/skills/test_skills_formatting.py tests/skills/test_reference_load_tracking.py tests/skills/test_instruction_requirements.py tests/skills/test_capability_catalog.py tests/skills/test_loading_skills_content.py tests/skills/test_writing_skills_skill.py tests/skills/test_bundled_skill_content_size.py tests/cli/test_skills_cli.py tests/cli/test_cli_skills_coverage.py -q",
+      "result": "284 passed in 3.10s. Seven supported task categories resolve recommendations to real bundled skills; existing CLI rejection tests pass after the recovery-text change. Reference identity/reset/loading/levels and authoring contracts pass. Instruction migration preserves existing behavior; no new pressure-behavior claim based only on parser checks."
+    },
+    {
+      "id": "hubs-and-storage",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/hubs tests/storage/test_skill_sync.py tests/storage/test_storage_skills.py tests/storage/skills tests/skills/test_loader_files.py tests/skills/test_zip_import.py tests/config/test_skills.py tests/config/test_skills_config.py -q",
+      "result": "356 passed in 24.96s. Isolated hub/provider boundaries, source import, schema defaults, scoped storage, attached files and bundled sync/override behavior."
+    },
+    {
+      "id": "library-integrity",
+      "kind": "isolated-check",
+      "command": "uv run python: load_capability_catalog; fence-aware Markdown target/anchor validation; AST implementation identity checks; Click CliRunner help inventory equality",
+      "result": "Eight capabilities validated; links and anchors across 13 Markdown files; all 51 implementation mappings; all 17 CLI command leaves and --help results; changed production files below 1000 lines and ten references below default 15000 characters/UTF-8 bytes."
+    },
+    {
+      "id": "source-quality",
+      "kind": "static-analysis",
+      "command": "uv run ruff check src/gobby/cli/_skills_hubs.py src/gobby/hooks/skill_manager.py tests/hooks/test_skill_manager.py; uv run ruff format --check src/gobby/cli/_skills_hubs.py src/gobby/hooks/skill_manager.py tests/hooks/test_skill_manager.py; uv run mypy src/gobby/cli/_skills_hubs.py src/gobby/hooks/skill_manager.py",
+      "result": "Ruff clean, all three files formatted, mypy no issues."
+    },
+    {
+      "id": "test-quality",
+      "kind": "static-analysis",
+      "command": "uv run gobby test-quality audit tests/hooks/test_skill_manager.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "1 file, 24 tests, zero issues."
+    },
+    {
+      "id": "independent-review",
+      "kind": "review",
+      "command": "OCR staged review by review_reference_identity",
+      "result": "18/18 files reviewed, 0 skipped, 100% coverage; no critical/high/medium correctness findings. Added explicit proactive-search and pressure-refactor obligations identified by source-skill comparison. Recall matched existing condensed-instruction proof-preservation lesson 61a2b8e7-9302-5a3b-939f-638b69b43492; no contradictory local requirement."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Guide omitted file-list pagination, script materialization, levels, complete delivery and exact reference tracking.",
+      "resolution": "Added dedicated guide sections and separate references with explicit recovery/readiness boundaries.",
+      "evidence": [
+        "source-audit",
+        "focused-skills"
+      ]
+    },
+    {
+      "finding": "Guide allowed arbitrary workflow audience names and asserted an obsolete universal injection/format precedence.",
+      "resolution": "Document exact parser enum and actual explicit-load/manifest behavior; retain metadata without claiming nonexistent automatic selection.",
+      "evidence": [
+        "source-audit",
+        "focused-skills"
+      ]
+    },
+    {
+      "finding": "Default hub inventory omitted gobby-topic and conflated defaults with active configuration.",
+      "resolution": "Add source default and require live discovery; record four actually configured providers separately.",
+      "evidence": [
+        "source-audit",
+        "focused-skills"
+      ]
+    },
+    {
+      "finding": "Installation/update guide omitted source ambiguity, first-item MCP selection, skipped hub/ZIP updates, scan and project import boundaries.",
+      "resolution": "Document actual source handling and recovery without treating transport success as full completion.",
+      "evidence": [
+        "source-audit",
+        "focused-skills"
+      ]
+    },
+    {
+      "finding": "HTTP guide omitted three attached-file routes and irreversible repeated-delete semantics; export implied a complete bundle.",
+      "resolution": "Map all 20 routes and state file-only export and soft-delete versus permanent purge behavior.",
+      "evidence": [
+        "source-audit",
+        "focused-skills"
+      ]
+    },
+    {
+      "finding": "Duplicate-hub CLI error directed users to nonexistent hub remove.",
+      "resolution": "Replace with distinct-name or configuration-update recovery; no operation added.",
+      "evidence": [
+        "source-audit",
+        "focused-skills",
+        "delivery-and-consumers"
+      ]
+    },
+    {
+      "finding": "Task-readiness recommendations returned nonexistent retired gobby-* names.",
+      "resolution": "Use current bundled skill names and verify every supported category resolves to real bundled content. P4 will migrate these consumers to references before entrypoint retirement.",
+      "evidence": [
+        "source-audit",
+        "focused-skills",
+        "delivery-and-consumers"
+      ]
+    },
+    {
+      "finding": "Condensed discovery/authoring initially omitted explicit proactive-search and post-scenario rationalization counters.",
+      "resolution": "Restored both source-skill obligations before cutover; no new product behavior.",
+      "evidence": [
+        "independent-review"
+      ]
+    }
+  ]
+}

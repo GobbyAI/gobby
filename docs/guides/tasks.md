@@ -66,11 +66,13 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
     "priority": 2,
     "task_type": "task",
     "labels": ["docs", "audit"],
+    "validation_criteria": "Task examples match registered schemas and all guide links resolve.",
     "claim": True,
 })
 ```
 
-`create_task` requires `title` and `category`. Valid categories are:
+`create_task` requires `title`, `category`, and nonempty `validation_criteria`
+for every task type except `epic`, regardless of category. Valid categories are:
 
 | Category | Use for |
 | :--- | :--- |
@@ -84,8 +86,8 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 | `test` | Test-writing and test infrastructure. |
 
 Valid task types are `task`, `bug`, `feature`, `epic`, `chore`, `refactor`,
-`simple_fix`, `research_spike`, `architecture_doc`, and `prd_doc`. Some legacy
-aliases normalize on input, such as `docs` to `chore` and `fix` to `simple_fix`.
+`simple_fix`, `research_spike`, `architecture_doc`, and `prd_doc`. Use canonical values from the registered schema; do not rely on internal
+normalizers to accept aliases at the public tool boundary.
 
 To claim existing work:
 
@@ -97,7 +99,9 @@ call_tool(server_name="gobby-tasks", tool_name="claim_task", arguments={
 
 `claim_task` sets canonical ownership for the current session and detects claim
 conflicts. `force=true` overrides another owner and should be reserved for
-explicit recovery situations.
+explicit recovery situations. A session cannot accumulate ordinary open claims;
+finish its existing claim before claiming another task. An `already_claimed`
+response means read the task and continue, rather than claiming it again.
 
 ### Close
 
@@ -120,6 +124,12 @@ review. It returns per-item results, resolved commit SHAs, a transcript evidence
 summary, and the verdict. Blocked calls remain read-only and name the first
 repair action. A ready `preview=true` call reuses that evaluation, links the
 commit, and closes in the same call.
+
+If the response is `agentic_review_required`, register
+`gobby-agents:wait_for_agent` with the returned `validator_run_id` and yield.
+The daemon applies the verdict and notifies the session. Do not poll or repeat
+`close_task` while that review runs. After successful closure, call
+`gobby-memory:review_task_memories` with the task and the same summary.
 
 The bounded criteria review runs once per evidence state, not once per attempt.
 Its verdict is memoized against the review and evidence fingerprints the
@@ -166,7 +176,7 @@ submit that stage:
 call_tool(server_name="gobby-tasks-ops", tool_name="submit_for_review", arguments={
     "task_id": "#14390",
     "stage_name": "development",
-    "review_notes": "Refreshed docs/guides/tasks.md against 0.4.0 task behavior.",
+    "review_notes": "Refreshed docs/guides/tasks.md against current task behavior.",
 })
 ```
 
@@ -193,16 +203,16 @@ Common stage tools:
 For CLI inspection:
 
 ```bash
-gobby tasks stages #14390
+gobby tasks stages '#14390'
 ```
 
 For human stage transitions:
 
 ```bash
-gobby tasks advance #14390
-gobby tasks review #14390 --submit
-gobby tasks review #14390 --approve
-gobby tasks review #14390 --reject --reason "Missing validation evidence"
+gobby tasks advance '#14390'
+gobby tasks review '#14390' --submit
+gobby tasks review '#14390' --approve
+gobby tasks review '#14390' --reject --reason "Missing validation evidence"
 ```
 
 ## Dependencies and Ready Work
@@ -240,8 +250,8 @@ CLI equivalents:
 ```bash
 gobby tasks ready --limit 10
 gobby tasks blocked --limit 20
-gobby tasks dep add #44 #42
-gobby tasks dep tree #44
+gobby tasks dep add '#44' '#42'
+gobby tasks dep tree '#44'
 gobby tasks dep cycles
 ```
 
@@ -275,13 +285,13 @@ gobby tasks list --stage development --state in_progress
 gobby tasks list --claimed
 gobby tasks list --ready
 gobby tasks search "stage manifest" --limit 5
-gobby tasks show #14390
+gobby tasks show '#14390'
 gobby tasks stats
 ```
 
 ## Task Expansion
 
-Expansion is run-based in 0.4.0. The old saved-spec tools are retired. Use
+Expansion is run-based. The old saved-spec tools are retired. Use
 `gobby-tasks-ops` expansion run tools or the CLI `expand` subcommands.
 
 ```python
@@ -302,11 +312,11 @@ CLI equivalents:
 
 ```bash
 gobby tasks expand validate-plan .gobby/plans/feature.md
-gobby tasks expand compile #42 --plan-file .gobby/plans/feature.md
+gobby tasks expand compile '#42' --plan-file .gobby/plans/feature.md
 gobby tasks expand apply <run_id>
 gobby tasks expand status <run_id>
 gobby tasks expand resume <run_id>
-gobby tasks expand reset #42
+gobby tasks expand reset '#42'
 ```
 
 See [Task Expansion](./task-expansion.md) for the full run model.
@@ -317,7 +327,7 @@ Task commits are first-class metadata. Use task-linked commit messages and
 close with the commit SHA:
 
 ```bash
-git commit -m "[gobby-#14390] docs: refresh task guide"
+git commit --only -m "[gobby-#14390] docs: refresh task guide" -- docs/guides/tasks.md
 ```
 
 ```python
@@ -327,7 +337,7 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "changes_summary": "Updated the task guide against current MCP and stage behavior.",
     "preview": True,
 })
-# Blocked calls return repair actions; repeat until closed=true.
+# Repair deterministic blockers before retrying. Wait for background reviews.
 ```
 
 Related MCP tools:
@@ -337,18 +347,18 @@ Related MCP tools:
 | `link_commit` | Link a commit while keeping the task open. |
 | `unlink_commit` | Remove a linked commit. |
 | `auto_link_commits` | Detect commits that mention task refs. |
-| `get_task_diff` | Read the combined linked diff. |
+| `get_task_diff` | Read a byte page of the linked diff plus independently paginated commit and file manifests. |
 | `update_observed_files` | Annotate affected files from linked commits. |
 
 Related CLI commands:
 
 ```bash
-gobby tasks commit link #14390 abc1234
-gobby tasks commit unlink #14390 abc1234
+gobby tasks commit link '#14390' abc1234
+gobby tasks commit unlink '#14390' abc1234
 gobby tasks commit auto
-gobby tasks diff #14390
-gobby tasks validate #14390 --summary "Updated task guide"
-gobby tasks validation-history #14390
+gobby tasks diff '#14390'
+gobby tasks validate '#14390' --summary "Updated task guide"
+gobby tasks validation-history '#14390'
 ```
 
 `close_task` validates leaf tasks with `validation_criteria` against the linked
@@ -359,8 +369,14 @@ readable transcript is skipped). A task-attributed edit after a clean run makes 
 commit does not. Code, refactor, and test tasks require a clean test-category
 run, config tasks accept any clean validation command, and documentation,
 planning, research, manual, and no-edit tasks skip that checklist item. Parent
-tasks can close when all children are closed. Epics are organizational
-containers and do not require their own commit or criteria review.
+tasks that own no work can close when all children are closed. Closing the last
+child auto-closes eligible ancestors. A claimed parent or one with linked
+commits retains its own work gates, even if its type is `epic`.
+
+For `get_task_diff`, follow `byte_end` and both metadata `cursor_end` values.
+Carry `snapshot_hash` and `view_hash` on every subsequent page and restart on a
+stale snapshot/view error. Do not treat a complete diff-text page as a complete
+commit list or file manifest.
 
 The rendered criteria-review prompt has two bounds. The working budget
 `gobby-tasks.validation.close_review_prompt_budget_chars` (default 50,000
@@ -377,8 +393,9 @@ trimmed further.
 
 ## CLI Reference
 
-The CLI is optimized for humans and operators. Agents should prefer MCP for
-mutating lifecycle actions.
+The CLI is optimized for humans and operators. Agents use MCP for mutating
+lifecycle actions. Quote shell task references such as `'#14390'` so the shell
+does not interpret them as comments.
 
 ```bash
 # Listing and inspection
@@ -390,8 +407,8 @@ gobby tasks show TASK
 gobby tasks stats
 
 # CRUD
-gobby tasks create "Title" [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
-gobby tasks update TASK [--title TITLE] [--priority N] [--parent TASK] [--task-type TYPE] [--isolation MODE]
+gobby tasks create "Title" --validation-criteria CRITERIA [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
+gobby tasks update TASK [--title TITLE] [--validation-criteria CRITERIA] [--priority N] [--parent TASK] [--task-type TYPE] [--isolation MODE]
 gobby tasks close TASK [--reason REASON]
 gobby tasks reopen TASK [--reason REASON]
 gobby tasks delete TASK [--cascade | --unlink] [--yes]
@@ -465,6 +482,21 @@ Docs leaf tasks may run inside the parent epic's isolation context. Do not infer
 that shared isolation removes task ownership, commit, review, or validation
 requirements.
 
+## Live Interactive Work
+
+The `live-session` label identifies an interactive umbrella task; it does not
+disable task-close or epic-tree turn-end gates. Current rules require work to
+finish or a genuine durable wait (such as registered background review or
+dependent work). A label, arbitrary message, or stale human-wait marker does
+not create that wait.
+
+Only root interactive terminal sessions with the required live-work guidance
+loaded may change the label. Spawned, automated, and web-chat sessions cannot.
+Use one umbrella task for the requested scope, inspect claim ownership before
+resuming, and retain normal commit, validation, review, and close obligations.
+Expired-session recovery releases clean abandoned live claims and escalates
+dirty or indeterminate ones for recovery.
+
 ## Related Guides
 
 - [MCP Tools](./mcp-tools.md) for the full task tool inventory.
@@ -472,4 +504,4 @@ requirements.
 - [Workflows Overview](./workflows-overview.md) for lifecycle events.
 - [Worktrees](./worktrees.md) for isolation behavior.
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

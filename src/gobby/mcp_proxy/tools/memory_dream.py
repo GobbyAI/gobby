@@ -36,7 +36,7 @@ def register_memory_dream_tools(
         name="memory_dream",
         description=(
             "Start an asynchronous memory dream run and return its run ID; "
-            "poll memory_dream_status for progress."
+            "use memory_dream_status for bounded progress diagnostics."
         ),
     )
     async def memory_dream(

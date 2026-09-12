@@ -1,0 +1,112 @@
+@import "tailwindcss";
+@import "../../../../web/src/styles/tailwind-theme.css";
+@import "../../../../web/src/styles/tokens.css";
+@source "../../../../web/src/components/ui/Button.tsx";
+@source "../../../../web/src/components/ui/buttonVariants.ts";
+@source "../../../../web/src/components/ui/Input.tsx";
+@source "../../../../web/src/components/ui/Textarea.tsx";
+@source "../../../../web/src/components/ui/controlStyles.ts";
+@source "./";
+
+:host {
+  color-scheme: dark;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--text-primary);
+}
+:host([data-theme="light"]) {
+  color-scheme: light;
+}
+.annotate-shell {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+  width: max-content;
+  max-width: calc(100vw - 8px);
+  overflow: auto;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.annotate-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  box-shadow: 0 4px 16px oklch(10% 0.005 125 / 0.25);
+}
+.annotate-collapsed,
+.annotate-toolbar > button {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+}
+.annotate-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  width: 360px;
+  max-width: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.annotate-panel button {
+  min-height: 44px;
+}
+.annotate-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.annotate-context {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.annotate-panel textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+.annotate-panel img {
+  max-width: 100%;
+  height: auto;
+}
+.annotate-panel summary {
+  cursor: pointer;
+  padding-block: 12px;
+}
+.annotate-list-row {
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+  justify-content: flex-start;
+}
+[role="alert"] {
+  border-color: var(--destructive);
+}
+@media (max-width: 767px), (max-height: 500px) {
+  .annotate-panel {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

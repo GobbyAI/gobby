@@ -40,7 +40,7 @@ and deletion.
 Validate a plan file:
 
 ```bash
-uv run gobby plans validate PLAN_FILE
+uv run gobby plans validate PLAN_FILE -p <project-root>
 ```
 
 List plan records:
@@ -113,8 +113,11 @@ the user also selects adversarial review, accepted changes pass that review.
 
 ## Optional Adversarial Review
 
-Taskless review uses `plan-adversary-taskless`. The parent session passes the
-plan path, round number, review cap, and parent session id. The adversary loads
+Taskless review uses `plan-adversary-taskless`. After project-aware validation, the parent calls `prepare_plan_review_round`,
+passes the returned evidence ID, canonical path, clean deterministic sweep report,
+round number, review cap, and parent session ID, then binds the spawned run with
+`bind_evidence_run`. Spawn/bind failure expires the evidence; successful binding
+is followed immediately by a structured `set_handoff(clear_session=false)`. The adversary loads
 `plan-review` and `proportionality`, returns structured findings or approval to
 the parent, and calls `end_agent_run`. It does not claim or mutate Gobby tasks.
 The adversary now also carries an `over-engineering` review dimension: mechanism
@@ -129,12 +132,23 @@ Every review round is recorded in the plan under:
 ```
 
 Each round records reviewer run/session, verdict, findings, and resolution
-notes. Keep prior rounds for audit.
+notes. Keep prior rounds for audit. The reviewer reads an immutable snapshot,
+completes three review lanes and returns server-validated coverage attestation;
+it never writes the manifest. A rejection is appended and finalized with its
+canonical result before the coordinator applies accepted typed repairs.
+
+On user-accepted approval, the coordinator calls `apply_plan_review_manifest`,
+then `append_plan_changelog_round`, `finalize_plan_review_evidence`, and
+`checkpoint_plan_review_lesson_mint`. The daemon writes canonical V1 fences;
+never hand-build them. Pending lesson mint blocks a subsequent review round.
+If review is skipped, use `derive_plan_handoff_manifest` and
+`apply_plan_handoff_manifest` with their exact returned hashes/digest instead.
+These paths reject stale evidence rather than guessing a replacement manifest.
 
 Before expansion, approved plans must carry `## M1 Task Manifest` and pass:
 
 ```bash
-uv run gobby plans validate <plan-file> --mode expansion
+uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
 ```
 
 If adversarial review is skipped, the coordinator derives and applies the human
@@ -191,10 +205,11 @@ The plans CLI includes:
 ```bash
 uv run gobby plans list
 uv run gobby plans show PLAN_ID
-uv run gobby plans register PATH
-uv run gobby plans validate PLAN_FILE
+uv run gobby plans register PATH --root-task-ref '#42' --project <project>
+uv run gobby plans validate PLAN_FILE -p <project-root>
 uv run gobby plans archive PLAN_ID
-uv run gobby plans review-runs PLANNING_TASK_REF
+uv run gobby plans review-evidence --help
+uv run gobby plans review-runs '#42'
 ```
 
 `review-runs` prints the expansion-QA handoff pointer
@@ -226,6 +241,12 @@ and plan approval state rather than only static plan files.
 - `delete_plan`
 - `validate_plan`
 
+Review evidence uses `prepare_plan_review_round`, `get_plan_review_snapshot`,
+`bind_evidence_run`, `expire_plan_review_evidence`, and `verify_plan_unchanged`.
+Manifest derivation/application, coverage attestation, typed repairs, changelog
+append/finalization, and lesson checkpoint tools share this service. Discover
+unknown names with `list_tools`; fetch a known unleased schema directly.
+
 Plan file edits still obey normal agent write rules. MCP plan records do not
 override plan-mode restrictions on unrelated files.
 
@@ -247,4 +268,4 @@ override plan-mode restrictions on unrelated files.
 - [workflow-rules.md](workflow-rules.md)
 - [tdd-enforcement.md](tdd-enforcement.md)
 
-_Last verified: 2026-09-06_
+_Last verified: 2026-09-12_

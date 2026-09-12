@@ -1,0 +1,5 @@
+node_modules
+**/dist
+safari/build
+package-lock.json
+test-results

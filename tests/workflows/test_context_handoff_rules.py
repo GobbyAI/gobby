@@ -24,7 +24,7 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 BLOCK_REASON = "Autonomous sessions hand off in place."
-PLAN_MODE_BLOCK_REASON = "Plan Mode handoffs compact in place."
+PLAN_MODE_BLOCK_REASON = "Call gobby-sessions:set_handoff with clear_session=false to compact"
 
 
 @pytest.fixture

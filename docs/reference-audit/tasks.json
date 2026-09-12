@@ -1,0 +1,1328 @@
+{
+  "version": 1,
+  "capability": "tasks",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "tasks",
+    "live-session"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/tasks.md",
+      "anchors": [
+        "current-model",
+        "agent-workflow",
+        "create-and-claim",
+        "close",
+        "stage-manifests",
+        "dependencies-and-ready-work",
+        "search-and-listing",
+        "task-expansion",
+        "git-and-validation",
+        "cli-reference",
+        "storage-and-backups",
+        "automation-notes",
+        "live-interactive-work",
+        "related-guides"
+      ],
+      "evidence": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests",
+        "cli-declarations"
+      ]
+    },
+    {
+      "path": "docs/guides/tdd-enforcement.md",
+      "anchors": [
+        "expansion-shape",
+        "developer-skills",
+        "review-gates",
+        "planning-rules",
+        "runtime-nudges",
+        "verification-checklist",
+        "see-also"
+      ],
+      "evidence": [
+        "tdd-contract",
+        "installed-rules",
+        "tdd-runtime-tests"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "task-lifecycle",
+        "listing-and-inspection",
+        "create-update-close",
+        "stages-and-review",
+        "search-validation-and-maintenance",
+        "dependencies-labels-commits-and-diffs",
+        "expansion",
+        "import-and-compaction"
+      ],
+      "evidence": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "scope": "Task section only; expansion details also owned by plan deliverable."
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "tasks-and-stages"
+      ],
+      "evidence": [
+        "http-routes",
+        "focused-task-tests"
+      ],
+      "scope": "Task/stage routes only."
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_crud.py",
+        "symbol": "get_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "list_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_crud.py",
+        "symbol": "list_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "search_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_search.py",
+        "symbol": "search_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_session_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_session.py",
+        "symbol": "get_session_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_task_sessions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_session.py",
+        "symbol": "get_task_sessions"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "link_task_to_session",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_session.py",
+        "symbol": "link_task_to_session"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "create_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_crud.py",
+        "symbol": "create_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "update_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_crud.py",
+        "symbol": "update_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "claim_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py",
+        "symbol": "claim_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "add_label",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py",
+        "symbol": "add_label"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "remove_label",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py",
+        "symbol": "remove_label"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "reopen_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py",
+        "symbol": "reopen_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "delete_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_delete.py",
+        "symbol": "delete_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "escalate_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py",
+        "symbol": "escalate_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "de_escalate_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py",
+        "symbol": "de_escalate_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "add_dependency",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_dependencies.py",
+        "symbol": "add_dependency"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "remove_dependency",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_dependencies.py",
+        "symbol": "remove_dependency"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_dependency_tree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_dependencies.py",
+        "symbol": "get_dependency_tree"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "check_dependency_cycles",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_dependencies.py",
+        "symbol": "check_dependency_cycles"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "list_ready_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_readiness.py",
+        "symbol": "list_ready_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "list_blocked_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_readiness.py",
+        "symbol": "list_blocked_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "suggest_next_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_readiness.py",
+        "symbol": "suggest_next_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "inspect_task_path_ownership",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py",
+        "symbol": "inspect_task_path_ownership"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "release_task_paths",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py",
+        "symbol": "release_task_paths"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "close_task",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py",
+        "symbol": "close_task"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "submit_close_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py",
+        "symbol": "submit_close_review"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "validator-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_task_stages",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_read.py",
+        "symbol": "get_task_stages"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "list_stages_registry",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_read.py",
+        "symbol": "list_stages_registry"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_task_type_defaults",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_read.py",
+        "symbol": "get_task_type_defaults"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "initialize_task_manifest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "initialize_task_manifest"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "start_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "start_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "complete_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "complete_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "fail_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "fail_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "submit_for_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "submit_for_review"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "approve_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "approve_review"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "reject_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "reject_review"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "add_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "add_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "remove_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "remove_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "update_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
+        "symbol": "update_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "restore_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
+        "symbol": "restore_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "delete_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
+        "symbol": "delete_stage"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "set_task_type_defaults",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py",
+        "symbol": "set_task_type_defaults"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "update_observed_files",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_affected_files.py",
+        "symbol": "update_observed_files"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "link_commit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_commits.py",
+        "symbol": "link_commit"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "unlink_commit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_commits.py",
+        "symbol": "unlink_commit"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "auto_link_commits",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_commits.py",
+        "symbol": "auto_link_commits"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "get_task_diff",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_commits.py",
+        "symbol": "get_task_diff_tool"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "set_affected_files",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_affected_files.py",
+        "symbol": "set_affected_files"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "get_affected_files",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_affected_files.py",
+        "symbol": "get_affected_files"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "find_file_overlaps",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_affected_files.py",
+        "symbol": "find_file_overlaps"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "set_artifact",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_artifacts.py",
+        "symbol": "set_artifact"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "set_artifacts_atomic",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_artifacts.py",
+        "symbol": "set_artifacts_atomic"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "clear_isolation_pair",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_artifacts.py",
+        "symbol": "clear_isolation_pair"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "append_description_section",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_artifacts.py",
+        "symbol": "append_description_section"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "get_artifacts",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/artifacts.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_artifacts.py",
+        "symbol": "get_artifacts"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "backup_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_backup.py",
+        "symbol": "backup_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "restore_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_backup.py",
+        "symbol": "restore_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "import_github_issues",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_github.py",
+        "symbol": "import_github_issues"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "link_task_to_github_issue",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_github.py",
+        "symbol": "link_task_to_github_issue"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "reindex_tasks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_search.py",
+        "symbol": "reindex_tasks"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks compact analyze",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "compact_analyze"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks compact apply",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "compact_apply"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks compact stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "compact_stats"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks doctor",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "doctor_cmd"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks clean",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "clean_cmd"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks repair-lifecycle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/repair.py",
+        "symbol": "repair_lifecycle_cmd"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks validation-history",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "validation_history_cmd"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks validate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/ai.py",
+        "symbol": "validate_task_cmd"
+      },
+      "verification": [
+        "cli-declarations",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    }
+  ],
+  "delegated_operations": {
+    "build": [
+      "gobby-tasks:get_build_status",
+      "gobby-tasks:explain_dispatch",
+      "gobby-tasks:list_build_history",
+      "gobby-tasks-ops:build_task",
+      "gobby-tasks-ops:build_stop",
+      "gobby-tasks-ops:build_resume",
+      "gobby-tasks-ops:build_clean",
+      "gobby-tasks-ops:build_restart"
+    ],
+    "plan": [
+      "gobby-tasks-ops:start_expansion_run",
+      "gobby-tasks-ops:reset_expansion_output",
+      "gobby-tasks-ops:get_expansion_run",
+      "gobby-tasks-ops:get_latest_expansion_run",
+      "gobby-tasks-ops:resume_expansion_run",
+      "gobby-tasks-ops:cancel_expansion_run",
+      "gobby-tasks-ops:validate_expansion_run",
+      "gobby-tasks-ops:save_expansion_qa_result",
+      "gobby-tasks-ops:run_expansion_qa_coverage",
+      "gobby-tasks-ops:check_expansion_qa_result",
+      "gobby-tasks-ops:validate_plan_file",
+      "gobby-tasks-ops:wire_affected_files_from_run",
+      "gobby-tasks-ops:record_plan_enhancement",
+      "gobby-tasks-ops:backfill_plan_review_lessons"
+    ],
+    "source-control": [
+      "gobby-tasks-ops:record_pr_verdict",
+      "gobby-tasks-ops:record_pr_opened",
+      "gobby-tasks-ops:record_merge_result",
+      "gobby-tasks-ops:close_linked_github_issue",
+      "gobby-tasks-ops:get_delivery_state",
+      "gobby-tasks-ops:record_pr_state",
+      "gobby-tasks-ops:open_delivery_pr"
+    ]
+  },
+  "evidence": [
+    {
+      "id": "registered-inventory",
+      "kind": "live-read-only",
+      "command": "list_tools(gobby-tasks); list_tools(gobby-tasks-ops)",
+      "result": "39 and 50 registered public tools inventoried. 60 task-owned tools mapped; remaining tools assigned to build, plan, source-control.",
+      "schemas_read": [
+        "create_task",
+        "claim_task",
+        "close_task",
+        "list_tasks",
+        "add_dependency",
+        "get_task_diff",
+        "link_task_to_session"
+      ]
+    },
+    {
+      "id": "source-contract",
+      "kind": "source-inspection",
+      "command": "gcode outline/symbol-at on task registries; AST function inventory",
+      "result": "Mapped exact implementation symbols. Inspected creation criteria checks, claim conflict/one-claim checks, close/background review, artifact authority, stage submission, task backup, and live-session label authorization."
+    },
+    {
+      "id": "cli-declarations",
+      "kind": "read-only-cli-and-source",
+      "command": "uv run gobby tasks --help; uv run gobby tasks validate --help; gcode outline/grep on src/gobby/cli/tasks",
+      "result": "Verified command inventory and required leaf validation summary. Mutating-subcommand --help calls were hook-blocked; options checked from Click declarations and isolated CliRunner tests, not live mutations."
+    },
+    {
+      "id": "http-routes",
+      "kind": "source-inspection",
+      "command": "gcode outline/grep src/gobby/servers/routes/tasks*.py and stages.py",
+      "result": "Verified task CRUD, lifecycle, comment, dependency, stage, registry and defaults route ownership. Added omitted registry/default mutation routes; labeled HTTP as operator/client surface."
+    },
+    {
+      "id": "tdd-contract",
+      "kind": "source-inspection",
+      "command": "gcode symbol-at src/gobby/tasks/expansion/_contract.py:255; inspect bundled developer/reviewer skill/rule definitions",
+      "result": "One per-entry task; tdd flag adds required skill/label. Runtime test-write gate is distinct from transcript-backed red/green evidence."
+    },
+    {
+      "id": "installed-rules",
+      "kind": "live-read-only",
+      "command": "gobby-workflows:get_rule for require-task-close, require-epic-tree-close, enforce-tdd-block, enforce-tdd-track-tests",
+      "result": "All four source=installed, enabled=true, project_id=null on audit date.",
+      "rows": [
+        {
+          "name": "require-task-close",
+          "id": "f38eacbe-6dab-4c88-8aea-e7e0959ec9e7",
+          "event": "turn_end",
+          "enabled": true
+        },
+        {
+          "name": "require-epic-tree-close",
+          "id": "a1575ce9-dcc8-47e9-a045-ae2707b1f4df",
+          "event": "turn_end",
+          "enabled": true
+        },
+        {
+          "name": "enforce-tdd-block",
+          "id": "70e748ea-0695-4032-92d9-3ed65dbc8952",
+          "event": "before_tool",
+          "enabled": true
+        },
+        {
+          "name": "enforce-tdd-track-tests",
+          "id": "8938b7df-dcd6-423d-8fc0-2549fe37ff01",
+          "event": "after_tool",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "focused-task-tests",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py tests/mcp_proxy/tools/test_task_dependencies.py tests/mcp_proxy/tools/test_tasks_ops_artifacts.py tests/mcp_proxy/tools/test_live_session_label.py tests/tasks/test_task_backup.py tests/workflows/test_rule_engine_task_helper_wiring.py tests/cli/test_tasks_cli.py tests/servers/routes/test_tasks_routes.py tests/tasks/test_tdd_criteria_generation.py -q",
+      "result": "Final focused rerun: 372 passed. Initial run exposed two stale CLI owner-session fixtures, repaired with complete Session-derived rows and canonical project-qualified ref assertions.",
+      "limitation": "Representative behavior evidence, not a claim that every public tool was independently invoked."
+    },
+    {
+      "id": "library-structure",
+      "kind": "inline-validation",
+      "command": "uv run python: catalog load, AST symbol resolution, Markdown local link/anchor validation (script recorded in session transcript)",
+      "result": "1 capability, 68 operation records, 13 Markdown files validated; no missing paths, symbols, or anchors."
+    },
+    {
+      "id": "tdd-runtime-tests",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_tdd_enforcement_rules.py -q",
+      "result": "33 passed."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Docs creation example omitted validation_criteria and implied only code required criteria.",
+      "evidence": "create_task registered schema; _crud._task_invariant_error; criteria_contract.require_validation_criteria",
+      "resolution": "Corrected all-category non-epic requirement and example."
+    },
+    {
+      "finding": "Close examples advised retrying until closed and described all epics as gate-free.",
+      "evidence": "close_task schema and current background-close behavior; tasks skill completion contract",
+      "resolution": "Added durable validator wait and post-close memory sequence; preserved work gates for claimed/committed parents."
+    },
+    {
+      "finding": "Shell examples used unquoted #N references and CLI option tables omitted validation criteria.",
+      "evidence": "Shell token syntax and Click declarations in cli/tasks/crud.py; validate --help",
+      "resolution": "Quoted concrete refs and corrected criteria/summary options."
+    },
+    {
+      "finding": "Live-session source skill promised turn-end label exemptions removed by current rules.",
+      "evidence": "commit 6ba3f3c6c69ec1484c4cde870d790f39327fd06f; installed rules; test_rule_engine_task_helper_wiring tests reject both label bypasses",
+      "resolution": "Preserved the newer durable-stop-wait contract. New live-work reference and guide explicitly deny label bypass. No enforcement was weakened."
+    },
+    {
+      "finding": "Review source reference implied stage submission uses the complete interactive close checklist.",
+      "evidence": "_stage_review.submit_for_review performs scope/commit linking and stage transition, distinct from close orchestration",
+      "resolution": "Explained distinct review policies and lifecycle checks, retaining implementer/reviewer obligations."
+    },
+    {
+      "finding": "Two CLI tests supplied incomplete session rows and expected unqualified owner refs.",
+      "evidence": "cli/tasks/_utils/rendering.py::_resolve_session_refs constructs Session.from_row and canonical .ref",
+      "resolution": "Use complete Session-derived fixture rows; assert gobby#N and full-UUID orphan fallback."
+    },
+    {
+      "finding": "HTTP guide omitted stage registry/default mutation routes.",
+      "evidence": "servers/routes/stages.py decorators",
+      "resolution": "Added registered PUT/POST/DELETE routes and explicit operator/client boundary."
+    }
+  ],
+  "cutover_dependencies": [
+    "P4 migrates live-session label authorization and workflow requirements to exact references; P5 removes folded skill entrypoints. No compatibility wrappers."
+  ],
+  "planned_checks": [
+    "P3 executable service/CLI coverage checker and integrated library link checker; not yet executed."
+  ]
+}

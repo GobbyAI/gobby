@@ -357,14 +357,17 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 
 | Option | Purpose |
 | --- | --- |
-| `--quick` | Use quick build defaults. |
+| `--profile NAME` | Resolve an installed/project build preset (default name `default`). |
+| `--quick` | Run one bounded lifecycle action, then leave target automation disabled. |
 | `--project PROJECT` | Build or control automation in a target project by name or UUID. |
 | `--coordinator [current\|SESSION_UUID]` | Wake a coordinator session when build-spawned agents complete. `current` resolves from `GOBBY_SESSION_ID`; with `--project`, use `current` or a full session UUID. |
 | `--skip-stage STAGE` | Skip one lifecycle stage; repeat for multiple stages. |
 | `--stage STAGE:KEY=VALUE` | Override stage settings such as review caps. |
-| `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation defaults to `worktree`. |
+| `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation comes from the resolved profile. |
 | `--clone` | Shorthand for `--isolation clone`; conflicts with `--isolation none` and `--isolation worktree`. |
-| `--no-merge` | Skip merge stage setup. |
+| `--delivery-mode MODE` | Override `auto` or `pull_request` delivery intent. |
+| `--delivery-target-repo OWNER/REPO` | Override the PR target repository. |
+| `--no-merge` | Skip final promotion; requires worktree or clone isolation. |
 | `--pr VALUE` | Configure PR delivery behavior. |
 | `--target-branch BRANCH` | Override the target branch. |
 | `--agent NAME` | Assign a specific agent definition. |
@@ -374,12 +377,18 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 | `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
 | `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
 | `--plan-enhancement-rounds N` | Target constructive `plan-enhancer` rounds before the adversary gate (`0` disables; overrides the build profile default). |
-| `--dry-run` | Preview `clean` or `restart` effects. |
+| `--dry-run` | Preview launch, `clean`, or `restart`; control previews may record history. |
+| `--delete-dirty-worktrees` | For `clean`, explicitly permit dirty descendant worktree deletion. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
 | `--yes` | Confirm destructive `clean` or `restart` prompts. |
 | `--no-resume` | For `restart`, reset state and leave automation paused. |
 
-Use `gobby build stop [REF]` to pause future dispatch work for a target.
+Without a ref, `gobby build stop` pauses future project ticks. With a ref it
+disables the subtree, cancels active agents, clears mutexes/stale agent claims,
+and resets stoppable stage work while retaining task history and artifacts.
+Task-scoped resume preserves isolation; a new build request resolves profile
+options again. Use a clean/restart preview before destructive recovery.
+These are operator controls; agents use the corresponding `gobby-tasks-ops` tools.
 Explicit `--project` rejects project-local coordinator refs such as `#N` or
 bare numbers because they would resolve in the target project.
 
@@ -401,10 +410,21 @@ applied. `drafted` starts from planning.
 
 `--plan-enhancement-rounds N` seeds the target number of constructive
 `plan-enhancer` rounds that run as a pre-adversary sub-loop inside the planning
-stage. Autonomous builds default to `0` (no enhancement); pass `N > 0` to enable
-it. The explicit value wins over the build profile default, including an
+stage. Bundled profiles default to `0` (no enhancement); inspect the installed row
+before relying on that default. Pass `N > 0` to enable it when authorized. The explicit value wins over the build profile default, including an
 explicit `0`. Enhancement rounds are counted independently of the adversary
 review budget.
+
+### Profiles And Stage Defaults
+
+Operators use `gobby profiles list|show|create|update|enable|disable|restore|delete`
+and `gobby stages list|show|update|restore|delete|defaults`. These are command
+families, not literal pipe-separated commands; use each command's `--help` for
+required fields. Profiles distinguish installed and project scope.
+`gobby stages defaults TASK_TYPE` reads the default manifest; repeated
+`--set STAGE:POSITION` values replace it. Agents use `gobby-profiles`,
+`gobby-tasks` reads, and `gobby-tasks-ops` stage mutations.
+See [Dispatch](./dispatch.md#stage-registry) for registry constraints.
 
 ## Task Lifecycle
 
@@ -442,14 +462,15 @@ gobby tasks delete TASKS... [OPTIONS]
 
 | Command | Key options |
 | --- | --- |
-| `tasks create` | `--description`, `--priority`, `--type`, `--depends-on`, `--project` |
-| `tasks update` | `--title`, `--priority`, `--parent`, `--task-type`, `--isolation` |
+| `tasks create` | `--description`, `--validation-criteria` (required except epics), `--priority`, `--type`, `--depends-on`, `--project` |
+| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type`, `--isolation` |
 | `tasks close` | `--reason` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
-| `tasks delete` | `--cascade`, `--yes` |
+| `tasks delete` | `--cascade`, `--unlink`, `--yes` |
 
-Agents should use the `gobby-tasks` MCP lifecycle tools for claims, closure, and
-review transitions. The CLI remains useful for human inspection and maintenance.
+Agents use `gobby-tasks` MCP lifecycle tools for claims and closure, and
+`gobby-tasks-ops` for authorized stage review transitions. The CLI remains an
+operator interface. Quote shell task references, for example `'#123'`.
 
 ### Stages And Review
 
@@ -468,7 +489,7 @@ Stages with required review must be submitted through `tasks review --submit`.
 ```bash
 gobby tasks search QUERY [OPTIONS]
 gobby tasks reindex [OPTIONS]
-gobby tasks validate TASK
+gobby tasks validate TASK --summary SUMMARY
 gobby tasks validation-history TASK [--clear] [--json]
 gobby tasks doctor
 gobby tasks clean
@@ -480,6 +501,9 @@ gobby tasks restore [--input PATH] [--quiet]
 `tasks search` supports `--type`, `--priority`, `--project`, `--all-projects`,
 `--limit`, `--min-score`, and `--json`. `tasks reindex` supports
 `--all-projects`.
+
+Leaf validation requires `--summary` or `--file`; it runs a bounded criteria
+review and does not replace the agent close checklist.
 
 ### Dependencies, Labels, Commits, And Diffs
 
@@ -562,8 +586,16 @@ gobby plans show PLAN_ID [--project PROJECT]
 gobby plans register PLAN_PATH [--plan-id ID] [--kind KIND] [--root-task-ref TASK] [--project PROJECT]
 gobby plans validate PLAN_FILE [--project PROJECT] [--mode standard|expansion]
 gobby plans archive PLAN_ID [--reason REASON] [--project PROJECT]
-gobby plans review-runs PLANNING_TASK_REF
+gobby plans review-evidence [--plan PATH] [--open] [--json] [--limit N]
+gobby plans review-runs TASK_REF
 ```
+
+Plan registration needs a real root: supply `--root-task-ref` unless it can be
+inferred from plan metadata or the filename. Project-aware validation uses
+`-p <project-root>` and is required before review/expansion. `review-runs` prints
+an expansion-QA pointer; use `review-evidence` to inspect recent evidence.
+Agents use MCP for plan/task lifecycle writes; the task-expansion commands above
+are operator-only.
 
 ## MCP Proxy
 
@@ -596,16 +628,29 @@ gobby mcp-proxy refresh [OPTIONS]
 
 ### Sessions
 
+Operator interfaces (agents use `gobby-sessions` MCP tools):
+
 ```bash
 gobby sessions list [--project PROJECT] [--status STATUS] [--source SOURCE] [--limit N] [--json]
 gobby sessions show SESSION [--json]
 gobby sessions messages SESSION [--limit N] [--role ROLE] [--offset N] [--json]
-gobby sessions stats
+gobby sessions stats [--project PROJECT]
 gobby sessions summarize [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
-gobby sessions delete SESSION
+gobby sessions restore SESSION [--path PATH] [--json]
+gobby sessions restore --all [--json]
+gobby sessions delete SESSION [--yes]
+gobby sessions renumber --project PROJECT [--apply]
+gobby sessions backfill-context-windows [--dry-run]
 ```
 
+`summarize` creates archival output; it never stages a recoverable handoff.
+`renumber` previews until `--apply`; context-window backfill writes unless
+`--dry-run` is present. Restoration does not overwrite an existing transcript.
+See the [session guide](sessions.md#cli-commands) for workflows and recovery.
+
 ### Agents
+
+Operator interfaces; agents use `gobby-agents` and `gobby-workflows` MCP tools.
 
 ```bash
 gobby agents list [--enabled | --disabled] [--surface SURFACE] [--json]
@@ -617,14 +662,17 @@ gobby agents runs list [--session SESSION] [--status STATUS] [--limit N] [--json
 gobby agents runs show RUN [--json]
 gobby agents status RUN
 gobby agents stop RUN
-gobby agents kill RUN
-gobby agents stats
-gobby agents cleanup
+gobby agents kill RUN [--force] [--stop] [--yes]
+gobby agents stats [--session SESSION]
+gobby agents cleanup [--timeout MINUTES] [--dry-run]
 ```
 
 `agents spawn` supports `--workflow`, `--task`, `--provider`, `--model`,
 `--reasoning-effort`, `--reasoning-required/--no-reasoning-required`,
-`--timeout`, `--max-turns`, `--context`, and `--json`.
+`--timeout`, `--terminal-backend tmux|native`, and `--json`.
+The CLI requires a parent session and does not expose all MCP isolation/grant
+fields. Cleanup mutates by default; use `--dry-run` to inspect stale candidates.
+CLI kill defaults differ from MCP: pass `--stop` to stop the workflow as well.
 
 ## Workspaces
 
@@ -662,7 +710,7 @@ gobby clones delete CLONE
 ### Memory
 
 ```bash
-gobby memory create CONTENT [--type TYPE] [--project PROJECT]
+gobby memory create CONTENT --rationale REASON [--type TYPE] [--project PROJECT]
 gobby memory recall [QUERY] [--project PROJECT] [--limit N] [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
 gobby memory list [--type TYPE] [--limit N] [--project PROJECT] [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
 gobby memory show MEMORY [--project PROJECT]
@@ -672,7 +720,19 @@ gobby memory export [--output PATH]
 gobby memory stats
 ```
 
+Memory also provides backup/restore, graph/index maintenance, dream run
+observation/revert, and recall-signal diagnostics. See the audited
+[Memory CLI reference](memory.md#cli-reference) and
+[Dream operations](memory.md#dream-operations) for scope and recovery boundaries.
+
 ### Skills
+
+Use `gobby-skills` MCP for tracked agent instruction loads. CLI show/list and
+management operations do not satisfy load gates. Local name-based show,
+metadata, enable and disable commands resolve global rows; use scoped/ID-based
+management for project overrides. Hub configuration supports `hub list` and
+`hub add`, with no `hub remove` command. See the
+[skills guide](skills.md#cli-commands) for source, update and recovery boundaries.
 
 ```bash
 gobby skills list [--category CATEGORY] [--tags TAGS] [--enabled | --disabled] [--limit N] [--json]
@@ -852,6 +912,24 @@ To test a branch's bundled content before merge: for content-only changes
 them too. Content that needs the branch's code (new effect handlers, new MCP
 tools) needs the cutover above or the merge; forcing it in only produces rows
 the running daemon cannot serve.
+
+## Native Code Index
+
+PostgreSQL BM25 health is available through `gobby postgres status --json`
+(`code_index` in the payload). Operator `gobby postgres repair-code-index
+[--json]` selectively repairs damaged BM25 indexes and exits 1 if still unhealthy.
+It uses bootstrap credentials and the configured maintenance timeout; missing
+indexes require setup/migrations. After failed startup recovery, repair and
+coordinate a restart to enable workers. See
+[PostgreSQL BM25 recovery](code-index.md#postgresql-bm25-recovery).
+
+Use the separately installed `gcode` binary for code navigation. There is no
+`gobby code-index` command or code-index MCP service in this checkout.
+`gcode --help` lists the native surface; the
+[gcode guide](gcode-user-guide.md) covers search, retrieval, graph views,
+freshness, repair, and operator cleanup. `gcode init` requires a registered
+checkout; it does not create standalone project identity. Runtime access uses
+daemon-issued grants. Mutating index/cleanup commands need their own authority.
 
 ## ID Resolution
 
