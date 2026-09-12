@@ -98,10 +98,12 @@ an installed `gterm`. When the host is unavailable a native spawn fails before f
 with the typed refusal `host_unavailable` (`HostUnavailableError`, a
 `HostCommandError`); there is no silent tmux fallback. Native lifecycle, host
 recovery, coordinated writes, and the workspace client are implemented; native
-launches remain opt-in. The default flip's
-fabricated evidence artifact and its weekly parity producer were removed in
-`d091addeab`; leaf 1.3 of `.gobby/plans/herdr-foundation-landing.md` reverted the
-default it had justified.
+launches remain opt-in. The native default flip gate is
+`docs/evidence/native-backend-flip.md`: P7's host-driven acceptance suite must be
+green in ordinary CI on macOS and Linux at the same commit, with no later red
+evidence row. Evidence rows are append-only in execution order. Until that gate is
+satisfied, `tmux` remains the default. Roll back a native-default deployment with
+`gobby config set terminals.default_backend tmux`.
 
 ## Landing worktree
 
