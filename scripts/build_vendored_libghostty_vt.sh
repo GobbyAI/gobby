@@ -38,6 +38,72 @@ if [[ ! -x "$ZIG_BIN" ]] && ! command -v "$ZIG_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
+# macOS SDK 27 ships a math.h that Zig 0.15's bundled libcxx cannot compile
+# ("use of undeclared identifier 'INFINITY'" in __random/clamp_to_integral.h), so
+# build against the newest installed SDK below 27 when the active one is 27+.
+# Zig caches libc detection in its global cache, so the cache is keyed to the SDK
+# too: without that a warm cache silently reuses the incompatible include paths.
+sdk_version_of() {
+  plutil -extract Version raw "$1/SDKSettings.plist" 2>/dev/null || true
+}
+
+select_macos_sdk() {
+  [[ "$(uname -s)" == Darwin ]] || return 0
+  [[ -z "${SDKROOT:-}" ]] || return 0
+
+  local current current_ver current_major
+  current=$(xcrun --show-sdk-path 2>/dev/null || true)
+  [[ -n "$current" ]] || return 0
+  current_ver=$(sdk_version_of "$current")
+  current_major=${current_ver%%.*}
+  [[ "$current_major" =~ ^[0-9]+$ ]] || return 0
+  ((current_major >= 27)) || return 0
+
+  # Command Line Tools first so an Xcode SDK wins ties: Xcode's default MacOSX.sdk
+  # is often older than the Command Line Tools one, and pointing DEVELOPER_DIR at
+  # Xcode is what actually redirects Zig's libc detection.
+  local best="" best_ver="" dir ver major newest
+  for dir in /Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk \
+             /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX*.sdk; do
+    [[ -d "$dir" ]] || continue
+    ver=$(sdk_version_of "$dir")
+    major=${ver%%.*}
+    [[ "$major" =~ ^[0-9]+$ ]] || continue
+    ((major < 27)) || continue
+    if [[ -z "$best_ver" ]]; then
+      best=$dir best_ver=$ver
+    else
+      newest=$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)
+      # Explicit if, not `[[ ]] && assign`: a false test there would return 1 from
+      # the loop body and trip `set -e`.
+      if [[ "$newest" == "$ver" ]]; then
+        best=$dir
+        best_ver=$ver
+      fi
+    fi
+  done
+
+  if [[ -z "$best" ]]; then
+    echo "warning: active macOS SDK is $current_ver and no SDK below 27 is installed;" >&2
+    echo "         the libghostty-vt build will likely fail inside Zig's bundled libcxx." >&2
+    return 0
+  fi
+
+  export SDKROOT="$best"
+  case "$best" in
+    */Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/*)
+      export DEVELOPER_DIR="${best%%/Platforms/MacOSX.platform/Developer/SDKs/*}"
+      ;;
+  esac
+  # Both caches memoize the detected libc include paths, so both must be keyed to
+  # the SDK; keying only one lets the other reuse the incompatible paths.
+  export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/zig}/sdk-$best_ver"
+  export ZIG_LOCAL_CACHE_DIR="${ZIG_LOCAL_CACHE_DIR:-$VENDORED_DIR/.zig-cache}/sdk-$best_ver"
+  echo "note: macOS SDK $current_ver is incompatible with Zig 0.15's libcxx; building against SDK $best_ver" >&2
+}
+
+select_macos_sdk
+
 rust_triple=${GTERM_TARGET:-}
 if [[ -z "$rust_triple" ]]; then
   if command -v rustc >/dev/null 2>&1; then
