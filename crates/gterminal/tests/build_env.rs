@@ -14,6 +14,10 @@ fn workspace_root() -> PathBuf {
 }
 
 fn cargo_build(args: &[&str], extra_env: &[(&str, OsString)]) -> (i32, String) {
+    let scratch = tempfile::Builder::new()
+        .prefix("gterminal-cargo-")
+        .tempdir()
+        .expect("cargo scratch dir");
     let mut command = Command::new("cargo");
     command
         .args(args)
@@ -22,12 +26,52 @@ fn cargo_build(args: &[&str], extra_env: &[(&str, OsString)]) -> (i32, String) {
     for (key, value) in extra_env {
         command.env(key, value);
     }
+    command.env("CARGO_TARGET_DIR", scratch.path().join("target"));
     let output = command.output().expect("spawn cargo");
     let mut text = String::new();
     text.push_str(&String::from_utf8_lossy(&output.stdout));
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     let code = output.status.code().unwrap_or(1);
     (code, text)
+}
+
+#[test]
+#[cfg(unix)]
+fn build_env_uses_private_target_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let bin_dir = scratch.path().join("bin");
+    let cargo = bin_dir.join("cargo");
+    let marker = scratch.path().join("cargo-target-dir");
+    fs::create_dir(&bin_dir).expect("create fake cargo bin dir");
+    fs::write(
+        &cargo,
+        "#!/bin/sh\nprintf '%s' \"$CARGO_TARGET_DIR\" > \"$GOBBY_CARGO_TARGET_MARKER\"\n",
+    )
+    .expect("write fake cargo");
+    let mut permissions = fs::metadata(&cargo)
+        .expect("fake cargo metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&cargo, permissions).expect("chmod fake cargo");
+
+    let (code, text) = cargo_build(
+        &["build"],
+        &[
+            ("PATH", bin_dir.into_os_string()),
+            ("GOBBY_CARGO_TARGET_MARKER", marker.clone().into_os_string()),
+        ],
+    );
+    assert_eq!(code, 0, "fake cargo must succeed:\n{text}");
+
+    let target_dir = PathBuf::from(fs::read_to_string(marker).expect("read target marker"));
+    assert_ne!(target_dir, workspace_root().join("target"));
+    assert!(
+        target_dir.starts_with(std::env::temp_dir()),
+        "cargo target dir must be private scratch space: {}",
+        target_dir.display()
+    );
 }
 
 #[test]
