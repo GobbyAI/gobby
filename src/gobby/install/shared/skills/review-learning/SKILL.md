@@ -52,6 +52,12 @@ Pass the diagnostic and generalized lesson in one `finding` dict:
 - `diagnostic_format` should be `raw`, `sarif`, `rdjson`, or
   `review_comment`.
 
+The service-composed memory body has a **3,000-character limit**. Rendered
+headings and all included fields contribute to this shared budget, including
+finding fields, provenance, and evidence. Keep the complete lesson concise;
+on `content_too_long`, use the reported actual and allowed totals to shorten
+the payload before retrying.
+
 Seed `lesson_type` examples: `durable-writes`, `sql-placeholders`,
 `session-scope`, `task-lifecycle`, `validation-gates`, `workflow-verdicts`,
 `memory-recall`, `idempotency`, and `test-isolation`. These are examples, not
