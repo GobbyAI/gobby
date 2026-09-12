@@ -89,7 +89,7 @@ separate inventory-bound retirement procedure.
 - `src/gobby/config/bootstrap.py`: local/remote bootstrap ownership.
 - `src/gobby/storage/projects.py`: checkout-free personal identity.
 - `src/gobby/files_migrate.py`: stopped-daemon migration and preservation.
-- `src/gobby/servers/routes/files.py`: profile access.
+- `src/gobby/servers/routes/hub_files_proxy.py`: owner profile GET/PUT access.
 - `src/gobby/files_home_proxy.py`: shared hub forwarding.
 - `src/gobby/servers/routes/chat_attachments.py`: attachment HTTP access.
 - `src/gobby/cli/hub_backup/files_home.py`: scoped files-home archive handling.

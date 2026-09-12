@@ -807,6 +807,31 @@ failed task actions, interrupted review, and failed report writes preserve
 observation retryability. Do not blindly launch another batch after a client
 timeout. See the [operator CLI](cli-commands.md#feedback-review).
 
+## Global Working Profile
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/api/files/user-md` | Read the hub owner's `USER.md` as `{"content": "..."}`; a missing file gives empty content |
+| PUT | `/api/files/user-md` | Atomically replace the whole profile from JSON `{"content": "..."}`; empty content clears it |
+
+These routes are available to authenticated clients on the local files owner.
+A remote node targets its configured `hub_daemon_url` directly; calling these
+routes on a remote daemon returns 409 `remote_target`. They do not create a
+missing files-home root: missing-root GET returns 404 and PUT returns 409.
+The route is already fully qualified under `/api`; no second API prefix applies.
+
+PUT requires a string `content` field and valid UTF-8 JSON. Invalid bodies or
+Content-Length return 400; decoded content over 1,048,576 bytes or a wire body
+over 6,291,470 bytes returns 413. Both declared and streamed body sizes are bounded.
+There is no revision/ETag write precondition: preserve the current profile before
+replacement and reconcile concurrent updates. GET strips surrounding whitespace.
+
+This profile API is separate from the machine-local checkout browser and from
+build-profile management. Assigned agents may use it for an authorized intro
+request; installation and legacy migration remain operator operations. See
+[Working Profile](README.md#working-profile) and
+[prerequisites](cli-commands.md#working-profile-prerequisites).
+
 ## Error Handling
 
 Routes use FastAPI status codes for validation and service errors:

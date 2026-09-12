@@ -656,6 +656,26 @@
           "when": "Finalizing epic review or interpreting feedback actions"
         }
       ]
+    },
+    {
+      "name": "intro",
+      "description": "Capture a global working profile and resolve onboarding prerequisites",
+      "overview": "references/intro/overview.md",
+      "when": "Starting onboarding or updating durable collaboration preferences",
+      "topics": [
+        {
+          "name": "profile",
+          "description": "Read and update the global USER.md profile",
+          "path": "references/intro/profile.md",
+          "when": "Capturing or revising the user working profile"
+        },
+        {
+          "name": "onboarding",
+          "description": "Resolve owner storage, setup and session injection",
+          "path": "references/intro/onboarding.md",
+          "when": "Checking profile location, prerequisites or injection failures"
+        }
+      ]
     }
   ]
 }

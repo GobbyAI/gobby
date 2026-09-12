@@ -1014,6 +1014,32 @@ added by deterministic intake; human-review labels remain an operator boundary.
 See [feedback HTTP routes](http-endpoints.md#feedback-review) and
 [test-quality](test-quality.md) for local validation evidence.
 
+## Working Profile Prerequisites
+
+The global collaboration profile is `USER.md`, not a build profile. Use
+`$gobby intro` and [Working Profile](README.md#working-profile) to edit its content;
+there is no dedicated personal-profile CLI command.
+
+These provisioning/migration operations are operator-only prerequisites, not
+steps to repeat for every profile update:
+
+- Full local install: `gobby install --files-home <existing-absolute-directory>`.
+  Provision the root first. A configured existing files home can be reused;
+  interactive install prompts when it is missing, while noninteractive install
+  requires it. Remote install refuses `--files-home` and uses the hub's existing
+  local CLI token and configured owner origin.
+- Legacy files: `gobby files migrate` runs only on the local hub with the daemon
+  stopped, under its maintenance claim. Stop or upgrade remote writers and
+  collect their leftover profile/personal/attachment files at the hub first.
+  The command does not collect remote files or create a files-home root.
+- Start the daemon after successful migration. Divergent destinations are
+  refused; inspect partial results and preserve both copies before recovery.
+
+See [files-home migration](../architecture/hub-owned-files-home.md#migration).
+Profile GET/PUT uses [the files API](http-endpoints.md#global-working-profile)
+with the hub's configured authentication. Do not rotate credentials to repair
+an ordinary profile-writing request.
+
 ## Native Code Index
 
 PostgreSQL BM25 health is available through `gobby postgres status --json`

@@ -14,6 +14,41 @@ links to the guide that owns that topic.
 | [shared-stack.md](shared-stack.md) | Shared PostgreSQL/Qdrant/FalkorDB setup over Tailscale, client bootstrap, and M0 boundaries |
 | [remote-docker-acceptance.md](remote-docker-acceptance.md) | Physical remote-Docker M0 acceptance, evidence capture, and recovery procedure |
 
+## Working Profile
+
+`$gobby intro` captures a concise global working profile. It lives at
+`<files_home>/USER.md` on the hub owner and is never copied into a repository.
+It is separate from the build profiles managed by `gobby profiles`.
+
+Read the existing profile first. Infer relevant low-risk facts from the user's
+context, and ask only for missing preferences that change agent behavior.
+Preserve useful content using these sections in order: **Identity**, **Working
+Style**, **Preferences**, **Autonomy & Boundaries**, **Never-Do**. Keep durable
+preferences; omit task status and one-time assumptions. A profile update should
+report its destination, changed sections and information the user left unspecified.
+
+Local bootstrap supplies an existing absolute `files_home`. Remote bootstrap
+supplies `hub_daemon_url`; use the owner's authenticated
+`GET`/`PUT /api/files/user-md` with JSON `{"content": "..."}`. PUT replaces the
+entire file atomically, has no revision check, and an empty string clears it.
+Read before writing and verify afterward. Do not write the legacy
+`~/.gobby/personal/USER.md` or create a node-local replacement. See
+[profile HTTP behavior](http-endpoints.md#global-working-profile).
+
+The owner must provision its files-home root before installation. Full local
+installation accepts `--files-home`; remote installation refuses that option and
+requires the hub's existing credential. Legacy migration runs on the stopped hub
+after remote writers are stopped or upgraded. See
+[installation prerequisites](cli-commands.md#working-profile-prerequisites) and
+[files-home ownership](../architecture/hub-owned-files-home.md).
+
+Session startup reads the profile into `user_profile_content`. The bundled
+`inject-user-profile` rule injects nonempty content only when startup source is
+not `resume` and the session is not spawned. Inspect the installed rule and
+effective selection before expecting injection. File edits do not replace context
+already loaded in a running session. Handled profile/OS read errors are logged and
+seed empty content; bootstrap and files-home ownership errors require recovery.
+
 ## Core Workflows
 
 | Guide | Description |
@@ -127,6 +162,7 @@ links to the guide that owns that topic.
 5. Read [web-ui.md](web-ui.md) for the browser surfaces and route/API flow.
 6. Read [tasks.md](tasks.md) to learn task lifecycle basics.
 7. Read [cli-commands.md](cli-commands.md) for day-to-day commands.
+8. Use [Working Profile](#working-profile) to record durable collaboration preferences.
 
 ### Automated Development
 
@@ -151,14 +187,14 @@ links to the guide that owns that topic.
 
 ## Quick Links
 
-- **Create a task**: `gobby tasks create "Title"` or `create_task` MCP tool
-- **List ready work**: `gobby tasks ready` or `list_ready_tasks` MCP tool
-- **Spawn an agent**: `gobby agents spawn "Prompt" --session <session-id>` or `spawn_agent` MCP tool
-- **Create memory**: `gobby memory create "Content"` or `create_memory` MCP tool
-- **Session handoff**: `gobby sessions summarize` or `set_handoff` MCP tool
-- **Check daemon health**: `gobby status` or `/api/admin/status`
+- **Create or discover work**: [task workflow and required fields](tasks.md); agents use `gobby-tasks` MCP, operators use the CLI.
+- **Spawn an agent**: [agent definitions and spawning](agents.md).
+- **Capture durable memory**: [memory and rationale requirements](memory.md).
+- **Session handoff**: `gobby-sessions:set_handoff`; follow [session handoff guidance](sessions.md). The operator `gobby sessions summarize` command generates a summary, not a handoff.
+- **Check daemon health**: `gobby status` or `GET /api/admin/status`.
 - **Set up a private Telegram bot**:
   [Telegram DM-only quick path](telegram.md#quick-path-a-private-dm-bot)
 - **Audit test quality**: `gobby test-quality audit tests/path`
 
-_Last verified: 2026-07-25_
+_Index links, working-profile guidance and quick links verified: 2026-09-12.
+Linked guides retain their own verification scope._

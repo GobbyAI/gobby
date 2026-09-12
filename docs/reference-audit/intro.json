@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "capability": "intro",
+  "status": "verified",
+  "source_skills": [
+    "intro"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/README.md",
+      "anchors": [
+        "working-profile",
+        "getting-started",
+        "quick-links"
+      ],
+      "evidence": [
+        "source-audit",
+        "links",
+        "focused-intro"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "working-profile-prerequisites"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-intro"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "global-working-profile"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-intro"
+      ]
+    },
+    {
+      "path": "docs/architecture/hub-owned-files-home.md",
+      "anchors": [
+        "storage-and-ownership",
+        "current-tree-and-routes",
+        "migration",
+        "source-boundaries"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-intro"
+      ]
+    },
+    {
+      "path": "docs/guides/hub-install-contract.md",
+      "anchors": [
+        "files-and-client-credentials"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-intro"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/files/user-md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/intro/profile.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/hub_files_proxy.py",
+        "symbol": "get_user_md"
+      },
+      "verification": [
+        "source-audit",
+        "focused-intro"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "route": "/api/files/user-md",
+      "reference": "src/gobby/install/shared/skills/gobby/references/intro/profile.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/hub_files_proxy.py",
+        "symbol": "put_user_md"
+      },
+      "verification": [
+        "source-audit",
+        "focused-intro"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/intro/onboarding.md",
+      "implementation": {
+        "path": "src/gobby/cli/install.py",
+        "symbol": "install"
+      },
+      "verification": [
+        "source-audit",
+        "focused-intro"
+      ],
+      "audience": "operator",
+      "primary_capability": "admin",
+      "scope": "Working-profile files_home prerequisites only; full install belongs to admin."
+    },
+    {
+      "surface": "cli",
+      "command": "gobby files migrate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/intro/onboarding.md",
+      "implementation": {
+        "path": "src/gobby/cli/files.py",
+        "symbol": "migrate"
+      },
+      "verification": [
+        "source-audit",
+        "focused-intro"
+      ],
+      "audience": "operator",
+      "primary_capability": "admin"
+    }
+  ],
+  "scope_notes": [
+    "No dedicated personal-profile MCP registry or CLI command exists. The task research pointer mcp_proxy/tools/profiles.py owns build profiles, already mapped in docs/reference-audit/build.json; do not misroute those eight tools to intro.",
+    "Profile local filesystem reading/writing and session startup seeding are agent procedures backed by hooks/event_handlers/_session_start/profile.py, not additional MCP operations. Registered owner HTTP GET/PUT and shared install/migration CLI prerequisites are mapped here.",
+    "Installation/daemon lifecycle and full migration/backup operations remain operator admin coverage. This leaf verifies only working-profile prerequisites. Rule inspection is shared with rules; no live rule, profile content, credentials, or bootstrap values were modified for validation.",
+    "The guide index was read in full and all 100 local intro/index links checked. Descriptive links to unrelated capabilities do not claim a new whole-guide audit; linked guides retain their own receipts."
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "inspection",
+      "command": "gcode outline/symbol-at/grep of profile readers/writers/seeding, files-home paths and bootstrap, files API constants/mounts/routes, install_files_home, remote_preflight, files_migrate, files CLI, injection rule, source skill, guides and current ROADMAP",
+      "result": "Confirmed local/remote ownership, existing root, no node-local fallback, atomic publication, UTF-8/wire limits, empty clearing, no revision precondition, missing-root/error distinctions, seed/injection conditions, operator migration/remote credentials. CLI sessions.summarize remains available but is summary generation, not a handoff."
+    },
+    {
+      "id": "focused-intro",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_session_user_profile.py tests/servers/routes/test_hub_files_proxy.py tests/config/test_files_home.py tests/cli/test_files_migrate.py tests/cli/test_install_front_door.py tests/cli/test_install_prompts.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "149 passed in 3.08s using temporary roots, fake HTTP transports and isolated database fixtures. No live install, migration, profile GET/PUT or restart run by this audit."
+    },
+    {
+      "id": "installed-rule",
+      "kind": "inspection",
+      "command": "gobby-workflows:get_rule(name=inject-user-profile)",
+      "result": "2026-09-12: row 3ea55c9f-b024-42f8-b477-d5dc6c5d90de, source installed, project_id null, enabled true, event session_start, priority12. Condition is source != resume, nonempty user_profile_content, not is_spawned_agent. Effective session selection must still be checked before claiming actual injection."
+    },
+    {
+      "id": "links",
+      "kind": "validation",
+      "command": "uv run python Markdown destination/heading validator over three intro references and complete docs/guides/README.md",
+      "result": "100 local links/anchors valid."
+    },
+    {
+      "id": "cli-help",
+      "kind": "inspection",
+      "command": "uv run gobby files migrate --help",
+      "result": "Confirmed no required arguments and command purpose; mutation not invoked."
+    },
+    {
+      "id": "memory-conflict",
+      "kind": "inspection",
+      "command": "gobby-memory:search_memories(query=intro working profile USER.md files_home user-md onboarding); compare ROADMAP shared datastore status, hub-install-contract, hub-owned-files-home and profile/config tests",
+      "result": "Old memories d3ff0753-f347-5e5c-89e3-99ec7a0724d9 and b9c4b7cc-28b7-5611-9506-771d4bc1650f retained retired wiki/personal paths and discouraged remote assumptions. Current contracts explicitly retain files-home remote transport; document that existing behavior without claiming physical deployment acceptance. Updated d3ff0753 to preserve this distinction and deleted duplicate stale b9c4b7cc after the 149-test verification."
+    },
+    {
+      "id": "final-links-and-symbols",
+      "kind": "validation",
+      "command": "uv run python Markdown local destination/heading validator over intro references, full guide index, files-home architecture guide and added CLI/HTTP sections; implementation symbol/path checks",
+      "result": "105 local links/anchors and all four mapped operation paths/symbols valid."
+    },
+    {
+      "id": "injection-rule-test",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_rule_engine.py -k installed_user_profile_rule_renders_seeded_content -q --tb=short",
+      "result": "1 passed, 153 deselected in 0.75s; real rule-engine rendering of the bundled injection rule in isolated state."
+    },
+    {
+      "id": "bounded-review",
+      "kind": "review",
+      "command": "Independent code-review skill/OCR review by review_reference_identity (Mendel), nine owned paths",
+      "result": "9 reviewed, zero skipped, no critical/high/medium findings; owner routing, profile obligations, replacement/clearing, size limits, injection and operator boundaries checked."
+    },
+    {
+      "id": "review-recall",
+      "kind": "inspection",
+      "command": "gobby-review-learning:recall_review_context for profile owner transport and retired wiki ownership",
+      "result": "Effective policy/route composition lesson ed773ed5-5477-5038-bef4-1fe3737695a6 supports checking mounted routes and preserving current files contract; no contradictory recommendation adopted."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Task research pointer describes build-profile tools, not global working preferences.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Route intro to USER.md owner transport; leave build-profile tool coverage under build and link it explicitly.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    },
+    {
+      "finding": "Guide index omitted working-profile onboarding and conflated operator summary generation with agent handoff; terse task/memory snippets omitted required fields and boundaries.",
+      "evidence": [
+        "source-audit"
+      ],
+      "resolution": "Added human onboarding section and learning-path link; replaced quick links with authoritative workflow links, explicit MCP/operator task distinction and summary/handoff distinction.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    },
+    {
+      "finding": "Files-home architecture guide attributed profile routes to files.py instead of hub_files_proxy.py.",
+      "evidence": [
+        "source-audit",
+        "focused-intro"
+      ],
+      "resolution": "Corrected source-boundary link in the same deliverable.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    },
+    {
+      "finding": "Shared CLI/HTTP guides omitted profile prerequisites and owner GET/PUT contract.",
+      "evidence": [
+        "source-audit",
+        "focused-intro"
+      ],
+      "resolution": "Added owner routing, authentication boundary, full replacement/clearing, size limits, missing-root failures, installation and migration prerequisites.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    }
+  ],
+  "verified_at": "2026-09-12"
+}
