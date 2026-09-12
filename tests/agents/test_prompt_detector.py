@@ -37,6 +37,33 @@ WORKSPACE_TRUST_PANE = (
 )
 
 
+# The same dialog as the runtime delivers it. Both pane sources keep SGR: tmux
+# captures with ``-e``, and the native host's "text" snapshot is
+# ``recent_unwrapped_ansi``. Native Ask probe attempt 26 is the evidence: its
+# highlighted row arrived as " \x1b[0m\x1b[38;5;153m\u276f No, exit\x1b[0m",
+# reproduced verbatim below, and the monitor answered it with the bare Enter
+# that selects "No, exit".
+WORKSPACE_TRUST_PANE_WITH_SGR = (
+    "\x1b[0m\x1b[38;5;220m" + "\u2500" * 80 + "\x1b[0m\n"
+    " \x1b[0m\x1b[1m\x1b[38;5;220mAccessing workspace:\x1b[0m\n"
+    "\n"
+    " \x1b[0m\x1b[1m/private/tmp/gobby-ap-ne0hsfgx/gobby/ask/run/scratch/investigator-0\x1b[0m\n"
+    "\n"
+    " Quick safety check: Is this a project you created or one you trust? (Like your\n"
+    " own code, a well-known open source project, or work from your team). If not,\n"
+    " take a moment to review what's in this folder first.\n"
+    "\n"
+    " Claude Code'll be able to read, edit, and execute files here.\n"
+    "\n"
+    " \x1b[0m\x1b[38;5;246mSecurity guide\x1b[0m\n"
+    "\n"
+    " \x1b[0m\x1b[38;5;153m\u276f No, exit\x1b[0m\n"
+    "   Yes, I trust this folder\n"
+    "\n"
+    " \x1b[0m\x1b[38;5;246mEnter to confirm \u00b7 Esc to cancel\x1b[0m\n"
+)
+
+
 class TestTrustDismissKeys:
     """Tests for the key sequence that answers a trust prompt affirmatively."""
 
@@ -45,6 +72,12 @@ class TestTrustDismissKeys:
         detector = make_detector()
 
         assert detector.trust_dismiss_keys(WORKSPACE_TRUST_PANE) == ("down", "enter")
+
+    def test_navigates_to_the_affirmative_row_through_the_highlight_sequence(self) -> None:
+        """The highlight that marks the selected row is drawn before the marker."""
+        detector = make_detector()
+
+        assert detector.trust_dismiss_keys(WORKSPACE_TRUST_PANE_WITH_SGR) == ("down", "enter")
 
     def test_confirms_directly_when_the_affirmative_row_is_selected(self) -> None:
         """A dialog already sitting on the trust row only needs Enter."""

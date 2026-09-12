@@ -17,6 +17,12 @@ from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
 
 PromptKind = Literal["approval", "trust", "question", "stall"]
 
+# Pane snapshots carry SGR sequences: the tmux runtime captures with ``-e`` to
+# preserve them, and the native runtime's "text" snapshot is
+# ``recent_unwrapped_ansi``. A reader that positions on a character — the
+# selection marker below — has to work on the visible text.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
 
 @dataclass(frozen=True, slots=True)
 class DetectedPrompt:
@@ -141,9 +147,13 @@ class PromptDetector:
         these dialogs separate their options from the surrounding explanation. The
         scan reads a wider tail than ``_prompt_excerpt`` keeps, because a dialog
         whose rows fall outside the window would otherwise answer with the bare
-        Enter that quits the agent.
+        Enter that quits the agent, and it reads the visible text, because the
+        marker is preceded by the colour sequence that highlights its row.
         """
-        lines = excerpt.splitlines()[-self.TRUST_OPTION_SCAN_LINES :]
+        lines = [
+            _ANSI_ESCAPE_RE.sub("", line)
+            for line in excerpt.splitlines()[-self.TRUST_OPTION_SCAN_LINES :]
+        ]
         marked = next(
             (index for index, line in enumerate(lines) if self._is_selected_option(line)),
             None,
