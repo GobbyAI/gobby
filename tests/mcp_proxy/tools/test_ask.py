@@ -4,10 +4,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from gobby.ask.errors import AskPermissionDenied
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import (
     get_current_agent_run_id,
@@ -15,6 +16,10 @@ from gobby.utils.session_context import (
     session_context_for_test,
     set_current_agent_run_id,
 )
+from tests.ask.service_support import build_ask_service
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 SESSION_ID = "22222222-2222-4222-8222-222222222222"
@@ -127,13 +132,24 @@ def _agent_run_context(agent_run_id: str) -> Iterator[None]:
 
 
 @pytest.mark.asyncio
-async def test_ask_authorization_and_discovery(tmp_path: Path) -> None:
+async def test_ask_authorization_and_discovery(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
     from gobby.mcp_proxy.tools.ask import create_ask_registry
 
-    service = _AskService()
+    project_id = str(sample_project["id"])
+    ask = build_ask_service(temp_db, project_id=project_id, state_root=tmp_path / "state")
+    resolved_roots: list[str] = []
+
+    def resolve_root(resolved_project_id: str) -> Path:
+        resolved_roots.append(resolved_project_id)
+        return tmp_path
+
     registry = create_ask_registry(
-        lambda _project_id: service,
-        project_root_resolver=lambda _project_id: tmp_path,
+        lambda _project_id: ask.service,
+        project_root_resolver=resolve_root,
     )
     names = {entry["name"] for entry in registry.list_tools()}
     assert names == {
@@ -162,31 +178,37 @@ async def test_ask_authorization_and_discovery(tmp_path: Path) -> None:
     assert query_schema is not None
     assert "limit" not in query_schema["inputSchema"]["properties"]
 
-    with _project_context(PROJECT_ID), session_context_for_test(SESSION_ID):
+    with _project_context(project_id), session_context_for_test(SESSION_ID):
         started = await registry.call(
             "start_ask_run",
             {"question": "Where is the source of truth?", "retrieval_mode": "hybrid"},
         )
-    assert started["run_id"] == "ask-run-1"
-    start_call = service.calls[0]
-    request = start_call[1]["request"]
-    assert request.project_id == PROJECT_ID
-    assert request.retrieval_mode.value == "audited_hybrid"
-    assert start_call[1]["project_root"] == tmp_path
-    assert start_call[1]["caller_session_id"] == SESSION_ID
+    run_id = started["run_id"]
+    # The public operation binds the run to the caller's project and session rather
+    # than to anything the caller supplied: start_ask_run takes no project_id.
+    record = ask.storage.get(run_id)
+    assert record is not None
+    assert record.binding.project_id == project_id
+    assert record.binding.retrieval_mode.value == "audited_hybrid"
+    assert resolved_roots == [project_id]
+    assert len(ask.executor.calls) == 1
+    execution_id, executed_session_id, _inputs = ask.executor.calls[0]
+    assert execution_id == run_id
+    assert executed_session_id == SESSION_ID
+    completed = await ask.service.wait(run_id, project_id=project_id, timeout=10)
+    assert completed.status == "completed"
 
-    with _project_context(PROJECT_ID):
-        prepared = await registry.call(
-            "prepare",
-            {"run_id": "ask-run-1", "project_id": PROJECT_ID},
-        )
-    assert prepared == {"ok": True, "operation": "prepare"}
+    # An internal stage call carries no executor authority when an ordinary caller
+    # makes it, so the real service refuses it before any stage work begins.
+    with _project_context(project_id):
+        with pytest.raises(AskPermissionDenied, match="no executor authority is active"):
+            await registry.call("prepare", {"run_id": run_id, "project_id": project_id})
 
-    with _project_context(PROJECT_ID):
+    with _project_context(project_id):
         with pytest.raises(PermissionError, match="another project"):
             await registry.call(
                 "prepare",
-                {"run_id": "ask-run-1", "project_id": "foreign-project"},
+                {"run_id": run_id, "project_id": "foreign-project"},
             )
 
 

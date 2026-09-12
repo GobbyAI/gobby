@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,14 +13,21 @@ import httpx2
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
+from gobby.ask.service import AskService
 from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.ask import create_ask_router
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
+from tests.ask.service_support import (
+    CompletingPipelineExecutor,
+    RecordingCompletionRegistry,
+    build_ask_service,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -116,7 +123,6 @@ class _AuthHarness:
     ask_principal_headers: dict[str, str]
     operator_headers: dict[str, str]
     project_id: str
-    project_root: Path
     resolved_projects: list[str]
     resolved_project_roots: list[str]
     invalidate_after_auth: Callable[[_ManagedOwner], None]
@@ -260,10 +266,85 @@ def authenticated_ask_harness(
                     "X-Gobby-Session-Id": parent.id,
                 },
                 project_id=project_id,
-                project_root=tmp_path,
                 resolved_projects=resolved_projects,
                 resolved_project_roots=resolved_project_roots,
                 invalidate_after_auth=invalidate_after_auth,
+            )
+
+
+@dataclass
+class _RealAskHarness:
+    """An HTTP surface over a real ``AskService``, stubbed only at the spawn boundary."""
+
+    client: AsyncClient
+    service: AskService
+    executor: CompletingPipelineExecutor
+    completions: RecordingCompletionRegistry
+    headers: dict[str, str]
+    project_id: str
+
+
+@pytest.fixture
+async def real_ask_harness(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> AsyncIterator[_RealAskHarness]:
+    project_id = str(sample_project["id"])
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    AuthStore(temp_db).set_local_api_token_hash(hash_token("operator-token"))
+    auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    ask = build_ask_service(temp_db, project_id=project_id, state_root=tmp_path / "state")
+
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        parent = session_manager.register(
+            external_id="ask-route-real-parent",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        agent_run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=parent.id,
+            provider="codex",
+            prompt="Call the public Ask API",
+        )
+        token = issue_agent_api_token(
+            "operator-token",
+            agent_run_id=agent_run.id,
+            session_id=parent.id,
+            project_id=project_id,
+        )
+        server = SimpleNamespace(
+            auth_service=auth_service,
+            services=SimpleNamespace(
+                get_ask_service=lambda _project_id: ask.service,
+                http_admission_closed=False,
+            ),
+            run_db=_run_db,
+        )
+        app = FastAPI()
+        app.include_router(
+            create_ask_router(
+                cast("HTTPServer", server),
+                project_root_resolver=lambda _project_id: tmp_path,
+            )
+        )
+        app.add_middleware(AuthMiddleware, server=cast("HTTPServer", server))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            yield _RealAskHarness(
+                client=client,
+                service=ask.service,
+                executor=ask.executor,
+                completions=ask.completions,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Gobby-Agent-Run-Id": agent_run.id,
+                    "X-Gobby-Session-Id": parent.id,
+                    "X-Gobby-Caller-Project-Id": project_id,
+                },
+                project_id=project_id,
             )
 
 
@@ -289,46 +370,107 @@ def _request_ask(
     )
 
 
-def test_shared_run_contract_and_event_driven_wait(
-    authenticated_ask_harness: _AuthHarness,
-) -> None:
-    service = authenticated_ask_harness.service
-    started = authenticated_ask_harness.client.post(
+async def _start_gated_run(harness: _RealAskHarness, question: str) -> dict[str, Any]:
+    """Start a run whose pipeline execution is held open by the harness gate."""
+    response = await harness.client.post(
         "/api/ask/runs",
-        headers=authenticated_ask_harness.agent_headers,
+        headers=harness.headers,
         json={
-            "question": "Where is the source of truth?",
-            "project_id": authenticated_ask_harness.project_id,
+            "question": question,
+            "project_id": harness.project_id,
             "commit_ref": "HEAD",
             "timeout_seconds": 600,
             "retrieval_mode": "deterministic",
         },
     )
-    assert started.status_code == 202
-    assert started.json() == _Result("running").payload
+    assert response.status_code == 202
+    # The run is live once the executor has marked its execution RUNNING; waiting on
+    # that keeps every later assertion free of a scheduling race.
+    await asyncio.wait_for(harness.executor.running.wait(), timeout=10)
+    payload: dict[str, Any] = response.json()
+    return payload
 
-    waited = authenticated_ask_harness.client.get(
-        "/api/ask/runs/ask-run-1/wait",
-        headers=authenticated_ask_harness.agent_headers,
-        params={"project_id": authenticated_ask_harness.project_id, "timeout_seconds": 3},
+
+async def test_shared_run_contract_and_event_driven_wait(
+    real_ask_harness: _RealAskHarness,
+) -> None:
+    release = asyncio.Event()
+    real_ask_harness.executor.gate(release)
+    started = await _start_gated_run(real_ask_harness, "Where is the source of truth?")
+    run_id = started["run_id"]
+    # 202 answers before the pipeline finishes, so the run is still in flight.
+    assert started["status"] not in {"completed", "failed", "cancelled"}
+    assert started["deadline_at"]
+
+    fetched = await real_ask_harness.client.get(
+        f"/api/ask/runs/{run_id}",
+        headers=real_ask_harness.headers,
+        params={"project_id": real_ask_harness.project_id},
     )
-    assert waited.status_code == 200
-    assert waited.json() == _Result("completed", outcome="unknown").payload
-    assert waited.json()["deadline_at"] == started.json()["deadline_at"]
-    assert service.wait_call == ("ask-run-1", authenticated_ask_harness.project_id, 3.0)
-    assert service.cancel_calls == []
+    assert fetched.status_code == 200
+    assert fetched.json()["status"] == "running"
+    # The HTTP surface returns the shared service's record verbatim, which is what
+    # makes the CLI and MCP surfaces answer identically: they read the same object.
+    direct = real_ask_harness.service.get(run_id, project_id=real_ask_harness.project_id)
+    assert fetched.json() == direct.model_dump(mode="json")
+    assert fetched.json()["deadline_at"] == started["deadline_at"]
+    # The route, not the caller, chooses the two Ask profiles.
+    record = real_ask_harness.service.storage.get(run_id)
+    assert record is not None
+    assert record.investigator.identifier == "ask-investigator"
+    assert record.reviewer.identifier == "ask-reviewer"
 
-    assert service.start_call is not None
-    request, project_root, caller_session_id = service.start_call
-    assert project_root == authenticated_ask_harness.project_root
-    assert caller_session_id == authenticated_ask_harness.agent_headers["X-Gobby-Session-Id"]
-    assert request.project_id == authenticated_ask_harness.project_id
-    assert request.investigator_profile == "ask-investigator"
-    assert request.reviewer_profile == "ask-reviewer"
-    assert authenticated_ask_harness.resolved_projects == [
-        authenticated_ask_harness.project_id,
-        authenticated_ask_harness.project_id,
-    ]
+    waiting = asyncio.ensure_future(
+        real_ask_harness.client.get(
+            f"/api/ask/runs/{run_id}/wait",
+            headers=real_ask_harness.headers,
+            params={"project_id": real_ask_harness.project_id, "timeout_seconds": 10},
+        )
+    )
+    # A polling wait would answer with the running record; an event-driven one parks
+    # until the completion event fires, so this must still be pending.
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(waiting), timeout=0.25)
+    # And it is parked on the shared completion registry rather than re-reading
+    # storage, which is what lets the pipeline wake it instead of a poll interval.
+    assert real_ask_harness.completions.awaited == [f"ask:{run_id}"]
+
+    release.set()
+    waited = await waiting
+    assert waited.status_code == 200
+    assert waited.json()["status"] == "completed"
+    assert waited.json()["run_id"] == run_id
+    assert waited.json()["deadline_at"] == started["deadline_at"]
+
+
+async def test_waiter_disconnect_does_not_cancel_the_run(
+    real_ask_harness: _RealAskHarness,
+) -> None:
+    release = asyncio.Event()
+    real_ask_harness.executor.gate(release)
+    started = await _start_gated_run(real_ask_harness, "Does a hung up caller kill the run?")
+    run_id = started["run_id"]
+
+    abandoned = asyncio.ensure_future(
+        real_ask_harness.client.get(
+            f"/api/ask/runs/{run_id}/wait",
+            headers=real_ask_harness.headers,
+            params={"project_id": real_ask_harness.project_id, "timeout_seconds": 10},
+        )
+    )
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(abandoned), timeout=0.25)
+    assert real_ask_harness.completions.awaited == [f"ask:{run_id}"]
+    abandoned.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await abandoned
+
+    release.set()
+    rejoined = await real_ask_harness.service.wait(
+        run_id, project_id=real_ask_harness.project_id, timeout=10
+    )
+    assert rejoined.status == "completed"
+    assert rejoined.run_id == run_id
 
 
 @pytest.mark.parametrize("owner", ["agent_run", "managed_execution"])
