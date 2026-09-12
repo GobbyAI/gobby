@@ -36,6 +36,9 @@ def test_prepare_round_snapshot(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
+    caller = plan_path.parents[2] / "src/caller.py"
+    caller.parent.mkdir(parents=True, exist_ok=True)
+    caller.write_text("pass\n")
     original = plan_path.read_text()
     inventory = "Consumers unchanged:\n- `src/caller.py` — no-edit-reason: API unchanged.\n\n"
     plan_path.write_text(original.replace("**Acceptance:**", inventory + "**Acceptance:**", 1))

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from gobby.plans.parser import Kind, PlanParseError, parse_plan
+from gobby.plans.parser import Kind, PlanDocument, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
 from gobby.plans.symbol_targets import (
     CONSUMER_COVERAGE,
@@ -32,12 +32,13 @@ def validate_plan_file(
     code_index: Any | None = None,
     require_symbol_validation: bool = False,
     consumer_coverage_blocking: bool = False,
+    plan_document: PlanDocument | None = None,
 ) -> dict[str, Any]:
     """Validate a plan file against the Plan-Coverage Contract."""
     project_path = project_context.get("project_path") if project_context is not None else None
     project_root = Path(project_path) if isinstance(project_path, str) and project_path else None
     skipped_symbols = skipped_symbol_validation().to_dict()
-    if not plan_path.exists():
+    if plan_document is None and not plan_path.exists():
         return {
             "valid": False,
             "errors": [f"Plan file not found: {plan_path}"],
@@ -45,7 +46,7 @@ def validate_plan_file(
             "symbol_validation": skipped_symbols,
         }
     try:
-        plan_doc = parse_plan(plan_path, parse_mode="draft")
+        plan_doc = plan_document or parse_plan(plan_path, parse_mode="draft")
     except (OSError, PlanParseError) as exc:
         return {
             "valid": False,
@@ -104,7 +105,7 @@ def validate_plan_file(
         expected_project_id=expected_project_id,
         code_index=code_index,
         required=require_symbol_validation,
-        consumer_coverage_blocking=consumer_coverage_blocking,
+        consumer_coverage_blocking=consumer_coverage_blocking or bool(plan_doc.manifest_entries),
     )
     consumer_warnings = [
         issue.message

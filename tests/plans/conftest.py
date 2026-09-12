@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from gobby.code_index.models import IndexedProject, IndexWriteMode
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -18,6 +20,10 @@ def review_setup(
 ) -> tuple[PlanReviewEvidenceService, str, str, Path]:
     isolated = install_isolated_checkout_project(
         temp_db, tmp_path, name="review-evidence", monkeypatch=monkeypatch
+    )
+    CodeIndexStorage(temp_db).upsert_project_stats(
+        IndexedProject(id=isolated.project.id, root_path=isolated.root_path),
+        mode=IndexWriteMode.PRIMARY,
     )
     session = SessionManager(temp_db).register(
         external_id="review-evidence-parent",

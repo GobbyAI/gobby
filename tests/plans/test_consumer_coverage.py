@@ -13,6 +13,7 @@ import pytest
 
 from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.plans.parser import PlanDocument, parse_plan
+from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.symbol_targets import SymbolValidationResult, validate_symbol_targets
 from gobby.tasks.expansion._validate import validate_plan_file
 
@@ -49,18 +50,20 @@ class _Index:
         usages: list[str] | None = None,
         indexed_root: Path | None = None,
         usage_error: bool = False,
+        project_id: str = PROJECT_ID,
     ) -> None:
         self.root = root
+        self.project_id = project_id
         self.usages = usages or []
         self.indexed_root = indexed_root or root
         self.usage_error = usage_error
 
     def get_project_stats(self, project_id: str) -> _ProjectStats | None:
-        assert project_id == PROJECT_ID
+        assert project_id == self.project_id
         return _ProjectStats(root_path=str(self.indexed_root))
 
     def get_file(self, project_id: str, file_path: str) -> _IndexedFile | None:
-        assert project_id == PROJECT_ID
+        assert project_id == self.project_id
         path = self.root / file_path
         if not path.exists():
             return None
@@ -70,13 +73,13 @@ class _Index:
         )
 
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
-        assert project_id == PROJECT_ID
+        assert project_id == self.project_id
         if file_path == "src/provider.py":
             return [_Symbol(id="provider-run", qualified_name="run")]
         return []
 
     def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:
-        assert project_id == PROJECT_ID
+        assert project_id == self.project_id
         assert symbol_id == "provider-run"
         if self.usage_error:
             raise psycopg.OperationalError("index offline")
@@ -470,3 +473,119 @@ def test_unchanged_consumer_rejects_symlink_outside_repository(tmp_path: Path) -
     (root / "src/caller.py").symlink_to(outside)
     result = lint_plan_document(plan, project_root=root)
     assert any("inside the repository" in error for error in result.errors)
+
+
+_MANIFEST = """
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Change provider
+  source_section: '1.1'
+  category: code
+  implementation_domain: backend
+  task_type: feature
+  tdd: false
+  depends_on: []
+  labels: ['covers:consumer-coverage:1.1:1.1.1']
+  validation_criteria: Provider behaves correctly.
+```
+"""
+
+
+def _review_consumer_plan(
+    root: Path,
+    path: Path,
+    *,
+    manifest: bool,
+    correction: str = "missing",
+) -> None:
+    _write_source(root, "src/caller.py")
+    plan = _plan(root)
+    content = plan.source_path.read_text()
+    if correction == "unchanged":
+        content = content.replace("Implement the provider change.", _UNCHANGED)
+    elif correction == "target":
+        content = content.replace("Implement the provider change.", "Target: `src/caller.py`")
+    path.write_text(content + (_MANIFEST if manifest else ""))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("correction", ["missing", "target", "unchanged", "narrative"])
+async def test_review_and_cli_use_manifest_consumer_policy(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    correction: str,
+) -> None:
+    from importlib import import_module
+
+    from gobby.mcp_proxy.tools.plans import create_plan_registry
+
+    cli_plans = import_module("gobby.cli.plans")
+
+    service, project_id, session_id, path = review_setup
+    root = path.parents[2]
+    _review_consumer_plan(root, path, manifest=correction != "narrative", correction=correction)
+    index = _Index(root, usages=["src/caller.py"], project_id=project_id)
+    monkeypatch.setattr("gobby.plans.review_evidence.CodeIndexStorage", lambda _db: index)
+    monkeypatch.setattr(cli_plans, "CodeIndexStorage", lambda _db: index)
+    monkeypatch.setattr(cli_plans, "_open_db", lambda: service.db)
+    monkeypatch.chdir(root)
+    cli = cli_plans._validate_plan_for_cli(path, None, mode="standard")
+    registry = create_plan_registry(service.db, default_project_id=project_id)
+    result = await registry.call(
+        "prepare_plan_review_round",
+        {
+            "plan_path": str(path),
+            "round_number": 1,
+            "session_id": session_id,
+        },
+    )
+    should_pass = correction != "missing"
+    assert cli["valid"] is should_pass
+    assert result["ok"] is should_pass
+    rows = service.store.list_for_path(project_id=project_id, plan_path=str(path.relative_to(root)))
+    assert len(rows) == int(should_pass)
+    expansion = validate_plan_file(
+        None,
+        path,
+        project_context={"id": project_id, "project_path": str(root)},
+        code_index=index,
+        require_symbol_validation=True,
+        consumer_coverage_blocking=True,
+    )
+    assert expansion["valid"] is (correction in {"target", "unchanged"})
+    if not should_pass:
+        assert result["error"] == "plan_validation_failed"
+        assert result["symbol_validation"]["issues"][0]["code"] == "consumer-coverage"
+        assert "src/caller.py" in str(result["errors"])
+
+
+@pytest.mark.integration
+def test_review_validates_exact_snapshot_not_changed_plan_file(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, project_id, session_id, path = review_setup
+    root = path.parents[2]
+    _review_consumer_plan(root, path, manifest=True, correction="unchanged")
+    snapshot = path.read_bytes()
+    index = _Index(root, usages=["src/caller.py"], project_id=project_id)
+    monkeypatch.setattr("gobby.plans.review_evidence.CodeIndexStorage", lambda _db: index)
+    validate = service._validate_review_snapshot
+
+    def mutate_then_validate(
+        data: bytes, plan_path: Path, checkout: Path, selected_id: str
+    ) -> None:
+        plan_path.write_text("invalid replacement after snapshot capture")
+        validate(data, plan_path, checkout, selected_id)
+
+    monkeypatch.setattr(service, "_validate_review_snapshot", mutate_then_validate)
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=path,
+        round_number=1,
+        session_id=session_id,
+    )
+    assert service.snapshot_bytes(prepared.evidence_id) == snapshot
+    assert path.read_bytes() != snapshot

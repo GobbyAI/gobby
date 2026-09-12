@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.parser import PlanDocument
 from gobby.plans.review_checkpoint_service import ReviewCheckpointService
 from gobby.plans.review_coverage import (
@@ -18,6 +19,7 @@ from gobby.plans.review_evidence_io import (
     build_section_manifest,
     normalize_plan_path,
     parse_checkpoints,
+    parse_plan_bytes,
     reviewed_section_hashes,
 )
 from gobby.plans.review_evidence_models import (
@@ -188,6 +190,7 @@ class PlanReviewEvidenceService:
                         None,
                     )
                 if prepared is None:
+                    self._validate_review_snapshot(snapshot, resolved, root, project_id)
                     plan_hash = hashlib.sha256(snapshot).hexdigest()
                     sections = build_section_manifest(snapshot)
                     evidence = self.store.insert(
@@ -213,6 +216,35 @@ class PlanReviewEvidenceService:
         if prepared is None:  # pragma: no cover - guarded by the branches above.
             raise RuntimeError("plan review preparation produced no result")
         return prepared
+
+    def _validate_review_snapshot(
+        self,
+        snapshot: bytes,
+        plan_path: Path,
+        root: Path,
+        project_id: str,
+    ) -> None:
+        """Gate evidence creation on the same immutable bytes the reviewer receives."""
+        from gobby.tasks.expansion._validate import validate_plan_file
+        from gobby.utils.project_context import get_project_context
+
+        document = parse_plan_bytes(plan_path.name, snapshot)
+        context = get_project_context(root)
+        result = validate_plan_file(
+            None,
+            plan_path,
+            plan_document=document,
+            project_context=context,
+            expected_project_id=project_id,
+            code_index=CodeIndexStorage(self.db),
+            require_symbol_validation=bool(document.manifest_entries),
+        )
+        if not result["valid"]:
+            raise ReviewEvidenceError(
+                "plan_validation_failed",
+                "Plan must pass deterministic validation before review evidence is created",
+                details=result,
+            )
 
     def get_evidence(self, evidence_id: str) -> PlanReviewEvidence:
         return self.store.require(evidence_id)
