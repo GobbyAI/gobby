@@ -350,6 +350,62 @@ def _connector_for(client: FakeControlClient) -> Any:
 
 
 @pytest.mark.asyncio
+async def test_drain_stops_a_host_this_daemon_never_adopted(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`gobby stop --terminals` is the only path that reaches an unadopted host.
+
+    Adoption closed the daemon's connection, so the drain opens its own — and
+    the host refuses every verb until that connection has said `hello` (#22232).
+    """
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=7311)
+    # The pidfile disagrees with ping.host_pid: the host is alive but not
+    # adoptable, which is the state the operator is told to drain.
+    write_pidfile(tmp_path, 4111)
+    host = _host(tmp_path, terminals, client, pid_ok=True)
+    await host.start()
+    assert host.adopted is False
+    assert host.health_state()["host_mismatch"]
+
+    # A real host hangs up on the refused connection, so the drain's connection
+    # starts unauthenticated however the failed adoption ended.
+    client.authed = False
+    monkeypatch.setattr(host, "_process_alive", lambda _pid: False)
+    await host.stop(drain_host=True)
+
+    assert client.authed is True, "the drain must handshake before it commands"
+    assert client.shutdown_calls == [200]
+
+
+@pytest.mark.asyncio
+async def test_drain_reports_a_host_that_outlived_the_rpc(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drain that leaves the host running must not report a clean stop."""
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=7312)
+    write_pidfile(tmp_path, 7312)
+    host = _host(tmp_path, terminals, client, pid_ok=True)
+    await host.start()
+    assert host.adopted is True
+
+    monkeypatch.setattr(host, "_process_alive", lambda _pid: True)
+    await host.stop(drain_host=True)
+
+    assert client.shutdown_calls == [200]
+    assert host.last_error == "gterm host 7312 is still running after host_shutdown"
+
+
+@pytest.mark.asyncio
 async def test_adoption_requires_ping_host_pid_proof(
     tmp_path: Path,
     temp_db: HubDatabase,

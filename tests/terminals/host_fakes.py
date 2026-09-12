@@ -54,6 +54,7 @@ class FakeControlClient:
     record_process_hook: Any = None
     drop_on_commit: bool = False
     claimed: bool = False
+    authed: bool = False
 
     async def hello(self, protocol_version: int, control_token: str) -> FakeHello:
         if self.hello_error is not None:
@@ -62,6 +63,7 @@ class FakeControlClient:
             raise PermissionError("invalid_token")
         if protocol_version != self.protocol_version:
             raise PermissionError("unsupported_protocol")
+        self.authed = True
         return FakeHello(
             host_epoch=self.host_epoch,
             version=self.version,
@@ -105,6 +107,10 @@ class FakeControlClient:
     def _require_open(self) -> None:
         if self.closed:
             raise ConnectionError("control closed")
+        # The host refuses every verb but `hello` on an unauthenticated
+        # connection and hangs up (crates/gterminal/src/host/control.rs).
+        if not self.authed:
+            raise ConnectionError("unauthenticated")
 
 
 @dataclass

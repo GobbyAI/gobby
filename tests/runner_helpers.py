@@ -6,6 +6,8 @@ from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from starlette.datastructures import State
+
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.database_concurrency import DatabaseConcurrencyConfig
@@ -151,6 +153,12 @@ def create_base_patches(
     if mock_http is None:
         mock_http = MagicMock()
         mock_http.app = MagicMock()
+        # Starlette's `State` raises AttributeError for a key nobody set, which
+        # is how app-scoped singletons (the hook inbox drain lock, for one) tell
+        # `getattr(app.state, key, None)` to mint a real one. A bare MagicMock
+        # answers every attribute instead, so startup awaits a mock lock and
+        # subsystem init dies before it reaches the rest of the sequence.
+        mock_http.app.state = State()
         mock_http.port = 60887
     set_mock_default(mock_http, "_terminate_streamable_http_sessions", AsyncMock())
 
