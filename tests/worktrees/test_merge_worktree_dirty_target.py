@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import cast
-from unittest.mock import MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -135,3 +135,111 @@ async def test_sync_into_branch_conflict_is_reported_and_aborted(tmp_path: Path)
     assert result["step"] == "sync-into-branch"
     assert _git(source_path, "status", "--porcelain") == ""
     assert _git(repo, "diff", "--cached", "--name-only") == "staged.txt"
+
+
+@pytest.mark.parametrize("failure_step", ["merge", "stash-list", "stash-pop", "restore-branch"])
+async def test_landed_merge_survives_git_timeouts(tmp_path: Path, failure_step: str) -> None:
+    repo, source_path, git_manager, ctx = _repo_with_feature(tmp_path)
+    source_sha = _git(source_path, "rev-parse", "HEAD")
+    # A foreign stash must survive even when our own restore is ambiguous.
+    (repo / "base.txt").write_text("foreign dirty state\n", encoding="utf-8")
+    _git(repo, "stash", "push", "-m", "foreign-stash")
+    foreign_oid = _git(repo, "rev-parse", "refs/stash")
+    (repo / ".gobby/project.json").write_text('{"dirty": true}\n', encoding="utf-8")
+    if failure_step == "restore-branch":
+        _git(repo, "checkout", "-b", "develop")
+    run_git = git_manager.run_git_command
+    attempted: list[list[str]] = []
+
+    async def fail_git(args: list[str], **kwargs: Any) -> Any:
+        attempted.append(args)
+        fails = (
+            (failure_step == "merge" and args[:2] == ["merge", "refs/heads/feature/path"])
+            or (failure_step == "stash-list" and args == ["stash", "list", "--format=%gd%x00%H"])
+            or (failure_step == "stash-pop" and args[:2] == ["stash", "pop"])
+            or (failure_step == "restore-branch" and args == ["checkout", "develop"])
+        )
+        if fails:
+            if failure_step == "merge":
+                await run_git(args, **kwargs)
+            elif failure_step == "stash-pop":
+                # Git applied the stash before timing out; retaining it is intentional.
+                await run_git(["stash", "apply", args[2]], **kwargs)
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout", 10))
+        return await run_git(args, **kwargs)
+
+    with patch.object(git_manager, "run_git_command", AsyncMock(side_effect=fail_git)):
+        result = await _merge(ctx, git_manager)
+
+    assert result["success"] is True
+    assert result["landing_state"] == "landed"
+    assert result["source_sha"] == source_sha
+    assert result["merge_sha"] == _git(repo, "rev-parse", "main")
+    assert _git(repo, "merge-base", "--is-ancestor", source_sha, str(result["merge_sha"])) == ""
+    warnings = cast(list[dict[str, object]], result["cleanup_warnings"])
+    expected_step = "merge-operation" if failure_step == "merge" else failure_step
+    assert warnings[0]["step"] == expected_step
+    remaining = _git(repo, "stash", "list", "--format=%H").splitlines()
+    assert foreign_oid in remaining
+    if failure_step in {"stash-list", "stash-pop"}:
+        assert result["retained_stash_oid"] in remaining
+        assert warnings[0]["retained_stash_oid"] == result["retained_stash_oid"]
+        assert len(remaining) == 2
+    else:
+        assert result["retained_stash_oid"] is None
+        assert remaining == [foreign_oid]
+    if failure_step != "stash-list":
+        assert (repo / ".gobby/project.json").read_text(encoding="utf-8") == '{"dirty": true}\n'
+    assert not any(args[:2] == ["stash", "drop"] for args in attempted)
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+async def test_prelanding_timeout_reports_verified_failure_or_unknown(
+    tmp_path: Path, unknown: bool
+) -> None:
+    repo, _, git_manager, ctx = _repo_with_feature(tmp_path)
+    before_sha = _git(repo, "rev-parse", "main")
+    run_git = git_manager.run_git_command
+    status_failed = False
+
+    async def fail_git(args: list[str], **kwargs: Any) -> Any:
+        nonlocal status_failed
+        if args == ["status", "--porcelain"]:
+            status_failed = True
+            raise subprocess.TimeoutExpired(args, 10)
+        if unknown and status_failed and args == ["rev-parse", "refs/heads/main"]:
+            raise subprocess.TimeoutExpired(args, 10)
+        return await run_git(args, **kwargs)
+
+    with patch.object(git_manager, "run_git_command", AsyncMock(side_effect=fail_git)):
+        result = await _merge(ctx, git_manager)
+
+    assert result["success"] is False
+    assert result["landing_state"] == ("unknown" if unknown else "not-landed")
+    assert result["merged"] is (None if unknown else False)
+    assert "merge_sha" not in result
+    assert _git(repo, "rev-parse", "main") == before_sha
+    ctx.worktree_storage.mark_merged.assert_not_called()
+
+
+async def test_reconciliation_uses_captured_source_when_branch_advances(tmp_path: Path) -> None:
+    repo, source_path, git_manager, ctx = _repo_with_feature(tmp_path)
+    source_sha = _git(source_path, "rev-parse", "HEAD")
+    run_git = git_manager.run_git_command
+
+    async def advance_after_merge(args: list[str], **kwargs: Any) -> Any:
+        result = await run_git(args, **kwargs)
+        if args[:2] == ["merge", "refs/heads/feature/path"]:
+            _commit_file(source_path, "later.txt", "later source work\n")
+            raise subprocess.TimeoutExpired(args, 240)
+        return result
+
+    with patch.object(git_manager, "run_git_command", AsyncMock(side_effect=advance_after_merge)):
+        result = await _merge(ctx, git_manager)
+
+    assert result["success"] is True
+    assert result["source_sha"] == source_sha
+    assert result["merge_sha"] == _git(repo, "rev-parse", "main")
+    assert _git(source_path, "rev-parse", "HEAD") != source_sha
+    assert not (repo / "later.txt").exists()
+    ctx.worktree_storage.mark_merged.assert_not_called()

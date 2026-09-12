@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
-# Used only to classify timeout exceptions from the existing Git runner.
-import subprocess  # nosec
 from typing import Any, Literal, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -18,12 +15,12 @@ from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
     land_by_fast_forward,
     staged_paths,
 )
+from gobby.mcp_proxy.tools.worktrees._merge_recovery import MergeRecovery
 from gobby.utils.git import (
     get_checkout_mutation_lock,
     new_stash_marker,
     run_to_completion,
     stash_oid_for_marker,
-    stash_ref_for_oid,
 )
 from gobby.worktrees.git.manager import WorktreeGitManager
 
@@ -255,87 +252,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "target_branch": merge_target,
             }
 
-        original_branch = ""
-        checked_out_target = False
-        merge_cleanup_required = False
-
-        stash_oid: str | None = None
-
-        async def _restore_stash() -> None:
-            """Restore stashed .gobby/ files if any were stashed."""
-            if stash_oid:
-                stash_list = await run_to_completion(
-                    resolved_git_mgr.run_git_command(
-                        ["stash", "list", "--format=%gd%x00%H"],
-                        cwd=merge_cwd,
-                        timeout=10,
-                    )
-                )
-                if stash_list.returncode != 0:
-                    detail = stash_list.stderr or stash_list.stdout or "git stash list failed"
-                    raise RuntimeError(f"Failed to locate merge_worktree stash: {detail}")
-                stash_ref = stash_ref_for_oid(stash_list.stdout, stash_oid)
-                if stash_ref is None:
-                    raise RuntimeError(f"Failed to locate exact merge_worktree stash {stash_oid}")
-                pop_result = await run_to_completion(
-                    resolved_git_mgr.run_git_command(
-                        ["stash", "pop", stash_ref],
-                        cwd=merge_cwd,
-                        timeout=10,
-                    )
-                )
-                if pop_result.returncode != 0:
-                    detail = pop_result.stderr or pop_result.stdout or "git stash pop failed"
-                    raise RuntimeError(
-                        f"Failed to restore stashed .gobby/ files from {stash_ref}: {detail}"
-                    )
-
-        async def _abort_failed_merge() -> None:
-            """Abort a failed merge transaction if Git still has MERGE_HEAD."""
-            nonlocal merge_cleanup_required
-            if not merge_cleanup_required:
-                return
-
-            try:
-                merge_head = await run_to_completion(
-                    resolved_git_mgr.run_git_command(
-                        ["rev-parse", "--verify", "-q", "MERGE_HEAD"],
-                        cwd=merge_cwd,
-                        timeout=10,
-                    )
-                )
-            except (subprocess.TimeoutExpired, OSError) as error:
-                raise RuntimeError(f"Failed to inspect failed merge state: {error}") from error
-
-            if merge_head.returncode == 1:
-                merge_cleanup_required = False
-                return
-            if merge_head.returncode != 0:
-                detail = (
-                    merge_head.stderr
-                    or merge_head.stdout
-                    or f"git exited with status {merge_head.returncode}"
-                )
-                raise RuntimeError(f"Failed to inspect failed merge state: {detail}")
-
-            try:
-                abort_result = await run_to_completion(
-                    resolved_git_mgr.run_git_command(
-                        ["merge", "--abort"],
-                        cwd=merge_cwd,
-                        timeout=10,
-                    )
-                )
-            except (subprocess.TimeoutExpired, OSError) as error:
-                raise RuntimeError(f"Failed to abort merge_worktree merge: {error}") from error
-            if abort_result.returncode != 0:
-                detail = (
-                    abort_result.stderr
-                    or abort_result.stdout
-                    or f"git exited with status {abort_result.returncode}"
-                )
-                raise RuntimeError(f"Failed to abort merge_worktree merge: {detail}")
-            merge_cleanup_required = False
+        recovery = MergeRecovery(resolved_git_mgr, merge_cwd, target_ref)
 
         async def _source_is_merged_into_target() -> bool:
             ancestor_result = await run_to_completion(
@@ -451,11 +368,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 cutover_required=cutover_required,
             )
 
-        mutation_lock = get_checkout_mutation_lock(merge_cwd)
-        await mutation_lock.acquire()
-        try:
+        async def perform_merge() -> dict[str, Any]:
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
+            await recovery.capture(source_ref)
             current_branch_result = await run_to_completion(
                 resolved_git_mgr.run_git_command(
                     ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -476,13 +392,13 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "source_branch": effective_source,
                     "target_branch": merge_target,
                 }
-            original_branch = current_branch_result.stdout.strip()
-            if target_worktree_path and original_branch != merge_target:
+            recovery.original_branch = current_branch_result.stdout.strip()
+            if target_worktree_path and recovery.original_branch != merge_target:
                 return {
                     "success": False,
                     "error": (
                         f"Target branch '{merge_target}' is registered at "
-                        f"'{target_worktree_path}', but that checkout is on '{original_branch}'"
+                        f"'{target_worktree_path}', but that checkout is on '{recovery.original_branch}'"
                     ),
                     "worktree_path": wt_path,
                     "project_path": repo_path,
@@ -490,8 +406,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "source_branch": effective_source,
                     "target_branch": merge_target,
                 }
-            checked_out_target = original_branch == merge_target
-            if original_branch != merge_target:
+            recovery.checked_out_target = recovery.original_branch == merge_target
+            if recovery.original_branch != merge_target:
                 checkout_result = await run_to_completion(
                     resolved_git_mgr.run_git_command(
                         ["checkout", merge_target],
@@ -512,7 +428,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "source_branch": effective_source,
                         "target_branch": merge_target,
                     }
-                checked_out_target = True
+                recovery.checked_out_target = True
 
             status_result = await run_to_completion(
                 resolved_git_mgr.run_git_command(
@@ -655,8 +571,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
             before_oid = stash_head_before.stdout.strip() or None
             after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
-            stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
-            if stash_oid is None and after_oid != before_oid:
+            recovery.stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
+            if recovery.stash_oid is None and after_oid != before_oid:
                 return {
                     "success": False,
                     "error": (
@@ -741,7 +657,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 # raises instead of returning a nonzero result (for example, timeout).
                 # Treat the transaction as cleanup-required before starting merge and
                 # clear the flag only after Git proves the merge command succeeded.
-                merge_cleanup_required = True
+                recovery.merge_cleanup_required = True
                 merge_result = await run_to_completion(
                     resolved_git_mgr.run_git_command(
                         ["merge", source_ref, "--no-ff", "--no-edit"],
@@ -751,7 +667,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     )
                 )
                 if merge_result.returncode == 0:
-                    merge_cleanup_required = False
+                    recovery.merge_cleanup_required = False
                 if merge_result.returncode != 0:
                     # Detect unmerged (conflicted) files via git index — more reliable
                     # than parsing human-readable merge output for "CONFLICT" strings
@@ -840,44 +756,58 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["target_head_sha"] = target_head_sha
                 result["commit_sha"] = target_head_sha
             return _with_cutover_advisory(result, cutover_required=cutover_required)
-        finally:
-            cleanup_errors: list[RuntimeError] = []
+
+        mutation_lock = get_checkout_mutation_lock(merge_cwd)
+        await mutation_lock.acquire()
+        try:
             try:
-                try:
-                    await _abort_failed_merge()
-                except RuntimeError as abort_error:
-                    cleanup_errors.append(abort_error)
-                    logger.error("%s", abort_error)
-                if checked_out_target and original_branch != merge_target:
-                    restore_branch = await run_to_completion(
-                        resolved_git_mgr.run_git_command(
-                            ["checkout", original_branch],
-                            cwd=merge_cwd,
-                            timeout=30,
-                        )
-                    )
-                    if restore_branch.returncode != 0:
-                        detail = (
-                            restore_branch.stderr
-                            or restore_branch.stdout
-                            or f"git exited with status {restore_branch.returncode}"
-                        )
-                        cleanup_errors.append(
-                            RuntimeError(
-                                f"Failed to restore original branch {original_branch} "
-                                f"after merge_worktree: {detail}"
-                            )
-                        )
-                        logger.error("%s", cleanup_errors[-1])
-                try:
-                    await _restore_stash()
-                except RuntimeError as stash_error:
-                    cleanup_errors.append(stash_error)
-                    logger.error("%s", stash_error)
-                if cleanup_errors:
-                    raise RuntimeError("; ".join(str(error) for error in cleanup_errors))
+                result = await perform_merge()
+            except Exception as operation_error:
+                result = {"success": False, "error": str(operation_error)}
+                recovery.warn("merge-operation", operation_error)
             finally:
-                mutation_lock.release()
+                await recovery.cleanup(merge_target)
+            if recovery.warnings:
+                for warning in recovery.warnings:
+                    warning["retained_stash_oid"] = recovery.stash_oid
+                metadata_already_marked = result.get("merged") is True
+                result.update(await recovery.reconcile())
+                result["cleanup_warnings"] = recovery.warnings
+                result["retained_stash_oid"] = recovery.stash_oid
+                result.update(
+                    worktree_path=wt_path,
+                    project_path=repo_path,
+                    target_worktree_path=target_worktree_path,
+                    source_branch=effective_source,
+                    target_branch=merge_target,
+                    pushed=False,
+                )
+                if result["landing_state"] == "landed":
+                    result.pop("error", None)
+                    result.pop("has_conflicts", None)
+                    result.pop("conflicted_files", None)
+                    result["message"] = (
+                        f"Verified {effective_source} landed in local {merge_target}"
+                    )
+                    try:
+                        if (
+                            not metadata_already_marked
+                            and await _worktree_branch_is_merged_into_base(
+                                await _source_is_merged_into_target()
+                            )
+                        ):
+                            ctx.worktree_storage.mark_merged(worktree_id)
+                    except Exception as metadata_error:
+                        recovery.warn("mark-merged", metadata_error)
+                else:
+                    result["success"] = False
+                    result["merged"] = False if result["landing_state"] == "not-landed" else None
+                    for key in ("merge_sha", "target_head_sha", "commit_sha"):
+                        result.pop(key, None)
+                return _with_cutover_advisory(result, cutover_required=cutover_required)
+            return result
+        finally:
+            mutation_lock.release()
 
     @registry.tool(
         name="merge_worktree",

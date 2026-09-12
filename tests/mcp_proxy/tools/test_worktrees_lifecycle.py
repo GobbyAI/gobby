@@ -160,6 +160,8 @@ def _local_merge_git_side_effect(
             return MagicMock(returncode=0, stdout="", stderr="")
         if args == ["status", "--porcelain"]:
             return MagicMock(returncode=0, stdout="", stderr="")
+        if args == ["rev-parse", f"refs/heads/{source}"]:
+            return MagicMock(returncode=0, stdout="source-sha", stderr="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout=current, stderr="")
         if args in (["rev-parse", "HEAD"], ["rev-parse", f"refs/heads/{target}"]):
@@ -1549,6 +1551,8 @@ async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
         check: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> MagicMock:
+        if len(args) == 2 and args[0] == "rev-parse" and args[1].startswith("refs/heads/"):
+            return MagicMock(returncode=0, stdout="captured-sha", stderr="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout="main", stderr="")
         if args[:2] == ["merge-base", "--is-ancestor"]:
@@ -1774,6 +1778,8 @@ async def test_merge_worktree_conflict(
         check: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> MagicMock:
+        if len(args) == 2 and args[0] == "rev-parse" and args[1].startswith("refs/heads/"):
+            return MagicMock(returncode=0, stdout="captured-sha", stderr="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
@@ -1833,6 +1839,8 @@ async def test_merge_worktree_non_conflict_failure(
         check: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> MagicMock:
+        if len(args) == 2 and args[0] == "rev-parse" and args[1].startswith("refs/heads/"):
+            return MagicMock(returncode=0, stdout="captured-sha", stderr="")
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":

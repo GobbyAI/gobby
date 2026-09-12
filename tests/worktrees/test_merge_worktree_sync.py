@@ -146,6 +146,8 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout=target)
         if args == ["rev-parse", "HEAD"]:
             return _make_git_result(0, stdout="abc123def456\n")
+        if args == ["rev-parse", f"refs/heads/{source}"]:
+            return _make_git_result(0, stdout="source-sha\n")
         if args == ["rev-parse", f"refs/heads/{target}"]:
             return _make_git_result(0, stdout="abc123def456\n")
         if args == ["stash", "list"]:
@@ -156,7 +158,7 @@ def _local_merge_side_effect(
         if args == ["stash", "pop"]:
             return _make_git_result(0)
         if args == ["merge", f"refs/heads/{source}", "--no-ff", "--no-edit"]:
-            merge_performed = True
+            merge_performed = merge_result is None or merge_result.returncode == 0
             return merge_result or _make_git_result(0)
         if args == ["diff", "--name-only", "--diff-filter=U"]:
             return _make_git_result(0, stdout=unmerged_stdout)
@@ -337,7 +339,11 @@ async def test_queued_merge_snapshots_original_branch_after_lock(
             return _make_git_result(0)
         if args[:2] == ["merge-base", "--is-ancestor"]:
             return _make_git_result(0)
-        if args == ["rev-parse", "HEAD"]:
+        if args in (
+            ["rev-parse", "HEAD"],
+            ["rev-parse", "refs/heads/feat"],
+            ["rev-parse", "refs/heads/main"],
+        ):
             return _make_git_result(0, stdout="abc123def456\n")
         return _make_git_result(0)
 
@@ -430,7 +436,11 @@ async def test_concurrent_merge_worktree_mutations_stay_on_target_branch(
             return _make_git_result(0)
         if args[:2] == ["merge-base", "--is-ancestor"]:
             return _make_git_result(0)
-        if args == ["rev-parse", "HEAD"]:
+        if args in (
+            ["rev-parse", "HEAD"],
+            ["rev-parse", "refs/heads/feat"],
+            ["rev-parse", "refs/heads/main"],
+        ):
             return _make_git_result(0, stdout="abc123def456\n")
         return _make_git_result(0)
 
@@ -615,7 +625,7 @@ async def test_merge_worktree_checkout_cancellation_restores_original_branch_bef
 
 @pytest.mark.asyncio
 async def test_merge_worktree_original_branch_restore_failure_is_surfaced_after_cleanup():
-    """A failed checkout restore cannot preserve a successful merge result."""
+    """A pre-merge branch mismatch stays failed when branch restoration fails."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
@@ -648,8 +658,10 @@ async def test_merge_worktree_original_branch_restore_failure_is_surfaced_after_
     merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
     lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
 
-    with pytest.raises(RuntimeError, match="Failed to restore original branch develop"):
-        await merge_tool("wt-123")
+    result = await merge_tool("wt-123")
+    assert result["success"] is False
+    assert result["landing_state"] == "not-landed"
+    assert result["cleanup_warnings"][0]["step"] == "restore-branch"
 
     commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
     assert ["stash", "pop", "stash@{0}"] in commands
@@ -1016,10 +1028,12 @@ async def test_merge_worktree_abort_failure_is_surfaced_and_unlocks():
             "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
             return_value=(ctx.git_manager, "test-project", None),
         ),
-        pytest.raises(RuntimeError, match="Failed to abort merge_worktree merge.*index cleanup"),
     ):
-        await merge_tool("wt-123")
+        result = await merge_tool("wt-123")
 
+    assert result["success"] is False
+    assert result["cleanup_warnings"][0]["step"] == "abort-merge"
+    assert "index cleanup" in result["cleanup_warnings"][0]["error"]
     assert lock.locked() is False
 
 
@@ -1058,10 +1072,11 @@ async def test_merge_worktree_timeout_aborts_before_unlock():
             "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
             return_value=(ctx.git_manager, "test-project", None),
         ),
-        pytest.raises(subprocess.TimeoutExpired),
     ):
-        await merge_tool("wt-123")
+        result = await merge_tool("wt-123")
 
+    assert result["success"] is False
+    assert result["landing_state"] == "not-landed"
     assert cleanup_calls == ["inspect", "abort"]
     assert merge_timeouts == [MERGE_COMMAND_TIMEOUT_SECONDS]
     assert MERGE_COMMAND_TIMEOUT_SECONDS < MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
@@ -1320,7 +1335,7 @@ async def test_merge_worktree_stash_identity_lookup_failure_aborts_before_merge(
 
 
 async def test_merge_worktree_stash_restore_failure_is_surfaced() -> None:
-    """An exact-stash restore failure cannot be logged as merge success."""
+    """A landed merge retains its SHA and reports exact-stash restore failure."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
@@ -1352,5 +1367,8 @@ async def test_merge_worktree_stash_restore_failure_is_surfaced() -> None:
     merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
     assert merge_tool is not None
 
-    with pytest.raises(RuntimeError, match="restore conflict"):
-        await merge_tool("wt-123")
+    result = await merge_tool("wt-123")
+    assert result["success"] is True
+    assert result["merge_sha"] == "abc123def456"
+    assert result["cleanup_warnings"][0]["step"] == "stash-pop"
+    assert result["retained_stash_oid"] == "stash-ours"
