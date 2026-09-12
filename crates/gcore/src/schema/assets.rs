@@ -98,6 +98,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "0e3fd049adf275f5b385baadb568d1ea30bfcc45f912b41e56a76c2cbe12b5fe",
         sql: include_str!("../../assets/schema/migrations/431_add_coordination_waits.sql"),
     },
+    EmbeddedMigration {
+        version: 432,
+        filename: "432_bind_tool_chat_overlay_to_session_workspace.sql",
+        checksum: "107b5c6cdc766d847be29d76dc026bb0d6ac7674a426ffbc2fd15e5aa3202c31",
+        sql: include_str!(
+            "../../assets/schema/migrations/432_bind_tool_chat_overlay_to_session_workspace.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

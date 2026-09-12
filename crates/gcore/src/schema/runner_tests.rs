@@ -997,6 +997,123 @@ fn tool_chat_principal_binding_handles_clone_parent_and_ambiguous_workspaces() -
 }
 
 #[test]
+fn tool_chat_overlay_migration_converges_a_database_missing_the_issuer_grants() -> anyhow::Result<()>
+{
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    let migration = MIGRATIONS
+        .iter()
+        .find(|candidate| candidate.version == 432)
+        .expect("migration 432 must stay registered");
+
+    let owner_user_id = Uuid::new_v4();
+    let machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'overlay-converge@example.invalid', 'Overlay Converge', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'overlay-converge', $2)",
+        &[&machine_id, &owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'overlay-converge')",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO project_checkouts(machine_id, project_id, root_path) \
+         VALUES ($1, $2, '/tmp/gobby-overlay-converge')",
+        &[&machine_id, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
+         VALUES ($1, 'overlay-converge', $2, 'test', $3)",
+        &[&session_id, &machine_id, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO worktrees( \
+             id, project_id, machine_id, branch_name, worktree_path, agent_session_id \
+         ) VALUES ($1, $2, $3, 'converge', '/tmp/gobby-overlay-worktree', $4)",
+        &[&Uuid::new_v4(), &project_id, &machine_id, &session_id],
+    )?;
+
+    // The migration restates what baseline@420 already expresses, so re-running it
+    // against a fresh database must leave the function definition untouched.
+    let definition_before = tool_principal_definition(&mut client)?;
+    client.batch_execute(migration.sql)?;
+    assert_eq!(tool_principal_definition(&mut client)?, definition_before);
+
+    // #20664 granted the issuer the `agent_session_id` column its workspace lookup
+    // reads. A database migrated before that commit never received the grant, so
+    // the SECURITY DEFINER body cannot see the session's isolation workspace.
+    client.batch_execute(
+        "REVOKE SELECT(agent_session_id) ON TABLE worktrees FROM gobby_agent_issuer; \
+         REVOKE SELECT(agent_session_id) ON TABLE clones FROM gobby_agent_issuer;",
+    )?;
+    let stale_error = issue_tool_principal(&mut client, session_id, machine_id)
+        .expect_err("a stale database cannot read the workspace it must bind");
+    assert_eq!(stale_error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+
+    client.batch_execute(migration.sql)?;
+    let execution_id = issue_tool_principal(&mut client, session_id, machine_id)?;
+    let overlay: Option<Uuid> = client
+        .query_one(
+            "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings \
+             WHERE managed_execution_id = $1",
+            &[&execution_id],
+        )?
+        .get(0);
+    let expected_overlay: Uuid = client
+        .query_one(
+            "SELECT gobby_agent_auth.code_index_project_id('/tmp/gobby-overlay-worktree')",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(overlay, Some(expected_overlay));
+    Ok(())
+}
+
+fn tool_principal_definition(client: &mut Client) -> anyhow::Result<String> {
+    Ok(client
+        .query_one(
+            "SELECT pg_get_functiondef( \
+                 'gobby_agent_auth.issue_tool_principal(uuid, uuid, uuid, \
+                  timestamptz, text)'::regprocedure \
+             )",
+            &[],
+        )?
+        .get(0))
+}
+
+fn issue_tool_principal(
+    client: &mut Client,
+    session_id: Uuid,
+    machine_id: Uuid,
+) -> Result<Uuid, postgres::Error> {
+    let execution_id = Uuid::new_v4();
+    client.query_one(
+        "SELECT role_name FROM gobby_agent_auth.issue_tool_principal( \
+             $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4 \
+         )",
+        &[
+            &execution_id,
+            &session_id,
+            &machine_id,
+            &format!("gobby-tool-converge-{}", Uuid::new_v4().simple()),
+        ],
+    )?;
+    Ok(execution_id)
+}
+
+#[test]
 fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
