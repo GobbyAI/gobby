@@ -152,13 +152,14 @@ async def test_launch_moves_down_the_candidate_list_after_a_provider_failure(
 
 
 @pytest.mark.asyncio
-async def test_launch_keeps_the_last_candidate_once_every_provider_failed(
+async def test_launch_wraps_to_the_head_once_every_candidate_has_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Exhausting the list is not a reason to stop reviewing: the close gate
-    # still has to run somewhere, and the last candidate is the standing
-    # choice until one of the providers recovers.
-    store = _Store(_review(status="launching", run_id=None), provider_failures=7)
+    # Running off the end is not a reason to stay on the tail. A quota lifts on
+    # its own, so after every candidate has died the one that failed longest ago
+    # is the next worth trying; stopping at the last entry would pin the task to
+    # whichever provider stays down longest.
+    store = _Store(_review(status="launching", run_id=None), provider_failures=2)
     registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
     ctx = _ctx(
         registry=registry,
@@ -170,8 +171,11 @@ async def test_launch_keeps_the_last_candidate_once_every_provider_failed(
 
     result = await launch_close_review(ctx, evaluation=_evaluation(), close_arguments=_arguments())
 
-    assert registry.call.call_args.args[1]["provider"] == "claude"
-    assert result["validator_provider"] == "claude"
+    launch_args = registry.call.call_args.args[1]
+    assert launch_args["provider"] == "codex"
+    assert launch_args["model"] == "gpt-5.6-terra"
+    assert result["validator_provider"] == "codex"
+    assert result["validator_model"] == "gpt-5.6-terra"
 
 
 @pytest.mark.asyncio
