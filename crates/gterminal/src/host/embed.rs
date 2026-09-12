@@ -645,32 +645,28 @@ async fn emit_exit(state: &Arc<HostState>, key: &str) {
         (slot.host_terminal_id.clone(), senders)
     };
     for sender in senders {
-        if sender
-            .send(ServerMessage::TerminalExited {
+        let messages = [
+            ServerMessage::TerminalExited {
                 host_terminal_id: host_id.clone(),
                 exit_code: None,
-            })
-            .await
-            .is_err()
-        {
-            tracing::debug!(
-                host_terminal_id = %host_id,
-                "observer frame receiver closed before terminal exit"
-            );
-            continue;
-        }
-        if sender
-            .send(ServerMessage::Error {
+            },
+            ServerMessage::Error {
                 code: "observer_reaped".into(),
                 message: None,
-            })
-            .await
-            .is_err()
-        {
-            tracing::debug!(
-                host_terminal_id = %host_id,
-                "observer frame receiver closed before reap notice"
-            );
+            },
+        ];
+        match sender.reserve_many(messages.len()).await {
+            Ok(permits) => {
+                for (permit, message) in permits.zip(messages) {
+                    permit.send(message);
+                }
+            }
+            Err(_) => {
+                tracing::debug!(
+                    host_terminal_id = %host_id,
+                    "observer frame receiver closed before lifecycle delivery"
+                );
+            }
         }
     }
 }

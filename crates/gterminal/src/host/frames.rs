@@ -105,6 +105,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     Ok(msg) => msg,
                     Err(error) => {
                         tracing::debug!(%error, "frame connection read failed");
+                        drain_ready(&mut writer, &mut out_rx).await;
                         break;
                     }
                 };
@@ -236,6 +237,21 @@ async fn recv_opt(
     match rx.as_mut() {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+async fn drain_ready(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    rx: &mut Option<tokio::sync::mpsc::Receiver<ServerMessage>>,
+) {
+    let Some(rx) = rx.as_mut() else {
+        return;
+    };
+    while let Ok(message) = rx.try_recv() {
+        if let Err(error) = write_frame(writer, &message).await {
+            tracing::debug!(%error, "frame connection drain failed");
+            break;
+        }
     }
 }
 
