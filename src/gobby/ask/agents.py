@@ -106,6 +106,14 @@ def write_ask_mcp_config(scratch_root: Path) -> Path:
     ``mcp_config_read_exceptions``, which parses exactly this file, and
     ``--no-sync`` keeps ``uv`` from reinstalling the editable package into a
     read-only tree and closing stdio before the MCP handshake completes.
+
+    ``alwaysLoad`` is what makes the bridge arrive in time. Claude Code connects
+    ``--mcp-config`` servers without blocking the session, so an investigator
+    reaches its first turn about two seconds in while ``uv`` is still starting the
+    Python server, and ``--tools ""`` leaves no built-in tool to occupy that turn:
+    the model answers once out of an empty tool list and the run ends with no
+    submission. Servers marked ``alwaysLoad`` are connected on the blocking path
+    instead, so the first turn waits for the handshake and sees the tools.
     """
     if not (_GOBBY_PROJECT_ROOT / "pyproject.toml").is_file():
         raise UnsupportedAskRuntime(
@@ -126,6 +134,7 @@ def write_ask_mcp_config(scratch_root: Path) -> Path:
                             "gobby",
                             "mcp-server",
                         ],
+                        "alwaysLoad": True,
                     }
                 }
             },

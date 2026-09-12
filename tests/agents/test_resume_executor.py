@@ -708,6 +708,12 @@ async def test_resume_reuses_persisted_claude_mcp_config(
     launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
     assert "mcp_path" not in launch_updates
     assert "strict_mcp" not in launch_updates
+    # Claude Code connects `--mcp-config` servers without blocking the session and
+    # waits only for the ones the config marks `alwaysLoad`, then for no longer than
+    # `MCP_CONNECT_TIMEOUT_MS`. Its 5s default is under the cold start of
+    # `uv run ... gobby mcp-server` in an agent sandbox, so a resumed agent would
+    # reach the model before its Gobby tools exist.
+    assert int(runner._test_runtime.last_request.env["MCP_CONNECT_TIMEOUT_MS"]) >= 30000
 
 
 @pytest.mark.asyncio

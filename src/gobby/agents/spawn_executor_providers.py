@@ -18,6 +18,8 @@ from gobby.agents.constants import (
     GOBBY_AGENT_RUN_ID,
     GOBBY_PROJECT_ID,
     GOBBY_SESSION_ID,
+    MCP_CONNECT_TIMEOUT_MS,
+    MCP_CONNECT_TIMEOUT_MS_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
@@ -269,6 +271,8 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    if strict_mcp:
+        env[MCP_CONNECT_TIMEOUT_MS] = MCP_CONNECT_TIMEOUT_MS_VALUE
     if request.api_base:
         env["ANTHROPIC_BASE_URL"] = request.api_base
     if request.api_token:

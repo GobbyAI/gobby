@@ -16,6 +16,10 @@ from gobby.agents.codex_oss import (
     codex_local_transport_strategy,
     codex_oss_provider_for_local_endpoint,
 )
+from gobby.agents.constants import (
+    MCP_CONNECT_TIMEOUT_MS,
+    MCP_CONNECT_TIMEOUT_MS_VALUE,
+)
 from gobby.agents.external_write_grants import GRANT_KEY, revalidate_write_grant
 from gobby.agents.local_model import LocalModelError, ensure_local_model
 from gobby.agents.resume_finalization import (
@@ -499,6 +503,7 @@ async def resume_agent_run(
                 launch_updates["mcp_path"] = claude_mcp_path
                 launch_updates["strict_mcp"] = strict_mcp
         if claude_mcp_path:
+            env[MCP_CONNECT_TIMEOUT_MS] = MCP_CONNECT_TIMEOUT_MS_VALUE
             command.extend(["--mcp-config", claude_mcp_path])
             if strict_mcp and managed_runtime_profile is None:
                 command.append("--strict-mcp-config")

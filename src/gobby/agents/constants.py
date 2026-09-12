@@ -69,6 +69,15 @@ CARGO_HOME = "CARGO_HOME"
 # Shared per-project cargo build directory (see gobby.agents.cargo_target).
 CARGO_TARGET_DIR = "CARGO_TARGET_DIR"
 
+# How long Claude Code may block its first turn waiting for an `--mcp-config`
+# server it has to wait for. Claude Code's own default is 5s, and a cold
+# `uv run ... gobby mcp-server` inside an agent sandbox has been measured past
+# 7s on a loaded machine, so at the default an agent can reach the model before
+# its Gobby tools exist. Overshooting costs nothing: the wait ends as soon as
+# the handshake lands.
+MCP_CONNECT_TIMEOUT_MS = "MCP_CONNECT_TIMEOUT_MS"
+MCP_CONNECT_TIMEOUT_MS_VALUE = "60000"
+
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""

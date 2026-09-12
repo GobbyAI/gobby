@@ -1877,6 +1877,23 @@ def test_ask_scratch_root_declares_the_gobby_mcp_bridge(tmp_path: Path) -> None:
     assert "--no-sync" in args
 
 
+def test_ask_mcp_bridge_blocks_the_first_turn_until_it_is_connected(tmp_path: Path) -> None:
+    """Without `alwaysLoad` the investigator answers before its tools exist.
+
+    Claude Code connects `--mcp-config` servers without blocking the session and
+    waits only for the ones a config marks `alwaysLoad`. An Ask investigator runs
+    with `--tools ""`, so it owns no built-in tool to spend that first turn on:
+    left unmarked it reaches the model about two seconds in with an empty tool
+    list, answers out of it, and ends its only turn with no submission, while
+    `uv run ... gobby mcp-server` is still starting.
+    """
+    config_path = write_ask_mcp_config(tmp_path)
+
+    server = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["gobby"]
+
+    assert server["alwaysLoad"] is True
+
+
 def test_ask_mcp_bridge_earns_its_own_sandbox_read_grant(tmp_path: Path) -> None:
     """The sandbox denies the operator home, so `uv` needs an explicit read grant.
 

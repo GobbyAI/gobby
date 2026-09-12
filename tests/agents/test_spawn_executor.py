@@ -2316,6 +2316,87 @@ class TestExecuteSpawnErrorPaths:
         assert command.index("--strict-mcp-config") < command.index("Test")
 
     @pytest.mark.asyncio
+    async def test_claude_terminal_waits_long_enough_for_the_gobby_mcp_bridge(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A workspace MCP config raises Claude Code's connect deadline past its 5s default.
+
+        Claude Code connects `--mcp-config` servers without blocking the session,
+        and only blocks for the servers a config marks `alwaysLoad` — then for
+        `MCP_CONNECT_TIMEOUT_MS` at most, five seconds by default. A cold
+        `uv run ... gobby mcp-server` inside an agent sandbox has been measured
+        past seven seconds, so at the default an agent reaches its first turn
+        before its Gobby tools exist. An Ask investigator has no built-in tools to
+        fall back on and ends that turn with no submission at all.
+        """
+        (tmp_path / ".mcp.json").write_text(
+            '{"mcpServers":{"gobby":{"command":"uv","args":["run","gobby","mcp-server"],'
+            '"alwaysLoad":true}}}'
+        )
+        request = SpawnRequest(
+            prompt="Test",
+            cwd=str(tmp_path),
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            machine_id="21000000-0000-4000-8000-000000000023",
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+        )
+        mock_spawn_context = MagicMock()
+        mock_spawn_context.session_id = "child"
+        mock_spawn_context.agent_run_id = "run-1"
+        mock_spawn_context.env_vars = {}
+
+        with patch(
+            "gobby.agents.spawn.prepare_terminal_spawn",
+            return_value=mock_spawn_context,
+        ):
+            request.prepared_spawn = mock_spawn_context
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        assert int(_spawn_kwargs(request)["env"]["MCP_CONNECT_TIMEOUT_MS"]) >= 30000
+
+    @pytest.mark.asyncio
+    async def test_claude_terminal_without_mcp_config_keeps_the_default_connect_deadline(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """No workspace MCP config means nothing to wait for, so nothing is overridden."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd=str(tmp_path),
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            machine_id="21000000-0000-4000-8000-000000000024",
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+        )
+        mock_spawn_context = MagicMock()
+        mock_spawn_context.session_id = "child"
+        mock_spawn_context.agent_run_id = "run-1"
+        mock_spawn_context.env_vars = {}
+
+        with patch(
+            "gobby.agents.spawn.prepare_terminal_spawn",
+            return_value=mock_spawn_context,
+        ):
+            request.prepared_spawn = mock_spawn_context
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        assert "MCP_CONNECT_TIMEOUT_MS" not in _spawn_kwargs(request)["env"]
+
+    @pytest.mark.asyncio
     async def test_claude_terminal_disallows_native_delegation_tools(self) -> None:
         """Managed Claude agents must not escape into native Workflow or Task delegation."""
         request = SpawnRequest(
