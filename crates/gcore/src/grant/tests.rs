@@ -1270,7 +1270,11 @@ fn bounded_renewal_contention() {
     ));
     let _held = try_lock(&lock_path).expect("lock").expect("held");
     let mut request = harness.request(Some(url));
-    request.deadline = Some(Duration::from_millis(80));
+    // The deadline also caps the reachability probe, which acquisition.rs budgets as
+    // `REACHABILITY_PROBE.min(remaining)`. Leave the probe its full 150ms: starve it and
+    // the loopback connect misses under load, `reachable()` returns false, and acquire
+    // fails with `DaemonRequired` before ever reaching the lock wait asserted below.
+    request.deadline = Some(Duration::from_millis(500));
     let error = acquire_with(&request).expect_err("timeout");
     assert_eq!(error, GrantError::Timeout);
     drop(listener);
