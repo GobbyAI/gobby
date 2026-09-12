@@ -2,26 +2,21 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Map, Value};
-use tokio::sync::{mpsc, watch, Mutex};
+use serde_json::{Map, Value, json};
+use tokio::sync::{Mutex, mpsc, watch};
 
 use super::config::HostConfig;
-use super::helpers::{
-    err, list_rows, native_entitlements, push_terminal_ansi, s, spawn_fingerprint, truncate_title,
-};
+use super::helpers::{err, list_rows, s, spawn_fingerprint};
 #[cfg(feature = "vt-engine")]
-use super::spawn::{spawn_prepared, PreparedChild};
+use super::spawn::{PreparedChild, spawn_prepared};
 use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{
-    validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
-    CONTROL_DELIVERY_DEADLINE_MS, CONTROL_QUEUE_BYTES, CONTROL_QUEUE_ENTRIES, DELTA_LAG_TIMEOUT_MS,
-    DELTA_QUEUE_BYTES, DELTA_QUEUE_ENTRIES, EVENT_QUEUE_BYTES, EVENT_QUEUE_ENTRIES,
-    LIFECYCLE_RESERVED_SLOTS, MAX_FRAME_SIZE, SNAPSHOT_DEFAULT_MAX_BYTES,
-    SNAPSHOT_DEFAULT_MAX_LINES,
+    DELTA_QUEUE_ENTRIES, EVENT_QUEUE_BYTES, EVENT_QUEUE_ENTRIES, LIFECYCLE_RESERVED_SLOTS,
+    ObservationReason, ObservationState, RenderEncoding, ServerMessage, validate_dimensions,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -217,78 +212,6 @@ impl HostState {
         }
     }
 
-    pub async fn reserve_observer(&self, conn_id: u64, extra: &Map<String, Value>) -> Value {
-        let terminal_id = extra
-            .get("terminal_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let reserve_key = extra
-            .get("reserve_key")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        if terminal_id.is_empty() || reserve_key.is_empty() {
-            return err("invalid_request");
-        }
-        let mut inner = self.inner.lock().await;
-        if let Some(existing) = inner.reservations.values().find(|res| {
-            res.conn_id == conn_id && res.terminal_id == terminal_id && res.key == reserve_key
-        }) {
-            return json!({
-                "ok": true,
-                "reservation_id": existing.id,
-                "reserve_key": existing.key,
-                "reserve_generation": existing.generation,
-            });
-        }
-        let entitlements = native_entitlements(&inner);
-        if entitlements >= self.config.native_entitlement_ceiling() {
-            return err("capacity");
-        }
-        let reservation_id = format!("rsv-{}", uuid::Uuid::new_v4());
-        inner.reservations.insert(
-            reservation_id.clone(),
-            Reservation {
-                id: reservation_id.clone(),
-                key: reserve_key.clone(),
-                generation: 1,
-                terminal_id,
-                conn_id,
-                identity: None,
-                prepared: false,
-            },
-        );
-        json!({
-            "ok": true,
-            "reservation_id": reservation_id,
-            "reserve_key": reserve_key,
-            "reserve_generation": 1,
-        })
-    }
-
-    pub async fn release_observer(&self, extra: &Map<String, Value>) -> Value {
-        let reservation_id = extra
-            .get("reservation_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let reserve_key = extra
-            .get("reserve_key")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let mut inner = self.inner.lock().await;
-        if let Some(res) = inner.reservations.get(reservation_id) {
-            if res.prepared {
-                return json!({"ok": true, "released": false});
-            }
-            if res.key != reserve_key && !reserve_key.is_empty() {
-                return json!({"ok": true, "released": false});
-            }
-            inner.reservations.remove(reservation_id);
-        }
-        json!({"ok": true, "released": true})
-    }
-
     pub async fn spawn(&self, conn_id: u64, extra: &Map<String, Value>) -> Value {
         if self.draining.load(Ordering::SeqCst) {
             return err("host_draining");
@@ -478,145 +401,6 @@ impl HostState {
         }
     }
 
-    pub async fn spawn_commit(&self, extra: &Map<String, Value>) -> Value {
-        let terminal_id = s(extra, "terminal_id");
-        let spawn_key = s(extra, "spawn_key");
-        let identity = Identity {
-            terminal_id,
-            spawn_key,
-        };
-        let mut inner = self.inner.lock().await;
-        let Some(slot) = inner.terminals.get_mut(&identity) else {
-            return err("not_found");
-        };
-        if slot.commit_state == CommitState::Committed {
-            return json!({
-                "ok": true,
-                "host_terminal_id": slot.host_terminal_id,
-                "commit_state": "committed",
-            });
-        }
-        #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_mut() {
-            if child.commit().is_err() {
-                return err("commit_failed");
-            }
-        }
-        slot.commit_state = CommitState::Committed;
-        slot.commit_deadline = None;
-        json!({
-            "ok": true,
-            "host_terminal_id": slot.host_terminal_id,
-            "commit_state": "committed",
-        })
-    }
-
-    pub async fn kill(&self, extra: &Map<String, Value>) -> Value {
-        let host_terminal_id = s(extra, "host_terminal_id");
-        let grace_ms = extra.get("grace_ms").and_then(Value::as_u64).unwrap_or(100);
-        let mut inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return json!({"ok": true, "killed": false});
-        };
-        if let Some(slot) = inner.terminals.remove(&identity) {
-            inner.by_host_id.remove(&host_terminal_id);
-            inner.reservations.remove(&slot.reservation_id);
-            #[cfg(unix)]
-            unsafe {
-                libc::killpg(slot.pgid, libc::SIGTERM);
-            }
-            let pgid = slot.pgid;
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(grace_ms)).await;
-                unsafe {
-                    libc::killpg(pgid, libc::SIGKILL);
-                }
-            });
-            drop(slot);
-        }
-        json!({"ok": true, "killed": true})
-    }
-
-    pub async fn resize(&self, extra: &Map<String, Value>) -> Value {
-        let host_terminal_id = s(extra, "host_terminal_id");
-        let rows = extra.get("rows").and_then(Value::as_i64).unwrap_or(0);
-        let cols = extra.get("cols").and_then(Value::as_i64).unwrap_or(0);
-        let dims = match validate_dimensions(rows, cols) {
-            Ok(dims) => dims,
-            Err(e) => return err(e.code()),
-        };
-        let mut inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return err("not_found");
-        };
-        let Some(slot) = inner.terminals.get_mut(&identity) else {
-            return err("not_found");
-        };
-        #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_ref() {
-            child.runtime.resize(dims.0, dims.1, 0, 0);
-        }
-        slot.rows = dims.0;
-        slot.cols = dims.1;
-        slot.last_seq += 1;
-        json!({"ok": true, "rows": dims.0, "cols": dims.1})
-    }
-
-    #[allow(unused_variables, unused_mut)]
-    #[allow(unused_variables, unused_mut)]
-    pub async fn snapshot(&self, extra: &Map<String, Value>) -> Value {
-        let host_terminal_id = s(extra, "host_terminal_id");
-        let max_bytes = extra
-            .get("max_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(SNAPSHOT_DEFAULT_MAX_BYTES as u64) as usize;
-        let max_lines = extra
-            .get("max_lines")
-            .and_then(Value::as_u64)
-            .unwrap_or(SNAPSHOT_DEFAULT_MAX_LINES as u64) as usize;
-        let inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return err("not_found");
-        };
-        let Some(slot) = inner.terminals.get(&identity) else {
-            return err("not_found");
-        };
-        let mut text = String::new();
-        #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_ref() {
-            text = child.runtime.snapshot_history().unwrap_or_default();
-            if text.is_empty() {
-                text = child.runtime.visible_text();
-            }
-        }
-        let total_bytes = text.len() as u64;
-        let mut truncated = false;
-        let mut dropped_bytes = 0u64;
-        let mut lines: Vec<&str> = text.lines().collect();
-        if lines.len() > max_lines {
-            dropped_bytes += lines[..lines.len() - max_lines]
-                .iter()
-                .map(|l| l.len() as u64 + 1)
-                .sum::<u64>();
-            lines = lines[lines.len() - max_lines..].to_vec();
-            truncated = true;
-        }
-        let mut joined = lines.join("\n");
-        if joined.len() > max_bytes {
-            let overflow = joined.len() - max_bytes;
-            joined = joined[overflow..].to_string();
-            dropped_bytes += overflow as u64;
-            truncated = true;
-        }
-        json!({
-            "ok": true,
-            "text": joined,
-            "truncated": truncated,
-            "dropped_bytes": dropped_bytes,
-            "total_bytes": total_bytes,
-        })
-    }
-
     pub async fn subscribe_events(&self) -> (Value, mpsc::Receiver<Value>) {
         let (tx, rx) = mpsc::channel(EVENT_QUEUE_ENTRIES);
         let mut inner = self.inner.lock().await;
@@ -626,30 +410,6 @@ impl HostState {
             queued_bytes: 0,
         });
         (json!({"ok": true, "subscribed": true}), rx)
-    }
-
-    pub async fn expire_prepared(&self) {
-        let mut inner = self.inner.lock().await;
-        let now = Instant::now();
-        let expired: Vec<Identity> = inner
-            .terminals
-            .iter()
-            .filter(|(_, slot)| {
-                slot.commit_state == CommitState::Prepared
-                    && slot.commit_deadline.is_some_and(|d| d <= now)
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        for identity in expired {
-            if let Some(slot) = inner.terminals.remove(&identity) {
-                inner.by_host_id.remove(&slot.host_terminal_id);
-                inner.reservations.remove(&slot.reservation_id);
-                #[cfg(unix)]
-                unsafe {
-                    libc::killpg(slot.pgid, libc::SIGKILL);
-                }
-            }
-        }
     }
 
     pub async fn attach(
@@ -796,108 +556,6 @@ impl HostState {
             applied_rows: applied,
             max_rows,
         })
-    }
-
-    #[allow(unused_variables)]
-    pub async fn broadcast_frames(self: &Arc<Self>) {
-        let mut inner = self.inner.lock().await;
-        let ids: Vec<u64> = inner.attachments.keys().copied().collect();
-        for id in ids {
-            let (host_id, rows, cols, scroll, encoding) = {
-                let Some(att) = inner.attachments.get(&id) else {
-                    continue;
-                };
-                (
-                    att.host_terminal_id.clone(),
-                    att.rows,
-                    att.cols,
-                    att.scroll,
-                    att.encoding,
-                )
-            };
-            let Some(identity) = inner.by_host_id.get(&host_id).cloned() else {
-                continue;
-            };
-            if inner
-                .terminals
-                .get(&identity)
-                .is_some_and(|slot| slot.locator.is_some())
-            {
-                continue;
-            }
-            #[cfg(feature = "vt-engine")]
-            let (frame, seq) = {
-                let Some(slot) = inner.terminals.get_mut(&identity) else {
-                    continue;
-                };
-                let Some(child) = slot.child.as_mut() else {
-                    continue;
-                };
-                if scroll > 0 {
-                    child.runtime.set_scroll_offset_from_bottom(scroll as usize);
-                } else {
-                    child.runtime.scroll_reset();
-                }
-                let frame = child.runtime.frame_data(cols, rows);
-                if scroll > 0 {
-                    child.runtime.scroll_reset();
-                }
-                let title = child.runtime.osc_title();
-                if slot.title != title {
-                    slot.title = truncate_title(&title);
-                    slot.last_seq += 1;
-                }
-                (frame, slot.last_seq)
-            };
-            #[cfg(not(feature = "vt-engine"))]
-            let (frame, seq) = (
-                crate::protocol::FrameData {
-                    cells: Vec::new(),
-                    width: cols,
-                    height: rows,
-                    cursor: None,
-                    hyperlinks: Vec::new(),
-                    graphics: Vec::new(),
-                    modes: crate::protocol::PaneModes::default(),
-                },
-                inner
-                    .terminals
-                    .get(&identity)
-                    .map_or(0, |slot| slot.last_seq),
-            );
-            if let Some(att) = inner.attachments.get_mut(&id) {
-                let sent = match encoding {
-                    RenderEncoding::SemanticFrame => {
-                        match att.tx.try_send(ServerMessage::Frame(frame)) {
-                            Ok(()) => {
-                                att.last_send = Instant::now();
-                                att.desynced = false;
-                                true
-                            }
-                            Err(_) => {
-                                att.desynced = true;
-                                false
-                            }
-                        }
-                    }
-                    RenderEncoding::TerminalAnsi => push_terminal_ansi(att, &frame, seq),
-                };
-                if sent {
-                    att.delta_len = att.delta_len.saturating_add(1);
-                }
-            }
-            let _ = MAX_FRAME_SIZE;
-            let _ = DELTA_QUEUE_BYTES;
-            let _ = CONTROL_QUEUE_ENTRIES;
-            let _ = CONTROL_QUEUE_BYTES;
-            let _ = CONTROL_DELIVERY_DEADLINE_MS;
-            let _ = DELTA_LAG_TIMEOUT_MS;
-            let _ = EVENT_QUEUE_BYTES;
-        }
-    }
-
-    pub fn lag_timeout(&self) -> Duration {
-        Duration::from_millis(DELTA_LAG_TIMEOUT_MS)
     }
 }
 
