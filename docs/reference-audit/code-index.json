@@ -140,6 +140,21 @@
         "source-audit",
         "python-maintenance-http"
       ]
+    },
+    {
+      "path": "docs/guides/ask.md",
+      "anchors": [
+        "start-a-run",
+        "inspect-and-recover",
+        "outcomes-and-failures",
+        "export-and-replay",
+        "mcp-and-http-clients",
+        "evidence-expectations",
+        "installation-check"
+      ],
+      "evidence": [
+        "ask-source"
+      ]
     }
   ],
   "operations": [
@@ -920,6 +935,364 @@
         "bm25-recovery"
       ],
       "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode ask",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "crates/gcode/src/dispatch_ask.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-native"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
+      "command": "gcode evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/evidence.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-native"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "start_ask_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.start_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "get_ask_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.get_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "wait_for_ask_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.wait_for_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "resume_ask_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.resume_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "cancel_ask_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.cancel_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "export_ask_run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.export_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "query_evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.query_evidence"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "assigned-ask-worker"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "read_evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.read_evidence"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "assigned-ask-worker"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "submit_answer",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.submit_answer"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "assigned-ask-worker"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "submit_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.submit_review"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "assigned-ask-worker"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "prepare",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.prepare"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "pipeline-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "seed",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.seed"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "pipeline-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "spawn",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.spawn"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "pipeline-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "validate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.validate"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "pipeline-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "admit_repair",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.admit_repair"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "pipeline-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "publish",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.publish"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "pipeline-only"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/ask/runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/ask.py",
+        "symbol": "create_ask_router.start_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/ask/runs/{run_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/ask.py",
+        "symbol": "create_ask_router.get_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/ask/runs/{run_id}/wait",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/ask.py",
+        "symbol": "create_ask_router.wait_for_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/ask/runs/{run_id}/resume",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/ask.py",
+        "symbol": "create_ask_router.resume_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/ask/runs/{run_id}/cancel",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/ask.py",
+        "symbol": "create_ask_router.cancel_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "integration-client"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/ask/runs/{run_id}/export",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/ask.py",
+        "symbol": "create_ask_router.export_ask_run"
+      },
+      "verification": [
+        "ask-source",
+        "ask-python"
+      ],
+      "audience": "integration-client"
     }
   ],
   "evidence": [
@@ -994,6 +1367,24 @@
       "kind": "implementation-and-tests",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_bm25_health.py tests/cli/test_postgres_bm25.py tests/test_bm25_startup.py -q",
       "result": "13 passed in 0.90s. CLI help confirms only --json and --help. Inspected repair_code_index_cmd/status_cmd, repair_bm25_indexes/_verify_index/_required_index_names and startup repair. Swept CLI code-index/BM25 mentions: other hits are init/install/git-hook integration or plan expansion consumers, not additional dedicated recovery commands. No live repair invoked."
+    },
+    {
+      "id": "ask-source",
+      "kind": "implementation-and-registry",
+      "command": "gcode ask --help; gcode evidence --help; list_tools(gobby-ask); get_tool_schema(start_ask_run/query_evidence); gcode outline/symbol-at for CLI, evidence contracts, Ask MCP/HTTP adapters, service wait/resume/publication and stage discovery authority",
+      "result": "Native Ask epic landed at 5944ea09a4. Two newly merged native command leaves, ten ordinary-discoverable MCP tools, six pipeline-only tools and six authenticated HTTP routes mapped. CLI defaults HEAD/600/deterministic and guarded resume verified. Runtime list_tools returns ten tools and hides stage operations. Source stage_tool_is_discoverable requires current pipeline authority. This supplements the earlier 43-command inventory; earlier installation observations remain historical. No live Ask run or snapshot mutation invoked."
+    },
+    {
+      "id": "ask-python",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_ask.py tests/servers/routes/test_ask.py tests/servers/routes/mcp_endpoints/test_ask_discovery.py tests/ask/test_recovery.py tests/ask/test_publication.py tests/ask/test_evidence.py tests/ask/test_stage_authority.py tests/skills/test_capability_catalog.py tests/docs/test_gcode_guidance.py -q",
+      "result": "167 passed in 24.98s. Isolated adapters, discovery authorization, recovery, publication and evidence fixtures; not a live-model end-to-end probe."
+    },
+    {
+      "id": "ask-native",
+      "kind": "tests",
+      "command": "GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'binary(ask) | test(evidence::)' --status-level fail --final-status-level fail",
+      "result": "16 passed in 2.066s; 1080 skipped. Built current merged native source; isolated native Ask lifecycle/export and evidence tests. No binary install needed for docs-only changes."
     }
   ],
   "discrepancies": [
@@ -1076,9 +1467,10 @@
     },
     {
       "finding": "Installed gcode exposes ask/evidence absent from this checkout.",
-      "resolution": "Owner #12858 confirms epic-22010-native-ask scope until #22010 merges. Exclude these unmerged operations from main library; do not overwrite its pinned native binary.",
+      "resolution": "Previously deferred to active epic owner #12858; now merged at 5944ea09a4. Added current Ask/evidence references and complete adapter coverage; previous branch-only exclusion no longer applies.",
       "evidence": [
-        "source-audit"
+        "source-audit",
+        "ask-source"
       ]
     },
     {
@@ -1094,6 +1486,13 @@
       "evidence": [
         "bm25-recovery",
         "installation-coordination"
+      ]
+    },
+    {
+      "finding": "New Ask surface was absent from the previously completed code-index library; disconnect guide omitted running-run resume refusal.",
+      "resolution": "Added Ask topic and adapter mappings; guide now directs status/event wait for running runs and resume only when eligible. Explicitly distinguish pipeline-authorized stage discovery from ordinary discovery without changing the normative Ask contract.",
+      "evidence": [
+        "ask-source"
       ]
     }
   ]

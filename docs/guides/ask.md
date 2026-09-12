@@ -61,7 +61,10 @@ absolute deadline. It does not start a replacement run.
 Foreground waiting is event-driven. If the client disconnects, the daemon run
 continues and gcode reports `ask_wait_disconnected` with the durable ID and an
 exact resume command. Do not assume a closed terminal or SSH connection cancelled
-the run.
+the run. Check status first after a disconnect: if it is still running, wait
+through `wait_for_ask_run` rather than repeatedly resuming it. Resume rejects
+already-running, completed, cancelled, and expired runs; its printed recovery
+command is applicable only after the run becomes eligible for recovery.
 
 ## Outcomes And Failures
 
@@ -123,6 +126,13 @@ The public MCP surface is:
 Project identity comes from the active MCP registry and caller identity comes
 from the verified session context. Do not add `project_id` to public calls.
 
+Ordinary discovery also exposes the four guarded worker tools `query_evidence`,
+`read_evidence`, `submit_answer`, and `submit_review`; they require the active
+Ask child principal and its assigned stage. Reviewers cannot issue new evidence
+queries. The six pipeline stage operations in the contract are hidden from
+ordinary discovery and require the owning pipeline's live authority. Their
+names are not a public recovery interface.
+
 HTTP start uses `POST /api/ask/runs` with `question`, `project_id`, and optional
 `commit_ref`, `timeout_seconds`, `retrieval_mode`, and `idempotency_key` fields.
 Status, wait, resume, cancel, and export use the routes documented in
@@ -154,3 +164,5 @@ Before production use, verify all three runtime layers from the serving checkout
 Files under `src/gobby/install/shared/` are templates. Their presence does not
 prove those definitions are installed or active; the database registry is the
 runtime source of truth.
+
+_Last verified: 2026-09-12_

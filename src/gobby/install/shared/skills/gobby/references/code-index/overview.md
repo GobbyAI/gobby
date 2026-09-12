@@ -2,8 +2,9 @@
 
 Load when locating implementation, retrieving source, assessing change impact,
 or diagnosing index freshness. Use the native `gcode` CLI through the shell.
-There is no code-index MCP service in this checkout's internal registry; the
-daemon's HTTP routes serve UI and integration clients.
+Ordinary index navigation uses native commands. The `gobby-ask` MCP service
+handles durable source-bound questions and assigned Ask worker evidence;
+the daemon's HTTP routes also serve UI and integration clients.
 
 Start with the query shape, then retrieve the smallest useful source body.
 Direct `gcode` navigation does not require loading this reference. Reference
@@ -14,6 +15,7 @@ Loading an overview or menu never loads another topic.
 | --- | --- |
 | [search](search.md) | Choosing search lanes or interpreting ranked matches |
 | [retrieval](retrieval.md) | Reading source by file location or stored symbol ID |
+| [ask](ask.md) | Running durable questions or handling immutable evidence |
 | [navigation](navigation.md) | Exploring structure, paths, identities, or pages |
 | [impact](impact.md) | Finding callers, dependencies, and change impact |
 | [graphs](graphs.md) | Inspecting graph views, reports, or projections |

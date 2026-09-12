@@ -332,6 +332,12 @@
           "when": "Reading source bodies or recovering stale IDs"
         },
         {
+          "name": "ask",
+          "description": "Run durable source-bound questions and verify evidence",
+          "path": "references/code-index/ask.md",
+          "when": "Starting or recovering Ask runs or handling assigned evidence work"
+        },
+        {
           "name": "navigation",
           "description": "Survey structure and preserve scope and pagination",
           "path": "references/code-index/navigation.md",
