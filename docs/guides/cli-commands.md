@@ -566,8 +566,16 @@ gobby plans show PLAN_ID [--project PROJECT]
 gobby plans register PLAN_PATH [--plan-id ID] [--kind KIND] [--root-task-ref TASK] [--project PROJECT]
 gobby plans validate PLAN_FILE [--project PROJECT] [--mode standard|expansion]
 gobby plans archive PLAN_ID [--reason REASON] [--project PROJECT]
-gobby plans review-runs PLANNING_TASK_REF
+gobby plans review-evidence [--plan PATH] [--open] [--json] [--limit N]
+gobby plans review-runs TASK_REF
 ```
+
+Plan registration needs a real root: supply `--root-task-ref` unless it can be
+inferred from plan metadata or the filename. Project-aware validation uses
+`-p <project-root>` and is required before review/expansion. `review-runs` prints
+an expansion-QA pointer; use `review-evidence` to inspect recent evidence.
+Agents use MCP for plan/task lifecycle writes; the task-expansion commands above
+are operator-only.
 
 ## MCP Proxy
 

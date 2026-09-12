@@ -56,6 +56,62 @@
           "when": "Starting, resuming, or finishing live interactive work"
         }
       ]
+    },
+    {
+      "name": "plan",
+      "description": "Draft, verify, approve, and expand implementation plans",
+      "overview": "references/plan/overview.md",
+      "when": "Investigating or operating a Gobby plan",
+      "topics": [
+        {
+          "name": "drafting",
+          "description": "Author atomic, self-contained plan deliverables",
+          "path": "references/plan/drafting.md",
+          "when": "Writing or revising a plan narrative"
+        },
+        {
+          "name": "coverage",
+          "description": "Apply coverage grammar, targets, and evidence",
+          "path": "references/plan/coverage.md",
+          "when": "Authoring targets, acceptance, manifests, or deferrals"
+        },
+        {
+          "name": "enhancement",
+          "description": "Run optional constructive enhancement",
+          "path": "references/plan/enhancement.md",
+          "when": "Enhancing a plan or processing suggestions"
+        },
+        {
+          "name": "repair",
+          "description": "Repair validator residue and recover checkpoints",
+          "path": "references/plan/repair.md",
+          "when": "Validation, evidence, or manifest application fails"
+        },
+        {
+          "name": "review",
+          "description": "Review immutable plan evidence and findings",
+          "path": "references/plan/review.md",
+          "when": "Preparing or performing adversarial review"
+        },
+        {
+          "name": "approval",
+          "description": "Apply approved manifests and hand off implementation",
+          "path": "references/plan/approval.md",
+          "when": "Accepting review or handing a plan to implementation"
+        },
+        {
+          "name": "expansion",
+          "description": "Compile, apply, verify, and recover task trees",
+          "path": "references/plan/expansion.md",
+          "when": "Expanding plans or repairing expansion output"
+        },
+        {
+          "name": "lifecycle",
+          "description": "Register, refresh, archive, and delete plan metadata",
+          "path": "references/plan/lifecycle.md",
+          "when": "Changing plan registry state or coverage artifacts"
+        }
+      ]
     }
   ]
 }

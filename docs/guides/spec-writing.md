@@ -18,14 +18,14 @@ For the full contract, read [Plan-Coverage Contract](../contracts/plan-coverage.
 A plan is one Markdown file. The current authoring shape is narrative first:
 
 - `# {Epic Title}` at the top.
-- Optional `**Plan ID:** <stable-id>` near the top when the file name cannot
-  supply the intended plan ID.
+- A real `**Plan ID:** <stable-id>` near the top before review/approval; reject
+  blank/unknown IDs and `covers:unknown:` labels.
 - `## Overview` and `## Constraints` as `kind: framing` sections.
 - One `## P<N>: {Phase Name}` section per phase, also `kind: framing`.
 - One `### N.M {Task Title} [category: X]` deliverable per atomic unit of work.
 - Optional `kind: verification` sections for end-to-end checks.
 - Optional `kind: deferred` sections for work deliberately moved out of scope.
-- `## V1 Plan Changelog` as `kind: framing` for adversarial revision rounds when
+- `## V1 Plan Changelog` as `kind: verification` for adversarial revision rounds when
   the planner updates an existing draft after review findings. The `V1` section
   id is required by the canonical heading regex; a bare `## Plan Changelog` is
   dropped.
@@ -37,14 +37,16 @@ front-matter line:
 `kind: deliverable | framing | verification | deferred`
 ```
 
-The parser also recognizes `kind: manifest`. The approving
-`plan-adversary-taskless` agent or the interactive coordinator writes
-`## M1 Task Manifest` after user-approved review.
+The parser also recognizes `kind: manifest`. The coordinator applies server-derived `## M1 Task Manifest` through the
+review-evidence or explicit human-handoff tools after user approval. The adversary
+never edits the plan.
 
 ## Canonical Template
 
 ```markdown
 # Feature Name
+
+**Plan ID:** feature-name
 
 ## Overview
 `kind: framing`
@@ -65,7 +67,12 @@ One or two short paragraphs describing the goal and current context.
 ### 1.1 Add task validation helper [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/tasks/validation.py`
+Targets:
+- `src/gobby/tasks/validation.py::*` — scope-reason: revise validation behavior
+- `tests/tasks/test_validation.py::*` — scope-reason: cover the revised behavior
+
+**Research context:** Resolve current validation entry points, consumers and test
+fixtures before finalizing this illustrative section; preserve concrete findings here.
 
 Describe the implementation in enough detail for an agent that only receives
 this section. Include file paths, symbols, data shapes, edge cases, and any
@@ -81,6 +88,10 @@ behavior that must remain stable.
 
 Target: `tests/tasks/test_validation_cli.py`
 
+**Research context:** This example assumes a new test file; use exact indexed
+symbol Targets if the file already exists. Keep independent CLI regression scope
+separate from the preceding behavior’s required tests.
+
 Add standalone regression coverage for the CLI validation path.
 
 **Acceptance:**
@@ -90,7 +101,7 @@ Add standalone regression coverage for the CLI validation path.
 ## Verification
 `kind: verification`
 
-- `uv run gobby plans validate .gobby/plans/task-123-feature-name.md`
+- `uv run gobby plans validate .gobby/plans/task-123-feature-name.md -p <project-root>`
 - Focused pytest for touched task validation tests.
 ```
 
@@ -117,8 +128,10 @@ deferral:
     - 2.3.1
 ```
 
-The referenced task must be open and carry
-`deferred-from:<plan-id>:<section-id>` provenance.
+The referenced task must carry `deferred-from:<plan-id>:<section-id>` provenance
+and be open or closed as completed/already_implemented. Other closure reasons
+require a valid replacement owner. Placeholder refs are resolved through the
+expansion run deferral_task_map and then materialized in the canonical plan.
 
 ## Acceptance Items
 
@@ -209,7 +222,7 @@ carries one manifest section at the end:
 `kind: manifest`
 ```
 
-The approving adversary or coordinator writes that section on approval. Each
+The coordinator applies that section through the approved manifest API. Each
 manifest entry maps one `kind: deliverable` section to one synthesized leaf
 task and includes:
 
@@ -256,7 +269,7 @@ Before presenting or expanding a plan:
 4. Confirm every acceptance item has a valid artifact reference.
 5. Confirm dependencies name existing section IDs.
 6. Remove filler test tasks duplicated by TDD-required implementation leaves.
-7. Run `uv run gobby plans validate <plan-file>`.
+7. Run `uv run gobby plans validate <plan-file> -p <project-root>`.
 
 Use `uv run gobby tasks expand validate-plan <plan-file>` only when validating
 the task-expansion CLI path itself.
@@ -267,4 +280,4 @@ the task-expansion CLI path itself.
 - [MCP Tools Reference](./mcp-tools.md) - MCP tool API documentation
 - [Plan-Coverage Contract](../contracts/plan-coverage.md) - Canonical parser and coverage contract
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

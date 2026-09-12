@@ -596,29 +596,18 @@ invariant. Base validation and user approval remain separate mandatory gates.
 
 ## Review Severity and Approval
 
-The shared normative severity matrix is:
+The active plan-review protocol uses `blocking` and `nit`. A blocking finding
+names a concrete violated obligation and a repair; it must be resolved before
+approval. A nit is cosmetic or advisory and does not block approval. Every finding
+still receives an explicit disposition and remains in the canonical round result.
 
-| Severity | Decision boundary | Required disposition |
-| --- | --- | --- |
-| blocking | Demonstrated violation of a required obligation, backed by the complete failure trace. | Repair before approval. |
-| major | Material non-gating quality or operability risk. | Record an explicit quality-ledger decision. |
-| minor | Localized hardening with bounded effect. | Carry in the quality ledger until resolved or explicitly accepted. |
-| nit | Cosmetic issue with no behavioral effect. | Carry in the quality ledger; it never blocks approval. |
-
-Boundary examples are table-driven:
-
-| Candidate | Boundary fact | Severity |
-| --- | --- | --- |
-| A required rollback path leaves a durable partial write and includes the reproducible trace. | Required obligation is demonstrably violated. | blocking |
-| Retry behavior works, but operator-visible diagnosis is materially incomplete. | Operability risk is material and non-gating. | major |
-| One validated example omits an adjacent bounded hardening case. | Effect is localized and bounded. | minor |
-| Heading punctuation differs from house style. | Effect is cosmetic. | nit |
-
-An adversary approval requires zero `blocking` findings. Open `major`, `minor`,
-and `nit` entries remain visible in the server-derived quality ledger carried
-beside the canonical manifest in the approved result envelope. Regardless of
-whether optional review ran, explicit user approval is mandatory before
-expansion.
+This restores the baseline protocol explicitly approved in task #19368 (commit
+`a2b779f60f`), which removed the convergence experiment's four-severity quality
+ledger. The earlier four-severity text survived that cleanup in this contract;
+it does not define an additional runtime ledger or an alternate wire schema.
+`gobby.plans.review_findings.FINDING_SEVERITIES` and the registered finding schema
+carry the two supported values. Regardless of optional review, explicit user
+approval remains mandatory before expansion.
 
 ## Coverage CLI
 
