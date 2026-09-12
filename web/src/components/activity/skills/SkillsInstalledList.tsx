@@ -10,6 +10,7 @@ import {
   skillSourceLabel,
   type ActivitySkill,
 } from "./SkillsTabData";
+import { TickerText } from "../../ui/TickerText";
 
 interface SkillsInstalledListProps {
   skills: ActivitySkill[];
@@ -129,7 +130,9 @@ export function SkillsInstalledList({
                 kind={statusKind(skill)}
                 label={statusLabel(skill)}
               />
-              <span className="activity-row-title">{skill.name}</span>
+              <TickerText className="activity-row-title">
+                {skill.name}
+              </TickerText>
               <Chip>{skillCategory(skill)}</Chip>
               {source !== "installed" && <Chip>{skillSourceLabel(skill)}</Chip>}
             </Button>

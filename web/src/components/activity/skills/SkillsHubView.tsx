@@ -17,6 +17,7 @@ import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { loadSkillHubs, searchSkillHubs } from "./SkillsTabActions";
 import type { ActivitySkill, SkillHub, SkillHubResult } from "./SkillsTabData";
 import { SkillsHubDetail } from "./SkillsHubDetail";
+import { TickerText } from "../../ui/TickerText";
 
 interface SkillsHubViewProps {
   projectId?: string | null;
@@ -232,9 +233,9 @@ export function SkillsHubView({
                       onClick={() => setSelectedKey(resultKey(result))}
                     >
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="activity-row-title">
+                        <TickerText className="activity-row-title">
                           {result.display_name || result.slug}
-                        </span>
+                        </TickerText>
                         <span className="activity-row-meta truncate">
                           {result.description || "No description"}
                         </span>

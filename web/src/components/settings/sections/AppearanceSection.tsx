@@ -6,6 +6,8 @@ import type { SegmentedControlOption } from "../../ui/SegmentedControl";
 import type {
   Density,
   Theme,
+  TickerDirection,
+  TickerSpeed,
   UseSettingsReturn,
 } from "../../../hooks/useSettings";
 import type { PlanPendingVariant } from "../../chat/planPendingSurface";
@@ -26,6 +28,19 @@ const THEME_OPTIONS: readonly SegmentedControlOption<Theme>[] = [
 const DENSITY_OPTIONS: readonly SegmentedControlOption<Density>[] = [
   { value: "comfortable", label: "Comfortable" },
   { value: "compact", label: "Compact" },
+];
+
+const TICKER_DIRECTION_OPTIONS: readonly SegmentedControlOption<TickerDirection>[] =
+  [
+    { value: "off", label: "Off" },
+    { value: "left", label: "Left" },
+    { value: "right", label: "Right" },
+  ];
+
+const TICKER_SPEED_OPTIONS: readonly SegmentedControlOption<TickerSpeed>[] = [
+  { value: "slow", label: "Slow" },
+  { value: "normal", label: "Normal" },
+  { value: "fast", label: "Fast" },
 ];
 
 const PLAN_PENDING_OPTIONS: readonly SegmentedControlOption<PlanPendingVariant>[] =
@@ -86,6 +101,8 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
     updateDensity,
     updateFontSize,
     updatePlanPendingVariant,
+    updateTickerDirection,
+    updateTickerSpeed,
     resetSettings,
   } = client;
 
@@ -112,6 +129,31 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
           value={settings.density}
           options={DENSITY_OPTIONS}
           onChange={updateDensity}
+        />
+      </AppearanceField>
+
+      <AppearanceField
+        label="Title scrolling"
+        description="Activity-panel titles too long for their row slide to reveal the rest. Every row moves together and the loop waits for the longest."
+      >
+        <SegmentedControl<TickerDirection>
+          ariaLabel="Title scrolling"
+          value={settings.tickerDirection}
+          options={TICKER_DIRECTION_OPTIONS}
+          onChange={updateTickerDirection}
+        />
+      </AppearanceField>
+
+      <AppearanceField
+        label="Scrolling speed"
+        description="How fast those titles travel."
+      >
+        <SegmentedControl<TickerSpeed>
+          ariaLabel="Scrolling speed"
+          value={settings.tickerSpeed}
+          options={TICKER_SPEED_OPTIONS}
+          onChange={updateTickerSpeed}
+          disabled={settings.tickerDirection === "off"}
         />
       </AppearanceField>
 

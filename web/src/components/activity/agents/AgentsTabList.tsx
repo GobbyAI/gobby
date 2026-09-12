@@ -6,6 +6,7 @@ import { Chip } from "../../ui/Chip";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { AgentDefInfo } from "./AgentsTabData";
 import { SOURCE_LABELS, getAgentKey } from "./AgentsTabData";
+import { TickerText } from "../../ui/TickerText";
 
 interface AgentsTabListProps {
   agents: AgentDefInfo[];
@@ -75,9 +76,9 @@ export function AgentsTabList({
                 label={agent.enabled ? "Agent enabled" : "Agent disabled"}
                 pulse={agent.enabled}
               />
-              <span className="activity-row-title">
+              <TickerText className="activity-row-title">
                 {agent.definition.name}
-              </span>
+              </TickerText>
               <Chip>{agent.definition.provider}</Chip>
               <Chip>{sourceLabel}</Chip>
             </Button>

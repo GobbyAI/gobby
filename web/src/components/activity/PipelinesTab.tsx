@@ -31,6 +31,7 @@ import {
   type PipelineDefinitionViewMode,
 } from "./pipelines/PipelinesDefsDetail";
 import { PipelinesDefsList } from "./pipelines/PipelinesDefsList";
+import { TickerText } from "../ui/TickerText";
 
 interface PipelinesTabProps {
   projectId?: string | null;
@@ -617,9 +618,9 @@ export const PipelinesTab = memo(function PipelinesTab({
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       <PipelineStatusDot status={exec.status} />
-                      <span className="activity-row-title">
+                      <TickerText className="activity-row-title">
                         {exec.pipeline_name}
-                      </span>
+                      </TickerText>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="activity-row-meta">
@@ -661,9 +662,9 @@ export const PipelinesTab = memo(function PipelinesTab({
               <div className="flex h-10 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <PipelineStatusDot status={detailExec.status} />
-                  <span className="activity-row-title">
+                  <TickerText className="activity-row-title">
                     {detailExec.pipeline_name}
-                  </span>
+                  </TickerText>
                   {detailExec.completed_at && (
                     <span className="activity-row-meta">
                       {formatDuration(

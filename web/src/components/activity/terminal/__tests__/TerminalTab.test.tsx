@@ -928,9 +928,7 @@ describe("session scope", () => {
         sessions: [makeTmuxSession({ name: "shell" })],
       });
       render(<TerminalTab />);
-      expect(screen.getByLabelText("Terminal min cols")).toHaveTextContent(
-        "1",
-      );
+      expect(screen.getByLabelText("Terminal min cols")).toHaveTextContent("1");
     } finally {
       vi.unstubAllGlobals();
     }

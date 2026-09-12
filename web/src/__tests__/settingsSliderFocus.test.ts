@@ -22,6 +22,8 @@ function renderAppearanceSlider(): HTMLElement {
     voiceInputMode: "ptt",
     planPendingVariant: "info",
     density: "comfortable",
+    tickerDirection: "left",
+    tickerSpeed: "normal",
   };
   const clientSettings: UseSettingsReturn = {
     settings,
@@ -33,6 +35,8 @@ function renderAppearanceSlider(): HTMLElement {
     updateSttEnabled: vi.fn(),
     updateTtsEnabled: vi.fn(),
     updateVoiceInputMode: vi.fn(),
+    updateTickerDirection: vi.fn(),
+    updateTickerSpeed: vi.fn(),
     updatePlanPendingVariant: vi.fn(),
     updateDensity: vi.fn(),
     resetSettings: vi.fn(),

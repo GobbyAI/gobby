@@ -11,6 +11,7 @@ import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { useRegisterActivityActions } from "./activityActions";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
+import { TickerText } from "../ui/TickerText";
 
 interface CronTabProps {
   projectId?: string | null;
@@ -215,7 +216,9 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                     onClick={() => selectJob(job)}
                   >
                     <CronStatusDot enabled={job.enabled} />
-                    <span className="activity-row-title">{jobLabel}</span>
+                    <TickerText className="activity-row-title">
+                      {jobLabel}
+                    </TickerText>
                     <span className="activity-row-meta shrink-0">
                       {formatNextFiring(job, now)}
                     </span>
@@ -265,9 +268,9 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
           <div className="flex h-10 items-center gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
             <div className="flex min-w-0 items-center gap-2">
               <CronStatusDot enabled={selectedJob.enabled} />
-              <span className="activity-row-title">
+              <TickerText className="activity-row-title">
                 {selectedJob.display_name ?? selectedJob.name}
-              </span>
+              </TickerText>
               {selectedJob.display_name != null &&
                 selectedJob.display_name !== selectedJob.name && (
                   <span

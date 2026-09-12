@@ -16,6 +16,7 @@ import type { ChatPagePaletteSelect } from "./ChatPage.types";
 import type { PlanPendingVariant } from "./planPendingSurface";
 import type { UseChatPageProviderStateResult } from "./useChatPageProviderState";
 import type { UseChatPageVoiceStatusResult } from "./useChatPageVoiceStatus";
+import { cn } from "../../lib/utils";
 
 interface AgentPickerProps {
   agentDefinitions: AgentDefInfo[];
@@ -117,7 +118,20 @@ export function ChatMainColumn({
 
   return (
     <div
-      className="chat-column @container/chat-column flex min-w-[320px] flex-1 flex-col @max-[360px]/chat-column:[&_.command-bar]:pr-2 @max-[360px]/chat-column:[&_.command-bar]:pl-3 @max-[479px]/chat-column:[&_.command-bar-right_span]:hidden"
+      className={cn(
+        "chat-column @container/chat-column flex min-w-[320px] flex-1 flex-col",
+        "@max-[360px]/chat-column:[&_.command-bar]:pr-2 @max-[360px]/chat-column:[&_.command-bar]:pl-3",
+        "@max-[479px]/chat-column:[&_.command-bar-right_span]:hidden",
+        // A button whose label just collapsed is a glyph button, so it takes
+        // the same 28px square the activity panel gives its own collapsed
+        // chrome (ActivityPanel.tsx) and the header cog already is. Literal
+        // underscores in targeted class names must stay escaped (\_) and the
+        // literals must be String.raw: Tailwind turns bare `_` into a space
+        // inside arbitrary variants, silently producing dead selectors.
+        String.raw`@max-[479px]/chat-column:[&_button:has(>.command-bar-btn\_\_label)]:w-7 @max-[479px]/chat-column:[&_button:has(>.command-bar-btn\_\_label)]:gap-0 @max-[479px]/chat-column:[&_button:has(>.command-bar-btn\_\_label)]:px-0`,
+        String.raw`@max-[479px]/chat-column:[&_button:has(>.chat-new-chat-btn\_\_label)]:w-7 @max-[479px]/chat-column:[&_button:has(>.chat-new-chat-btn\_\_label)]:gap-0 @max-[479px]/chat-column:[&_button:has(>.chat-new-chat-btn\_\_label)]:px-0`,
+        String.raw`@max-[479px]/chat-column:[&_button:has(>.chat-action-btn\_\_label)]:w-7 @max-[479px]/chat-column:[&_button:has(>.chat-action-btn\_\_label)]:gap-0 @max-[479px]/chat-column:[&_button:has(>.chat-action-btn\_\_label)]:px-0`,
+      )}
       data-chat-column
     >
       <CommandBar

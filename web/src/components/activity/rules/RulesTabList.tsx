@@ -5,6 +5,7 @@ import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
 import { Chip } from "../../ui/Chip";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
+import { TickerText } from "../../ui/TickerText";
 
 interface RulesTabListProps {
   rules: RuleSummary[];
@@ -70,7 +71,9 @@ export function RulesTabList({
                 kind={rule.enabled ? "active" : "disabled"}
                 label={rule.enabled ? "Rule enabled" : "Rule disabled"}
               />
-              <span className="activity-row-title">{rule.name}</span>
+              <TickerText className="activity-row-title">
+                {rule.name}
+              </TickerText>
               {rule.event && (
                 <Chip className="inline-block max-w-40 min-w-0 overflow-hidden leading-5 text-ellipsis">
                   {rule.event}

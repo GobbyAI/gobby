@@ -11,6 +11,7 @@ import {
   memoryScopeLabel,
   memoryTypeLabel,
 } from "./MemoryTabData";
+import { TickerText } from "../../ui/TickerText";
 
 interface MemoryTabListProps {
   memories: GobbyMemory[];
@@ -167,9 +168,9 @@ export function MemoryTabList({
               aria-label={`Select ${previewContent(memory.content)}`}
               onClick={() => onSelect(memory)}
             >
-              <span className="activity-row-title">
+              <TickerText className="activity-row-title">
                 {previewContent(memory.content)}
-              </span>
+              </TickerText>
               {hidden && <DreamFlagBadge memory={memory} />}
               <Chip>{memoryTypeLabel(memory.memory_type)}</Chip>
               <Chip tone={memory.is_global ? "accent" : "neutral"}>

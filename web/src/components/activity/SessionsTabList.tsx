@@ -13,6 +13,7 @@ import {
 } from "./ActivityRowStatusDot";
 import { KebabIcon } from "./QuickMenu";
 import { type WatchingSessionEntry, renderBadges } from "./SessionsTab.helpers";
+import { TickerText } from "../ui/TickerText";
 
 interface SessionsEntryListProps {
   emptyState: ReactNode;
@@ -89,8 +90,9 @@ function SessionEntryRow({
   onSelect,
 }: SessionEntryRowProps) {
   const isDimmed = ["paused", "interrupted", "expired"].includes(entry.status);
+  const blockedCount = entry.blockedCount ?? 0;
   const statusKind =
-    (entry.blockedCount ?? 0) > 0
+    blockedCount > 0
       ? "paused"
       : entry.status === "active"
         ? "active"
@@ -103,7 +105,7 @@ function SessionEntryRow({
               ? "warning"
               : "paused";
   const statusGlyph =
-    (entry.blockedCount ?? 0) > 0
+    blockedCount > 0
       ? undefined
       : entry.status === "awaiting_input"
         ? EyeGlyph
@@ -136,16 +138,26 @@ function SessionEntryRow({
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <ActivityRowStatusDot
           kind={statusKind}
-          pulse={entry.status === "active" && !(entry.blockedCount ?? 0)}
+          pulse={entry.status === "active" && blockedCount === 0}
+          // #22163 traded the "blocked N" chip for this dot to hold the row to
+          // one line. The count and the reasons are then the dot's only
+          // carrier — a blocked session labelled "Session paused" would be
+          // both wrong and the one thing a screen reader could learn.
           label={
-            (entry.blockedCount ?? 0) > 0
-              ? "Session paused"
+            blockedCount > 0
+              ? [
+                  `Blocked attention: ${blockedCount}`,
+                  ...(entry.attentionReasons ?? []),
+                ].join("; ")
               : `Session ${entry.status}`
+          }
+          title={
+            blockedCount > 0 ? entry.attentionReasons?.join("; ") : undefined
           }
           glyph={statusGlyph}
         />
         <SourceIcon source={entry.provider} size={14} />
-        <span className="activity-row-title">{displayLabel}</span>
+        <TickerText className="activity-row-title">{displayLabel}</TickerText>
       </div>
       <div className="flex items-center gap-1.5">
         {renderBadges(entry)}

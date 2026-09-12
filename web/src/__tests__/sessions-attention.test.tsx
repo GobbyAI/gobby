@@ -185,9 +185,12 @@ describe("session attention", () => {
     render(<SessionsTab />);
 
     expect(websocket.handler).not.toBeNull();
+    // The count and the reasons ride the row's status dot (#22163 dropped the
+    // separate chip), so the dot must also drop the active treatment: a
+    // blocked session is not a running one.
     expect(
       await screen.findByLabelText("Blocked attention: 1; Approval required"),
-    ).toHaveTextContent("blocked 1");
+    ).toHaveAttribute("data-kind", "paused");
 
     act(() => {
       websocket.handler?.(
@@ -198,7 +201,7 @@ describe("session attention", () => {
       await screen.findByLabelText(
         "Blocked attention: 2; Approval required; Operator input required",
       ),
-    ).toHaveTextContent("blocked 2");
+    ).toHaveAttribute("data-kind", "paused");
 
     fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Blocked" }));

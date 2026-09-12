@@ -94,14 +94,18 @@ describe("TasksTab row layout (#14247)", () => {
     }
   });
 
-  it("title takes the flexible column and truncates", async () => {
+  it("title takes the flexible column and recovers its tail", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
       expect(screen.getByText("Open task 2")).toBeTruthy();
     });
 
+    // Tasks joins the panel-wide ticker: the title still owns the flexible
+    // column, but overflow is now recoverable rather than clipped, and the
+    // inline colour/weight style has to survive the wrapper.
     const title = document.querySelector("[data-task-row-title]");
-    expect(title).toHaveClass("flex-1", "truncate");
+    expect(title).toHaveClass("flex-1", "ticker", "overflow-hidden");
+    expect(title).toHaveAttribute("style");
   });
 });

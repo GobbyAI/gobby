@@ -268,7 +268,14 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
         .then((data) => {
           const s = data?.session;
           if (!s || !isCurrentRequest()) return;
-          const ref = typeof s.ref === "string" ? s.ref : null;
+          // A daemon that sends no `ref` still sends `seq_num`, and session
+          // #0 is a real session — deriving it has to survive the falsy zero.
+          const ref =
+            typeof s.ref === "string"
+              ? s.ref
+              : typeof s.seq_num === "number"
+                ? `#${s.seq_num}`
+                : null;
           setSessionRef(ref);
           const nextMeta: SessionObservationMeta = {
             ref,

@@ -740,6 +740,27 @@ describe("mobile chrome CSS", () => {
     );
   });
 
+  it("collapses labelled chat-column buttons to the shared 28px glyph square", () => {
+    const mainColumnSource = readSource(
+      "src/components/chat/ChatMainColumn.tsx",
+    );
+
+    // A button whose label just collapsed is a glyph button, so it takes the
+    // same square the header cog and the activity panel's own chrome use —
+    // width and horizontal padding go with the label, at the same breakpoint.
+    for (const marker of [
+      "command-bar-btn",
+      "chat-new-chat-btn",
+      "chat-action-btn",
+    ]) {
+      for (const property of ["w-7", "gap-0", "px-0"]) {
+        expect(mainColumnSource).toContain(
+          `@max-[479px]/chat-column:[&_button:has(>.${marker}\\_\\_label)]:${property}`,
+        );
+      }
+    }
+  });
+
   it("keeps the minimum-width chat input toolbar controls to one row", () => {
     const chatInputSource = readSource("src/components/chat/ChatInput.tsx");
     const toolbarSource = readSource(
