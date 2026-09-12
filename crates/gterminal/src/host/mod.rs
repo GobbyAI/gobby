@@ -18,6 +18,7 @@ mod embed;
 mod frames;
 mod helpers;
 mod ledger;
+mod native_ops;
 pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;

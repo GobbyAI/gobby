@@ -82,7 +82,7 @@ pub async fn detach_frame(state: &Arc<HostState>, attachment_id: u64) {
                 .is_none_or(|slot| slot.user_attachments.is_empty())
         };
         if reap {
-            reap_observer(state, &key).await;
+            reap_observer(state, &key, true, &[]).await;
         }
     }
 }
@@ -243,9 +243,16 @@ fn existing_host_id(inner: &super::state::Inner, key: &str) -> Option<String> {
         .map(|slot| slot.host_terminal_id.clone())
 }
 
-async fn reap_observer(state: &Arc<HostState>, key: &str) {
+async fn reap_observer(
+    state: &Arc<HostState>,
+    key: &str,
+    abort_poll: bool,
+    delivered_attachment_ids: &[u64],
+) {
     if let Some(handle) = state.polls.lock().await.remove(key) {
-        handle.abort();
+        if abort_poll {
+            handle.abort();
+        }
     }
     let mut inner = state.inner.lock().await;
     let identity = inner
@@ -264,6 +271,9 @@ async fn reap_observer(state: &Arc<HostState>, key: &str) {
                 inner.attachments.remove(&att_id);
             }
         }
+    }
+    for attachment_id in delivered_attachment_ids {
+        inner.attachments.remove(attachment_id);
     }
 }
 
@@ -368,8 +378,8 @@ async fn poll_loop(state: Arc<HostState>, key: String) {
                     || parsed.pid != locator.server_pid
                     || parsed.start_time != locator.server_start_time
                 {
-                    emit_exit(&state, &key).await;
-                    reap_observer(&state, &key).await;
+                    let delivered = emit_exit(&state, &key).await;
+                    reap_observer(&state, &key, false, &delivered).await;
                     break;
                 }
                 if geometry_oversize(parsed.width, parsed.height) {
@@ -405,8 +415,8 @@ async fn poll_loop(state: Arc<HostState>, key: String) {
             }
             Err(class) => {
                 if class == PollClass::ConfirmedAbsence {
-                    emit_exit(&state, &key).await;
-                    reap_observer(&state, &key).await;
+                    let delivered = emit_exit(&state, &key).await;
+                    reap_observer(&state, &key, false, &delivered).await;
                     break;
                 }
                 let reason = class.reason();
@@ -625,25 +635,51 @@ async fn emit_code(state: &Arc<HostState>, key: &str, code: &str) {
     }
 }
 
-async fn emit_exit(state: &Arc<HostState>, key: &str) {
-    let inner = state.inner.lock().await;
-    let Some(slot) = inner.terminals.values().find(|slot| {
-        slot.locator
-            .as_ref()
-            .is_some_and(|l| l.locator_key() == key)
-    }) else {
-        return;
+async fn emit_exit(state: &Arc<HostState>, key: &str) -> Vec<u64> {
+    let (host_id, recipients) = {
+        let inner = state.inner.lock().await;
+        let Some(slot) = inner.terminals.values().find(|slot| {
+            slot.locator
+                .as_ref()
+                .is_some_and(|l| l.locator_key() == key)
+        }) else {
+            return Vec::new();
+        };
+        let recipients = slot
+            .user_attachments
+            .iter()
+            .filter_map(|id| inner.attachments.get(id).map(|att| (*id, att.tx.clone())))
+            .collect::<Vec<_>>();
+        (slot.host_terminal_id.clone(), recipients)
     };
-    let host_id = slot.host_terminal_id.clone();
-    let ids: Vec<u64> = slot.user_attachments.iter().copied().collect();
-    for id in ids {
-        if let Some(att) = inner.attachments.get(&id) {
-            let _ = att.tx.try_send(ServerMessage::TerminalExited {
+    let mut delivered = Vec::with_capacity(recipients.len());
+    for (attachment_id, sender) in recipients {
+        let messages = [
+            ServerMessage::TerminalExited {
                 host_terminal_id: host_id.clone(),
                 exit_code: None,
-            });
+            },
+            ServerMessage::Error {
+                code: "observer_reaped".into(),
+                message: None,
+            },
+        ];
+        match sender.reserve_many(messages.len()).await {
+            Ok(permits) => {
+                for (permit, message) in permits.zip(messages) {
+                    permit.send(message);
+                }
+                delivered.push(attachment_id);
+            }
+            Err(_) => {
+                tracing::debug!(
+                    host_terminal_id = %host_id,
+                    "observer frame receiver closed before lifecycle delivery"
+                );
+            }
         }
     }
+    delivered
 }
 
 async fn mark_observation(

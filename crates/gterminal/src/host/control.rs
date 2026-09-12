@@ -4,13 +4,14 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::io;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{unix::OwnedReadHalf, UnixStream};
 
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
 
 pub const PROTOCOL_VERSION: u32 = 1;
+const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct ControlRequest {
@@ -27,6 +28,46 @@ pub struct ControlRequest {
     pub operation_seq: Option<u64>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+enum RequestRead {
+    Request(ControlRequest),
+    InvalidJson,
+    Overflow,
+    Closed,
+}
+
+async fn read_request(
+    reader: &mut BufReader<OwnedReadHalf>,
+    buffer: &mut Vec<u8>,
+) -> io::Result<RequestRead> {
+    if buffer.len() > MAX_CONTROL_LINE {
+        buffer.clear();
+        return Ok(RequestRead::Overflow);
+    }
+    let remaining = MAX_CONTROL_LINE + 1 - buffer.len();
+    let read = (&mut *reader)
+        .take(remaining as u64)
+        .read_until(b'\n', buffer)
+        .await?;
+    if buffer.len() > MAX_CONTROL_LINE {
+        buffer.clear();
+        return Ok(RequestRead::Overflow);
+    }
+    if read == 0 && buffer.is_empty() {
+        return Ok(RequestRead::Closed);
+    }
+    let mut line = std::mem::take(buffer);
+    if line.last() == Some(&b'\n') {
+        line.pop();
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+    }
+    match serde_json::from_slice(&line) {
+        Ok(request) => Ok(RequestRead::Request(request)),
+        Err(_) => Ok(RequestRead::InvalidJson),
+    }
 }
 
 async fn write_json(writer: &mut tokio::net::unix::OwnedWriteHalf, value: Value) -> io::Result<()> {
@@ -49,26 +90,18 @@ fn with_id(mut value: Value, id: &Option<Value>) -> Value {
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let conn_id = state.alloc_conn();
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
+    let mut request_buffer = Vec::new();
     let mut authed = false;
     let mut ledger = OperationLedger::default();
     let mut events_rx: Option<tokio::sync::mpsc::Receiver<Value>> = None;
 
     loop {
         tokio::select! {
-            line = lines.next_line() => {
-                let Ok(Some(line)) = line else { break; };
-                if line.len() >= 2 * 1024 * 1024 {
-                    let _ = write_json(
-                        &mut writer,
-                        with_id(json!({"ok": false, "error": "request_too_large"}), &None),
-                    )
-                    .await;
-                    continue;
-                }
-                let request: ControlRequest = match serde_json::from_str(&line) {
-                    Ok(request) => request,
-                    Err(_) => {
+            request = read_request(&mut reader, &mut request_buffer) => {
+                let request = match request {
+                    Ok(RequestRead::Request(request)) => request,
+                    Ok(RequestRead::InvalidJson) => {
                         let _ = write_json(
                             &mut writer,
                             json!({"ok": false, "error": "invalid_json"}),
@@ -76,6 +109,15 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                         .await;
                         continue;
                     }
+                    Ok(RequestRead::Overflow) => {
+                        let _ = write_json(
+                            &mut writer,
+                            json!({"ok": false, "error": "control_overflow"}),
+                        )
+                        .await;
+                        break;
+                    }
+                    Ok(RequestRead::Closed) | Err(_) => break,
                 };
                 if !authed {
                     if request.method != "hello" {

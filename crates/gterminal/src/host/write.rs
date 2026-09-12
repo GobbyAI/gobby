@@ -62,6 +62,9 @@ impl HostState {
         let Some(slot) = inner.terminals.get(&identity) else {
             return err("not_found");
         };
+        if slot.locator.is_some() {
+            return err("not_native");
+        }
         #[cfg(feature = "vt-engine")]
         if let Some(child) = slot.child.as_ref() {
             let payload = match kind.as_str() {
@@ -236,6 +239,9 @@ impl HostState {
         let Some(slot) = inner.terminals.get(&identity) else {
             return err("not_found");
         };
+        if slot.locator.is_some() {
+            return err("not_native");
+        }
         if let Some(child) = slot.child.as_ref() {
             let _ = child.runtime.try_send_paste(text);
         }
