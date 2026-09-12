@@ -48,9 +48,9 @@ module map. This is a one-time fork; there is no re-pin procedure.
 - Vendored pin: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
   (`1.3.2-HEAD-+c5a21edfc`)
 - Location: `vendor/libghostty-vt/`
-- Built only with `-Demit-lib-vt` when this crate's `vt-engine` feature is
-  enabled. The full Ghostty application, renderer, and font stack are not
-  linked.
+- Built only with `-Demit-lib-vt -Demit-lib-vt-shared=false` when this crate's
+  `vt-engine` feature is enabled, so only the static archive is emitted. The
+  full Ghostty application, renderer, and font stack are not linked.
 
 The MIT license text is at `vendor/libghostty-vt/LICENSE`.
 
@@ -87,7 +87,11 @@ The MIT license text is at `vendor/portable-pty/LICENSE.md`.
 
 Local patch `vendor/patches/libghostty-vt/0001-default-grapheme-cluster-mode.patch`
 defaults lib-vt panes to grapheme clustering (DEC private mode 2027) so RIS
-does not disable it. See `vendor/libghostty-vt.patches.md`.
+does not disable it.
+
+Local patch `vendor/patches/libghostty-vt/0002-optional-lib-vt-shared.patch`
+adds `-Demit-lib-vt-shared`, letting this crate emit only the static archive
+it links. Both are documented in `vendor/libghostty-vt.patches.md`.
 
 ### portable-pty
 
@@ -105,9 +109,11 @@ wrapper sources are MIT © 2024 Mitchell Hashimoto and Ghostty contributors,
 except `pkg/afl++/LICENSE` (MIT © 2024 Loris Cro, zig-afl-kit).
 
 The wrappers reference third-party tarballs through `build.zig.zon` fetch
-URLs. Those nested projects are present in this source tree only as wrapper
-code plus fetch metadata. **None of them are compiled into libghostty-vt
-(`-Demit-lib-vt`) builds.** Inventory:
+URLs. Most of those nested projects are present in this source tree only as
+wrapper code plus fetch metadata and are not compiled into libghostty-vt
+(`-Demit-lib-vt`) builds. **The two exceptions are `simdutf` and `highway`**,
+which carry in-tree C++ sources that `-Demit-lib-vt` does compile and link
+into `libghostty-vt.a`; both are marked below. Inventory:
 
 | `pkg/` directory | Nested project (fetch-only unless noted) |
 | --- | --- |
@@ -121,7 +127,7 @@ code plus fetch metadata. **None of them are compiled into libghostty-vt
 | `glslang` | glslang |
 | `gtk4-layer-shell` | gtk4-layer-shell 1.1.0; wayland-protocols |
 | `harfbuzz` | HarfBuzz 11.0.0 |
-| `highway` | Highway |
+| `highway` | Highway 1.2.0 — **compiled in**: in-tree `src/cpp/abort.cc`, `per_target.cc`, `targets.cpp`, vendored from google/highway `66486a10` and built against fetched headers. Upstream is dual-licensed Apache-2.0 / BSD-3-Clause (`LICENSE`, `LICENSE-BSD3`); `abort.cc` carries both SPDX ids (© 2019 Google LLC, © 2024 Arm Limited), `per_target.cc` carries Apache-2.0 (© 2022 Google LLC), `targets.cpp` carries a vendoring note and no SPDX header |
 | `libintl` | gettext 0.24 |
 | `libpng` | libpng |
 | `libxml2` | libxml2 2.11.5 |
@@ -129,7 +135,7 @@ code plus fetch metadata. **None of them are compiled into libghostty-vt
 | `oniguruma` | Oniguruma |
 | `opengl` | OpenGL bindings |
 | `sentry` | sentry-native (getsentry); also pulls `breakpad` |
-| `simdutf` | simdutf |
+| `simdutf` | simdutf 5.2.8 — **compiled in**: in-tree amalgamation `vendor/simdutf.cpp` and `vendor/simdutf.h`, no fetch. The amalgamation carries no SPDX header and no license file is vendored beside it; see #22228 |
 | `spirv-cross` | SPIRV-Cross |
 | `wuffs` | Wuffs; pixels |
 | `zlib` | zlib |

@@ -53,6 +53,10 @@ emit_docs: bool = false,
 emit_exe: bool = false,
 emit_helpgen: bool = false,
 emit_lib_vt: bool = false,
+// GOBBY DIVERGENCE (crates/gterminal): not upstream. Lets a consumer that
+// links only the static archive skip the shared library. See the option
+// definition below for why.
+emit_lib_vt_shared: bool = true,
 emit_macos_app: bool = false,
 emit_terminfo: bool = false,
 emit_termcap: bool = false,
@@ -355,6 +359,23 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
         "emit-lib-vt",
         "Set defaults for a libghostty-vt-only build (disables xcframework, macOS app, and docs).",
     ) orelse false;
+
+    // GOBBY DIVERGENCE (crates/gterminal): not upstream. Zig has to compile
+    // its own bundled libc++ to link a C++ shared library, and zig 0.15.2
+    // cannot do that against the macOS 27.0 SDK: it builds libc++ with
+    // -std=c++23, which makes clang answer __has_feature(modules) with 1, so
+    // that SDK's math.h hands INFINITY and NAN to <float.h> through
+    // __need_infinity_nan and compiles out its own `#define INFINITY
+    // HUGE_VALF` -- and zig 0.15.2's bundled float.h knows nothing about
+    // __need_infinity_nan. The static archive never links, so it builds fine.
+    // gobby-terminal's build.rs consumes only the static archive on every
+    // platform, so it opts out and never reaches the broken sub-build.
+    // Default stays true, which is upstream's behavior.
+    config.emit_lib_vt_shared = b.option(
+        bool,
+        "emit-lib-vt-shared",
+        "Build and install the libghostty-vt shared library alongside the static one.",
+    ) orelse true;
 
     config.emit_exe = b.option(
         bool,

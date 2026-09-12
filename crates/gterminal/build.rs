@@ -72,7 +72,12 @@ fn main() {
         .arg(format!("-Dsimd={simd}"))
         .arg(format!("-Dtarget={zig_target}"))
         .arg(format!("-Dversion-string={version_string}"))
-        .arg("-Demit-xcframework=false");
+        .arg("-Demit-xcframework=false")
+        // We link the static archive on every platform (see below), and
+        // building the shared library forces zig to compile its own libc++,
+        // which zig 0.15.2 cannot do against the macOS 27.0 SDK. This option
+        // is a vendored divergence; see vendor/libghostty-vt/src/build/Config.zig.
+        .arg("-Demit-lib-vt-shared=false");
     if let Ok(system_dir) = env::var("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {
         command.arg("--system").arg(system_dir);
     }
