@@ -606,6 +606,35 @@ def _rollback_run() -> SimpleNamespace:
     )
 
 
+class _RecordingTerminalRuntime:
+    def __init__(self) -> None:
+        self.terminations: list[tuple[object, float]] = []
+
+    async def terminate(self, row: object, grace_seconds: float) -> None:
+        self.terminations.append((row, grace_seconds))
+
+
+class _RecordingRuntimeRegistry:
+    def __init__(self, runtime: _RecordingTerminalRuntime) -> None:
+        self.runtime = runtime
+        self.resolved_backends: list[str] = []
+
+    def resolve(self, backend: str) -> _RecordingTerminalRuntime:
+        self.resolved_backends.append(backend)
+        return self.runtime
+
+
+class _RecordingTerminalManager:
+    def __init__(self) -> None:
+        self.transitions: list[tuple[str, str]] = []
+
+    def fail_pending(self, terminal_id: str) -> None:
+        self.transitions.append(("fail_pending", terminal_id))
+
+    def mark_exited(self, terminal_id: str) -> None:
+        self.transitions.append(("mark_exited", terminal_id))
+
+
 @pytest.mark.asyncio
 async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
     run = _rollback_run()
@@ -658,11 +687,9 @@ async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None
         state="live",
         spawn_key="native-orphan",
     )
-    runtime = MagicMock()
-    runtime.terminate = AsyncMock()
-    runtime_registry = MagicMock()
-    runtime_registry.resolve.return_value = runtime
-    terminal_manager = MagicMock()
+    runtime = _RecordingTerminalRuntime()
+    runtime_registry = _RecordingRuntimeRegistry(runtime)
+    terminal_manager = _RecordingTerminalManager()
 
     await _failure_cleanup._terminate_spawn_process(
         run_storage=None,
@@ -673,8 +700,9 @@ async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None
         terminal=terminal,
     )
 
-    runtime.terminate.assert_awaited_once_with(terminal, 0.2)
-    terminal_manager.mark_exited.assert_called_once_with(terminal.id)
+    assert runtime_registry.resolved_backends == ["native"]
+    assert runtime.terminations == [(terminal, 0.2)]
+    assert terminal_manager.transitions == [("mark_exited", terminal.id)]
 
 
 @pytest.mark.asyncio
@@ -686,11 +714,9 @@ async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
             state=state,
             spawn_key=f"spawn-{state}",
         )
-        runtime = MagicMock()
-        runtime.terminate = AsyncMock()
-        runtime_registry = MagicMock()
-        runtime_registry.resolve.return_value = runtime
-        terminal_manager = MagicMock()
+        runtime = _RecordingTerminalRuntime()
+        runtime_registry = _RecordingRuntimeRegistry(runtime)
+        terminal_manager = _RecordingTerminalManager()
 
         await _failure_cleanup._terminate_spawn_process(
             run_storage=None,
@@ -701,6 +727,6 @@ async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
             terminal=terminal,
         )
 
-        runtime_registry.resolve.assert_called_once_with("native")
-        runtime.terminate.assert_awaited_once_with(terminal, 0.2)
-        getattr(terminal_manager, transition).assert_called_once_with(terminal.id)
+        assert runtime_registry.resolved_backends == ["native"]
+        assert runtime.terminations == [(terminal, 0.2)]
+        assert terminal_manager.transitions == [(transition, terminal.id)]

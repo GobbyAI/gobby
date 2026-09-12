@@ -54,19 +54,36 @@ async def test_terminal_is_live_uses_registered_runtime() -> None:
 @pytest.mark.asyncio
 async def test_terminal_is_live_reports_dead_runtime_output() -> None:
     row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
-    runtime = MagicMock()
-    runtime.is_live = AsyncMock(return_value=False)
-    runtime.snapshot = AsyncMock(
-        return_value=SimpleNamespace(text="/bin/bash: claude: command not found\n")
-    )
+
+    class DeadRuntime:
+        def __init__(self) -> None:
+            self.live_rows: list[Terminal] = []
+            self.snapshot_requests: list[tuple[Terminal, int]] = []
+
+        async def is_live(self, terminal: Terminal) -> bool:
+            self.live_rows.append(terminal)
+            return False
+
+        async def snapshot(self, terminal: Terminal, *, lines: int) -> SimpleNamespace:
+            self.snapshot_requests.append((terminal, lines))
+            return SimpleNamespace(text="/bin/bash: claude: command not found\n")
+
+    runtime = DeadRuntime()
+    resolved_backends: list[str] = []
+
+    def resolve(backend: str) -> DeadRuntime:
+        resolved_backends.append(backend)
+        return runtime
+
     registry = MagicMock(spec=TerminalRuntimeRegistry)
-    registry.resolve.return_value = runtime
+    registry.resolve.side_effect = resolve
 
     result = await _terminal_is_live(row, registry)
 
     assert result == (False, _bounded_redacted_pane_output("/bin/bash: claude: command not found"))
-    runtime.is_live.assert_awaited_once_with(row)
-    runtime.snapshot.assert_awaited_once_with(row, lines=50)
+    assert resolved_backends == ["tmux"]
+    assert runtime.live_rows == [row]
+    assert runtime.snapshot_requests == [(row, 50)]
 
 
 @pytest.mark.asyncio
