@@ -244,8 +244,14 @@ impl AskCliFixture {
         Ok(Self { project, home })
     }
 
+    /// The binary under test. Defaults to this crate's build; acceptance 3.1.3
+    /// wants the rebuilt installed binary, which `GOBBY_GCODE_BIN` selects.
+    fn binary() -> std::ffi::OsString {
+        std::env::var_os("GOBBY_GCODE_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gcode").into())
+    }
+
     fn command(&self, daemon_url: &str, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        Ok(Command::new(env!("CARGO_BIN_EXE_gcode"))
+        Ok(Command::new(Self::binary())
             .current_dir(self.project.path())
             .args(["--quiet", "--format", "json", "--project"])
             .arg(self.project.path())
