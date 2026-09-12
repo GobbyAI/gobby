@@ -96,11 +96,8 @@ async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None
     for run in runs:
         stored_pid = getattr(run, "pid", None)
         fallback_pid = stored_pid if isinstance(stored_pid, int) and stored_pid > 0 else None
-        session_name = getattr(run, "tmux_session_name", None)
-        if not isinstance(session_name, str):
-            run_id = getattr(run, "id", None)
-            if isinstance(run_id, str):
-                session_name = terminal_sessions.get(run_id)
+        run_id = getattr(run, "id", None)
+        session_name = terminal_sessions.get(run_id) if isinstance(run_id, str) else None
         if not isinstance(session_name, str):
             if fallback_pid is not None:
                 pids.add(fallback_pid)

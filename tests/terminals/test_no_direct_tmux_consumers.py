@@ -197,20 +197,10 @@ def test_remaining_runtime_test_seams_are_owned() -> None:
     assert hits == [], f"named test seams still patch tmux managers: {hits}"
 
 
-_FIELD_SWEEP_ALLOWED = {
-    "src/gobby/runner_lifecycle_processes.py",
-    "src/gobby/agents/spawn_models.py",
-    "src/gobby/agents/spawn_executor.py",
-    "src/gobby/agents/resume_executor.py",
-    "src/gobby/agents/spawners/base.py",
-    "src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py",
-    "src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py",
-    "src/gobby/mcp_proxy/tools/spawn_agent/_execution.py",
-    "src/gobby/mcp_proxy/tools/spawn_agent/_health.py",
-}
+_FIELD_SWEEP_ALLOWED: set[str] = set()
 
 
-def test_repo_wide_field_sweep_is_empty() -> None:
+def test_tmux_session_name_field_sweep() -> None:
     import re
 
     field = re.compile(r"\btmux_session_name\b")

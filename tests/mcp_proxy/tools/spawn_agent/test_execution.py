@@ -1331,14 +1331,13 @@ class TestSpawnAgentPreRegistration:
             mock_fire_agent_event.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_success_result_includes_tmux_socket_metadata(
+    async def test_success_uses_terminal_identity_for_health(
         self,
         mock_runner: MagicMock,
         agent_body: Any,
     ) -> None:
-        """MCP response exposes the verified tmux session and socket metadata."""
+        """MCP response exposes backend-neutral terminal identity."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-        from gobby.mcp_proxy.tools.spawn_agent._health import _health_check_tasks
 
         mock_runner.run_storage = MagicMock()
         mock_runner.run_storage.has_active_run_for_task.return_value = False
@@ -1346,9 +1345,18 @@ class TestSpawnAgentPreRegistration:
         mock_runner.run_storage.update_runtime = MagicMock()
         mock_runner.run_storage.start = MagicMock()
         mock_runner.run_storage.get.return_value = MagicMock(status="running")
+        terminal = SimpleNamespace(
+            id="gobby-agent",
+            backend="tmux",
+            state="live",
+            locator={
+                "socket_name": "gobby",
+                "socket_path": "/tmp/tmux-1000/gobby",
+            },
+        )
+        mock_runner.terminal_manager.get.return_value = terminal
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
-        health_task = MagicMock()
 
         with (
             patch(
@@ -1362,14 +1370,13 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
+                "gobby.mcp_proxy.tools.spawn_agent._execution._terminal_is_live",
                 new_callable=AsyncMock,
                 return_value=(True, None),
             ) as mock_health,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",
-                return_value=health_task,
-            ),
+                "gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check"
+            ) as schedule_health,
         ):
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",
@@ -1381,10 +1388,8 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                terminal_type="tmux",
+                backend="tmux",
                 terminal_id="gobby-agent",
-                tmux_socket_name="gobby",
-                tmux_socket_path="/tmp/tmux-1000/gobby",
                 message="Spawned",
             )
 
@@ -1394,14 +1399,15 @@ class TestSpawnAgentPreRegistration:
             )
             await _drain_spawn_background_tasks()
 
-        _health_check_tasks.discard(health_task)
         assert result["success"] is True
         assert result["status"] == "starting"
         mock_runner.run_storage.start.assert_called_once()
-        mock_health.assert_awaited_once_with(
-            "gobby-agent",
-            socket_name="gobby",
-            socket_path="/tmp/tmux-1000/gobby",
+        mock_health.assert_awaited_once_with(terminal, mock_runner.terminal_runtime_registry)
+        schedule_health.assert_called_once_with(
+            mock_runner,
+            ANY,
+            terminal.id,
+            None,
         )
 
     @pytest.mark.asyncio
@@ -1421,7 +1427,6 @@ class TestSpawnAgentPreRegistration:
     ) -> None:
         """Live-pane verification starts healthy runs and explains failed panes."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-        from gobby.mcp_proxy.tools.spawn_agent._health import _health_check_tasks
 
         mock_runner.run_storage = MagicMock()
         mock_runner.run_storage.has_active_run_for_task.return_value = False
@@ -1430,9 +1435,21 @@ class TestSpawnAgentPreRegistration:
         mock_runner.run_storage.start = MagicMock()
         mock_runner.run_storage.fail = MagicMock()
         mock_runner.run_storage.get.return_value = MagicMock(status="pending")
+        terminal = SimpleNamespace(
+            id="gobby-agent-timeout",
+            backend="tmux",
+            state="pending",
+            spawn_key="gobby-agent-timeout",
+            locator={"socket_name": "gobby"},
+        )
+        mock_runner.terminal_manager.get.return_value = terminal
+        runtime = MagicMock()
+        runtime.is_live = AsyncMock(return_value=False)
+        runtime.snapshot_full = AsyncMock(return_value=SimpleNamespace(text=""))
+        runtime.terminate = AsyncMock()
+        mock_runner.terminal_runtime_registry.resolve.return_value = runtime
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
-        health_task = MagicMock()
 
         with (
             patch(
@@ -1446,14 +1463,11 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
+                "gobby.mcp_proxy.tools.spawn_agent._execution._terminal_is_live",
                 new_callable=AsyncMock,
                 return_value=health_result,
             ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",
-                return_value=health_task,
-            ),
+            patch("gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check"),
         ):
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",
@@ -1465,10 +1479,8 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                terminal_type="tmux",
+                backend="tmux",
                 terminal_id="gobby-agent-timeout",
-                tmux_socket_name="gobby",
-                tmux_socket_path=None,
                 message="Spawned",
             )
 
@@ -1478,7 +1490,6 @@ class TestSpawnAgentPreRegistration:
             )
             await _drain_spawn_background_tasks()
 
-        _health_check_tasks.discard(health_task)
         assert result["success"] is True
         assert result["status"] == "starting"
         if expected_success:

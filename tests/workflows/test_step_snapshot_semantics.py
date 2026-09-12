@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -14,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import psycopg
@@ -469,21 +470,25 @@ async def test_post_launch_faults_leave_no_live_process() -> None:
     from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import cleanup_failed_spawn
 
     runner = MagicMock()
-    runner.run_storage.get.return_value = MagicMock(child_session_id=S1, pid=4242)
+    runner.run_storage.get.return_value = None
     runner.child_session_manager._storage.delete.return_value = True
+    terminal = SimpleNamespace(
+        id="terminal-1",
+        backend="native",
+        state="pending",
+        spawn_key="gobby-run",
+    )
+    runner.terminal_manager.get.return_value = terminal
+    runtime = MagicMock()
+    runtime.terminate = AsyncMock()
+    runner.terminal_runtime_registry.resolve.return_value = runtime
     with (
         patch("os.kill") as kill,
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager",
-        ) as tmux_factory,
         patch(
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             new_callable=AsyncMock,
         ),
     ):
-        tmux = MagicMock()
-        tmux.kill_session = AsyncMock(return_value=True)
-        tmux_factory.return_value = tmux
         await cleanup_failed_spawn(
             runner,
             "run-1",
@@ -495,10 +500,10 @@ async def test_post_launch_faults_leave_no_live_process() -> None:
             task_manager=None,
             child_session_id=S1,
             pid=4242,
-            tmux_session_name="gobby-run",
+            terminal_id=terminal.id,
         )
-    assert tmux.kill_session.await_count == 1
-    assert tmux.kill_session.await_args == call("gobby-run", missing_ok=True)
+    runtime.terminate.assert_awaited_once_with(terminal, 0.2)
+    runner.terminal_manager.fail_pending.assert_called_once_with(terminal.id)
     assert kill.call_count == 0
     assert runner.child_session_manager._storage.delete.call_count >= 1
 
@@ -1219,15 +1224,36 @@ async def _run_post_launch_failure_case(
         live["run_id"] = request.prepared_spawn.agent_run_id
         assert _pid_alive(pid)
         assert _tmux_session_exists(tmux_name)
+        terminal = SimpleNamespace(
+            id=f"terminal-{request.prepared_spawn.agent_run_id}",
+            backend="tmux",
+            state="pending",
+            spawn_key=tmux_name,
+            locator=None,
+        )
+        runner.terminal_manager.get.return_value = terminal
+        runtime = MagicMock()
+        runtime.is_live = AsyncMock(return_value=True)
+        runtime.snapshot_full = AsyncMock(return_value=SimpleNamespace(text=""))
+
+        async def terminate(row: SimpleNamespace, _grace_seconds: float) -> None:
+            await asyncio.to_thread(
+                subprocess.run,
+                _tmux_cmd("kill-session", "-t", row.spawn_key),
+                check=False,
+                capture_output=True,
+                env=_tmux_env(),
+            )
+
+        runtime.terminate = AsyncMock(side_effect=terminate)
+        runner.terminal_runtime_registry.resolve.return_value = runtime
         return SimpleNamespace(
             success=True,
             child_session_id=request.prepared_spawn.session_id,
             status="pending",
             pid=pid,
-            terminal_type="tmux",
-            tmux_session_name=tmux_name,
-            tmux_socket_name="gobby",
-            tmux_socket_path=None,
+            backend="tmux",
+            terminal_id=terminal.id,
             message="dummy live spawn",
             error=None,
         )
@@ -1275,7 +1301,7 @@ async def _run_post_launch_failure_case(
             )
             stack.enter_context(
                 patch(
-                    "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
+                    "gobby.mcp_proxy.tools.spawn_agent._execution._terminal_is_live",
                     new_callable=AsyncMock,
                     return_value=pane_return,
                 )
@@ -1287,7 +1313,7 @@ async def _run_post_launch_failure_case(
                 )
             )
             stack.enter_context(
-                patch("gobby.mcp_proxy.tools.spawn_agent._health.schedule_tmux_health_check")
+                patch("gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check")
             )
             for extra in extra_patches:
                 stack.enter_context(extra)
