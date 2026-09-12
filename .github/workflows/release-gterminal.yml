@@ -72,8 +72,7 @@ jobs:
             vendor/libghostty-vt.vendor.json \
             vendor/libghostty-vt.patches.md \
             vendor/portable-pty.patches.md \
-            vendor/libghostty-vt/LICENSE \
-            vendor/portable-pty/LICENSE.md
+            vendor/libghostty-vt/LICENSE
           do
             if ! grep -Fxq "$required" /tmp/gobby-terminal-package.list; then
               echo "::error::packaged gobby-terminal is missing $required" >&2

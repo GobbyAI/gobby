@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -41,6 +42,11 @@ ZIG_TARGET_MAP = {
 }
 
 REQUIRED_ZIG = "0.15"
+VENDOR_BUILD_ENABLED = os.environ.get("GOBBY_RUN_VENDOR_BUILD") == "1"
+requires_vendor_build = pytest.mark.skipif(
+    not VENDOR_BUILD_ENABLED,
+    reason="set GOBBY_RUN_VENDOR_BUILD=1 to run Zig-dependent vendor builds",
+)
 
 
 def _compile_build_rs(tmp_path: Path) -> Path:
@@ -237,7 +243,31 @@ def test_vendor_patches_are_applied_to_copied_trees() -> None:
         )
 
 
+def test_zig_cases_skip_without_opt_in() -> None:
+    env = os.environ.copy()
+    env.pop("GOBBY_RUN_VENDOR_BUILD", None)
+    env["ZIG"] = str(REPO_ROOT / ".missing-zig-for-skip-probe")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            f"{__file__}::test_helper_builds_vendored_libghostty_vt",
+            "-q",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 skipped" in result.stdout
+
+
 @pytest.mark.slow
+@requires_vendor_build
 def test_helper_builds_vendored_libghostty_vt() -> None:
     zig = os.environ.get("ZIG") or shutil.which("zig")
     assert zig, "Zig 0.15 is required to build the vendored VT tree (set ZIG or PATH)"
