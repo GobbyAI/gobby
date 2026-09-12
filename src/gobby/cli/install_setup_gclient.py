@@ -12,10 +12,11 @@ from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
-from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
 
 from . import install_release
+from .install_setup_gterm import ManagedBinaryReleaseMissing
 
 _CRATE_PACKAGE = "gobby-client"
 _CRATE_DIR = "gclient"
@@ -259,19 +260,32 @@ def install_gclient(module: Any, force: bool = False) -> dict[str, Any]:
 
     installed_version = module._get_installed_gclient_version(bin_dir)
     pinned_version = MANAGED_BIN_VERSION_PINS["gclient"]
+    published = is_published("gclient")
     if gclient_path.exists() and not force:
+        if not published:
+            local_version = installed_version or "unknown"
+            module._write_gclient_version_stamp(bin_dir, local_version)
+            return {
+                "installed": False,
+                "skipped": True,
+                "version": local_version,
+                "method": "local",
+            }
         if installed_version and managed_version_satisfies_pin("gclient", installed_version):
             module._write_gclient_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
     target_version = pinned_version
-    if compare_versions(installed_version, pinned_version) == 1:
+    if published and compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 
-    if module._install_gclient_from_submodule(bin_dir):
-        method = "workspace"
+    if not published:
+        if module._install_gclient_from_submodule(bin_dir):
+            method = "workspace"
+        else:
+            raise ManagedBinaryReleaseMissing("gclient")
     elif module._install_gclient_from_github(bin_dir, target, target_version):
         method = "github"
     elif module._install_gclient_from_cargo_binstall(bin_dir, target_version):
