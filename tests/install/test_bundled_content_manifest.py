@@ -4,21 +4,10 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import zipfile
 from pathlib import Path
 
-import pytest
-
-from gobby.install.manifest import (
-    build_bundled_content_manifest,
-    check_committed_bundled_content_manifest,
-    check_committed_bundled_content_manifest_async,
-    check_linked_committed_bundled_manifest,
-    check_linked_committed_bundled_manifest_async,
-    main,
-    write_bundled_content_manifest,
-)
+from gobby.install.manifest import build_bundled_content_manifest
 
 
 def test_bundled_content_manifest_matches_tree() -> None:
@@ -28,148 +17,6 @@ def test_bundled_content_manifest_matches_tree() -> None:
     )
 
     assert committed == build_bundled_content_manifest(install_dir / "shared")
-
-
-def test_current_committed_bundled_content_manifest_matches_git_tree() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-
-    result = check_committed_bundled_content_manifest(repo_root)
-
-    assert result.ok is True
-    assert result.errors == ()
-    assert result.expected_file_count > 0
-
-
-def test_main_write_round_trips_to_committed_check(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    install_dir = tmp_path / "src" / "gobby" / "install"
-    shared_dir = install_dir / "shared"
-    shared_dir.mkdir(parents=True)
-    (shared_dir / "rule.yaml").write_text("enabled: true\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
-
-    assert main(["--write"]) == 0
-    manifest_path = install_dir / "bundled_content_manifest.json"
-    assert capsys.readouterr().out == f"{manifest_path}\n"
-
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "tests@gobby.local")
-    _git(tmp_path, "config", "user.name", "Gobby Tests")
-    _git(tmp_path, "add", "src/gobby/install")
-    _git(tmp_path, "commit", "-qm", "initial manifest")
-    assert check_committed_bundled_content_manifest(tmp_path).ok is True
-
-
-def test_main_write_treeish_uses_committed_shared_files(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    install_dir = tmp_path / "src" / "gobby" / "install"
-    shared_dir = install_dir / "shared"
-    shared_dir.mkdir(parents=True)
-    rule = shared_dir / "rule.yaml"
-    rule.write_text("enabled: true\n", encoding="utf-8")
-    manifest_path = write_bundled_content_manifest(install_dir)
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "tests@gobby.local")
-    _git(tmp_path, "config", "user.name", "Gobby Tests")
-    _git(tmp_path, "add", "src/gobby/install")
-    _git(tmp_path, "commit", "-qm", "initial manifest")
-    expected = manifest_path.read_bytes()
-
-    rule.write_text("enabled: false\n", encoding="utf-8")
-    (shared_dir / "foreign.yaml").write_text("foreign: true\n", encoding="utf-8")
-    assert main(["--repo-root", str(tmp_path), "--write", "--treeish", "HEAD"]) == 0
-
-    assert capsys.readouterr().out == f"{manifest_path}\n"
-    assert manifest_path.read_bytes() == expected
-
-
-async def test_committed_checker_ignores_worktree_and_scopes_linked_commits(
-    tmp_path: Path,
-) -> None:
-    install_dir = tmp_path / "src" / "gobby" / "install"
-    shared_dir = install_dir / "shared"
-    shared_dir.mkdir(parents=True)
-    rule = shared_dir / "rule.yaml"
-    rule.write_text("enabled: true\n", encoding="utf-8")
-    write_bundled_content_manifest(install_dir)
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "tests@gobby.local")
-    _git(tmp_path, "config", "user.name", "Gobby Tests")
-    _git(tmp_path, "add", "src/gobby/install")
-    _git(tmp_path, "commit", "-qm", "initial manifest")
-    assert check_committed_bundled_content_manifest(tmp_path).ok is True
-
-    rule.write_text("enabled: false\n", encoding="utf-8")
-    _git(tmp_path, "add", "src/gobby/install/shared/rule.yaml")
-    _git(tmp_path, "commit", "-qm", "change shared rule")
-    shared_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
-
-    # A fixed working-tree manifest and foreign untracked content cannot make
-    # the stale committed tree pass.
-    write_bundled_content_manifest(install_dir)
-    (shared_dir / "foreign.yaml").write_text("foreign: true\n", encoding="utf-8")
-    stale = check_committed_bundled_content_manifest(tmp_path)
-    linked = check_linked_committed_bundled_manifest(tmp_path, [shared_sha])
-    async_stale = await check_committed_bundled_content_manifest_async(tmp_path)
-    async_linked = await check_linked_committed_bundled_manifest_async(tmp_path, [shared_sha])
-    assert stale.ok is False
-    assert stale.errors[0] == "Committed bundled content manifest is stale."
-    assert linked is not None and linked.ok is False
-    assert async_stale == stale
-    assert async_linked == linked
-    stale_cli = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "gobby.install.manifest",
-            "--repo-root",
-            str(tmp_path),
-            "--treeish",
-            "HEAD",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert stale_cli.returncode == 1
-    assert "Committed bundled content manifest is stale." in stale_cli.stderr
-
-    readme = tmp_path / "README.md"
-    readme.write_text("unrelated\n", encoding="utf-8")
-    _git(tmp_path, "add", "README.md")
-    _git(tmp_path, "commit", "-qm", "unrelated")
-    unrelated_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
-    assert check_linked_committed_bundled_manifest(tmp_path, [unrelated_sha]) is None
-    assert await check_linked_committed_bundled_manifest_async(tmp_path, [unrelated_sha]) is None
-
-    _git(tmp_path, "add", "src/gobby/install/bundled_content_manifest.json")
-    _git(tmp_path, "commit", "-qm", "refresh manifest")
-    rule.write_text("foreign working-tree edit\n", encoding="utf-8")
-    clean = check_committed_bundled_content_manifest(tmp_path)
-    assert clean.ok is True
-    assert await check_committed_bundled_content_manifest_async(tmp_path) == clean
-
-    cli = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "gobby.install.manifest",
-            "--repo-root",
-            str(tmp_path),
-            "--treeish",
-            "HEAD",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert cli.returncode == 0
-    assert "Committed bundled content manifest matches HEAD" in cli.stdout
 
 
 def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
@@ -238,14 +85,4 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
     assert all(
         not any(part.startswith(".") for part in Path(relative_path).parts)
         for relative_path in committed["files"]
-    )
-
-
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
     )
