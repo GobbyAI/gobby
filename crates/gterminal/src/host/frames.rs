@@ -229,6 +229,9 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     if let Some(id) = attachment_id {
         embed::detach_frame(&state, id).await;
     }
+    if let Err(error) = writer.shutdown().await {
+        tracing::debug!(%error, "frame connection write shutdown failed");
+    }
 }
 
 async fn recv_opt(
