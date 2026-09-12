@@ -9,6 +9,9 @@ import signal
 import subprocess
 from typing import Any
 
+from gobby.storage.terminals import Terminal
+from gobby.terminals.runtime import TerminalRuntime
+
 _SPAWN_TERM_GRACE_SECONDS = 0.2
 _RUN_STARTTIMES: dict[str, str] = {}
 
@@ -316,8 +319,8 @@ async def _terminate_spawn_process(
 async def _capture_then_kill_spawn_session(
     run_storage: Any | None,
     run_id: str | None,
-    runtime: Any,
-    terminal: Any,
+    runtime: TerminalRuntime,
+    terminal: Terminal,
 ) -> None:
     """Capture a failed spawn into its run row, then terminate through its runtime.
 

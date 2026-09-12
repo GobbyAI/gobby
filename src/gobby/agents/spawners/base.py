@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.agents.spawn_cache_policy import merge_spawn_path
+from gobby.storage.terminals import AttachLocator
 
 
 @dataclass
@@ -20,7 +21,7 @@ class SpawnResult:
     backend: str | None = None
     terminal_id: str | None = None
     error: str | None = None
-    locator: object | None = None
+    locator: AttachLocator | None = None
     """Backend attach locator returned by the runtime."""
 
 
