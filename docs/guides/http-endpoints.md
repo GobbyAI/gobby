@@ -538,11 +538,14 @@ Build profile operator/client routes are:
 | `POST` | `/api/skills/restore-defaults` | Restore default skills. |
 | `GET` | `/api/skills/{skill_id}` | Get a skill. |
 | `PUT` | `/api/skills/{skill_id}` | Update a skill. |
-| `DELETE` | `/api/skills/{skill_id}` | Delete a skill. |
-| `GET` | `/api/skills/{skill_id}/export` | Export a skill. |
+| `DELETE` | `/api/skills/{skill_id}` | Soft-delete; a repeated delete of a deleted row permanently purges it. |
+| `GET` | `/api/skills/{skill_id}/export` | Export SKILL.md only, without attached files. |
 | `POST` | `/api/skills/{skill_id}/move-to-project` | Move a skill to project scope. |
 | `POST` | `/api/skills/{skill_id}/move-to-installed` | Move a project skill to installed scope. |
-| `POST` | `/api/skills/{skill_id}/restore` | Restore a deleted skill. |
+| `POST` | `/api/skills/{skill_id}/restore` | Restore a soft-deleted skill. |
+| `GET` | `/api/skills/{skill_id}/files` | List attached-file metadata; optional `path_prefix`. |
+| `GET` | `/api/skills/{skill_id}/files/{file_path}` | Read an attached file; the path can contain `/`. |
+| `PUT` | `/api/skills/{skill_id}/files/{file_path}` | Update an existing file with JSON `content`. |
 | `GET` | `/api/pipelines/definitions` | List pipeline definitions. |
 | `POST` | `/api/pipelines/definitions` | Create a pipeline definition. |
 | `POST` | `/api/pipelines/definitions/import` | Import a pipeline definition. |
@@ -573,6 +576,17 @@ Build profile operator/client routes are:
 | `PUT` | `/api/rules/{name}` | Update a rule. |
 | `DELETE` | `/api/rules/{name}` | Delete a rule. |
 | `PUT` | `/api/rules/{name}/toggle` | Toggle one rule. |
+
+Skill HTTP management does not record instruction loads. List uses `limit=50`
+and `offset=0`; search uses `q` and `limit=20`. Local/ZIP imports require
+`project_id` and remain inside its registered local checkout (escape: `403`).
+Import responses contain per-item `errors`; hub search includes `hub_errors`.
+Create returns `201`, with metadata errors `422` and name conflicts `409`;
+missing skills/files generally return `404`. Hub download failures return `502`.
+Restore-defaults invokes bundled sync and preserves genuine custom sources.
+Stats category/source breakdowns inspect at most 1000 rows; do not treat those
+breakdowns as an exhaustive inventory. See the
+[skills lifecycle guide](skills.md#lifecycle-and-http-management).
 
 ## Source Control, Files, Projects, And Config
 

@@ -727,6 +727,13 @@ observation/revert, and recall-signal diagnostics. See the audited
 
 ### Skills
 
+Use `gobby-skills` MCP for tracked agent instruction loads. CLI show/list and
+management operations do not satisfy load gates. Local name-based show,
+metadata, enable and disable commands resolve global rows; use scoped/ID-based
+management for project overrides. Hub configuration supports `hub list` and
+`hub add`, with no `hub remove` command. See the
+[skills guide](skills.md#cli-commands) for source, update and recovery boundaries.
+
 ```bash
 gobby skills list [--category CATEGORY] [--tags TAGS] [--enabled | --disabled] [--limit N] [--json]
 gobby skills show NAME [--json]

@@ -86,7 +86,7 @@ class HookSkillManager:
         skills = manager.discover_core_skills()
 
         # Get a specific skill
-        tasks_skill = manager.get_skill_by_name("gobby-tasks")
+        tasks_skill = manager.get_skill_by_name("tasks")
         ```
     """
 
@@ -224,7 +224,7 @@ class HookSkillManager:
 
         Resolution order:
         1. Exact match on skill.name
-        2. With gobby- prefix (e.g., "tasks" -> "gobby-tasks")
+        2. With gobby- prefix (e.g., "custom" -> "gobby-custom")
         3. Prefix/startswith match — only if unambiguous (exactly 1 match)
 
         Args:
@@ -410,13 +410,13 @@ class HookSkillManager:
         """
         # Category to skill mappings
         category_skills: dict[str, list[str]] = {
-            "code": ["gobby-tasks", "gobby-expand", "gobby-worktrees"],
-            "test": ["gobby-tasks", "gobby-expand"],
-            "docs": ["gobby-tasks", "gobby-plan"],
-            "config": ["gobby-tasks", "gobby-mcp"],
-            "refactor": ["gobby-tasks", "gobby-expand", "gobby-worktrees"],
-            "planning": ["gobby-tasks", "gobby-plan", "gobby-expand"],
-            "research": ["gobby-tasks", "gobby-memory"],
+            "code": ["tasks", "expand", "source-control"],
+            "test": ["tasks", "expand"],
+            "docs": ["tasks", "plan"],
+            "config": ["tasks", "mcp-servers"],
+            "refactor": ["tasks", "expand", "source-control"],
+            "planning": ["tasks", "plan", "expand"],
+            "research": ["tasks", "memory"],
         }
 
         # Get skills for the category (or empty list if no match)

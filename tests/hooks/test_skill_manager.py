@@ -111,7 +111,7 @@ class TestHookSkillManager:
         manager = HookSkillManager()
         result = manager.recommend_skills(category="code")
 
-        assert "gobby-tasks" in result
+        assert "tasks" in result
 
     def test_recommend_skills_for_docs_category(self) -> None:
         """Test that recommend_skills returns docs-related skills."""
@@ -120,8 +120,18 @@ class TestHookSkillManager:
         manager = HookSkillManager()
         result = manager.recommend_skills(category="docs")
 
-        assert "gobby-tasks" in result
-        assert "gobby-plan" in result
+        assert "tasks" in result
+        assert "plan" in result
+
+    @pytest.mark.parametrize(
+        "category", ["code", "test", "docs", "config", "refactor", "planning", "research"]
+    )
+    def test_recommendations_resolve_to_bundled_skills(self, category: str) -> None:
+        from gobby.hooks.skill_manager import HookSkillManager
+
+        manager = HookSkillManager()
+        available = {skill.name for skill in manager.discover_core_skills()}
+        assert set(manager.recommend_skills(category=category)) <= available
 
     def test_recommend_skills_unknown_category_returns_always_apply(self) -> None:
         """Test that recommend_skills returns alwaysApply skills for unknown category."""

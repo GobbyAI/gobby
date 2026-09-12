@@ -356,6 +356,68 @@
           "when": "Indexing, repairing, or operating cleanup"
         }
       ]
+    },
+    {
+      "name": "skills",
+      "description": "Discover, load, author and manage installed skills",
+      "overview": "references/skills/overview.md",
+      "when": "Working with reusable instruction bundles",
+      "topics": [
+        {
+          "name": "discovery",
+          "description": "Discover installed skills",
+          "path": "references/skills/discovery.md",
+          "when": "Selecting installed guidance or diagnosing missing names"
+        },
+        {
+          "name": "loading",
+          "description": "Load complete instructions",
+          "path": "references/skills/loading.md",
+          "when": "Applying installed instructions or implementing delivery consumers"
+        },
+        {
+          "name": "levels",
+          "description": "Select and preserve skill levels",
+          "path": "references/skills/levels.md",
+          "when": "Selecting or preserving a declared standalone skill level"
+        },
+        {
+          "name": "references",
+          "description": "Discover and load reference files",
+          "path": "references/skills/references.md",
+          "when": "Loading topic files or checking exact reference requirements"
+        },
+        {
+          "name": "hubs",
+          "description": "Search and configure skill hubs",
+          "path": "references/skills/hubs.md",
+          "when": "Searching external skill sources or configuring providers"
+        },
+        {
+          "name": "installation",
+          "description": "Install instruction bundles",
+          "path": "references/skills/installation.md",
+          "when": "Installing or refreshing a selected instruction bundle"
+        },
+        {
+          "name": "authoring",
+          "description": "Author verified skill instructions",
+          "path": "references/skills/authoring.md",
+          "when": "Creating or changing skill instructions and verification scenarios"
+        },
+        {
+          "name": "scripts",
+          "description": "Materialize and use skill scripts",
+          "path": "references/skills/scripts.md",
+          "when": "Preparing files and runtime dependencies for skill scripts"
+        },
+        {
+          "name": "lifecycle",
+          "description": "Manage installed skill state",
+          "path": "references/skills/lifecycle.md",
+          "when": "Changing scope, metadata, visibility, deletion or restoration"
+        }
+      ]
     }
   ]
 }
