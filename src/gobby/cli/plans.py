@@ -20,7 +20,7 @@ from gobby.plans.review_evidence_store import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
-from gobby.storage.project_checkouts import require_root
+from gobby.storage.project_checkouts import require_root, resolve_operation_root
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.expansion._validate import validate_plan_file
@@ -119,8 +119,13 @@ def register_plan_command(
 
 
 @plans.command("validate")
-@click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--project", "-p", "project_ref", help="Project context for code-index checks.")
+@click.argument("plan_file", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--project",
+    "-p",
+    "project_ref",
+    help="Project name, UUID, or checkout path. Relative plan paths use the selected checkout.",
+)
 @click.option(
     "--mode",
     type=click.Choice(["standard", "expansion"]),
@@ -328,20 +333,74 @@ def _render_evidence_table(evidence: list[PlanReviewEvidence]) -> str:
     return "\n".join(lines)
 
 
+def _validation_project_context(project_ref: str) -> tuple[dict[str, Any], str]:
+    """Select a registered local checkout before resolving the plan or running lints."""
+    candidate = Path(project_ref).expanduser()
+    path_context = get_project_context(candidate) if candidate.is_dir() else None
+    named_id = _project_id(project_ref)
+    if path_context is not None and named_id is not None:
+        raise click.ClickException(
+            f"Ambiguous project {project_ref!r}: both a project reference and a checkout path. "
+            "Use an absolute checkout path or project UUID."
+        )
+    db = _open_db()
+    try:
+        if path_context is not None:
+            project_id = str(path_context.get("parent_project_id") or path_context.get("id") or "")
+            if not project_id or LocalProjectManager(db).get(project_id) is None:
+                raise click.ClickException(
+                    f"Checkout {candidate} has no registered project identity"
+                )
+        elif named_id is not None:
+            project_id = named_id
+        else:
+            raise click.ClickException(
+                f"Cannot resolve project {project_ref!r}. Use a registered project name, UUID, "
+                "or initialized local checkout path."
+            )
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        if path_context is not None:
+            root = Path(path_context["project_path"]).resolve()
+            if path_context.get("parent_project_path"):
+                registered_root = resolve_operation_root(
+                    db, project_id, machine_id, overlay_path=str(root)
+                )
+            else:
+                registered_root = require_root(db, project_id, machine_id)
+            if root != Path(registered_root).expanduser().resolve():
+                raise click.ClickException(f"Checkout {root} is not the registered local checkout")
+        else:
+            root = Path(require_root(db, project_id, machine_id)).expanduser().resolve()
+        context = get_project_context(root) if root.is_dir() else None
+        if context is None or Path(context["project_path"]).resolve() != root:
+            raise click.ClickException(f"Local checkout {root} is missing or not initialized")
+        if (context.get("parent_project_id") or context.get("id")) != project_id:
+            raise click.ClickException(f"Local checkout {root} belongs to a different project")
+        return context, project_id
+    except ValueError as exc:
+        raise click.ClickException(f"Cannot select local checkout: {exc}") from exc
+
+
 def _validate_plan_for_cli(
     plan_file: Path,
     project_ref: str | None,
     *,
     mode: str,
 ) -> dict[str, Any]:
-    plan_path = plan_file if plan_file.is_absolute() else Path.cwd() / plan_file
-    structural_result = validate_plan_file(None, plan_path)
+    expected_project_id = None
+    project_context = get_project_context(Path.cwd())
+    plan_root = Path.cwd()
+    if project_ref is not None:
+        project_context, expected_project_id = _validation_project_context(project_ref)
+        plan_root = Path(project_context["project_path"])
+    plan_path = plan_file if plan_file.is_absolute() else plan_root / plan_file
+    structural_result = validate_plan_file(None, plan_path, project_context=project_context)
     if not structural_result.get("valid"):
         return structural_result
 
     require_symbol_validation = project_ref is not None or mode == "expansion"
-    expected_project_id = _project_id(project_ref) if project_ref is not None else None
-    project_context = get_project_context(Path.cwd())
     if project_context is None:
         result = validate_plan_file(
             None,

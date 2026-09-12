@@ -415,7 +415,10 @@ def test_validate_helper_explicit_project_fails_closed_without_index(
         lambda _db: _FakeIndex(tmp_path, available=False),
     )
 
-    result = plans_module._validate_plan_for_cli(plan, "gobby", mode="standard")
+    monkeypatch.setattr(plans_module, "require_root", lambda *_args: str(tmp_path))
+    monkeypatch.setattr(plans_module, "require_local_machine_id", lambda *_args, **_kw: "machine")
+
+    result = plans_module._validate_plan_for_cli(plan, "registered-project", mode="standard")
 
     assert result["valid"] is False
     assert result["symbol_validation"]["status"] == "failed"
@@ -452,7 +455,7 @@ def test_validate_helper_uses_isolated_overlay_context(
         "parent_project_id": "project-1",
         "parent_project_path": str(tmp_path.parent / "parent"),
     }
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: "project-1")
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plans_module, "get_project_context", lambda *_args: project_context)
     monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
     monkeypatch.setattr(
@@ -465,30 +468,17 @@ def test_validate_helper_uses_isolated_overlay_context(
         ),
     )
 
-    result = plans_module._validate_plan_for_cli(plan, "gobby", mode="standard")
+    monkeypatch.setattr(plans_module, "require_local_machine_id", lambda *_args, **_kw: "machine")
+    monkeypatch.setattr(plans_module, "resolve_operation_root", lambda *_args, **_kw: str(tmp_path))
+    monkeypatch.setattr(
+        plans_module,
+        "LocalProjectManager",
+        lambda _db: SimpleNamespace(get=lambda _id: SimpleNamespace(id="project-1")),
+    )
+    result = plans_module._validate_plan_for_cli(plan, str(tmp_path), mode="standard")
 
     assert result["valid"] is True
     assert result["symbol_validation"]["status"] == "passed"
-
-
-def test_validate_helper_rejects_explicit_project_context_mismatch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    plan = _write_contract_plan(tmp_path)
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: "other")
-    monkeypatch.setattr(
-        plans_module,
-        "get_project_context",
-        lambda *_args: {"id": "project-1", "project_path": str(tmp_path)},
-    )
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
-    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda _db: _FakeIndex(tmp_path))
-
-    result = plans_module._validate_plan_for_cli(plan, "other", mode="standard")
-
-    assert result["valid"] is False
-    assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"
 
 
 def test_normalized_evidence_plan_path_uses_machine_checkout(  # tdd-red window
@@ -520,3 +510,85 @@ def test_normalized_evidence_plan_path_fails_closed_without_checkout(  # tdd-red
 
     with pytest.raises((click.ClickException, CheckoutNotFoundError)):
         _normalized_evidence_plan_path(temp_db, project.id, plan)
+
+
+@pytest.mark.parametrize("selection", ["name", "id", "path"])
+def test_validate_selects_checkout_outside_repo(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str
+) -> None:
+    root = tmp_path / "checkout"
+    checkout = install_isolated_checkout_project(temp_db, root, monkeypatch=monkeypatch)
+    root = Path(checkout.root_path)
+    _write_contract_plan(root)
+    (root / "docs").mkdir()
+    (root / "docs/demo.md").write_text("demo\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda: temp_db)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: temp_db)
+    monkeypatch.setattr(
+        plans_module,
+        "CodeIndexStorage",
+        lambda _db: _FakeIndex(root, primary_project_id=checkout.project.id),
+    )
+    ref = {"name": checkout.project.name, "id": checkout.project.id, "path": str(root)}[selection]
+    result = CliRunner().invoke(plans, ["validate", "plan.md", "-p", ref])
+    assert result.exit_code == 0, result.output
+    assert f"Plan: {root / 'plan.md'}" in result.output
+    assert "skipped" not in result.output
+
+
+@pytest.mark.parametrize(
+    "failure", ["unknown", "missing", "ambiguous", "unregistered", "wrong-project"]
+)
+def test_validate_rejects_unresolved_checkout(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    root = tmp_path / "checkout"
+    checkout = install_isolated_checkout_project(
+        temp_db,
+        root,
+        name="checkout",
+        monkeypatch=monkeypatch,
+    )
+    root = Path(checkout.root_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda: temp_db)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: temp_db)
+    ref = checkout.project.id
+    if failure == "unknown":
+        ref = "unknown-project"
+        expected = "Cannot resolve project"
+    elif failure == "missing":
+        root.rename(tmp_path / "moved")
+        expected = "missing or not initialized"
+    elif failure == "wrong-project":
+        (root / ".gobby/project.json").write_text('{"id": "other-project"}')
+        expected = "belongs to a different project"
+    elif failure == "unregistered":
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+        LocalProjectCheckoutManager(temp_db).unregister_project(checkout.project.id)
+        expected = "no checkout"
+    else:
+        ref = "checkout"
+        expected = "Ambiguous project"
+    result = CliRunner().invoke(plans, ["validate", "plan.md", "-p", ref])
+    assert result.exit_code != 0
+    assert expected in result.output
+
+
+def test_validate_selected_root_runs_size_lint(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "checkout"
+    checkout = install_isolated_checkout_project(temp_db, root, monkeypatch=monkeypatch)
+    root = Path(checkout.root_path)
+    _write_contract_plan(root, target_line="Target: `large.py`\nTarget: `docs/demo.md`")
+    (root / "large.py").write_text("# line\n" * 850)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("gobby.cli.runtime.require_cli_database", lambda: temp_db)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: temp_db)
+    result = CliRunner().invoke(plans, ["validate", "plan.md", "-p", checkout.project.id])
+    assert result.exit_code != 0
+    assert "production-size-growth" in result.output
+    assert "skipped: no project root" not in result.output
