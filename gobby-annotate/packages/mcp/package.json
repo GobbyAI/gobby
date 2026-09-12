@@ -1,0 +1,29 @@
+{
+  "name": "gobby-annotate",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Portable browser annotation inspection and read-only stdio MCP server",
+  "license": "FSL-1.1-ALv2",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "bin": {
+    "gobby-annotate-mcp": "dist/server.js",
+    "gobby-annotate": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "devDependencies": {
+    "@gobby/annotate-core": "0.1.0"
+  }
+}

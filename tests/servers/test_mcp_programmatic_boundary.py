@@ -33,6 +33,7 @@ from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.pipeline.handlers import execute_mcp_step
 from gobby.workflows.pipeline_models import MCPStepConfig, PipelineStep
@@ -138,7 +139,11 @@ def boundary(
                 "effects": [{"type": "set_variable", "variable": f"saw_{event}", "value": True}],
             },
         )
-    hooks = WorkflowHookHandler(rule_engine=RuleEngine(temp_db), enabled=True)
+    hooks = WorkflowHookHandler(
+        rule_engine=RuleEngine(temp_db),
+        enabled=True,
+        evaluation_runtime=WorkflowEvaluationRuntime(),
+    )
     hook_manager = cast(
         HookManager,
         SimpleNamespace(_database=temp_db, _session_manager=sessions, _workflow_handler=hooks),

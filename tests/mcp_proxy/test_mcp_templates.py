@@ -29,6 +29,7 @@ _BUNDLED_TEMPLATE_NAMES = frozenset(
         "context7",
         "playwright",
         "chrome-devtools",
+        "gobby-annotate",
     }
 )
 
@@ -88,7 +89,7 @@ def _load_bundled() -> dict[str, MCPServerTemplate]:
     return loaded
 
 
-def test_seven_bundled_templates_load_and_openapi_contract() -> None:
+def test_bundled_templates_load_and_openapi_contract() -> None:
     templates = _load_bundled()
     assert set(templates) == _BUNDLED_TEMPLATE_NAMES
 

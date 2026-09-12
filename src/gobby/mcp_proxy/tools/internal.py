@@ -432,10 +432,8 @@ class InternalRegistryManager:
     Manages multiple internal registries (gobby-tasks, gobby-hooks, etc.).
 
     Provides routing logic to dispatch calls to the appropriate registry
-    based on server name prefix.
+    based on registered server names.
     """
-
-    INTERNAL_PREFIX = "gobby-"
 
     def __init__(self) -> None:
         self._registries: dict[str, InternalToolRegistry] = {}
@@ -458,11 +456,11 @@ class InternalRegistryManager:
             server_name: Server name to check
 
         Returns:
-            True if server_name starts with 'gobby-'
+            True if server_name belongs to a registered internal server.
         """
         if server_name is None:
             return False
-        return server_name.startswith(self.INTERNAL_PREFIX)
+        return server_name in self._registries
 
     def get_registry(self, server_name: str) -> InternalToolRegistry | None:
         """

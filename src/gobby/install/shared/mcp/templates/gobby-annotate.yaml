@@ -1,0 +1,12 @@
+name: gobby-annotate
+description: Read portable browser annotation captures and screenshots from a local directory.
+version: 1
+enabled: true
+transport: stdio
+command: gobby-annotate-mcp
+args: []
+params:
+  - name: capture_root
+    arg_flag: --root
+    required: true
+    description: Absolute path to the directory containing exported capture ZIPs or extracted bundles.

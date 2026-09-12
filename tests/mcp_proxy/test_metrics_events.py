@@ -13,9 +13,11 @@ import pytest
 
 from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord, MetricsEventStore
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.metrics import create_metrics_registry
+from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -39,6 +41,7 @@ SESSION_REF_2 = "#112"
 def _create_metrics_proxy(
     temp_db: "HubDatabase",
 ) -> tuple[ToolProxyService, MagicMock, ToolMetricsManager]:
+    LocalProjectManager(temp_db).create(name="metrics-context", project_id=PROJECT_ID)
     metrics_manager = ToolMetricsManager(temp_db)
     mcp_manager = MagicMock()
     mcp_manager.project_id = FALLBACK_PROJECT_ID
@@ -53,6 +56,13 @@ def _create_metrics_proxy(
     )
     session_manager.get.return_value = SimpleNamespace(project_id=PROJECT_ID)
     mcp_manager.session_manager = session_manager
+    config = MCPServerConfig(
+        id="context7", name="context7", project_id=PROJECT_ID, url="https://example.test"
+    )
+    mcp_manager.server_configs = [config]
+    mcp_manager.get_server_config.side_effect = lambda server_id: (
+        config if server_id == config.id else None
+    )
     mcp_manager.has_server.side_effect = lambda server_name: server_name == "context7"
 
     internal_manager = InternalRegistryManager()
@@ -742,12 +752,13 @@ class TestInternalToolMetricsIntegration:
 
         mcp_manager.call_tool = AsyncMock(side_effect=call_external)
 
-        await proxy.call_tool(
+        external_result = await proxy.call_tool(
             "context7",
             "resolve-library-id",
             {"libraryName": "pytest"},
             session_id=SESSION_REF_2,
         )
+        assert external_result == {"content": [{"type": "text", "text": "ok"}]}
         await proxy.call_tool(
             "gobby-memory",
             "search_memories",
