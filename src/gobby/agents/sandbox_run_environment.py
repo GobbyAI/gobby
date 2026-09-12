@@ -45,8 +45,12 @@ class SandboxRunPaths:
             name: str(self.cache / name.replace("_", "-").lower()) for name in RUN_CACHE_ENV_VARS
         }
         # Every provider child, and everything it spawns, must land temp files in
-        # the run's writable tmp: a Claude MCP bridge launched through `uv` takes
-        # its lock from TMPDIR, and the ambient system tmp is not a write grant.
+        # the run's writable tmp. Claude alone used to get only CLAUDE_CODE_TMPDIR,
+        # so its children kept the ambient system temp, which is not a write grant:
+        # a `uv`-launched MCP bridge had its lock write denied on every start.
+        # Measured under SRT: `uv` tolerates that denial and the bridge still
+        # serves, so this is a policy violation to remove, not a startup failure
+        # to blame. srt_runner.mjs already assumes TMPDIR is the run temp.
         values["TMPDIR"] = str(self.tmp)
         if provider == "claude":
             values["CLAUDE_CODE_TMPDIR"] = str(self.tmp)
