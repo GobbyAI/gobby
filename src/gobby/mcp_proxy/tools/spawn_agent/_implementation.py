@@ -20,7 +20,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
-from gobby.agents.provider_rotation import rotated_model_for_provider
+from gobby.agents.provider_rotation import model_for_provider
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
@@ -206,39 +206,27 @@ async def spawn_agent_impl(
             agy_record = await ensure_agy_support()
         if not agy_record.supported:
             return {"success": False, "error": agy_support_refusal(agy_record)}
-    provider_was_overridden = explicit_provider is not None
-
-    concrete_agent_provider: str | None = None
-    provider_differs_from_agent = False
-    if provider_was_overridden and agent_body:
-        concrete_agent_provider = concrete_provider(agent_body.provider)
-        provider_differs_from_agent = (
-            concrete_agent_provider is not None and effective_provider != concrete_agent_provider
-        )
-
     effective_model = _normalize_optional_model(model)
     if effective_model is None and agent_body:
         agent_model = _normalize_optional_model(agent_body.model)
-        if not provider_differs_from_agent:
-            effective_model = agent_model
-        elif agent_model is not None:
-            # The agent pinned a model and the spawn rotated off its provider.
-            # Carrying the model over would be wrong, but leaving it unset hands
-            # the choice to the target CLI's configured default — an unchosen
-            # model that may carry its own spend cap. Substitute the target
-            # provider's model at the same tier, or refuse.
-            effective_model = rotated_model_for_provider(
+        if agent_model is not None:
+            # The agent names one model, but the provider it lands on need not be
+            # the one that model belongs to: the spawn may override the provider,
+            # and `provider: inherit` follows the spawning session. Resolve the
+            # target provider's model at the same tier rather than leaving the
+            # model unset for that CLI's configured default to fill in.
+            effective_model = model_for_provider(
                 target_provider=effective_provider,
-                source_model=agent_model,
+                declared_model=agent_model,
             )
             if effective_model is None:
                 return {
                     "success": False,
                     "error": (
-                        f"Agent {agent_body.name!r} is pinned to "
-                        f"{concrete_agent_provider}/{agent_model}, and no {effective_provider} "
-                        f"model is registered at that tier. Pass an explicit model for "
-                        f"{effective_provider} instead of leaving it to the provider's default."
+                        f"Agent {agent_body.name!r} declares model {agent_model!r}, which "
+                        f"belongs to another provider and has no {effective_provider} "
+                        f"equivalent. Pass an explicit model for {effective_provider} "
+                        "instead of leaving it to the provider's default."
                     ),
                 }
     is_local_run = False

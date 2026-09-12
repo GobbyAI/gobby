@@ -80,7 +80,10 @@ step_workflow:
         Load both required methodology skills through the Gobby proxy:
         1. get_skill(name="restraint") on gobby-skills
         2. get_skill(name="proportionality") on gobby-skills
-        Use only mcp__gobby__call_tool in this step. Native skill tools bypass
+        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "restraint"}) and
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's observable skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
@@ -113,8 +116,15 @@ step_workflow:
       status_message: |
         Verify concerns against current code and existing tasks. Submit findings
         and a Markdown summary using gobby-feedback:submit_review. Then end the
-        run with a brief status and report reference, never the report body.
+        run with gobby-agents:end_agent_run, passing current_state as a brief
+        completion status, the report path in references, and one next_steps
+        entry naming the coordinator's next action — never the report body.
         Use Bash only for read-only inspection; do not edit source or run fixes.
+        Any further skill this review needs loads through the Gobby proxy with
+        mcp__gobby__call_tool. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's observable skill tracking.
       allowed_tools:
         - Bash
         - Read

@@ -21,21 +21,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def rotated_model_for_provider(*, target_provider: str, source_model: str) -> str | None:
-    """Return the model ``target_provider`` uses at ``source_model``'s tier.
+def model_for_provider(*, target_provider: str, declared_model: str) -> str | None:
+    """Return the model ``target_provider`` should run for ``declared_model``.
 
-    Rotating a spawn onto another provider cannot carry the agent's model
-    across — ``gpt-5.6-sol`` means nothing to the claude CLI — but dropping it
-    is worse: the CLI then falls back to whatever default it has configured,
-    which is a model nobody chose and may carry its own spend cap. The feature
-    profiles in ``DEFAULT_PROFILE_CANDIDATES`` already pair each provider's
-    models by capability tier, so they answer the substitution directly.
+    An agent definition names one model, but the provider it lands on is not
+    always the one that model belongs to: a spawn can override the provider, and
+    ``provider: inherit`` follows whatever the spawning session uses. Handing
+    ``gpt-5.6-sol`` to the claude CLI is wrong, and dropping the model is worse —
+    the CLI then falls back to whatever default it has configured, a model nobody
+    chose that may carry its own spend cap. The feature profiles in
+    ``DEFAULT_PROFILE_CANDIDATES`` already pair each provider's models by
+    capability tier, so they answer the substitution directly.
 
-    Returns ``None`` when ``source_model`` sits in no profile or the target
-    provider has no candidate at that tier; callers must fail rather than
-    spawn with the model unset.
+    ``declared_model`` comes back unchanged when it already belongs to
+    ``target_provider`` or appears in no profile at all. ``None`` means it belongs
+    to another provider and ``target_provider`` has no candidate at that tier;
+    callers must fail rather than spawn with the model unset.
     """
-    normalized = source_model.strip().lower()
+    normalized = declared_model.strip().lower()
     for candidates in DEFAULT_PROFILE_CANDIDATES.values():
         parsed = [parse_feature_candidate(candidate) for candidate in candidates]
         if not any(model.lower() == normalized for _, model in parsed):
@@ -44,7 +47,7 @@ def rotated_model_for_provider(*, target_provider: str, source_model: str) -> st
             if provider == target_provider:
                 return model
         return None
-    return None
+    return declared_model
 
 
 def parse_provider_list(provider_string: str | None) -> list[str]:

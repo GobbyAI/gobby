@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 def skill_fetch_proxy_path(name: str) -> str:
     """Return the direct proxy call for fetching an enforcement-exempt skill."""
     return instruction_fetch_call(name)

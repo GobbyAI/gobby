@@ -34,6 +34,7 @@ async def test_invalid_external_grant_rejects_before_allocation() -> None:
             prompt="work",
             runner=runner,
             parent_session_id="parent",
+            terminal_backend="tmux",
             extra_write_paths=["/"],
             write_paths_reason="authorized",
         )
@@ -269,7 +270,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
-            model="gpt-6-astra",
+            model="gpt-5.6-sol",
         )
         runner = _make_runner()
 
@@ -288,13 +289,67 @@ class TestProviderResolution:
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
-                provider="claude",
+                provider="droid",
                 parent_session_id="parent-session-xyz",
             )
 
         assert result["success"] is False
-        assert "gpt-6-astra" in str(result["error"])
+        assert "gpt-5.6-sol" in str(result["error"])
+        assert "droid" in str(result["error"])
         mock_execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_inherit_provider_model_is_read_as_a_tier(self) -> None:
+        """`provider: inherit` plus a model means a tier, not that provider's model."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="expansion-qa",
+            provider="inherit",
+            model="gpt-5.6-terra",
+        )
+        runner = _make_runner()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000001",
+            ),
+        ):
+            mock_ctx.return_value = {"id": "proj-abc", "project_path": "/repo"}
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
+            mock_handler.cleanup_environment = AsyncMock()
+            mock_handler.build_context_prompt.return_value = "Do the thing"
+            mock_get_handler.return_value = mock_handler
+
+            mock_execute.return_value = _make_execute_spawn_result()
+
+            result = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="Do the thing",
+                runner=runner,
+                agent_body=agent_body,
+                provider="claude",
+                parent_session_id="parent-session-xyz",
+            )
+            await asyncio.gather(*_spawn_background_tasks.values())
+
+        assert result["success"] is True, result.get("error")
+        spawn_request = mock_execute.call_args[0][0]
+        # `inherit` landed on claude, so the MID tier means sonnet, not terra.
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model == "sonnet"
 
     @pytest.mark.asyncio
     async def test_explicit_model_survives_a_provider_rotation(self) -> None:
