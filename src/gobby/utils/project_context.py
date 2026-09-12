@@ -434,7 +434,12 @@ async def ensure_project_json_for_isolation(
 
         _atomic_write_bytes(isolated_root / ISOLATION_MARKER_RELATIVE_PATH, marker_bytes)
         await _restore_generated_tracked_project_json(isolated_root, source_root)
-        link_checkout_cargo_target(isolated_root, parent_project_id)
+        if snapshot_commit is None:
+            # A commit-bound snapshot root holds exactly the files of its commit and
+            # nothing else: gcode's inventory verification rejects any other entry,
+            # a shared build-directory symlink included. Ordinary isolation roots
+            # still get the link, which is what keeps their cargo builds shared.
+            link_checkout_cargo_target(isolated_root, parent_project_id)
         logger.info("Wrote isolation sidecar in %s", isolated_root)
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         raise IsolationProjectJsonError(

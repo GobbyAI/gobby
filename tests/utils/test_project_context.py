@@ -847,6 +847,26 @@ class TestEnsureProjectJsonForIsolation:
         assert marker["parent_project_path"] == str(repo.resolve())
         assert marker["parent_project_id"] == "proj-1"
 
+    async def test_commit_bound_snapshot_root_gets_no_shared_build_link(
+        self, tmp_path: Path
+    ) -> None:
+        """An Ask snapshot root must hold only its commit's files, so no target link."""
+        repo = tmp_path / "repo"
+        (repo / ".gobby").mkdir(parents=True)
+        (repo / ".gobby" / "project.json").write_text('{"id": "proj-1", "name": "test"}')
+        (repo / "Cargo.toml").write_text("[workspace]\n")
+
+        snapshot = tmp_path / "snapshot"
+        snapshot.mkdir()
+        (snapshot / "Cargo.toml").write_text("[workspace]\n")
+
+        await ensure_project_json_for_isolation(repo, snapshot, snapshot_commit="a" * 40)
+
+        assert not (snapshot / "target").exists()
+        assert not (snapshot / "target").is_symlink()
+        marker = json.loads((snapshot / ".gobby" / "isolation.json").read_text())
+        assert marker["snapshot_commit"] == "a" * 40
+
     async def test_augments_existing(self, tmp_path: Path) -> None:
         """Target already has project.json (git-tracked) — sidecar is written, file left alone."""
         repo = tmp_path / "repo"
