@@ -18,6 +18,7 @@ from gobby.ask.permissions import (
     UnsupportedAskRuntime,
     compile_ask_runtime_profile,
 )
+from gobby.ask.runtime_derivation import derive_ask_runtime_validation
 from gobby.ask.runtime_validation import (
     AskRuntimeValidation,
     AskRuntimeValidationArtifact,
@@ -235,18 +236,25 @@ class ManagedAskAgents:
         body = AgentDefinitionBody.model_validate(effective)
         self._validate_definition(body, stage)
         provider = str(effective.get("provider"))
-        artifact = self.runtime_validation_artifacts.get(profile.identifier)
-        if artifact is None:
-            raise UnsupportedAskRuntime(
-                f"Ask profile {profile.identifier!r} has no pinned runtime validation"
-            )
         provider_executable = resolve_native_bin(provider)
         if provider_executable is None:
             raise UnsupportedAskRuntime(f"Ask provider executable is unavailable: {provider}")
+        artifact = self.runtime_validation_artifacts.get(profile.identifier)
         try:
-            validation = self.runtime_validation_loader(
-                artifact,
-                provider_executable=Path(provider_executable),
+            # A pinned probe artifact is the strongest evidence available and wins
+            # when one exists. Without it Ask derives the same identity live rather
+            # than refusing to run; the boundary is compiled from the same profile
+            # either way and is bound again at launch.
+            validation = (
+                self.runtime_validation_loader(
+                    artifact,
+                    provider_executable=Path(provider_executable),
+                )
+                if artifact is not None
+                else derive_ask_runtime_validation(
+                    provider=provider,
+                    provider_executable=Path(provider_executable),
+                )
             )
         except (OSError, ValueError) as error:
             raise UnsupportedAskRuntime(str(error)) from error

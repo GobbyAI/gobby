@@ -196,7 +196,7 @@ def test_runtime_profile_rejects_unverified_or_stale_provider_binding(tmp_path: 
     source_root.mkdir()
     scratch_root.mkdir()
     unverified = replace(_runtime_validation(), verified_artifact=False)
-    with pytest.raises(UnsupportedAskRuntime, match="pinned artifact"):
+    with pytest.raises(UnsupportedAskRuntime, match="neither derived nor attested"):
         compile_ask_runtime_profile(
             provider="claude",
             source_root=source_root,

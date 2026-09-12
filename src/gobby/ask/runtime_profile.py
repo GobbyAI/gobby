@@ -11,6 +11,7 @@ from typing import Any
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.ask.errors import AskPermissionDenied, UnsupportedAskRuntime
+from gobby.ask.runtime_derivation import assert_ask_srt_policy_boundary
 from gobby.ask.runtime_validation import (
     ASK_RUNTIME_CONTROLS,
     AskRuntimeValidation,
@@ -106,7 +107,7 @@ class AskRuntimeProfile:
     provider_version: str
     srt_runtime_version: str
     srt_policy_schema_version: int
-    srt_policy_digest: str
+    srt_policy_digest: str | None
     runtime_control_digest: str
     runtime_validation_digest: str
     profile_hash: str
@@ -190,7 +191,19 @@ class AskRuntimeProfile:
             )
         except (OSError, ValueError, json.JSONDecodeError) as error:
             raise UnsupportedAskRuntime("Ask SRT policy could not be verified") from error
-        if policy_digest != self.srt_policy_digest:
+        if self.srt_policy_digest is None:
+            # A derived profile pins no earlier digest, so the rendered policy is bound
+            # to the boundary it must express rather than to a previous observation.
+            try:
+                assert_ask_srt_policy_boundary(
+                    policy,
+                    provider=self.provider,
+                    source_root=self.source_root,
+                    scratch_root=self.scratch_root,
+                )
+            except ValueError as error:
+                raise UnsupportedAskRuntime(str(error)) from error
+        elif policy_digest != self.srt_policy_digest:
             raise UnsupportedAskRuntime("Ask SRT policy semantics changed after validation")
         if _runtime_api_base(self.provider, environment) != self.endpoint_api_base:
             raise UnsupportedAskRuntime("Ask endpoint environment changed after validation")
@@ -265,8 +278,10 @@ class AskRuntimeProfile:
             srt_policy_schema_version=_required_int(
                 value.get("srt_policy_schema_version"), name="Ask SRT policy schema version"
             ),
-            srt_policy_digest=_required_string(
-                value.get("srt_policy_digest"), name="Ask SRT policy digest"
+            srt_policy_digest=(
+                _required_string(value.get("srt_policy_digest"), name="Ask SRT policy digest")
+                if value.get("srt_policy_digest") is not None
+                else None
             ),
             runtime_control_digest=_required_string(
                 value.get("runtime_control_digest"), name="Ask runtime control digest"
@@ -310,12 +325,14 @@ def compile_ask_runtime_profile(
     if normalized_api_base is not None:
         raise UnsupportedAskRuntime("Ask runtime does not permit a custom model endpoint")
     if validation is None:
-        raise UnsupportedAskRuntime("Ask runtime requires trusted fresh and resume validation")
-    if not validation.verified_artifact:
-        raise UnsupportedAskRuntime("Ask runtime validation must come from a pinned artifact")
+        raise UnsupportedAskRuntime("Ask runtime requires provider and SRT runtime validation")
+    if not validation.verified_artifact and not validation.derived:
+        raise UnsupportedAskRuntime("Ask runtime validation is neither derived nor attested")
     if validation.provider != provider:
         raise UnsupportedAskRuntime("Ask runtime validation provider mismatch")
-    if not validation.fresh_probe_passed or not validation.resume_probe_passed:
+    if validation.verified_artifact and (
+        not validation.fresh_probe_passed or not validation.resume_probe_passed
+    ):
         raise UnsupportedAskRuntime("Ask runtime validation did not pass fresh and resume probes")
     if validation.controls != ASK_RUNTIME_CONTROLS:
         raise UnsupportedAskRuntime("Ask runtime validation controls are incomplete or widened")

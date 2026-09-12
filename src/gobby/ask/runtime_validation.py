@@ -70,13 +70,14 @@ class AskRuntimeValidation:
     control_digest: str
     srt_runtime_version: str
     srt_policy_schema_version: int
-    srt_policy_digest: str
+    srt_policy_digest: str | None
     controls: frozenset[str]
     fresh_probe_passed: bool
     resume_probe_passed: bool
-    evidence_sha256: str
+    evidence_sha256: str | None
     schema_version: int = _VALIDATION_VERSION
     verified_artifact: bool = field(default=False, repr=False, compare=False)
+    derived: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.schema_version != _VALIDATION_VERSION:
@@ -92,13 +93,23 @@ class AskRuntimeValidation:
         }.items():
             if not value:
                 raise ValueError(f"Ask runtime validation {name} is incomplete")
-        for name, value in {
+        if self.derived and self.verified_artifact:
+            raise ValueError("Ask runtime validation cannot be derived and attested at once")
+        digests: dict[str, str | None] = {
             "provider executable": self.provider_executable_sha256,
             "control": self.control_digest,
             "SRT policy": self.srt_policy_digest,
             "evidence": self.evidence_sha256,
-        }.items():
-            _validate_sha256(value, name=name)
+        }
+        for name, digest in digests.items():
+            if digest is None:
+                # A derived validation observed no earlier launch, so it pins no SRT
+                # policy digest and holds no probe evidence to hash. The launch binds
+                # its policy semantically instead. Every other digest stays mandatory.
+                if not self.derived or name not in {"SRT policy", "evidence"}:
+                    raise ValueError(f"Ask runtime validation {name} digest is missing")
+                continue
+            _validate_sha256(digest, name=name)
 
     @property
     def validation_digest(self) -> str:
@@ -114,6 +125,7 @@ class AskRuntimeValidation:
                 "srt_runtime_version": self.srt_runtime_version,
                 "srt_policy_schema_version": self.srt_policy_schema_version,
                 "srt_policy_digest": self.srt_policy_digest,
+                "derived": self.derived,
                 "controls": sorted(self.controls),
                 "fresh_probe_passed": self.fresh_probe_passed,
                 "resume_probe_passed": self.resume_probe_passed,
