@@ -250,7 +250,6 @@ async fn reap_observer(state: &Arc<HostState>, key: &str, abort_poll: bool) {
         }
     }
     let mut inner = state.inner.lock().await;
-    let mut senders = Vec::new();
     let identity = inner
         .terminals
         .iter()
@@ -264,20 +263,9 @@ async fn reap_observer(state: &Arc<HostState>, key: &str, abort_poll: bool) {
         if let Some(slot) = inner.terminals.remove(&identity) {
             inner.by_host_id.remove(&slot.host_terminal_id);
             for att_id in slot.user_attachments {
-                if let Some(attachment) = inner.attachments.remove(&att_id) {
-                    senders.push(attachment.tx);
-                }
+                inner.attachments.remove(&att_id);
             }
         }
-    }
-    drop(inner);
-    for sender in senders {
-        let _ = sender
-            .send(ServerMessage::Error {
-                code: "observer_reaped".into(),
-                message: None,
-            })
-            .await;
     }
 }
 
@@ -640,22 +628,49 @@ async fn emit_code(state: &Arc<HostState>, key: &str, code: &str) {
 }
 
 async fn emit_exit(state: &Arc<HostState>, key: &str) {
-    let inner = state.inner.lock().await;
-    let Some(slot) = inner.terminals.values().find(|slot| {
-        slot.locator
-            .as_ref()
-            .is_some_and(|l| l.locator_key() == key)
-    }) else {
-        return;
+    let (host_id, senders) = {
+        let inner = state.inner.lock().await;
+        let Some(slot) = inner.terminals.values().find(|slot| {
+            slot.locator
+                .as_ref()
+                .is_some_and(|l| l.locator_key() == key)
+        }) else {
+            return;
+        };
+        let senders = slot
+            .user_attachments
+            .iter()
+            .filter_map(|id| inner.attachments.get(id).map(|att| att.tx.clone()))
+            .collect::<Vec<_>>();
+        (slot.host_terminal_id.clone(), senders)
     };
-    let host_id = slot.host_terminal_id.clone();
-    let ids: Vec<u64> = slot.user_attachments.iter().copied().collect();
-    for id in ids {
-        if let Some(att) = inner.attachments.get(&id) {
-            let _ = att.tx.try_send(ServerMessage::TerminalExited {
+    for sender in senders {
+        if sender
+            .send(ServerMessage::TerminalExited {
                 host_terminal_id: host_id.clone(),
                 exit_code: None,
-            });
+            })
+            .await
+            .is_err()
+        {
+            tracing::debug!(
+                host_terminal_id = %host_id,
+                "observer frame receiver closed before terminal exit"
+            );
+            continue;
+        }
+        if sender
+            .send(ServerMessage::Error {
+                code: "observer_reaped".into(),
+                message: None,
+            })
+            .await
+            .is_err()
+        {
+            tracing::debug!(
+                host_terminal_id = %host_id,
+                "observer frame receiver closed before reap notice"
+            );
         }
     }
 }

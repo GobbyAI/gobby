@@ -119,6 +119,9 @@ fn broadcast_task_exits_on_closed_channel() {
         ServerMessage::Attached { .. }
     ));
 
+    frames
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout");
     let killed = rpc(
         &mut control,
         "kill",
@@ -129,9 +132,6 @@ fn broadcast_task_exits_on_closed_channel() {
         }),
     );
     assert_eq!(killed["killed"], true, "{killed}");
-    frames
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("read timeout");
     let mut buffer = [0_u8; 8192];
     loop {
         match frames.read(&mut buffer) {
