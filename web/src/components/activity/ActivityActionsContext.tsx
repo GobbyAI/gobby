@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import {
   ActivityActionsContext,
@@ -121,6 +122,8 @@ export function ActivityActionButtons() {
           type="button"
           variant="accent"
           size="sm"
+          dense
+          className={coarseHitAreaCls}
           onClick={actions.search.onToggle}
           aria-label={actions.search.ariaLabel}
           title={actions.search.ariaLabel}
@@ -135,6 +138,8 @@ export function ActivityActionButtons() {
           type="button"
           variant="accent"
           size="sm"
+          dense
+          className={coarseHitAreaCls}
           onClick={actions.onAdd}
           disabled={actions.addDisabled}
           aria-label={actions.addAriaLabel ?? addLabel}

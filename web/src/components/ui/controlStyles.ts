@@ -35,3 +35,14 @@ export const controlSurfaceCls = cn(
   "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
   "disabled:cursor-not-allowed disabled:opacity-50",
 );
+
+/**
+ * The selected-segment treatment of SegmentedControl, shared with controls
+ * that stand in for one on the mobile tier (the compact project trigger) so
+ * the "current scope" reads identically at every tier.
+ */
+export function segmentedActiveOptionCls(isLight: boolean): string {
+  return isLight
+    ? "bg-[var(--surface-selected)] text-[var(--text-primary)] font-semibold"
+    : "bg-accent/15 text-accent font-semibold";
+}

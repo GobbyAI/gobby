@@ -22,7 +22,7 @@ describe("ThemeToggle", () => {
     });
     expect(button).toHaveClass(
       "bg-accent-tint",
-      "w-8",
+      "w-7",
       "shrink-0",
       "pointer-coarse:before:min-w-11",
     );

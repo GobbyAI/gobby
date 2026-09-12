@@ -307,6 +307,49 @@ describe("TerminalView", () => {
     }
   });
 
+  it("keeps 80 columns and zooms a narrow panel by default, but tracks the width when minCols is 1", async () => {
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        width,
+        height,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        bottom: height,
+        right: width,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        if (this instanceof HTMLSpanElement) return rect(8, 16);
+        if (this.classList.contains("term-row")) return rect(200, 16);
+        return rect(200, 320);
+      });
+
+    try {
+      // 200px / 8px per char = 25 cols. Default floor: 80 cols (640px)
+      // shrunk to the 200px panel, which CSS-transforms the scroll container.
+      const first = render(<TerminalView />);
+      await settleAsyncWork();
+      const zoomed = latestInstance();
+      expect(zoomed.resize).toHaveBeenCalledWith(80, expect.any(Number));
+      expect(zoomed.element.style.transform).toBe("scale(0.3125)");
+      first.unmount();
+
+      // Mobile tier: the grid is the panel width, no transform, so the PTY
+      // wraps and the element touch-scrolls natively.
+      render(<TerminalView minCols={1} />);
+      await settleAsyncWork();
+      const fitted = latestInstance();
+      expect(fitted.resize).toHaveBeenCalledWith(25, 20);
+      expect(fitted.element.style.transform).toBe("");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("resize transposition", async () => {
     vi.useFakeTimers();
     const onReady = vi.fn();

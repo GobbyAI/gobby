@@ -105,6 +105,8 @@ describe("terminal session helpers", () => {
         tmux: tmux[0],
         gobby: userSession,
         label: "other-project#7: User shell",
+        refLabel: "other-project#7",
+        titleText: "User shell",
         provider: "codex",
         paneRef: "user-shell",
         backendLabel: "tmux",
@@ -116,6 +118,8 @@ describe("terminal session helpers", () => {
         tmux: tmux[1],
         gobby: null,
         label: "external-shell",
+        refLabel: null,
+        titleText: "external-shell",
         provider: null,
         paneRef: "external-shell",
         backendLabel: "tmux",
@@ -127,6 +131,8 @@ describe("terminal session helpers", () => {
         tmux: tmux[2],
         gobby: agentSession,
         label: "gobby#8: Agent shell",
+        refLabel: "gobby#8",
+        titleText: "Agent shell",
         provider: "codex",
         paneRef: "agent-shell",
         backendLabel: "tmux",
@@ -138,6 +144,46 @@ describe("terminal session helpers", () => {
     expect(findByGobbySessionId(joined, agentSession.id)).toBe(joined[2]);
     expect(findByGobbySessionId(joined, "missing")).toBeNull();
     expect(joinTmuxSessions([tmux[1]], undefined)[0].external).toBe(true);
+  });
+
+  it("trims the current project's name off refs and keeps other projects' names", () => {
+    const own = makeGobbySession({
+      id: "own",
+      ref: "gobby#12",
+      project_id: "project-1",
+      title: "Task #22203 - portrait fixes",
+    });
+    const foreign = makeGobbySession({
+      id: "foreign",
+      ref: "other-project#7",
+      project_id: "project-2",
+      title: "User shell",
+    });
+    const provisional = makeGobbySession({
+      id: "provisional",
+      ref: "gobby#13",
+      project_id: "project-1",
+      title: "gobby#13: New Session",
+      title_source: "provisional",
+    });
+    const joined = joinTmuxSessions(
+      [
+        makeTmuxSession({ name: "own", gobby_session_id: "own" }),
+        makeTmuxSession({ name: "foreign", gobby_session_id: "foreign" }),
+        makeTmuxSession({ name: "prov", gobby_session_id: "provisional" }),
+      ],
+      [own, foreign, provisional],
+      "project-1",
+    );
+
+    expect(joined[0].label).toBe("#12: Task #22203 - portrait fixes");
+    expect(joined[0].refLabel).toBe("#12");
+    expect(joined[0].titleText).toBe("Task #22203 - portrait fixes");
+    expect(joined[1].label).toBe("other-project#7: User shell");
+    expect(joined[1].refLabel).toBe("other-project#7");
+    // A provisional title never rides along: the ref stands alone.
+    expect(joined[2].label).toBe("#13");
+    expect(joined[2].titleText).toBe("");
   });
 
   it("socket specific identity join", () => {

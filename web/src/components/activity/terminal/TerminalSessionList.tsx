@@ -13,6 +13,7 @@ import { Button } from "../../ui/Button";
 import { Chip } from "../../ui/Chip";
 import { chipIdentityClasses } from "../../ui/chipVariants";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
+import { TickerText } from "../../ui/TickerText";
 import { type JoinedTerminalSession, sessionKey } from "./terminalSessions";
 
 interface TerminalSessionListProps {
@@ -102,27 +103,37 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
       ) : session.external ? (
         <ExternalTerminalGlyph />
       ) : null}
-      <span className="activity-row-title">{session.label}</span>
-      {/* paneRef embeds the raw tmux session name, which is unbounded; cap it
-          so it can never push the kebab off the row or overflow the list. */}
-      <span className="activity-row-meta max-w-[45%] truncate font-mono">
-        {session.paneRef}
-      </span>
-      <span className="flex shrink-0 items-center gap-1">
-        <Chip tone="accent" uppercase className={chipIdentityClasses}>
-          {session.backendLabel}
-        </Chip>
-        {session.dead ? (
-          <span className="rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-2xs font-medium text-destructive-foreground">
-            Dead
-          </span>
-        ) : null}
-        {session.agentManaged ? (
-          <span className="rounded-full border border-info/40 bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info">
-            Agent-managed
-          </span>
-        ) : null}
-      </span>
+      {/* Status, provider and ref stay put; only the title tail tickers when
+          the row is too narrow for it. The raw tmux pane name never renders
+          here — it is the terminal's identity, not the session's. */}
+      {session.refLabel ? (
+        <span className="activity-row-meta font-mono">{session.refLabel}</span>
+      ) : null}
+      {session.titleText ? (
+        <TickerText className="min-w-0 flex-1 text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
+          {session.titleText}
+        </TickerText>
+      ) : null}
+    </>
+  );
+}
+
+function SessionRowBadges({ session }: { session: JoinedTerminalSession }) {
+  return (
+    <>
+      <Chip tone="accent" uppercase className={chipIdentityClasses}>
+        {session.backendLabel}
+      </Chip>
+      {session.dead ? (
+        <span className="rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-2xs font-medium text-destructive-foreground">
+          Dead
+        </span>
+      ) : null}
+      {session.agentManaged ? (
+        <span className="rounded-full border border-info/40 bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info">
+          Agent-managed
+        </span>
+      ) : null}
     </>
   );
 }
@@ -176,7 +187,10 @@ export function TerminalSessionList({
             >
               <SessionRowContent session={session} />
             </Button>
-            <div className="px-1">
+            {/* Backend chip and kebab share one trailing group so the chip
+                is always flush right with a single gap before the kebab. */}
+            <div className="flex shrink-0 items-center gap-1 pr-1">
+              <SessionRowBadges session={session} />
               <QuickMenu
                 items={menuItems}
                 menuLabel={`Actions for ${session.label}`}

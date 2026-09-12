@@ -102,6 +102,42 @@ body {
   }
 }
 
+/* TickerText (ui/TickerText.tsx): overflowing single-line text slides to
+   reveal its tail and back instead of truncating. The component measures the
+   overflow into --ticker-distance / --ticker-duration; the trailing 20px
+   mask matches TICKER_MASK_PX there. */
+.ticker {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ticker__inner {
+  display: inline-block;
+}
+
+.ticker--overflow {
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+
+.ticker--overflow .ticker__inner {
+  animation: ticker-slide var(--ticker-duration, 8s) ease-in-out infinite
+    alternate;
+}
+
+@keyframes ticker-slide {
+  0%,
+  20% {
+    transform: translateX(0);
+  }
+
+  80%,
+  100% {
+    transform: translateX(var(--ticker-distance, 0px));
+  }
+}
+
 /* The reduced-motion kill switch lives in the `base` layer deliberately:
  * for !important declarations, earlier layers outrank later ones — so this
  * beats any !important animation declaration in later layers or un-layered

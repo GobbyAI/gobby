@@ -39,7 +39,7 @@ export function ThemeToggle({
     <Button
       type="button"
       variant="accent"
-      size="icon"
+      size="icon-sm"
       dense
       className={cn("shrink-0", coarseHitAreaCls)}
       disabled={disabled}

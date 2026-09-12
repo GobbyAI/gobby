@@ -8,7 +8,12 @@ import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { HitAreaHarness } from "./components/dev/HitAreaHarness";
 import { isHitAreaHarnessRequested } from "./components/dev/hitAreaHarnessConfig";
 import { TierPreview } from "./components/dev/TierPreview";
-import { isTierPreviewRequested } from "./components/dev/tierPreviewConfig";
+import {
+  applyPointerOverride,
+  isTierPreviewRequested,
+} from "./components/dev/tierPreviewConfig";
+
+applyPointerOverride(window.location.search, document.documentElement);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

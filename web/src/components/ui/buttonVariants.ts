@@ -38,6 +38,12 @@ export const buttonVariants = cva(
         md: "min-h-8 gap-1.5 px-3.5 text-sm leading-none",
         lg: "min-h-10 gap-2 px-4.5 text-base leading-none",
         icon: "min-h-8 w-8 gap-1.5 p-0 text-sm leading-none",
+        // Collapsed glyph button: the one 28px square every icon-only control
+        // in header/toolbar chrome renders at (app-header cog, and what a
+        // labeled `sm` toolbar button becomes once its label collapses — see
+        // the panel-root collapse rules in ActivityPanel.tsx). Pair with
+        // `dense` + coarseHitAreaCls so touch keeps the 44px floor invisibly.
+        "icon-sm": "min-h-7 w-7 gap-0 p-0 text-xs leading-none",
       },
       // Coarse pointers promote every button to the 44px touch floor. `dense`
       // strips the promotion for desktop-only chrome (activity-panel toolbars,

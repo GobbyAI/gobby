@@ -86,6 +86,11 @@ function activityPanelClassName(className?: string) {
     // collapse CSS.
     String.raw`@max-[479px]/activity-panel:[&_.activity-panel-action-btn\_\_label]:hidden`,
     String.raw`mobile:[&_.activity-panel-action-btn\_\_label]:hidden`,
+    // Collapsed geometry rides the same two triggers: a button whose label
+    // just collapsed becomes the `icon-sm` 28px square (buttonVariants.ts),
+    // so every glyph button in the chrome reads at one size.
+    String.raw`@max-[479px]/activity-panel:[&_button:has(>.activity-panel-action-btn\_\_label)]:w-7 @max-[479px]/activity-panel:[&_button:has(>.activity-panel-action-btn\_\_label)]:gap-0 @max-[479px]/activity-panel:[&_button:has(>.activity-panel-action-btn\_\_label)]:px-0`,
+    String.raw`mobile:[&_button:has(>.activity-panel-action-btn\_\_label)]:w-7 mobile:[&_button:has(>.activity-panel-action-btn\_\_label)]:gap-0 mobile:[&_button:has(>.activity-panel-action-btn\_\_label)]:px-0`,
     String.raw`@max-[360px]/activity-panel:[&_.activity-panel-status-bar\_\_watching-prefix]:hidden`,
     "[&_.activity-row-title]:min-w-0 [&_.activity-row-title]:flex-1 [&_.activity-row-title]:truncate",
     "[&_.activity-row-title]:text-[length:var(--text-base)] [&_.activity-row-title]:font-[var(--font-weight-medium)] [&_.activity-row-title]:text-[var(--text-primary)]",
@@ -533,6 +538,8 @@ export function ActivityPanel({
                     type="button"
                     variant="accent"
                     size="sm"
+                    dense
+                    className={coarseHitAreaCls}
                     onClick={handleToggleChat}
                     aria-label="Close panel"
                     title="Close panel"
@@ -618,6 +625,8 @@ export function ActivityPanel({
                 type="button"
                 variant="accent"
                 size="sm"
+                dense
+                className={coarseHitAreaCls}
                 onClick={handleToggleChat}
                 aria-label={chatHidden ? "Show chat" : "Hide chat"}
                 title={chatHidden ? "Show chat" : "Hide chat"}

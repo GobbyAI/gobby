@@ -11,6 +11,20 @@
   }
 }
 
+/* Built-in `pointer-coarse` re-declared with one extra trigger: the root
+   stamped `data-pointer="coarse"` by main.tsx from `?pointer=coarse`. The tier
+   preview loads phone tiers that way so a desktop iframe renders the same
+   coarse-pointer branch an iPhone does. tokens.css mirrors it for the raw
+   media query it owns. */
+@custom-variant pointer-coarse {
+  @media (pointer: coarse) {
+    @slot;
+  }
+  :root[data-pointer="coarse"] & {
+    @slot;
+  }
+}
+
 @theme inline {
   --color-background: var(--bg-primary);
   --color-foreground: var(--text-primary);

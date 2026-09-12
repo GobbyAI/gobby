@@ -53,6 +53,14 @@ export interface TerminalViewProps {
   onSizeChange?: (rows: number, cols: number) => void;
   onReady?: (rows: number, cols: number) => void;
   onProtocolResponse?: (data: string) => void;
+  /**
+   * Column floor for the grid. Defaults to the standard 80: a narrower panel
+   * keeps 80 columns and zooms the rendering down. The mobile tier passes 1
+   * so the grid tracks the panel width and the PTY wraps instead — mono
+   * content wraps on that tier (.impeccable.md), and a CSS-scaled scroll
+   * container does not touch-scroll on iOS.
+   */
+  minCols?: number;
 }
 
 interface TerminalInstanceProps {
@@ -67,6 +75,7 @@ interface TerminalInstanceProps {
   onProtocolResponseRef: MutableRefObject<
     TerminalViewProps["onProtocolResponse"]
   >;
+  minColsRef: MutableRefObject<number>;
   onInitError: (resolution: RendererResolution, error: unknown) => void;
 }
 
@@ -171,6 +180,7 @@ function TerminalInstance({
   onSizeChangeRef,
   onReadyRef,
   onProtocolResponseRef,
+  minColsRef,
   onInitError,
 }: TerminalInstanceProps) {
   useLayoutEffect(() => {
@@ -253,12 +263,12 @@ function TerminalInstance({
           const padY = pad(style.paddingTop) + pad(style.paddingBottom);
           const availWidth = Math.max(0, rect.width - padX);
           const availHeight = Math.max(0, rect.height - padY);
-          // Never fall below the standard terminal width. When the panel is
-          // too narrow to show MIN_COLS at the base font, keep the grid at
-          // MIN_COLS and zoom the rendering down so full rows stay visible
-          // instead of clipping or wrapping.
+          // Never fall below the column floor. When the panel is too narrow
+          // to show it at the base font, keep the grid at the floor and zoom
+          // the rendering down so full rows stay visible instead of clipping
+          // or wrapping. A floor of 1 (mobile tier) disables the zoom.
           const fitCols = Math.floor(availWidth / charWidth);
-          const cols = Math.max(MIN_TERMINAL_COLS, fitCols);
+          const cols = Math.max(1, minColsRef.current, fitCols);
           const scale = Math.min(1, availWidth / (cols * charWidth) || 1);
           const rows = Math.max(
             1,
@@ -312,6 +322,7 @@ function TerminalInstance({
     };
   }, [
     container,
+    minColsRef,
     onInitError,
     onProtocolResponseRef,
     onReadyRef,
@@ -328,7 +339,7 @@ function TerminalInstance({
 
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
   function TerminalView(
-    { onSizeChange, onReady, onProtocolResponse },
+    { onSizeChange, onReady, onProtocolResponse, minCols = MIN_TERMINAL_COLS },
     forwardedRef,
   ) {
     const terminalRef = useRef<WTerm | null>(null);
@@ -337,6 +348,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     const onSizeChangeRef = useRef(onSizeChange);
     const onReadyRef = useRef(onReady);
     const onProtocolResponseRef = useRef(onProtocolResponse);
+    const minColsRef = useRef(minCols);
     const [container, setContainer] = useState<HTMLDivElement | null>(null);
     const scrollElementRef = useRef<HTMLElement | null>(null);
     const [scrollGeneration, setScrollGeneration] = useState(0);
@@ -351,7 +363,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       onSizeChangeRef.current = onSizeChange;
       onReadyRef.current = onReady;
       onProtocolResponseRef.current = onProtocolResponse;
-    }, [onProtocolResponse, onReady, onSizeChange]);
+      minColsRef.current = minCols;
+    }, [minCols, onProtocolResponse, onReady, onSizeChange]);
 
     const captureContainer = useCallback((node: HTMLDivElement | null) => {
       setContainer(node);
@@ -499,6 +512,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
               onSizeChangeRef={onSizeChangeRef}
               onReadyRef={onReadyRef}
               onProtocolResponseRef={onProtocolResponseRef}
+              minColsRef={minColsRef}
               onInitError={handleInitError}
             />
           ) : null}

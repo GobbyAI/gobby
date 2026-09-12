@@ -252,6 +252,12 @@
   }
 }
 
+/* Emulated coarse pointer (tier preview, see the pointer-coarse variant in
+   tailwind-theme.css). */
+:root[data-pointer="coarse"] {
+  --control-row-height: 2.75rem;
+}
+
 /* Compact display density (client-only; see useSettings Density). Tightens the
    global control and list-row heights on fine pointers only — touch pointers
    keep the 44px floor from the coarse override above, so density never shrinks

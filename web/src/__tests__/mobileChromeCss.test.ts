@@ -495,7 +495,8 @@ describe("mobile chrome CSS", () => {
       expectNoClassToken(appSource, hook);
     }
 
-    expectStringAttribute(themeToggleSource, "size", "icon");
+    // The collapsed 28px glyph token shared with the header cog and logout.
+    expectStringAttribute(themeToggleSource, "size", "icon-sm");
     expectClassToken(themeToggleSource, "shrink-0");
     expectNoClassToken(themeToggleSource, "pointer-coarse:min-w-11");
     expect(themeToggleSource).toContain("coarseHitAreaCls");
