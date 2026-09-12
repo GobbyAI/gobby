@@ -44,11 +44,22 @@ class PromptDetector:
     This handles interactive prompts that block agent startup or execution.
     """
 
-    # Key sequence to send: Enter to accept "Trust Folder" (option 1).
-    # Do NOT use "2\n" (Trust parent Folder) — that would trust the
-    # parent directory, granting access to sibling clone directories
-    # when multiple dev pipelines run in parallel.
-    TRUST_DISMISS_KEYS = "\n"
+    # Selection-list dialogs mark the highlighted row, and the highlighted row is
+    # not always the affirmative one: Claude Code's workspace trust dialog opens on
+    # "No, exit". Confirming the default there quits the agent instead of dismissing
+    # the prompt, so the affirmative row has to be selected before Enter. A row that
+    # trusts the PARENT directory is never that row — it would grant access to
+    # sibling clone directories when several dev pipelines run in parallel.
+    SELECTION_MARKERS = "\u276f\u203a\u25b6\u25cf\u2022"
+    TRUST_OPTION_SCAN_LINES = 40
+    MAX_SELECTION_OPTIONS = 8
+    MAX_OPTION_LABEL_CHARS = 100
+    AFFIRMATIVE_TRUST_PATTERN = re.compile(r"(?i)\b(?:yes|trust|proceed|accept)\b")
+    DECLINE_TRUST_PATTERN = re.compile(r"(?i)\b(?:no|exit|quit|cancel|don'?t|never)\b")
+    PARENT_TRUST_PATTERN = re.compile(r"(?i)\bparent\b")
+    DOWN_KEY = "down"
+    UP_KEY = "up"
+    ENTER_KEY_NAME = "enter"
 
     # Key sequence to dismiss loop detection: "yes, continue"
     LOOP_DISMISS_KEYS = "y\n"
@@ -96,6 +107,71 @@ class PromptDetector:
     def detect_trust_prompt(self, pane_output: str) -> bool:
         """Return True if pane output contains a folder trust prompt."""
         return self._matches("trust_prompt", pane_output)
+
+    def trust_dismiss_keys(self, pane_output: str) -> tuple[str, ...]:
+        """Return the key sequence that answers a visible trust prompt affirmatively.
+
+        Falls back to a bare Enter whenever the pane shows no navigable selection
+        list, which is what every prompt that documents Enter as acceptance needs.
+        """
+        labels, selected = self._selection_options(pane_output)
+        if selected is None:
+            return (self.ENTER_KEY_NAME,)
+        target = self._affirmative_option(labels)
+        if target is None or target == selected:
+            return (self.ENTER_KEY_NAME,)
+        step = self.DOWN_KEY if target > selected else self.UP_KEY
+        return (step,) * abs(target - selected) + (self.ENTER_KEY_NAME,)
+
+    def _affirmative_option(self, labels: list[str]) -> int | None:
+        """Return the index of the row that grants trust, or None when ambiguous."""
+        for index, label in enumerate(labels):
+            if self.DECLINE_TRUST_PATTERN.search(label):
+                continue
+            if self.PARENT_TRUST_PATTERN.search(label):
+                continue
+            if self.AFFIRMATIVE_TRUST_PATTERN.search(label):
+                return index
+        return None
+
+    def _selection_options(self, excerpt: str) -> tuple[list[str], int | None]:
+        """Return the marked selection block's labels and the selected row index.
+
+        The block is the run of non-blank lines around the marked row, which is how
+        these dialogs separate their options from the surrounding explanation. The
+        scan reads a wider tail than ``_prompt_excerpt`` keeps, because a dialog
+        whose rows fall outside the window would otherwise answer with the bare
+        Enter that quits the agent.
+        """
+        lines = excerpt.splitlines()[-self.TRUST_OPTION_SCAN_LINES :]
+        marked = next(
+            (index for index, line in enumerate(lines) if self._is_selected_option(line)),
+            None,
+        )
+        if marked is None:
+            return ([], None)
+        start = marked
+        while start > 0 and lines[start - 1].strip():
+            start -= 1
+        end = marked
+        while end + 1 < len(lines) and lines[end + 1].strip():
+            end += 1
+        labels = [self._option_label(line) for line in lines[start : end + 1]]
+        if len(labels) > self.MAX_SELECTION_OPTIONS:
+            return ([], None)
+        if any(not label or len(label) > self.MAX_OPTION_LABEL_CHARS for label in labels):
+            return ([], None)
+        return (labels, marked - start)
+
+    def _is_selected_option(self, line: str) -> bool:
+        stripped = line.strip(" \u2502\u256d\u256e\u2570\u256f\u2500")
+        return bool(stripped) and stripped[0] in self.SELECTION_MARKERS
+
+    def _option_label(self, line: str) -> str:
+        label = line.strip(" \u2502\u256d\u256e\u2570\u256f\u2500")
+        if label and label[0] in self.SELECTION_MARKERS:
+            label = label[1:]
+        return label.strip()
 
     def detect_loop_prompt(self, pane_output: str) -> bool:
         """Return True if pane output contains a loop detection prompt."""

@@ -20,6 +20,73 @@ def make_detector() -> PromptDetector:
 pytestmark = pytest.mark.unit
 
 
+WORKSPACE_TRUST_PANE = (
+    "\u2500" * 80 + "\n"
+    " Accessing workspace:\n"
+    "\n"
+    " /private/tmp/gobby-ap-hsat03zs/gobby/ask/run/scratch/investigator-0\n"
+    "\n"
+    " Quick safety check: Is this a project you created or one you trust?\n"
+    "\n"
+    " Security guide\n"
+    "\n"
+    " \u276f No, exit\n"
+    "   Yes, I trust this folder\n"
+    "\n"
+    " Enter to confirm \u00b7 Esc to cancel\n"
+)
+
+
+class TestTrustDismissKeys:
+    """Tests for the key sequence that answers a trust prompt affirmatively."""
+
+    def test_navigates_to_the_affirmative_row_when_decline_is_selected(self) -> None:
+        """Claude's workspace dialog opens on "No, exit", so Enter alone quits."""
+        detector = make_detector()
+
+        assert detector.trust_dismiss_keys(WORKSPACE_TRUST_PANE) == ("down", "enter")
+
+    def test_confirms_directly_when_the_affirmative_row_is_selected(self) -> None:
+        """A dialog already sitting on the trust row only needs Enter."""
+        detector = make_detector()
+        output = " \u276f Yes, I trust this folder\n   No, exit\n"
+
+        assert detector.trust_dismiss_keys(output) == ("enter",)
+
+    def test_moves_up_when_the_affirmative_row_is_above_the_selection(self) -> None:
+        """Selection can start below the trust row."""
+        detector = make_detector()
+        output = "   Yes, I trust this folder\n \u276f No, exit\n"
+
+        assert detector.trust_dismiss_keys(output) == ("up", "enter")
+
+    def test_skips_a_parent_folder_row(self) -> None:
+        """Trusting the parent would expose sibling workspaces."""
+        detector = make_detector()
+        output = " \u276f No, exit\n   Yes, trust parent folder\n   Yes, I trust this folder\n"
+
+        assert detector.trust_dismiss_keys(output) == ("down", "down", "enter")
+
+    def test_falls_back_to_enter_without_a_selection_marker(self) -> None:
+        """Enumerated dialogs documenting Enter as acceptance keep working."""
+        detector = make_detector()
+        output = (
+            "Do you trust the files in this folder?\n"
+            "1. Trust Folder\n"
+            "2. Trust parent Folder\n"
+            "3. Don't Trust\n"
+        )
+
+        assert detector.trust_dismiss_keys(output) == ("enter",)
+
+    def test_falls_back_to_enter_when_no_row_grants_trust(self) -> None:
+        """An unrecognized option list must not be navigated blindly."""
+        detector = make_detector()
+        output = " \u276f Review the folder\n   Open the security guide\n"
+
+        assert detector.trust_dismiss_keys(output) == ("enter",)
+
+
 class TestDetectTrustPrompt:
     """Tests for trust prompt pattern matching."""
 

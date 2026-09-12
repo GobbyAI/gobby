@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.loop_tracker import LoopTracker
@@ -92,19 +92,31 @@ class TerminalPromptMonitor:
         return None if snapshot is None else snapshot.text
 
     async def _send_enter(self, run: AgentRun, action_key: str) -> bool:
+        return await self._send_keys(run, action_key, ("enter",))
+
+    async def _send_keys(self, run: AgentRun, action_key: str, keys: Sequence[str]) -> bool:
+        """Deliver one key sequence, reporting success only when every key lands.
+
+        Navigation keys carry their own action key so a retried sequence is not
+        collapsed into the write that already moved the selection.
+        """
         from gobby.terminals.runtime import Delivered, IndeterminateWrite
 
         if self._terminal_services is None:
             return False
-        outcome = await self._terminal_services.write(
-            run,
-            action_key=action_key,
-            kind="key",
-            payload="enter",
-        )
-        if isinstance(outcome, IndeterminateWrite) or outcome is None:
-            return False
-        return isinstance(outcome, Delivered)
+        single = len(keys) == 1
+        for index, key in enumerate(keys):
+            outcome = await self._terminal_services.write(
+                run,
+                action_key=action_key if single else f"{action_key}:{index}",
+                kind="key",
+                payload=key,
+            )
+            if isinstance(outcome, IndeterminateWrite) or outcome is None:
+                return False
+            if not isinstance(outcome, Delivered):
+                return False
+        return True
 
     def mark_enter_sent(self, run_id: str) -> None:
         """Record that this run just received an automatic terminal keypress."""
@@ -128,14 +140,16 @@ class TerminalPromptMonitor:
             try:
                 pane_output = await self._pane_text(run, lines=15)
                 if pane_output and detector.detect_trust_prompt(pane_output):
-                    sent = await self._send_enter(run, f"trust-dismiss:{run.id}")
+                    keys = detector.trust_dismiss_keys(pane_output)
+                    sent = await self._send_keys(run, f"trust-dismiss:{run.id}", keys)
                     if sent:
                         self.mark_enter_sent(run.id)
                         detector.mark_dismissed(run.id)
                         await self._notify_prompt_injected(run)
                         logger.info(
-                            "Auto-dismissed trust prompt for agent %s (trust folder)",
+                            "Auto-dismissed trust prompt for agent %s (trust folder) with %s",
                             run.id,
+                            "+".join(keys),
                         )
                         handled += 1
             except Exception as e:

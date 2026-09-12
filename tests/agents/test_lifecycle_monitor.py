@@ -2844,6 +2844,42 @@ class TestCheckTrustPrompts:
         assert _runtime_of(monitor).write_log == [("key", "enter")]
 
     @pytest.mark.asyncio
+    async def test_selects_the_trust_row_before_confirming(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        """Claude's workspace dialog opens on "No, exit", which Enter alone confirms."""
+        _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id=_rid("run-workspace-trust"),
+            terminal_id="gobby-workspace-trust",
+        )
+
+        trust_output = (
+            " Accessing workspace:\n"
+            "\n"
+            " /private/tmp/gobby-ap-hsat03zs/gobby/ask/run/scratch/investigator-0\n"
+            "\n"
+            " Quick safety check: Is this a project you created or one you trust?\n"
+            "\n"
+            " \u276f No, exit\n"
+            "   Yes, I trust this folder\n"
+            "\n"
+            " Enter to confirm \u00b7 Esc to cancel\n"
+        )
+
+        with (
+            _pane_text(monitor, trust_output),
+        ):
+            handled = await monitor.check_trust_prompts()
+
+        assert handled == 1
+        assert _runtime_of(monitor).write_log == [("key", "down"), ("key", "enter")]
+
+    @pytest.mark.asyncio
     async def test_no_action_on_normal_output(
         self,
         monitor: AgentLifecycleMonitor,
