@@ -43,7 +43,7 @@ fn collect_until<F: FnMut(&ServerMessage) -> bool>(
     let mut out = Vec::new();
     while std::time::Instant::now() < deadline {
         let remain = deadline.saturating_duration_since(std::time::Instant::now());
-        match read_msg_timeout(stream, remain.min(Duration::from_millis(200))) {
+        match read_msg_timeout(stream, remain) {
             Some(msg) => {
                 let done = pred(&msg);
                 out.push(msg);
@@ -51,7 +51,7 @@ fn collect_until<F: FnMut(&ServerMessage) -> bool>(
                     break;
                 }
             }
-            None => continue,
+            None => break,
         }
     }
     out

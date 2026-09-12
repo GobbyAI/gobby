@@ -4,7 +4,7 @@ use std::io::{self, Cursor};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::embed::{self, AttachOutcome};
@@ -16,10 +16,15 @@ use crate::protocol::{
 };
 
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
-    let (mut reader, mut writer) = stream.into_split();
-    let hello = match read_frame::<ClientMessage>(&mut reader).await {
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let mut read_buffer = Vec::new();
+    let hello = match read_frame::<ClientMessage>(&mut reader, &mut read_buffer).await {
         Ok(msg) => msg,
-        Err(_) => return,
+        Err(error) => {
+            tracing::debug!(%error, "frame connection closed while reading hello");
+            return;
+        }
     };
     let ClientMessage::Hello {
         version,
@@ -95,10 +100,13 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let mut out_rx: Option<tokio::sync::mpsc::Receiver<ServerMessage>> = None;
     loop {
         tokio::select! {
-            incoming = read_frame::<ClientMessage>(&mut reader) => {
+            incoming = read_frame::<ClientMessage>(&mut reader, &mut read_buffer) => {
                 let msg = match incoming {
                     Ok(msg) => msg,
-                    Err(_) => break,
+                    Err(error) => {
+                        tracing::debug!(%error, "frame connection read failed");
+                        break;
+                    }
                 };
                 if msg.is_legacy_unknown() {
                     let _ = write_frame(
@@ -207,9 +215,11 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
             }
             outgoing = recv_opt(&mut out_rx) => {
                 let Some(msg) = outgoing else {
+                    tracing::debug!("frame connection sender closed");
                     break;
                 };
-                if write_frame(&mut writer, &msg).await.is_err() {
+                if let Err(error) = write_frame(&mut writer, &msg).await {
+                    tracing::debug!(%error, "frame connection write failed");
                     break;
                 }
             }
@@ -229,11 +239,34 @@ async fn recv_opt(
     }
 }
 
+async fn fill_frame_buffer(
+    reader: &mut (impl AsyncBufRead + Unpin),
+    buffer: &mut Vec<u8>,
+    target_len: usize,
+) -> io::Result<()> {
+    while buffer.len() < target_len {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "frame connection closed mid-message",
+            ));
+        }
+        let take = available.len().min(target_len - buffer.len());
+        buffer.extend_from_slice(&available[..take]);
+        reader.consume(take);
+    }
+    Ok(())
+}
+
 async fn read_frame<M: for<'de> serde::Deserialize<'de>>(
-    reader: &mut tokio::net::unix::OwnedReadHalf,
+    reader: &mut (impl AsyncBufRead + Unpin),
+    buffer: &mut Vec<u8>,
 ) -> io::Result<M> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await?;
+    fill_frame_buffer(reader, buffer, 4).await?;
+    let len_buf: [u8; 4] = buffer[..4]
+        .try_into()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid frame prefix"))?;
     let len = u32::from_le_bytes(len_buf) as usize;
     if len > MAX_FRAME_SIZE {
         return Err(io::Error::new(
@@ -244,11 +277,9 @@ async fn read_frame<M: for<'de> serde::Deserialize<'de>>(
             },
         ));
     }
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload).await?;
-    let mut framed = Vec::with_capacity(4 + len);
-    framed.extend_from_slice(&len_buf);
-    framed.extend_from_slice(&payload);
+    let frame_len = 4 + len;
+    fill_frame_buffer(reader, buffer, frame_len).await?;
+    let framed = buffer.drain(..frame_len).collect::<Vec<_>>();
     read_message(&mut Cursor::new(framed), MAX_FRAME_SIZE)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
@@ -271,4 +302,40 @@ fn _protocol_version() -> u32 {
 #[allow(dead_code)]
 fn _duration() -> Duration {
     Duration::from_millis(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_frame_read_preserves_partial_prefix() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let mut reader = BufReader::new(reader);
+        let mut buffer = Vec::new();
+        let mut framed = Vec::new();
+        write_message(&mut framed, &ClientMessage::Detach).expect("encode frame");
+
+        writer
+            .write_all(&framed[..2])
+            .await
+            .expect("write partial prefix");
+        assert!(tokio::time::timeout(
+            Duration::from_millis(10),
+            read_frame::<ClientMessage>(&mut reader, &mut buffer),
+        )
+        .await
+        .is_err());
+
+        writer
+            .write_all(&framed[2..])
+            .await
+            .expect("write remaining frame");
+        assert!(matches!(
+            read_frame::<ClientMessage>(&mut reader, &mut buffer)
+                .await
+                .expect("decode frame after cancellation"),
+            ClientMessage::Detach
+        ));
+    }
 }
