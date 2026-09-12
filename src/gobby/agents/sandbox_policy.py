@@ -538,6 +538,26 @@ def managed_execution_root() -> Path:
     return get_gobby_home() / "runtime" / "managed-executions"
 
 
+def managed_grant_lock_path(env: Mapping[str, str]) -> Path | None:
+    """Return the lock file gcode takes beside a managed run's grant, if any.
+
+    ``grant_lock_path`` in gcore appends ``.lock`` to the grant path, so the lock
+    lands in the managed-execution run root next to ``grant.json`` itself. Only
+    the root's four siblings are writable, so without this grant the refresh dies
+    with EPERM rather than waiting: both lock call sites in
+    ``crates/gcore/src/grant/acquisition.rs`` propagate an IO error instead of
+    reading it as "lock unavailable". Granting the one lock path keeps
+    ``grant.json`` and ``bootstrap.json`` out of the agent's reach.
+    """
+    bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+    if not bootstrap:
+        return None
+    path = Path(bootstrap).resolve(strict=False)
+    if not path.parent.is_relative_to(managed_execution_root().resolve(strict=False)):
+        return None
+    return path.with_name(f"{path.name}.lock")
+
+
 def pre_commit_store_spare_paths(managed_root: Path | None = None) -> tuple[Path, Path]:
     """Return the complete and in-progress spare-store paths."""
     root = managed_execution_root() if managed_root is None else managed_root

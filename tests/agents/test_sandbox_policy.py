@@ -454,3 +454,58 @@ def test_ghostty_dependency_host_grant() -> None:
     assert control_host not in enabled_domains
     assert ghostty_host not in disabled_domains
     assert control_host not in disabled_domains
+
+
+def test_managed_grant_lock_path_names_the_lock_beside_the_run_grant(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """gcode takes `<grant>.lock`, and that file lands in the read-only run root.
+
+    Only the run root's four siblings are writable, so the lock needs its own
+    grant. Both lock call sites in crates/gcore/src/grant/acquisition.rs
+    propagate an IO error rather than reading it as "lock unavailable", so an
+    ungranted lock fails the refresh with EPERM instead of making it wait.
+    """
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    run_root = sandbox_policy.managed_execution_root() / "1c9d0c7e"
+    run_root.mkdir(parents=True)
+
+    lock = sandbox_policy.managed_grant_lock_path(
+        {"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(run_root / "grant.json")}
+    )
+
+    assert lock == run_root / "grant.json.lock"
+    # The root itself stays ungranted: it also holds grant.json and bootstrap.json.
+    assert lock is not None
+    assert lock.parent == run_root
+
+
+def test_managed_grant_lock_path_is_absent_without_a_managed_bootstrap() -> None:
+    """An unmanaged run has no grant file, so there is no lock to grant."""
+    assert sandbox_policy.managed_grant_lock_path({}) is None
+    assert sandbox_policy.managed_grant_lock_path({"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": ""}) is None
+
+
+def test_managed_grant_lock_path_refuses_a_bootstrap_outside_the_managed_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The environment is attacker-adjacent, so the grant never leaves the root.
+
+    `prepare_sandbox_run_paths` already ignores a bootstrap that does not live
+    under the managed-execution root; the write grant must agree, or a forged
+    variable would open an arbitrary path for writing.
+    """
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    assert (
+        sandbox_policy.managed_grant_lock_path(
+            {"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(elsewhere / "grant.json")}
+        )
+        is None
+    )
