@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.3.1"
+version: "1.3.2"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -47,6 +47,11 @@ or move work out of it just to satisfy a stop hook, context limit, or handoff
 pressure. If the goal is not complete, keep the coordination epic claimed and
 continue, compact the session, or ask the user to explicitly cancel or pause the
 goal.
+
+Each session may hold one open claim. Keep the coordination epic
+claimed; separate worker sessions claim, implement,
+validate, commit, and close its child bugs. The coordinator diagnoses, scopes,
+assigns, and verifies that work without claiming or editing for a child bug.
 
 ## Startup
 
@@ -98,12 +103,12 @@ loop order is:
    build history, and workspace health.
 2. Check the coordination epic's child tasks for open build bugs, claims,
    escalations, and validation failures.
-3. Work the highest-priority actionable coordination bug yourself, or coordinate
-   the owning session when a child bug is already claimed.
+3. Assign the highest-priority actionable coordination bug to a separate worker
+   session that claims it, or coordinate its existing owner when already claimed.
 4. Resume or launch build automation only after known blocking bugs for the
    immediate dispatch path are fixed or explicitly documented as non-blocking.
 5. Use `gobby-sessions:set_handoff` with `clear_session=false` when context pressure is
-   high or when you have not compacted recently. Always compact after completing a coordination bug task
+   high or when you have not compacted recently. Always compact after verifying a worker's completed coordination bug
    before the next coordinator-loop iteration or agent wait.
 6. Use `gobby-agents:wait_for_agent` as the last idle action only when agents
    are running and no actionable work remains; subscribe once by calling it for
@@ -119,7 +124,7 @@ recording evidence that they are diagnostics or recovery for a build bug.
 
 For an unattended build-flow test, do not use the same task as both the tracking work and the automation target.
 
-- Keep a separate claimed coordinator/tracking epic for the active session; use it for blocker fixes and to prevent stopping mid-run.
+- Keep a separate claimed coordinator/tracking epic for the active session; assign blocker fixes to separate workers that claim the child bugs.
 - Create a separate build or document epic as the `gobby build #epic` target. Fix and merge blockers before starting the final automation epic.
 - Before the final launch, verify project build automation is enabled. If it is paused from prior `gobby build stop` or restart work, run `gobby build resume` once to restore daemon-owned dispatch before judging the E2E.
 - Use `--quick` only for smoke checks of one lifecycle step. For real end-to-end validation, run without `--quick`, usually with bounded concurrency such as `--max-active-agents <n>`.
@@ -174,7 +179,7 @@ the automation gap before continuing the target build.
 
 If a stop hook fires while the coordination epic is still claimed, continue the
 coordinator loop above. A claimed coordination epic means the build goal is still
-active; finish actionable child work, monitor agents, or hand off with saved
+active; assign actionable child work, coordinate its owners, or hand off with saved
 context.
 
 Do not close the coordination epic to clear a stop hook.
@@ -190,9 +195,8 @@ call `get_tool_schema(server_name="gobby-sessions", tool_name="set_handoff")`
 directly. Then call `set_handoff` with concise `current_state`, actionable
 `next_steps`, and `clear_session=false`.
 
-Pass the current Gobby session ref as the top-level `call_tool.session_id`, not
+Pass the current Gobby session ref as top-level `call_tool.session_id`, not
 inside `arguments`.
-requires attribution.
 
 In a terminal session that call comes back as a rejected or cancelled tool use
 attributed to the user. That is the daemon interrupting the turn to deliver the
@@ -214,8 +218,10 @@ File every discovered `gobby build` bug under the coordination epic. Examples:
 - missing build history or status visibility that prevents safe unattended
   operation
 
-Fix blocking bugs immediately. Fix non-blocking bugs when agents are running or
-other coordinator work is idle. All discovered unattended-build bugs must be fixed,
+Assign blocking bugs to separate workers immediately. Assign non-blocking bugs
+when capacity permits. Workers own implementation and validation under their child
+claims; the coordinator keeps its epic claim. When no coordination action remains,
+register the applicable event-driven wait and yield the turn. All discovered unattended-build bugs must be fixed,
 committed, linked, and closed before the target task or epic is closed.
 
 Product-task failures are different from build-system bugs. Let assigned agents
