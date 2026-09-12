@@ -275,11 +275,20 @@ mod tests {
 
     #[test]
     fn anchors_the_openai_key_signature_at_a_word_boundary() {
+        // Split so this file does not match its own signature and exclude itself
+        // from evidence, the same reason tests/ask/test_evidence.py splits its literal.
+        let key = format!("sk-{}", "0123456789abcdefghij");
         let cases = [
-            ("docs/evidence/ask-snapshot-preparation.md\n", false),
-            ("name: queue-task-memory-review-after-close\n", false),
-            ("const KEY: &str = \"sk-0123456789abcdefghij\";\n", true),
-            ("sk-0123456789abcdefghij\n", true),
+            (
+                "docs/evidence/ask-snapshot-preparation.md\n".to_string(),
+                false,
+            ),
+            (
+                "name: queue-task-memory-review-after-close\n".to_string(),
+                false,
+            ),
+            (format!("const KEY: &str = \"{key}\";\n"), true),
+            (format!("{key}\n"), true),
         ];
 
         for (content, expected) in cases {
