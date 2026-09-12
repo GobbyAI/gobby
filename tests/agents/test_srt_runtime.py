@@ -919,3 +919,82 @@ async def test_srt_verification_does_not_run_on_the_event_loop(
 
     assert len(verified_on) == 1
     assert verified_on[0] != threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_prepare_srt_launch_grants_write_on_the_managed_grant_lock_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A managed run may take its grant lock without gaining the run root.
+
+    gcode locks a managed grant at ``<grant>.lock``, and for a managed run that
+    path lands in the managed-execution run root beside the grant itself. Only
+    the root's four siblings are writable, so without this one grant the lock
+    create returns EPERM and both call sites in ``grant/acquisition.rs``
+    propagate the IO error instead of waiting for the lock. The root also holds
+    the grant, which is the credential the sandbox exists to keep out of the
+    agent's reach, so the grant must stay readable and unwritable.
+    """
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform="darwin"))
+    gobby_home = tmp_path / "gobby-home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    run_root = gobby_home / "runtime" / "managed-executions" / "exec-1"
+    run_root.mkdir(parents=True)
+    grant_path = run_root / "grant.json"
+    grant_path.write_text("{}", encoding="utf-8")
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    node = runtime / "node"
+    runner = runtime / "runner.mjs"
+    package_json = runtime / "package.json"
+    for path in (node, runner, package_json):
+        path.write_text("test", encoding="utf-8")
+    provider_target = tmp_path / "claude-bin" / "claude"
+    provider_target.parent.mkdir()
+    provider_target.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider_target.chmod(0o755)
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    (shim_dir / "claude").symlink_to(provider_target)
+
+    def verified_installation(**_context: str | None) -> SrtInstallation:
+        return SrtInstallation(runtime, node, runner, package_json)
+
+    async def fake_preflight(
+        launch: SandboxLaunch,
+        cwd: str,
+        env: dict[str, str],
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", verified_installation)
+    monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
+
+    launch = await prepare_sandbox_launch(
+        config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        provider="claude",
+        workspace_path=str(workspace),
+        run_id="exec-1",
+        resolver=ClaudeSandboxResolver(),
+        daemon_port=60887,
+        websocket_port=60888,
+        api_base=None,
+        env={
+            "PATH": str(shim_dir),
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
+        },
+    )
+
+    policy = json.loads(Path(launch.policy_path or "").read_text(encoding="utf-8"))
+    allowed_writes = policy["filesystem"]["allowWrite"]
+    assert str(run_root.resolve() / "grant.json.lock") in allowed_writes
+    # The lock is the whole grant: neither the credential nor the root it sits in
+    # becomes writable, which is what separates this from widening the run root.
+    assert str(grant_path.resolve()) not in allowed_writes
+    assert str(run_root.resolve()) not in allowed_writes
+    assert str(grant_path.resolve()) in policy["filesystem"]["allowRead"]
