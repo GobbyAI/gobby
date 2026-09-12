@@ -171,9 +171,10 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 9
+    assert contract["contract_version"] == 10
     assert "invalid_path_scope" in contract["error_codes"]
     assert {
+        "ask",
         "index",
         "evidence",
         "search",
@@ -211,6 +212,29 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
         "budget_exceeded",
         "results",
     } <= _json_keys(contract, "callees")
+    # Ask is daemon-delegated, so the daemon parses this lifecycle payload and branches
+    # on these typed lifecycle failures; contract 10 is exactly that surface. The other
+    # ask_* codes are deliberately not pinned here because they never cross the
+    # delegation boundary: ask_export_io is local export IO, and invalid_ask_request,
+    # malformed_ask_response and ask_daemon_error describe the transport itself.
+    assert {
+        "run_id",
+        "status",
+        "current_stage",
+        "answer_outcome",
+        "typed_error",
+        "deadline_at",
+        "artifact_manifest",
+    } <= _json_keys(contract, "ask")
+    assert {
+        "ask_run_not_found",
+        "ask_unauthorized",
+        "ask_wait_timeout",
+        "ask_wait_disconnected",
+        "ask_cancelled",
+        "ask_failed",
+        "ask_daemon_unavailable",
+    } <= set(contract["error_codes"])
     assert "codewiki" not in commands
     assert "--project" in _flag_names(contract["global_flags"])
     assert {"project_id", "results"} <= _json_keys(contract, "search")
