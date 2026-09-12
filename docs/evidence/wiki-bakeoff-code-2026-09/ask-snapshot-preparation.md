@@ -1238,13 +1238,290 @@ no cleanup errors. The runtime root was removed and schema
 `gobby_test_askprobe_3d2c37a00cbf41c5a8eda274a7fa69e0` was dropped, so nothing
 from this attempt is retained beyond the probe record itself.
 
+## Attempt 25: recording attempt 24 rejected the seed
+
+Attempt 24 was rejected by the test database's tmpfs, so attempt 25 required
+freeing it first. The three retained probe schemas were the volume: 1.8 GB of a
+3.0 GB filesystem that `df` showed at 2.3 GB used with 799 MB free, against the
+roughly 600 MB a fresh run needs for its own index.
+
+Dropping them was made reversible rather than accepted as a loss. Each schema is
+overwhelmingly a derived artifact: of attempt 23's 597 MB, 576 MB is `code_*` —
+`code_calls` 350 MB over 475,939 rows, `code_symbols` 99 MB over 125,014,
+`code_content_chunks` 96 MB over 30,419 and `code_imports` 19 MB over 43,289 —
+and the probe run itself is a single `pipeline_executions` row. The findings
+those runs produced live outside the database, in each attempt's immutable
+`raw-probe.json`, in attempt 23's retained runtime root on the host volume, and
+in this document.
+
+All three were dumped to the host before anything was dropped, streamed through
+`docker exec` stdout so nothing was written back onto the exhausted tmpfs:
+
+```sh
+docker exec gobby-postgres-test-1 pg_dump -U gobby_test -d gobby_test \
+  -n <schema> -n <schema>_agent_auth | gzip > <dest>/attempt<N>-<id>.sql.gz
+```
+
+Each dump carries the probe schema and its `_agent_auth` sibling, and each was
+verified against the live tables before the drop rather than after:
+
+| attempt | schema | dump | `code_calls` | `code_symbols` |
+| --- | --- | --- | --- | --- |
+| 19 | `122d8ebb…` | 44 MB | 474,758 | 124,781 |
+| 22 | `fd875d56…` | 44 MB | 475,856 | 124,999 |
+| 23 | `a1da5505…` | 45 MB | 475,939 | 125,014 |
+
+Every count matched the live schema exactly, and each archive passed `gzip -t`
+and declares both `CREATE SCHEMA` statements. SHA-256, under
+`~/.gobby/backups/d45545c5-ded5-4335-b115-0245752edacf/ask-probe-schemas/`:
+
+- attempt 19 `a031e1c67669cb3d5e7211d82307384a8772280a250e4c709e83d27bacf420e5`
+- attempt 22 `6ca52b23fde6b3dc0b0617295bb958e8d6d8d8af990b74981358584feeab4619`
+- attempt 23 `f0e49fbbaba801701d196126255fe6491e0220d6a05aa9e89ece23d0bbd17e7e`
+
+Attempts 19 and 22 were then dropped with their `_agent_auth` siblings, on the
+user's explicit instruction, and attempt 23 was left live as the most recent
+retained state. Free space went from 799 MB to 2.2 GB, which admits attempt 25's
+index and one retry.
+
+Attempt 25 ran against source `92afbbe0c0`. That commit is byte-identical to
+`40c0287769` under `src/` and `crates/` — the four commits between them touch
+only documentation and tests — so the `.ask-probe-b92c5542` pin still applies
+and this is the first run carrying all three fixes at once: the digest
+normalizer, the gterm frame credential from `b92c554220`, and the trust-row
+selection from `40c0287769`.
+
+```sh
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src \
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test \
+GOBBY_TEST_PROTECT=1 \
+GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/.ask-probe-b92c5542 \
+uv run --no-sync python tests/ask/native_probe_harness.py contained-drive \
+  --project-root /Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask \
+  --output-dir /tmp/gobby-ask-native-probe-12858-twentyfifth --timeout-seconds 1500
+```
+
+Preparation passed. `prepare` ran `11:14:53` to `11:20:20` UTC and completed;
+the private index built without the disk error that stopped attempt 24. The
+run then failed at the next step, eleven seconds later:
+
+```
+MCP step seed failed: gobby-ask:seed returned error:
+invalid gcode evidence response: response contains credential-bearing content
+```
+
+Zero agent runs and zero receipts: nothing launched, so attempt 25 carries no
+evidence about the trust-dialog fix either. Execution
+`046e24b2-fb53-4892-a422-84b4e5622a9d`; immutable `raw-probe.json` SHA-256 is
+`08810e7b7417dec4c6d81b97fad78b36ad118dd08c46f6204eea9e10fb7842c6`,
+`complete=true`, no capture errors and no cleanup errors. The runtime root was
+removed and schema `gobby_test_askprobe_b47d1c4145ab435490dd34eead808564` was
+dropped.
+
+### The cause, and why it is this document's fault
+
+This is the same admission guard that rejected attempt 13, but not the same
+defect and not the same surface. `_KNOWN_CREDENTIALS` in
+`src/gobby/ask/evidence.py` carried
+
+```
+sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}
+```
+
+with no left word boundary, alone among the five signatures in that tuple. It
+therefore matched inside any sufficiently long word containing `sk-`, which in
+this repository means every `ask-` and `task-` slug of fifteen characters or
+more: `ask-snapshot-preparation` yields `sk-snapshot-preparation`, and
+`queue-task-memory-review-after-close` yields
+`sk-memory-review-after-close`. Over the tracked files at `ed9d7c5031` the
+unanchored form matches 849 times in 97 files where the anchored one matches 10
+times in 8; all 10 are standalone key-shaped literals in test fixtures, which is
+what the signature is for, and all 839 of the difference are false positives.
+
+The surface that fired is the snapshot binding, which every gcode evidence
+response echoes. Its `commit.changed_paths` entries carry the fields `old_path`
+and `new_path`, and `_contains_credential` skips only keys literally named
+`path` and `paths`, so those two are walked as response content under the
+strict, non-source-reference rule. Attempt 25 pinned `92afbbe0c0`, whose single
+changed path is
+`docs/evidence/wiki-bakeoff-code-2026-09/ask-snapshot-preparation.md` — this
+file. **Recording attempt 24 here is what rejected attempt 25.** Attempts 22
+and 23 passed seed only because their pinned commits happened to touch no such
+path, which is a property of the commit, not of the corpus or of the guard.
+
+The first diagnosis was wrong and is recorded here because the correction is
+the useful part. Simulating the two seed lanes against the live index flagged
+three excerpts, which looked like the answer; all three were already excluded
+by the Rust checker at inventory time and could never have reached the Python
+one. Fetching the real inventory instead, and running the Python classifier
+over all 8,050 eligible blobs at `92afbbe0c0`, flagged nothing — which proved
+the excerpt surface innocent and left the binding as the only response content
+remaining.
+
+The same signature exists twice, deliberately: `contains_known_credential` in
+`crates/gcode/src/index/security.rs` decides `ExclusionReason::SensitiveContent`
+at blob granularity, and the two texts were identical. That parity was
+confirmed empirically, zero disagreements over all 8,050 eligible blobs, which
+is what made the Python-side test conclusive for both. The Rust side is the
+larger consequence: it drops whole blobs from the snapshot inventory and
+`search` retains only items whose path is eligible, so a false exclusion
+shrinks the evidence corpus silently, with no error anywhere. 54 of the 276
+`sensitive_content` exclusions were false, among them
+`src/gobby/ask/stage_runtime.py` and `tests/ask/native_probe_harness.py` —
+Ask could not cite its own implementation.
+
+`3c623f9b99` anchors both, with regression cases pinning the real binding
+shape rather than a synthetic string, and `ed9d7c5031` splits the new Rust
+fixture literal so that file stops matching its own signature, following the
+convention `tests/ask/test_evidence.py` already used. After the fix the
+attempt-25 binding and both seed requests are admitted, the URI-password and
+real key shapes are still rejected, and the inventory goes from 8,050 eligible
+with 276 sensitive exclusions to 8,104 with 222.
+
+The unanchored signature arrived in `7946f7bb18`, whose validation was a parity
+scan over the 262 blobs the *previous* checker had rejected. That design can
+only find newly admitted blobs; it is structurally blind to newly rejected ones,
+which is exactly the direction a pattern added by the same commit fails in.
+
+The `old_path`/`new_path` asymmetry against the skipped `path` key was left
+alone. It stops being load-bearing once the signature is anchored, and whether
+repository paths should be scanned as response content at all is a separate
+decision from this defect; a regression case now pins that surface so a future
+change to it is deliberate.
+
+## Attempt 26: the launch succeeds, and the trust dialog is answered "No, exit"
+
+Attempt 26 ran from the same session with output directory
+`/tmp/gobby-ask-native-probe-12858-twentysixth`, starting `06:50` and failing
+at `06:56` local time, against source `ed9d7c5031` and a new pin
+`.ask-probe-ed9d7c50` holding the rebuilt `gcode`
+(`40aeb1431f207c7ee88247412e36e6f45b5e9583418551051e0903ac7621ec0c`) and the
+unchanged `gterm`
+(`b7ad098377451219b6b12f07bae8caa569a9f81163b8d2cab501a2e4e0b48ac2`). The
+rebuild carries the anchored credential signature; `gcode`'s CLI contract is
+byte-identical to `tests/contracts/gcode.contract.json`, still version 10 with
+45 commands and 41 error codes.
+
+It is the first attempt to get past the seed, and the first to launch at all.
+Three steps, two of them new ground:
+
+| step | window (UTC) | outcome |
+| --- | --- | --- |
+| `prepare` | `11:50:10` – `11:55:24` | completed |
+| `seed` | `11:55:24` – `11:55:53` | completed |
+| `investigate` | `11:55:53` – `11:56:46` | failed |
+
+```
+MCP step investigate failed: gobby-ask:spawn returned error:
+Ask agent ended as error without a valid submission
+```
+
+### What attempt 26 proves
+
+**The credential anchor holds.** `seed` completed in 29 seconds against the
+same corpus and the same binding shape that rejected attempt 25 — and against
+a pinned commit whose one changed path is `crates/gcode/src/index/security.rs`,
+the file carrying the signature itself.
+
+**The digest normalizer holds, in a completed launch.** Attempt 22's evidence
+for `16be058101` was negative — the absence of "Ask SRT policy semantics
+changed after validation" — and its launch policy was gone before the harness
+could copy it. Attempt 26 supplies the positive half. The launch receipt records
+`launch_complete: true` and `launch_error: null`, and the captured launch
+policy (SHA-256
+`625a4088d1e1a8801bff97a5c277d7b974dbb4b817d498da674d3498aee1d28a`) carries
+
+```
+filesystem.allowRead   /private/tmp/gobby-ap-ne0hsfgx/gobby/gcode-runtime/138d19e7f5c2963c
+filesystem.allowWrite  /private/tmp/gobby-ap-ne0hsfgx/gobby/gcode-runtime/138d19e7f5c2963c
+```
+
+— the workspace-keyed runtime home that is the whole of the defect. It is
+present, it is relabelled rather than hashed verbatim, and
+`AskRuntimeProfile.validate_launch` admitted it. Attempts 1–17 and 19 all died
+on that entry.
+
+The agent then reached its own workspace, which is where it stopped. `PID 28472
+no longer matches agent identity`, with the pane holding
+
+```
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+```
+
+and the daemon logging, thirty seconds before the health check found the
+process gone:
+
+```
+Auto-dismissed trust prompt for agent b78eb46a-472f-4a48-92bd-baa047f3b66d
+(trust folder) with enter
+```
+
+### Why the trust fix did not fire
+
+`40c0287769` taught the monitor to select the row that grants trust before
+confirming, and its tests pass. The monitor still answered with a bare Enter,
+because `with enter` is what the log records: `trust_dismiss_keys` took its
+"no navigable selection list" fallback.
+
+The pane is why. `_selection_options` locates the selected row by testing
+whether a line's first visible character is a selection marker, and pane
+snapshots are not visible text — the tmux runtime captures with `-e`
+specifically to preserve SGR, and the native host's `mode="text"` snapshot is
+`recent_unwrapped_ansi`. The highlighted row arrives as
+
+```
+ \x1b[0m\x1b[38;5;153m❯ No, exit\x1b[0m
+```
+
+so after the box-drawing and padding are stripped the first character is ESC,
+no marker is found anywhere in the block, and the fallback Enter confirms the
+row the dialog opens on. Every fixture in
+`tests/agents/test_prompt_detector.py` was written as visible text, which is
+exactly why 279 passing tests did not catch it.
+
+`ecde9874e1` strips the escape sequences before the block is read, the way four
+other pane readers in this repository already do, and pins the real pane from
+this attempt as a fixture; it fails on the unpatched reader with
+`('enter',) != ('down', 'enter')`.
+
+### Retained state
+
+Immutable `raw-probe.json` SHA-256 is
+`2292d3beab9a42567c2e0810236a021c3e0c6d9124fa060169924e203f028723`. Unlike
+every previous attempt it is `complete=false`: zero receipts and three excluded
+(`provider-transcript-and-mcp-responses`, `srt-policy`, `srt-violations`, all
+`agent-session-launch-identity-mismatch`), because the agent process was gone
+before its receipts could be bound to a live identity. The incomplete export is
+what made cleanup retain rather than reap, so runtime root
+`/private/tmp/gobby-ap-ne0hsfgx` and schema
+`gobby_test_askprobe_46a901259c8247598323c0846b1e9b23` both survive, carrying
+the launch receipt, the launch policy and the pane capture quoted above. Three
+cleanup errors record the same fact: owned-process liveness unknown, not every
+owned process verified dead, export incomplete.
+
+This retention costs the next attempt its working room again — the test
+database's tmpfs is back to 675 MB free against the roughly 600 MB a fresh
+index needs, the same squeeze that rejected attempt 24.
+
 Attempts 1–17 and 19 remain immutable policy failures, and 16be058101 closed
-the cause they all share. Attempts 18 and 24 are immutable environment failures
-carrying no policy evidence, the first on the host volume and the second on the
-test database's tmpfs. Attempts 20 and 21 are immutable harness and snapshot
+the cause they all share: attempt 22 proved it negatively, by the absence of
+that message, and attempt 26 positively, with a captured launch policy whose
+allowRead and allowWrite carry the workspace-keyed runtime home every one of
+those attempts died on. Attempts 18 and 24 are immutable environment failures carrying no
+policy evidence, the first on the host volume and the second on the test
+database's tmpfs. Attempts 20 and 21 are immutable harness and snapshot
 failures from the shared build directory, fixed by relocating the pin and by
-4c0f6bce05. Attempts 22, 23 and 24 each carry the previous fix forward and
-reach one step further: 22 proved the digest fix and died at the gterm frame
-credential, 23 proved the frame-credential fix and died at the trust dialog,
-and 24 never launched. Attempt 25, the first run against all three fixes, and
+4c0f6bce05. Attempts 22 through 26 each carry the previous fix forward and
+reach one step further: 22 cleared the digest and died at the gterm frame
+credential, 23 proved the frame-credential fix and died at
+the trust dialog, 24 never launched, 25 died at the seed on a credential
+signature that matched this document's own filename, and 26 passed preparation,
+passed the seed, completed the launch, and died at the trust dialog again —
+this time because the monitor was reading the highlighted row through the
+escape sequence that highlights it. Every failure observed so far has a landed
+fix, and no step before the investigator's own work is still unexplained.
+Whether it can reach a submission is what attempt 27 tests; that attempt and
 all 14 cohort questions remain unrun.
