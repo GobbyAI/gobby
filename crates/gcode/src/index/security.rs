@@ -193,7 +193,9 @@ pub fn contains_known_credential(path: &str, content: &[u8]) -> bool {
         .get_or_init(|| {
             [
                 r"(?i)[a-z][a-z0-9+.-]*://[^:/\s]+:[^@\s]+@",
-                r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}",
+                // Anchored: without the boundary this matches inside ordinary
+                // repository identifiers such as "ask-" and "task-" slugs.
+                r"\bsk-[A-Za-z0-9][A-Za-z0-9_-]{15,}",
                 r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})",
                 r"\bAKIA[0-9A-Z]{16}\b",
                 r"(?i)\bbearer\s+[A-Za-z0-9._-]{16,}",
@@ -268,8 +270,26 @@ fn glob_inner(pattern: &[char], text: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::has_secret_extension;
+    use super::{contains_known_credential, has_secret_extension};
     use std::path::Path;
+
+    #[test]
+    fn anchors_the_openai_key_signature_at_a_word_boundary() {
+        let cases = [
+            ("docs/evidence/ask-snapshot-preparation.md\n", false),
+            ("name: queue-task-memory-review-after-close\n", false),
+            ("const KEY: &str = \"sk-0123456789abcdefghij\";\n", true),
+            ("sk-0123456789abcdefghij\n", true),
+        ];
+
+        for (content, expected) in cases {
+            assert_eq!(
+                contains_known_credential("notes.md", content.as_bytes()),
+                expected,
+                "unexpected credential classification for {content:?}"
+            );
+        }
+    }
 
     #[test]
     fn classifies_secret_names_by_boundary_and_container_extension() {

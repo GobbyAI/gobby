@@ -47,7 +47,10 @@ _SENSITIVE_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
 _URI_PASSWORD = re.compile(r"([a-z][a-z0-9+.-]*://[^:/\s]+:)[^@\s]+(@)", re.IGNORECASE)
 _KNOWN_CREDENTIALS = (
     _URI_PASSWORD,
-    re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"),
+    # Anchored: without the boundary this matches inside ordinary repository
+    # identifiers such as "ask-snapshot-preparation" and
+    # "task-memory-review-after-close".
+    re.compile(r"\bsk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"),
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bbearer\s+[A-Za-z0-9._-]{16,}", re.IGNORECASE),

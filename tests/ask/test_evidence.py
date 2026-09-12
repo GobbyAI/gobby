@@ -70,10 +70,38 @@ _TEST_LITERAL_VALUE = "01234567" + "89abcdef"
             False,
         ),
         ({"excerpt": "postgresql://worker:real-secret@127.0.0.1/db"}, None, True),
+        # The snapshot binding echoes the pinned commit's changed paths, and those
+        # fields are not the skipped "path"/"paths" keys, so an ordinary repository
+        # path is classified as response content. Both spellings below embed "sk-"
+        # inside a longer word; only a real key stands alone at a word boundary.
+        (
+            {
+                "commit": {
+                    "changed_paths": [
+                        {
+                            "old_path": "docs/evidence/ask-snapshot-preparation.md",
+                            "new_path": "docs/evidence/ask-snapshot-preparation.md",
+                        }
+                    ]
+                }
+            },
+            None,
+            False,
+        ),
+        (
+            {"path": "rules/close.yaml", "excerpt": "name: queue-task-memory-review-after-close"},
+            {"rules/close.yaml": "yaml"},
+            False,
+        ),
+        (
+            {"path": "src/runtime.py", "excerpt": 'key = "sk-' + "0123456789abcdefghij" + '"'},
+            {"src/runtime.py": "python"},
+            True,
+        ),
     ],
 )
 def test_credential_classifier_matches_snapshot_source_semantics(
-    value: dict[str, str],
+    value: dict[str, object],
     source_languages: dict[str, str | None] | None,
     expected: bool,
 ) -> None:
