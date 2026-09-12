@@ -5,8 +5,8 @@ enabled: true
 priority: 20
 surfaces: [spawn]
 provider: claude
-model: fable
-reasoning_effort: high
+model: opus
+reasoning_effort: xhigh
 isolation: none
 blocked_tools:
   - Agent
