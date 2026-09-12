@@ -10,15 +10,6 @@ from pathlib import Path
 from gobby.install.manifest import build_bundled_content_manifest
 
 
-def test_bundled_content_manifest_matches_tree() -> None:
-    install_dir = Path(__file__).resolve().parents[2] / "src" / "gobby" / "install"
-    committed = json.loads(
-        (install_dir / "bundled_content_manifest.json").read_text(encoding="utf-8")
-    )
-
-    assert committed == build_bundled_content_manifest(install_dir / "shared")
-
-
 def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     source_root = tmp_path / "source"
@@ -28,6 +19,7 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     ).stdout.split(b"\0")
+    assert b"src/gobby/install/bundled_content_manifest.json" not in tracked
     for raw_relative in tracked:
         if not raw_relative:
             continue

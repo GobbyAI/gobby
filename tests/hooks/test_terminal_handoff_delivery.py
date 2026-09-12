@@ -338,7 +338,7 @@ def test_duplicate_completion_schedules_only_the_claimed_attempt(
     ]
 
 
-def test_after_tool_handler_routes_normalized_completion_to_scheduler() -> None:
+async def test_after_tool_handler_routes_normalized_completion_to_scheduler() -> None:
     session_manager = MagicMock()
     agent_run_manager = MagicMock()
     event_loop = MagicMock()
@@ -353,7 +353,7 @@ def test_after_tool_handler_routes_normalized_completion_to_scheduler() -> None:
         "gobby.hooks.event_handlers._tool.schedule_terminal_handoff_delivery",
         return_value=True,
     ) as schedule:
-        response = handlers.handle_after_tool(event)
+        response = await handlers.handle_after_tool(event)
 
     assert response.decision == "allow"
     assert schedule.call_count == 1

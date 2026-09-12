@@ -218,7 +218,7 @@ async def test_task_dirty_paths_async_treats_malformed_status_as_unavailable(
     assert await task_dirty_state.task_dirty_paths_async({"first.py"}, "/repo") is None
 
 
-def test_paths_committed_after_reports_only_strictly_later_commits(tmp_path: Path) -> None:
+async def test_paths_committed_after_reports_only_strictly_later_commits(tmp_path: Path) -> None:
     """Only a commit in a later second than the edit proves the edit was already landed;
     same-second and older commits, and never-committed paths, stay attributable."""
     committed_at = 1_776_340_810  # 2026-04-16T12:00:10Z
@@ -243,8 +243,14 @@ def test_paths_committed_after_reports_only_strictly_later_commits(tmp_path: Pat
     )
     paths = {"landed.py", "never.py"}
 
-    assert task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at - 5.0) == {
-        "landed.py"
-    }
-    assert task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 0.9) == set()
-    assert task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 5.0) == set()
+    assert await task_dirty_state.paths_committed_after(
+        paths, str(tmp_path), committed_at - 5.0
+    ) == {"landed.py"}
+    assert (
+        await task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 0.9)
+        == set()
+    )
+    assert (
+        await task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 5.0)
+        == set()
+    )

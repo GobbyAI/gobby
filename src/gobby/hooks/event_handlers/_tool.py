@@ -182,7 +182,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             context=context,
         )
 
-    def handle_after_tool(self, event: HookEvent) -> HookResponse:
+    async def handle_after_tool(self, event: HookEvent) -> HookResponse:
         """Handle AFTER_TOOL event."""
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
@@ -236,7 +236,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             if not is_failure and is_edit and self._session_manager:
                 try:
-                    self._record_successful_file_mutation(
+                    await self._record_successful_file_mutation(
                         event,
                         session_id,
                         is_canonical_edit=is_canonical_edit,
@@ -250,7 +250,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(decision="allow")
 
-    def _record_successful_file_mutation(
+    async def _record_successful_file_mutation(
         self,
         event: HookEvent,
         session_id: str,
@@ -320,7 +320,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             task_id = active_task_id_for_edit(variables)
             for checkout_root, paths in paths_by_checkout.items():
                 if task_id is not None:
-                    landed = self._paths_landed_before_edit(
+                    landed = await self._paths_landed_before_edit(
                         variables, task_id, checkout_root, paths, edited_at
                     )
                     if landed:
@@ -347,7 +347,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         self._mark_session_had_edits_if_claimed(session_id)
 
     @staticmethod
-    def _paths_landed_before_edit(
+    async def _paths_landed_before_edit(
         variables: dict[str, Any],
         task_id: str,
         checkout_root: str,
@@ -365,7 +365,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         candidates = {path for path in paths if path not in attributed}
         if not candidates:
             return set()
-        return paths_committed_after(candidates, checkout_root, edited_at)
+        return await paths_committed_after(candidates, checkout_root, edited_at)
 
     def _notify_code_index(self, repo_root: Path, repo_relative_path: str) -> None:
         if self._code_index_trigger is None:

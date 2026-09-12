@@ -2165,7 +2165,7 @@ class TestAutonomousIntegration:
         assert len(history) == 0
 
     @pytest.mark.integration
-    def test_live_hook_and_task_selection_traffic_persist_and_detect_stuck(
+    async def test_live_hook_and_task_selection_traffic_persist_and_detect_stuck(
         self,
         test_db: HubDatabase,
         session_id: str,
@@ -2189,7 +2189,7 @@ class TestAutonomousIntegration:
                 },
                 metadata={"_platform_session_id": session_id},
             )
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
             assert response.decision == "allow"
 
         progress_rows = test_db.fetchall(

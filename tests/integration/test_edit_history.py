@@ -30,7 +30,7 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def test_edit_history_flow(temp_db, tmp_path) -> None:
+async def test_edit_history_flow(temp_db, tmp_path) -> None:
     """Test full flow: session -> claim task -> edit -> had_edits set."""
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -94,7 +94,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    await handlers.handle_after_tool(event)
 
     # 6. Verify had_edits is True
     session = session_manager.get(session.id)
@@ -118,13 +118,13 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
         data={"tool_name": "read_file"},
         metadata={"_platform_session_id": session.id},
     )
-    handlers.handle_after_tool(event_read)
+    await handlers.handle_after_tool(event_read)
 
     session = session_manager.get(session.id)
     assert not session.had_edits
 
 
-def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
+async def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     session_manager = SessionManager(temp_db)
@@ -169,14 +169,14 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    await handlers.handle_after_tool(event)
 
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py", "docs/edited.md"]
     assert variables["task_edited_files"] == {task.id: ["src/edited.py", "docs/edited.md"]}
 
 
-def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
+async def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     """Test claimed out-of-repo edits do not set had_edits or session_edited_files."""
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -217,14 +217,14 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    await handlers.handle_after_tool(event)
 
     session = session_manager.get(session.id)
     assert not session.had_edits
     assert "session_edited_files" not in session_var_manager.get_variables(session.id)
 
 
-def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
+async def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
     """Test had_edits is NOT set if no task is claimed."""
     session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
@@ -259,13 +259,13 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    await handlers.handle_after_tool(event)
 
     session = session_manager.get(session.id)
     assert not session.had_edits
 
 
-def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_path) -> None:
+async def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_path) -> None:
     """Unclaimed edits remain session-scoped only."""
     repo_root = tmp_path / "repo-no-claim"
     repo_root.mkdir()
@@ -297,14 +297,14 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    await handlers.handle_after_tool(event)
 
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py"]
     assert "task_edited_files" not in variables
 
 
-def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> None:
+async def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> None:
     """Multiple claimed tasks attribute edits to active_task_id only."""
     repo_root = tmp_path / "repo-multi-claim"
     repo_root.mkdir()
@@ -357,14 +357,14 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    await handlers.handle_after_tool(event)
 
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py"]
     assert variables["task_edited_files"] == {second.id: ["src/edited.py"]}
 
 
-def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
+async def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -422,7 +422,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(patch_event)
+    await handlers.handle_after_tool(patch_event)
 
     expected_task_map = {task.id: ["src/first.py", "docs/plan.md"]}
     variables = variables_manager.get_variables(session.id)

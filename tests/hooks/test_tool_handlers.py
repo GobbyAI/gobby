@@ -34,14 +34,14 @@ class TestToolHandlers:
         response = event_handlers.handle_before_tool(event)
         assert response.decision == "allow"
 
-    def test_after_tool_allows(self, event_handlers: EventHandlers) -> None:
+    async def test_after_tool_allows(self, event_handlers: EventHandlers) -> None:
         """Test AFTER_TOOL allows by default."""
         event = make_event(
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Read"},
             metadata={"_platform_session_id": "plat-123"},
         )
-        response = event_handlers.handle_after_tool(event)
+        response = await event_handlers.handle_after_tool(event)
         assert response.decision == "allow"
 
     def test_before_tool_allows_gobby_tasks_cli_dict_input(
@@ -135,7 +135,7 @@ class TestToolHandlerEdgeCases:
             tool_args={"command": "uv run pytest tests/foo.py"},
         )
 
-    def test_after_tool_failure_status(self, mock_dependencies: dict) -> None:
+    async def test_after_tool_failure_status(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL handles is_failure metadata."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -144,11 +144,11 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123", "is_failure": True},
         )
 
-        response = handlers.handle_after_tool(event)
+        response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
 
-    def test_after_tool_tracks_native_outcome_and_skips_wrapper_echo(
+    async def test_after_tool_tracks_native_outcome_and_skips_wrapper_echo(
         self,
         mock_dependencies: dict,
     ) -> None:
@@ -177,13 +177,13 @@ class TestToolHandlerEdgeCases:
         )
 
         with patch("gobby.hooks.event_handlers._tool.track_tool_outcome") as track_outcome:
-            handlers.handle_after_tool(native_event)
-            handlers.handle_after_tool(wrapper_event)
+            await handlers.handle_after_tool(native_event)
+            await handlers.handle_after_tool(wrapper_event)
 
         assert track_outcome.call_count == 1
         assert track_outcome.call_args.args[1:] == ("sess-123", native_event)
 
-    def test_after_tool_no_session_id(self, mock_dependencies: dict) -> None:
+    async def test_after_tool_no_session_id(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -192,11 +192,11 @@ class TestToolHandlerEdgeCases:
             metadata={},
         )
 
-        response = handlers.handle_after_tool(event)
+        response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
 
-    def test_after_tool_records_autonomous_progress(self, mock_dependencies: dict) -> None:
+    async def test_after_tool_records_autonomous_progress(self, mock_dependencies: dict) -> None:
         """AFTER_TOOL feeds normalized tool traffic to the progress tracker."""
         progress_tracker = MagicMock()
         handlers = EventHandlers(**mock_dependencies, progress_tracker=progress_tracker)
@@ -210,7 +210,7 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        response = handlers.handle_after_tool(event)
+        response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         progress_tracker.record_tool_call.assert_called_once_with(
@@ -220,7 +220,7 @@ class TestToolHandlerEdgeCases:
             tool_result="1 passed",
         )
 
-    def test_edit_tracking_failure_logs_warning(
+    async def test_edit_tracking_failure_logs_warning(
         self,
         mock_dependencies: dict,
         caplog: pytest.LogCaptureFixture,
@@ -247,7 +247,7 @@ class TestToolHandlerEdgeCases:
                 side_effect=RuntimeError("primary write failed"),
             ),
         ):
-            handlers.handle_after_tool(event)
+            await handlers.handle_after_tool(event)
 
         warning = next(
             record
@@ -257,7 +257,9 @@ class TestToolHandlerEdgeCases:
         assert warning.levelno == logging.WARNING
         assert warning.exc_info is not None
 
-    def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict, tmp_path: Path) -> None:
+    async def test_after_tool_edit_marks_had_edits(
+        self, mock_dependencies: dict, tmp_path: Path
+    ) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
@@ -273,13 +275,13 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(tmp_path)
 
-        handlers.handle_after_tool(event)
+        await handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
         assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
-    def test_after_tool_edit_marks_had_edits_for_in_repo_path(
+    async def test_after_tool_edit_marks_had_edits_for_in_repo_path(
         self, mock_dependencies: dict
     ) -> None:
         """Test AFTER_TOOL marks had_edits when the edited path resolves inside cwd."""
@@ -296,7 +298,7 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(repo_root)
 
-        handlers.handle_after_tool(event)
+        await handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
@@ -337,7 +339,7 @@ class TestToolHandlerEdgeCases:
         ],
         ids=["failed", "read-only", "external-home-path"],
     )
-    def test_after_tool_shell_non_edits_skip_tracking(
+    async def test_after_tool_shell_non_edits_skip_tracking(
         self,
         mock_dependencies: dict,
         data: dict[str, Any],
@@ -350,7 +352,7 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_not_called()
@@ -383,7 +385,7 @@ class TestToolHandlerEdgeCases:
     def _claimed(task_id: str, **extra: Any) -> dict[str, Any]:
         return {"claimed_tasks": {task_id: "#123"}, "active_task_id": task_id, **extra}
 
-    def test_replayed_edit_predating_a_later_commit_is_not_attributed(
+    async def test_replayed_edit_predating_a_later_commit_is_not_attributed(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """An outage-queued edit envelope replayed after the owner commit landed the
@@ -408,12 +410,12 @@ class TestToolHandlerEdgeCases:
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
             ) as record_files,
         ):
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_not_called()
 
-    def test_edit_newer_than_last_commit_is_attributed_with_event_time(
+    async def test_edit_newer_than_last_commit_is_attributed_with_event_time(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """A live edit observed after the path's last commit is attributed and stamped
@@ -438,7 +440,7 @@ class TestToolHandlerEdgeCases:
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
             ) as record_files,
         ):
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_called_once_with(
@@ -448,7 +450,7 @@ class TestToolHandlerEdgeCases:
             edited_at=event.timestamp.timestamp(),
         )
 
-    def test_stale_edit_of_an_attributed_path_leaves_the_ledger_to_record(
+    async def test_stale_edit_of_an_attributed_path_leaves_the_ledger_to_record(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """A path the task already holds skips the commit check; the ledger keeps the
@@ -479,10 +481,10 @@ class TestToolHandlerEdgeCases:
             ) as record_files,
             patch("gobby.hooks.event_handlers._tool.paths_committed_after") as commit_check,
         ):
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        commit_check.assert_not_called()
+        commit_check.assert_not_awaited()
         record_files.assert_called_once_with(
             "sess-123",
             [rel_path],
@@ -505,7 +507,7 @@ class TestToolHandlerEdgeCases:
         ],
         ids=["search-pattern-and-directory", "dotfile", "sql-file"],
     )
-    def test_read_only_path_like_arguments_skip_tracking(
+    async def test_read_only_path_like_arguments_skip_tracking(
         self,
         mock_dependencies: dict[str, Any],
         data: dict[str, Any],
@@ -521,13 +523,13 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
-    def test_after_tool_records_candidate_without_sync_git(
+    async def test_after_tool_records_candidate_without_sync_git(
         self, mock_dependencies: dict, tmp_path: Path
     ) -> None:
         """The sync hook records candidates; async status later filters clean or ignored paths."""
@@ -546,7 +548,7 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_called_once_with(
@@ -557,7 +559,7 @@ class TestToolHandlerEdgeCases:
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
-    def test_after_tool_non_ignored_edit_still_marks_had_edits(
+    async def test_after_tool_non_ignored_edit_still_marks_had_edits(
         self, mock_dependencies: dict, tmp_path: Path
     ) -> None:
         """Paths git does not ignore keep the existing tracking behavior."""
@@ -577,7 +579,7 @@ class TestToolHandlerEdgeCases:
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
             return_value=True,
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_called_once_with(
@@ -588,7 +590,7 @@ class TestToolHandlerEdgeCases:
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
-    def test_structured_multi_file_edit_is_recorded_atomically(
+    async def test_structured_multi_file_edit_is_recorded_atomically(
         self,
         mock_dependencies: dict,
         tmp_path: Path,
@@ -620,7 +622,7 @@ class TestToolHandlerEdgeCases:
                 return_value=True,
             ) as record_files,
         ):
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         record_files.assert_called_once_with(
             "sess-123",
@@ -631,7 +633,7 @@ class TestToolHandlerEdgeCases:
         assert response.decision == "allow"
         assert notify_code_index.call_count == 2
 
-    def test_structured_edit_without_paths_skips_tracking_and_warns(
+    async def test_structured_edit_without_paths_skips_tracking_and_warns(
         self,
         mock_dependencies: dict,
         caplog: pytest.LogCaptureFixture,
@@ -657,13 +659,13 @@ class TestToolHandlerEdgeCases:
                 return_value=True,
             ) as record_files,
         ):
-            handlers.handle_after_tool(event)
+            await handlers.handle_after_tool(event)
 
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         assert "no attributable file paths" in caplog.text
 
-    def test_failed_structured_edit_does_not_change_attribution(
+    async def test_failed_structured_edit_does_not_change_attribution(
         self,
         mock_dependencies: dict,
     ) -> None:
@@ -683,13 +685,13 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
-    def test_after_tool_absolute_path_without_repo_context_not_tracked(
+    async def test_after_tool_absolute_path_without_repo_context_not_tracked(
         self, mock_dependencies: dict
     ) -> None:
         """Out-of-repo absolute paths without cwd are not attributed as repo edits."""
@@ -707,13 +709,13 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
-    def test_absolute_path_in_same_project_worktree_tracks_target_checkout(
+    async def test_absolute_path_in_same_project_worktree_tracks_target_checkout(
         self,
         mock_dependencies: dict[str, Any],
         tmp_path: Path,
@@ -747,7 +749,7 @@ class TestToolHandlerEdgeCases:
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
             return_value=True,
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_called_once_with(
@@ -757,7 +759,7 @@ class TestToolHandlerEdgeCases:
             edited_at=event.timestamp.timestamp(),
         )
 
-    def test_cp_from_primary_to_worktree_attributes_only_destination(
+    async def test_cp_from_primary_to_worktree_attributes_only_destination(
         self,
         mock_dependencies: dict[str, Any],
         tmp_path: Path,
@@ -798,7 +800,7 @@ class TestToolHandlerEdgeCases:
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
             return_value=True,
         ) as record_files:
-            response = handlers.handle_after_tool(event)
+            response = await handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         record_files.assert_called_once_with(
@@ -808,7 +810,7 @@ class TestToolHandlerEdgeCases:
             edited_at=event.timestamp.timestamp(),
         )
 
-    def test_after_tool_notifies_code_index_with_project_root_path(
+    async def test_after_tool_notifies_code_index_with_project_root_path(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """Test code index notification uses project root even when cwd is nested."""
@@ -835,7 +837,7 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(deep_cwd)
 
-        handlers.handle_after_tool(event)
+        await handlers.handle_after_tool(event)
 
         resolve_project_id.assert_called_once_with(None, str(repo_root.resolve()))
         assert resolve_project_id.call_count == 1
@@ -849,7 +851,7 @@ class TestToolHandlerEdgeCases:
         assert code_index_trigger.notify_file_changed.call_count == 1
         assert code_index_trigger.notify_file_changed.call_args is not None
 
-    def test_after_tool_edit_skips_gobby_internal_files(
+    async def test_after_tool_edit_skips_gobby_internal_files(
         self,
         mock_dependencies: dict[str, Any],
     ) -> None:
@@ -867,13 +869,13 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_after_tool(event)
+        await handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
         assert not mock_dependencies["session_storage"].mark_had_edits.called
 
-    def test_after_tool_edit_skips_out_of_repo_paths(
+    async def test_after_tool_edit_skips_out_of_repo_paths(
         self,
         mock_dependencies: dict[str, Any],
     ) -> None:
@@ -891,13 +893,13 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(repo_root)
 
-        handlers.handle_after_tool(event)
+        await handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
         assert not mock_dependencies["session_storage"].mark_had_edits.called
 
-    def test_after_tool_edit_skips_relative_gobby_path(
+    async def test_after_tool_edit_skips_relative_gobby_path(
         self,
         mock_dependencies: dict[str, MagicMock],
     ) -> None:
@@ -915,7 +917,7 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_after_tool(event)
+        await handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
