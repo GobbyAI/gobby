@@ -72,7 +72,11 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
             if paths.is_empty() {
                 return Ok(FreshnessStatus::Checked);
             }
-            let locks = index_lock::lock_project_files(ctx, &paths, IndexLockPolicy::wait())?;
+            let locks = index_lock::lock_project_files(
+                ctx,
+                &paths,
+                IndexLockPolicy::brief_freshness_try(),
+            )?;
             if locks.acquired_files.is_empty() {
                 return Ok(FreshnessStatus::SkippedBusy(None));
             }
@@ -455,7 +459,7 @@ mod tests {
             ignore = "requires a PostgreSQL test database URL"
         )]
         #[serial_test::serial(serial_db)]
-        fn file_scope_waits_for_lock_then_refreshes_dirty_file() {
+        fn file_scope_skips_busy_lock_then_refreshes_after_release() {
             let tmp = tempfile::tempdir().expect("tempdir");
             let root = tmp.path();
             std::fs::create_dir_all(root.join("src")).expect("create src");
@@ -484,13 +488,22 @@ mod tests {
                 .is_ok();
             drop(holder);
             let (status, ctx) = handle.join().expect("freshness thread joins");
-            assert_eq!(
+            assert!(matches!(
                 status.expect("file freshness status"),
-                FreshnessStatus::Checked
-            );
+                FreshnessStatus::SkippedBusy(_)
+            ));
             assert!(
-                !completed_while_locked,
-                "file-scoped freshness must wait while the project lock is held"
+                completed_while_locked,
+                "file-scoped navigation must not wait for a full project refresh"
+            );
+            assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["stale_name"]);
+            assert_eq!(
+                ensure_fresh(
+                    &ctx,
+                    FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")])
+                )
+                .expect("refresh after writer releases lock"),
+                FreshnessStatus::Checked
             );
             assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["fresh_name"]);
             invalidate_test_project(&ctx);
