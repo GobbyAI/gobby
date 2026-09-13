@@ -214,7 +214,9 @@ class TestAgentRunnerCancelRun:
 
         assert result is True
         runner._run_storage.cancel.assert_called_once_with("run-cancel")
-        mock_session_storage.update_status.assert_called_once_with("sess-child", "cancelled")
+        mock_session_storage.update_status_if_non_terminal.assert_called_once_with(
+            "sess-child", "cancelled"
+        )
 
     def test_cancel_run_not_found(self, runner) -> None:
         """cancel_run returns False when run not found."""
@@ -276,7 +278,9 @@ class TestAgentRunnerCancelRun:
 
         assert result is True
         runner._run_storage.cancel.assert_called_once_with("run-pending")
-        mock_session_storage.update_status.assert_called_once_with("sess-child", "cancelled")
+        mock_session_storage.update_status_if_non_terminal.assert_called_once_with(
+            "sess-child", "cancelled"
+        )
 
 
 class TestAgentRunnerDBTracking:

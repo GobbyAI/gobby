@@ -81,9 +81,9 @@ def cancel_run(runner: AgentRunner, run_id: str) -> bool:
         )
         return False
 
-    # Also mark session as cancelled
+    # Preserve terminal child states, including expiration racing with cancellation.
     if run.child_session_id:
-        runner._session_manager.update_status(run.child_session_id, "cancelled")
+        runner._session_manager.update_status_if_non_terminal(run.child_session_id, "cancelled")
 
     runner.logger.info("Cancelled agent run %s", run_id)
 
