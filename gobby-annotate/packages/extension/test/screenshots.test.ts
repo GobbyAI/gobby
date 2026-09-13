@@ -2,10 +2,45 @@
 import { expect, it, vi } from "vitest";
 import {
   captureHidden,
+  regionCrop,
   sameCapture,
   type Fingerprint,
 } from "../src/screenshots";
 import { fixture } from "../../core/test/fixtures";
+it("maps regions to native pixels using each actual screenshot axis", () => {
+  const view = fixture().manifest.annotations[0]!.viewport;
+  view.visual = {
+    width: 400,
+    height: 300,
+    offsetLeft: 37,
+    offsetTop: 51,
+    scale: 2,
+  };
+  view.scrollX = 100;
+  view.scrollY = 200;
+  view.devicePixelRatio = 3;
+  expect(
+    regionCrop({ x: 10.25, y: 20.5, width: 30, height: 40 }, view, 800, 900),
+  ).toEqual({
+    x: 20,
+    y: 61,
+    width: 61,
+    height: 121,
+    sourceBounds: { x: 10, y: 61 / 3, width: 30.5, height: 121 / 3 },
+  });
+  expect(
+    regionCrop({ x: -10, y: 280, width: 30, height: 40 }, view, 800, 900),
+  ).toEqual({
+    x: 0,
+    y: 840,
+    width: 40,
+    height: 60,
+    sourceBounds: { x: 0, y: 280, width: 20, height: 20 },
+  });
+  expect(() =>
+    regionCrop({ x: 410, y: 10, width: 20, height: 20 }, view, 800, 900),
+  ).toThrow("outside the screenshot");
+});
 it("hides the UI through capture and restores it on failure", async () => {
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     callback(0);

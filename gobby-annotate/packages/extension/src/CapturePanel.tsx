@@ -62,7 +62,15 @@ export function CapturePanel({
       {image ? (
         <details>
           <summary>Review screenshot</summary>
-          <img src={image} alt="Original visible page at selection time" />
+          <img
+            src={image}
+            alt={
+              annotation.screenshot.status === "available" &&
+              annotation.screenshot.sourceBounds
+                ? "Selected region at selection time"
+                : "Original visible page at selection time"
+            }
+          />
         </details>
       ) : (
         <p>

@@ -326,6 +326,17 @@ test("native capture, persistent editing, responsive controls and idempotent act
     });
     await page.getByLabel("What should change?").fill("Touch region");
     await expect(page.getByRole("status")).toHaveText("Saved locally");
+    await page.getByText("Review screenshot", { exact: true }).click();
+    const regionImage = page.getByRole("img", {
+      name: "Selected region at selection time",
+    });
+    await expect(regionImage).toBeVisible();
+    expect(
+      await regionImage.evaluate((node: HTMLImageElement) => [
+        node.naturalWidth,
+        node.naturalHeight,
+      ]),
+    ).toEqual([80, 50]);
     await page.setViewportSize({ width: 320, height: 280 });
     await expect(async () => {
       const editor = await page
@@ -417,6 +428,15 @@ test("native capture, persistent editing, responsive controls and idempotent act
       complex.manifest.annotations.find((a) => a.comment === "Touch region")!
         .target.bounds,
     ).toEqual({ x: 300, y: 300, width: 80, height: 50 });
+    const regionNote = complex.manifest.annotations.find(
+      (a) => a.comment === "Touch region",
+    )!;
+    expect(regionNote.screenshot).toMatchObject({
+      status: "available",
+      width: 80,
+      height: 50,
+      sourceBounds: { x: 300, y: 300, width: 80, height: 50 },
+    });
     await page
       .locator("#gobby-annotate-root")
       .evaluate((node) => node.dispatchEvent(new Event("annotate-deactivate")));

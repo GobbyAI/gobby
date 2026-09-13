@@ -41,8 +41,9 @@ Each bounds object is `{x,y,width,height}`, measured in CSS pixels, with nonnega
 width and height. `bounds` is relative to the selected frame's layout viewport;
 `screenshotBounds` is relative to the top-level visual viewport's visible image.
 Frame offsets and CSS scaling are applied before recording screenshot coordinates.
-Pixel coordinates can be derived independently per axis using screenshot width /
-visual viewport width and screenshot height / visual viewport height. Do not
+For full viewport screenshots, pixel coordinates can be derived independently per
+axis using screenshot width / visual viewport width and screenshot height /
+visual viewport height. Do not
 assume devicePixelRatio alone accounts for zoom or browser capture scaling.
 
 `viewport` has `layout:{width,height}`, `visual:{width,height,offsetLeft,offsetTop,scale}`,
@@ -53,6 +54,15 @@ Available screenshot: `{status:"available",path:"screenshots/<name>.png",width,h
 where name contains only ASCII letters, digits, underscore, or hyphen, and pixel
 dimensions are positive integers matching PNG IHDR. Unavailable screenshot:
 `{status:"unavailable",reason:"..."}` with a nonempty reason up to 2000 characters.
+
+Region captures contain only the selected rectangle's pixels. Their available
+screenshot includes `sourceBounds:{x,y,width,height}`: the captured area in CSS
+pixels relative to the top-level visual viewport. Edges are rounded outward to
+native pixels and clipped to the image. Map a viewport point into this image as
+`(x-sourceBounds.x)*width/sourceBounds.width` (and equivalently for y).
+Target bounds retain their original coordinates. Absence of `sourceBounds` means
+the screenshot contains the full visible viewport. Image pixels are cropped
+without rescaling; exported PNG dimensions describe the cropped image.
 
 Readers reject missing or unreferenced assets, duplicate archive entries,
 traversal/absolute paths, malformed directories, checksum or size mismatches,

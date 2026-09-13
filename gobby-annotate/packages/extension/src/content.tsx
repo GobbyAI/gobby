@@ -12,7 +12,12 @@ import type { Batch } from "./drafts";
 import { Toolbar } from "./Toolbar";
 import { CapturePanel, SaveStatus } from "./CapturePanel";
 import { assertSelectionCurrent, select, type Mode } from "./selection";
-import { captureHidden, fingerprint, sameCapture } from "./screenshots";
+import {
+  captureHidden,
+  cropRegion,
+  fingerprint,
+  sameCapture,
+} from "./screenshots";
 import { viewport } from "./frame-agent";
 import { rpc } from "./api";
 import css from "./ui.css?inline";
@@ -196,17 +201,22 @@ function App({
         assertSelectionCurrent(a);
         return image;
       });
+      const saved =
+        a.target.kind === "rectangle"
+          ? await cropRegion(result, a.target.screenshotBounds, a.viewport)
+          : { ...result, sourceBounds: undefined };
       await persist(
         {
           ...a,
           screenshot: {
             status: "available",
             path: `screenshots/${a.id}.png`,
-            width: result.width,
-            height: result.height,
+            width: saved.width,
+            height: saved.height,
+            sourceBounds: saved.sourceBounds,
           },
         },
-        result.image,
+        saved.image,
       );
     } catch (e) {
       report(e);

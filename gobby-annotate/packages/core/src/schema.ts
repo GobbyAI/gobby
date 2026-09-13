@@ -37,6 +37,9 @@ export const screenshotSchema = z.discriminatedUnion("status", [
       path: z.string().regex(/^screenshots\/[a-zA-Z0-9_-]+\.png$/),
       width: z.number().int().positive(),
       height: z.number().int().positive(),
+      sourceBounds: boundsSchema
+        .extend({ width: positive, height: positive })
+        .optional(),
     })
     .strict(),
   z
