@@ -9,7 +9,7 @@ are `gcode ask --help` and `gcode evidence --help`.
 
 Use `start_ask_run` for an authorized question; preserve the returned `run_id`.
 The public MCP tool derives project and caller identity from session context.
-Defaults are `commit_ref="HEAD"`, `timeout_seconds=600`, and
+Defaults are `timeout_seconds=600` and
 `retrieval_mode="deterministic"`. An optional idempotency key belongs to start.
 CLI equivalent:
 
@@ -17,8 +17,11 @@ CLI equivalent:
 gcode ask "Where is session authorization enforced?" --background --format json
 ```
 
-The daemon binds the run to immutable Git evidence and snapshotted investigator
-and reviewer definitions. Uncommitted working-tree edits are not that evidence.
+The daemon binds the run to the caller's existing project index and records HEAD
+commit/tree IDs as provenance, with snapshotted investigator and reviewer
+definitions. Evidence reads working-tree bytes verified against indexed content
+hashes, so indexed uncommitted edits are citable. Ask creates no checkout or index;
+there is no commit selector. Admitted evidence and published answers are immutable.
 Hybrid retrieval is explicit opt-in and requires matching healthy semantic
 configuration; a failure does not silently switch to deterministic retrieval.
 Starting Ask runs managed agents; loading this reference grants no authority to
@@ -79,21 +82,19 @@ implemented by `stage_tool_is_discoverable`.
 ## Native evidence adapter
 
 `gcode evidence` is a model-free JSON adapter for exact source evidence. Supply
-one complete versioned request through `--request-json`, or a canonical snapshot
-request through `--snapshot-json`. These are separate request modes. Evidence
-schema v1 supports search, read, and graph operations bound to project, commit,
-tree, and inventory; snapshot operations are inspect, materialize, and verify.
+one complete versioned request through `--request-json`. Evidence schema v1
+supports search, read, and graph operations against the resolved project index,
+with recorded commit/tree provenance.
 Use the generated request contract in `crates/gcode/src/evidence/contracts.rs`
-and the binding returned by snapshot preparation; do not invent hashes or IDs.
+and the binding returned by Ask preparation; do not invent hashes or IDs.
 
-JSON output is required. `--allow-stale` is rejected for both request modes.
-Honor response `complete`, `completeness`, `bounds`, exclusions, warnings, and
+JSON output is required. `--allow-stale` is rejected.
+Honor response `complete`, `completeness`, `bounds`, warnings, and
 opaque continuation. Repair stale index facts without bypassing admission.
-Snapshot materialization writes its selected target: use an authorized isolated
-destination. Native evidence retrieval alone does not admit evidence into an
+Native evidence retrieval alone does not admit evidence into an
 Ask worker's durable manifest; use that worker's MCP tools for admission.
 
 Guide: [Ask](../../../../../../../../docs/guides/ask.md).
 Contract: [Evidence and provenance](../../../../../../../../docs/contracts/ask.md#evidence-and-provenance).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-13_
