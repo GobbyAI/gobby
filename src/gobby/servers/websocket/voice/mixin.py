@@ -260,13 +260,13 @@ class VoiceMixin(VoiceWarmupMixin):
         if not stt:
             voice_config = self._get_voice_config()
             if not voice_config or not voice_config.enabled:
-                error_msg = "Voice is not enabled. Enable it in Settings > Voice."
+                error_msg = "Voice is not enabled. Run gobby install voice on the daemon host."
             elif not voice_config.stt_enabled:
                 error_msg = "Speech-to-text is disabled in config."
             else:
                 error_msg = (
                     "Speech-to-text requires the faster-whisper package. "
-                    "Install it with: pip install faster-whisper"
+                    "Run uv sync in the daemon checkout."
                 )
             await websocket.send(
                 json_dumps(

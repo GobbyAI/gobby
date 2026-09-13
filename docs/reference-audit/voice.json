@@ -1,0 +1,471 @@
+{
+  "version": 1,
+  "capability": "voice",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/voice.md",
+      "anchors": [
+        "overview",
+        "installation",
+        "during-gobby-install",
+        "dependency-health",
+        "configuration",
+        "reference-audio",
+        "optional-tts_reference_text",
+        "tts-provider",
+        "chatterbox",
+        "crane",
+        "web-chat-usage",
+        "api-and-websocket-reference",
+        "whisper-vocabulary-tools",
+        "troubleshooting"
+      ],
+      "evidence": [
+        "schemas",
+        "source",
+        "browser-source",
+        "focused-current"
+      ]
+    },
+    {
+      "path": "docs/guides/crane-tts.md",
+      "anchors": [
+        "local-setup",
+        "restore-the-previous-local-settings"
+      ],
+      "evidence": [
+        "source",
+        "ffmpeg-fixture",
+        "focused-current"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "gobby-install-and-gobby-uninstall"
+      ],
+      "scope": "Only the voice component row and its setup link.",
+      "evidence": [
+        "cli-help",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "code-index-metrics-pipelines-and-other-feature-apis"
+      ],
+      "scope": "Only GET /api/voice/status and POST /api/voice/transcribe rows.",
+      "evidence": [
+        "source",
+        "focused-current"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-voice",
+      "tool": "add_vocab",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/vocabulary.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/voice.py",
+        "symbol": "create_voice_registry.add_vocab"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current",
+        "schemas"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-voice",
+      "tool": "remove_vocab",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/vocabulary.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/voice.py",
+        "symbol": "create_voice_registry.remove_vocab"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current",
+        "schemas"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-voice",
+      "tool": "list_vocab",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/vocabulary.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/voice.py",
+        "symbol": "create_voice_registry.list_vocab"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current",
+        "schemas"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-voice",
+      "tool": "clear_vocab",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/vocabulary.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/voice.py",
+        "symbol": "create_voice_registry.clear_vocab"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current",
+        "schemas"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby install voice",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/configuration.md",
+      "implementation": {
+        "path": "src/gobby/cli/_install_prompts.py",
+        "symbol": "_run_voice_install"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/voice/status",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/voice.py",
+        "symbol": "create_voice_router.voice_status"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/voice/transcribe",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/stt.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/voice.py",
+        "symbol": "create_voice_router.transcribe_audio"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "message": "voice_prepare",
+      "audience": "browser/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/configuration.md",
+      "implementation": {
+        "path": "src/gobby/servers/websocket/voice/mixin.py",
+        "symbol": "VoiceMixin._handle_voice_prepare"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "message": "voice_status_request",
+      "audience": "browser/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/websocket/voice/mixin.py",
+        "symbol": "VoiceMixin._handle_voice_status_request"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "message": "voice_audio",
+      "audience": "browser/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/stt.md",
+      "implementation": {
+        "path": "src/gobby/servers/websocket/voice/mixin.py",
+        "symbol": "VoiceMixin._handle_voice_audio"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "message": "voice_mode_toggle",
+      "audience": "browser/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/tts.md",
+      "implementation": {
+        "path": "src/gobby/servers/websocket/voice/mixin.py",
+        "symbol": "VoiceMixin._handle_voice_mode_toggle"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "message": "tts_stop",
+      "audience": "browser/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/tts.md",
+      "implementation": {
+        "path": "src/gobby/servers/websocket/voice/mixin.py",
+        "symbol": "VoiceMixin._handle_tts_stop"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    }
+  ],
+  "shared_operations": [
+    {
+      "server": "gobby-config",
+      "tools": [
+        "get_config_values",
+        "patch_config_values"
+      ],
+      "owner": "config",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/configuration.md",
+      "evidence": [
+        "schemas",
+        "source"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "message": "chat_message",
+      "owner": "sessions",
+      "voice_behavior": "Per-message tts_enabled intent applied before pipeline creation; optional attached CLI target receives captured transcript.",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/stt.md",
+      "implementation": "src/gobby/servers/websocket/chat/_message_ingress.py::ChatMessageIngressMixin._apply_tts_intent",
+      "evidence": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "websocket",
+      "messages": [
+        "voice_status",
+        "voice_transcription",
+        "tts_audio",
+        "tts_status"
+      ],
+      "direction": "daemon-to-client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/voice/diagnostics.md",
+      "evidence": [
+        "source",
+        "browser-source",
+        "focused-current"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "inventory",
+      "command": "gcode tree **/*voice* **/*tts* **/*stt*; gcode outline src/gobby/mcp_proxy/tools/voice.py; gcode outline src/gobby/servers/routes/voice.py; gcode outline src/gobby/servers/websocket/voice/mixin.py; uv run gobby install --help",
+      "result": "12 voice-owned operations mapped: 4 MCP, 1 CLI, 2 HTTP, 5 inbound WebSocket messages. Shared config tools and outbound events recorded separately."
+    },
+    {
+      "id": "schemas",
+      "command": "get_tool_schema(gobby-voice, add_vocab/remove_vocab/list_vocab/clear_vocab); get_tool_schema(gobby-config, get_config_values/patch_config_values)",
+      "result": "Fetched every voice MCP schema and the two referenced config schemas in active context. add/remove require terms:string; list/clear have no inputs. Public config patch delegates nested values to service.patch; vocabulary uses internal patch_flat."
+    },
+    {
+      "id": "source",
+      "command": "gcode outline/symbol-at for src/gobby/config/voice.py and voice_secrets.py; src/gobby/voice/{providers,stt,tts_chatterbox,tts_crane}.py; src/gobby/ai/{audio,registry_builder}.py; src/gobby/mcp_proxy/tools/{voice,config}.py; src/gobby/servers/routes/voice.py; src/gobby/servers/websocket/voice/{mixin,warmup}.py; src/gobby/cli/_install_prompts.py",
+      "result": "Verified config defaults and string model IDs, nested public patch versus flat internal vocabulary writes, active listing/desired mutation, structured secret references, local and compatible audio selection, provider cache/unload, requested readiness, attached transcription, error mapping and Crane reference/PCM handling."
+    },
+    {
+      "id": "browser-source",
+      "command": "gcode symbol-at web/src/hooks/voice/useVoiceStatus.ts:67; gcode symbol-at web/src/hooks/voice/useVoiceCapture.ts:585; gcode symbol-at web/src/components/chat/ChatInputVoiceControls.tsx:33; gcode symbol-at web/src/components/chat/useChatInputPrimaryAction.ts:240; gcode grep -F tts_stop web/src/hooks/voice/useTTSPlayback.ts -m 10",
+      "result": "Verified mode cycle separate from primary PTT gestures, tap latch/hold/keyboard/Escape, request-status correlation and warmup target fields, VAD local processing and barge-in, explicit TTS stop."
+    },
+    {
+      "id": "cli-help",
+      "command": "uv run gobby install --help",
+      "result": "Exit 0; voice is a supported component of an existing installation. No live installation, config changes or daemon lifecycle operations executed."
+    },
+    {
+      "id": "focused-current",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_capability_catalog.py tests/voice/ tests/mcp_proxy/tools/test_voice.py tests/servers/routes/test_voice_routes.py tests/servers/websocket/test_voice_warmup.py tests/servers/websocket/test_tts_pipeline.py tests/ai/test_audio_capabilities.py tests/config/test_voice_secrets.py tests/cli/test_install_prompts.py::TestVoiceInstall tests/cli/test_install_components.py tests/cli/test_install_coverage.py -q --tb=short",
+      "result": "395 passed in 4.17s after test-host type cleanup."
+    },
+    {
+      "id": "ffmpeg-fixture",
+      "command": "uv run python temporary-directory WAV probe: generate one-second stereo PCM16 at 48 kHz; subprocess ffmpeg -hide_banner -loglevel error -i INPUT -ac 1 -ar 24000 -c:a pcm_s16le OUTPUT; assert wave channels/sample width/rate/frame count",
+      "result": "Passed: mono PCM16, 24 kHz, 24000 frames; original duration preserved. Temporary audio deleted; no private recording read."
+    },
+    {
+      "id": "independent-review",
+      "command": "review_reference_identity delegated code-review over 14 assigned paths, excluding unfinished audit",
+      "result": "Initial 14/14 reviewed with no findings; follow-up audit/test-host/PTT/translation review 4/4 with no findings. Combined 15/15 task paths, 0 skipped."
+    },
+    {
+      "id": "library-validation",
+      "command": "uv run python /tmp/gobby_voice_validate.py",
+      "result": "20 catalog capabilities, 12 AST operation symbols and 56 local links/anchors validated. Validator also checks audit guide anchors and evidence references."
+    },
+    {
+      "id": "test-types",
+      "command": "uv run gobby test-types audit tests/servers/websocket/test_voice_warmup.py --baseline .gobby/test-types-baseline.json --fail-on-new",
+      "result": "1 file, 0 errors. Initial 59 baseline errors resolved in test-host declarations and mock-call narrowing; no suppressions or checker relaxation."
+    },
+    {
+      "id": "quality",
+      "command": "uv run gobby test-quality audit tests/servers/websocket/test_voice_warmup.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "1 file, 32 tests, 0 issues."
+    },
+    {
+      "id": "lint-format",
+      "command": "uv run ruff check src/gobby/servers/websocket/voice/mixin.py src/gobby/cli/_install_prompts.py tests/servers/websocket/test_voice_warmup.py; uv run ruff format --check same three paths",
+      "result": "Ruff check clean; 3 files already formatted. Initial installer-copy format finding corrected."
+    },
+    {
+      "id": "production-types",
+      "command": "uv run mypy src/gobby/servers/websocket/voice/mixin.py src/gobby/cli/_install_prompts.py --follow-imports=silent",
+      "result": "No issues found in the two changed production modules."
+    },
+    {
+      "id": "suppressions",
+      "command": "uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "4285 files, 217 baseline suppressions, 0 new, 0 stale."
+    },
+    {
+      "id": "copy-review",
+      "command": "Impeccable Operate/clarify/polish scoped copy review; materialize_skill_scripts(impeccable), then node <scripts_dir>/detect.mjs --json src/gobby/servers/websocket/voice/mixin.py src/gobby/cli/_install_prompts.py",
+      "result": "Detector returned []; source review checks recovery in context. No visual/style changes. Browser gesture documentation checked against current handlers, not a live recording."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Voice guide and installer described Chatterbox as the only supported provider.",
+      "implementation": "src/gobby/voice/providers.py provider registry; src/gobby/config/voice.py::VoiceConfig",
+      "resolution": "Document embedded Chatterbox and external Crane; correct installer copy.",
+      "evidence": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "finding": "Blanket config restart instruction and fresh conversation advice concealed cached singleton reuse.",
+      "implementation": "src/gobby/servers/websocket/voice/warmup.py::VoiceWarmupMixin._get_tts and _unload_voice_models",
+      "resolution": "Use revisioned desired/active config, explain model release, and coordinate any necessary restart.",
+      "evidence": [
+        "source"
+      ]
+    },
+    {
+      "finding": "One-shot HTTP route was labeled test-only transcription and omitted translation/provider selection.",
+      "implementation": "src/gobby/servers/routes/voice.py::create_voice_router.transcribe_audio; src/gobby/ai/audio.py::AudioCapabilityService.execute",
+      "resolution": "Document multipart capability/provider/model/language/prompt, result metadata, upload/error behavior, local Whisper versus compatible bindings and external recording delivery.",
+      "evidence": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "finding": "Vocabulary guide omitted desired-versus-active semantics and implied clear only removed custom additions.",
+      "implementation": "src/gobby/mcp_proxy/tools/voice.py::create_voice_registry",
+      "resolution": "Explain revision-checked desired mutations, active listing, seeded-term clearing and preserved base prompt.",
+      "evidence": [
+        "schemas",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "finding": "Readiness prose treated all enabled models as always requested and omitted the status-request message.",
+      "implementation": "src/gobby/servers/websocket/voice/warmup.py::VoiceWarmupMixin.get_voice_status; src/gobby/servers/websocket/voice/mixin.py::VoiceMixin._handle_voice_status_request",
+      "resolution": "Document request-scoped status and distinguish want_stt/want_tts from voice_prepare stt_enabled/tts_enabled.",
+      "evidence": [
+        "source",
+        "browser-source",
+        "focused-current"
+      ]
+    },
+    {
+      "finding": "Crane guide assumed a machine-local launcher, private saved trial, universal 2 MiB service limit and external inference cancellation timing.",
+      "implementation": "src/gobby/voice/tts_crane.py::CraneTTSProvider",
+      "resolution": "Generalize operator-owned setup and snapshots, require checking the installed external service limit, and limit cancellation claims to closing the HTTP stream.",
+      "evidence": [
+        "source",
+        "ffmpeg-fixture"
+      ]
+    },
+    {
+      "finding": "Voice guide instructed holding the toolbar microphone and omitted latched primary-button recording.",
+      "implementation": "web/src/components/chat/ChatInputVoiceControls.tsx::ChatInputVoiceControls; web/src/components/chat/useChatInputPrimaryAction.ts::useChatInputPrimaryAction",
+      "resolution": "Distinguish mode switch from primary record button, document hold/release, tap latch, keyboard and cancellation.",
+      "evidence": [
+        "browser-source"
+      ]
+    },
+    {
+      "finding": "WebSocket errors directed users to removed Settings > Voice and pip install; installer linked nonexistent YouTube sampling instructions.",
+      "implementation": "src/gobby/servers/websocket/voice/mixin.py::VoiceMixin._handle_voice_audio; src/gobby/cli/_install_prompts.py::_run_voice_install",
+      "resolution": "Correct recovery to gobby install voice and uv sync on daemon host; link reference requirements. Parameterized regression verifies disabled/missing-runtime recovery and request identity.",
+      "evidence": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "finding": "Touched warmup tests reported 59 pre-existing typing errors from untyped mutable test-host callbacks and mock inspection.",
+      "implementation": "tests/servers/websocket/test_voice_warmup.py::DummyVoiceMixin",
+      "resolution": "Explicitly type replaceable callbacks and mock host fields, and narrow optional await_args. Final scoped type audit has zero errors. No suppressions or relaxed checker configuration.",
+      "evidence": [
+        "test-types",
+        "quality",
+        "focused-current",
+        "independent-review"
+      ]
+    }
+  ],
+  "coverage_notes": [
+    "No active rules/profiles/workflows are asserted by these references, so no installed enforcement-row claim requires a live row lookup.",
+    "Guides describe current implementation. Crane upstream process lifecycle and limits are operator-owned, not inferred from one workstation installation.",
+    "Focused tests use the isolated PostgreSQL test hub and fake providers/temporary fixtures; no live microphone, private WAV, remote audio service, daemon restart or vocabulary/config mutation.",
+    "Catalog/link/AST validation and the focused post-type-cleanup test run passed. No live audio/hardware integration or full pytest suite run; provider behavior is verified with isolated fixtures, and external Crane process internals remain outside Gobby control."
+  ]
+}

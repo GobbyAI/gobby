@@ -196,7 +196,7 @@ fails.
 | `git-hooks` | Install repository Git hooks (verification, JSONL export, code indexing) in the `-C` repository. | Remove them from the `-C` repository. Explicit only; bare uninstall never touches repositories. |
 | `rtk` | Reconcile the RTK binary and the `rtk-command-rewrite` rule (details below). | Disable the rule and remove the managed fallback binary. |
 | `impeccable` | Provision the Impeccable design runtime. | Remove the Impeccable runtime. |
-| `voice` | Set `voice.enabled=true` in daemon config. | — |
+| `voice` | Set `voice.enabled=true` through revisioned daemon config; [voice setup](./voice.md#installation) is operator-only. | — |
 | `embedding` | Configure the embedding provider, honoring the `--embedding-*` overrides. | — |
 | `ide-settings` | Configure VS Code-family terminal integration. | — |
 

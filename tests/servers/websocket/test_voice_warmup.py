@@ -6,31 +6,41 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.communications.voice import VoiceTranscriber
 from gobby.config.voice import VoiceConfig
 from gobby.servers.websocket.voice import VoiceMixin
-from gobby.voice.tts import TTSProviderStatus
+from gobby.voice.tts import TTSProvider, TTSProviderStatus
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
 
 class DummyVoiceMixin(VoiceMixin):
+    # These are replaceable dependency callbacks on the test host. Inherited
+    # provider lookups remain the defaults until a test supplies a boundary fake.
+    _get_stt: Callable[[], VoiceTranscriber | None]
+    _get_tts: Callable[[], TTSProvider | None]
+    _get_stt_availability: Callable[[], tuple[bool, str]]
+    _get_tts_availability: Callable[[], tuple[bool, str]]
+    _ensure_stt_deps: AsyncMock
+    _ensure_tts_deps: AsyncMock
+    _handle_chat_message: AsyncMock
+    _send_error: AsyncMock
+    session_manager: MagicMock
+
     def __init__(self, voice_config: VoiceConfig) -> None:
-        self.clients: dict = {}
+        self.clients: dict[object, dict[str, object]] = {}
         self.daemon_config = SimpleNamespace(voice=voice_config)
         self._init_voice()
         self._handle_chat_message = AsyncMock()
-
-    async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> bool:
-        return True
-
-    async def _ensure_tts_deps(self, voice_config: VoiceConfig) -> bool:
-        return True
+        self._ensure_stt_deps = AsyncMock(return_value=True)
+        self._ensure_tts_deps = AsyncMock(return_value=True)
 
 
 def _sent_payloads(websocket: SimpleNamespace | MagicMock) -> list[dict[str, object]]:
@@ -617,6 +627,7 @@ class TestVoiceWarmup:
         mixin._handle_chat_message.assert_awaited_once()
         payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
         assert payloads[-1]["text"] == "hello from voice"
+        assert mixin._handle_chat_message.await_args is not None
         chat_data = mixin._handle_chat_message.await_args.args[1]
         assert chat_data == {
             "type": "chat_message",
@@ -646,6 +657,7 @@ class TestVoiceWarmup:
         )
 
         mixin._handle_chat_message.assert_awaited_once()
+        assert mixin._handle_chat_message.await_args is not None
         chat_data = mixin._handle_chat_message.await_args.args[1]
         assert "project_id" not in chat_data
         assert chat_data["conversation_id"] == "conv-voice"
@@ -743,9 +755,19 @@ class TestVoiceWarmup:
         }
 
     @pytest.mark.asyncio
-    async def test_voice_audio_stt_unavailable_error_includes_request_id(self) -> None:
-        """STT-unavailable errors should echo the client request_id."""
-        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+    @pytest.mark.parametrize(
+        ("enabled", "stt_enabled", "recovery"),
+        [
+            (False, True, "Run gobby install voice on the daemon host."),
+            (True, False, "Speech-to-text is disabled in config."),
+            (True, True, "Run uv sync in the daemon checkout."),
+        ],
+    )
+    async def test_voice_audio_stt_unavailable_error_includes_request_id(
+        self, enabled: bool, stt_enabled: bool, recovery: str
+    ) -> None:
+        """Unavailable capture preserves request identity and gives valid recovery."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=enabled, stt_enabled=stt_enabled))
         mixin._get_stt = MagicMock(return_value=None)
         websocket = SimpleNamespace(send=AsyncMock())
 
@@ -764,7 +786,9 @@ class TestVoiceWarmup:
         assert payload["conversation_id"] == "conv-no-stt"
         assert payload["status"] == "error"
         assert payload["request_id"] == "req-no-stt"
-        assert "Speech-to-text" in payload["error"]
+        error = payload["error"]
+        assert isinstance(error, str)
+        assert recovery in error
 
 
 class TestWarmupFailureBackoff:

@@ -744,8 +744,8 @@ UI-setting/global-approval save routes. YAML replacement also requires
 | `DELETE` | `/api/chat/{conversation_id}/messages` | Delete chat messages. |
 | `GET` | `/api/traces` | List traces. |
 | `GET` | `/api/traces/{trace_id}` | Get a trace. |
-| `GET` | `/api/voice/status` | Voice subsystem status. |
-| `POST` | `/api/voice/transcribe` | Transcribe audio. |
+| `GET` | `/api/voice/status` | Voice availability and warmup; optional `want_stt`/`want_tts` scope readiness. |
+| `POST` | `/api/voice/transcribe` | Multipart audio transcription/translation with optional capability, provider, model, language, and prompt. See [voice API](./voice.md#api-and-websocket-reference). |
 
 ### Pipeline Definitions
 

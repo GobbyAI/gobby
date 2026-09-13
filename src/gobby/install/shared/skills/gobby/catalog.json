@@ -860,6 +860,44 @@
           "when": "Creating, changing, or diagnosing event subscriptions"
         }
       ]
+    },
+    {
+      "name": "voice",
+      "description": "Configure and diagnose speech recognition and playback",
+      "overview": "references/voice/overview.md",
+      "when": "Working with vocabulary, audio input, speech output, or voice health",
+      "topics": [
+        {
+          "name": "vocabulary",
+          "description": "Inspect and edit Whisper terminology",
+          "path": "references/voice/vocabulary.md",
+          "when": "Inspecting, adding, removing, or clearing recognition terms"
+        },
+        {
+          "name": "configuration",
+          "description": "Configure voice switches, models, and providers",
+          "path": "references/voice/configuration.md",
+          "when": "Changing voice configuration or restoring a trial"
+        },
+        {
+          "name": "stt",
+          "description": "Capture, transcribe, and translate audio",
+          "path": "references/voice/stt.md",
+          "when": "Using browser recognition or the one-shot audio API"
+        },
+        {
+          "name": "tts",
+          "description": "Prepare speech providers and interrupt playback",
+          "path": "references/voice/tts.md",
+          "when": "Setting up Chatterbox or Crane and verifying speech output"
+        },
+        {
+          "name": "diagnostics",
+          "description": "Diagnose voice readiness and failures",
+          "path": "references/voice/diagnostics.md",
+          "when": "Investigating packages, models, references, capture, or playback"
+        }
+      ]
     }
   ]
 }

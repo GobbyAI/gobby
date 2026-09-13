@@ -352,7 +352,9 @@ def _run_voice_install(
         click.echo("Voice Chat (Optional)")
         click.echo("-" * 40)
         click.echo("Voice adds speech-to-text and text-to-speech with voice cloning.")
-        click.echo("Requires a local Whisper + Chatterbox TTS stack.")
+        click.echo(
+            "Uses local Whisper; TTS defaults to Chatterbox and also supports external Crane."
+        )
         click.echo("")
 
         try:
@@ -402,7 +404,7 @@ def _run_voice_install(
         click.echo("Next: place a 10-20s voice reference WAV at:")
         click.echo("  ~/.gobby/voice/reference.wav")
         click.echo("")
-        click.echo("See docs/guides/voice.md for how to sample from YouTube.")
+        click.echo("See docs/guides/voice.md for reference audio requirements.")
         click.echo("")
 
 
