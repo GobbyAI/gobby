@@ -2,9 +2,20 @@
 
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from tests.mcp_proxy import test_results_tools as result_scenarios
+from tests.mcp_proxy.tools import test_config_values as config_scenarios
+from tests.mcp_proxy.tools import test_mcp_proxy_tools_build as build_scenarios
+from tests.mcp_proxy.tools import test_mcp_proxy_tools_pipeline_resume as pipeline_scenarios
+from tests.mcp_proxy.tools import test_worktrees_lifecycle as workspace_scenarios
+from tests.mcp_proxy.tools.tasks import test_lifecycle_close_orchestration as task_scenarios
+from tests.sessions import test_handoff as handoff_scenarios
 from tests.skills.reference_library_helpers import (
     ROOT,
     cli_inventory,
@@ -19,6 +30,8 @@ from tests.skills.reference_library_helpers import (
 )
 
 pytestmark = pytest.mark.unit
+reference_session_manager = handoff_scenarios.session_manager
+_local_machine_identity = handoff_scenarios._local_machine_identity
 
 
 async def test_reference_contract_3_2_1() -> None:
@@ -32,9 +45,52 @@ async def test_reference_contract_3_2_1() -> None:
     assert errors == [], "\n".join(errors)
 
 
-def test_reference_contract_3_2_2() -> None:
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "tasks",
+        "planning-build",
+        "agent-handoff",
+        "pipeline",
+        "workspace",
+        "config-conflict",
+        "oversized-result",
+    ],
+)
+async def test_reference_contract_3_2_2(
+    scenario: str,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    reference_session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run existing behavioral scenarios with this test's isolated fixture lifetime."""
     errors = documentation_errors(load_audits())
     assert errors == [], "\n".join(errors)
+    if scenario == "tasks":
+        await task_scenarios.test_close_persists_and_launches_one_taskless_validator(monkeypatch)
+    elif scenario == "planning-build":
+        await build_scenarios.test_build_task_tool_calls_shared_service_and_returns_result_dict(
+            temp_db
+        )
+    elif scenario == "agent-handoff":
+        handoff_scenarios.test_handoff_consumes_once_for_compact_and_clear_successor(
+            temp_db, reference_session_manager
+        )
+    elif scenario == "pipeline":
+        await pipeline_scenarios.test_concurrent_double_resume_spawns_one_executor()
+    elif scenario == "workspace":
+        storage = MagicMock()
+        storage.resolve_reference.side_effect = lambda ref: ref
+        await workspace_scenarios.test_delete_worktree_existing_path_without_git_manager_preserves_record(
+            storage
+        )
+    elif scenario == "config-conflict":
+        await config_scenarios.test_mcp_patch_requires_revision()
+    else:
+        await result_scenarios.test_get_tool_result_pages_content_within_shared_budget(
+            temp_db, sample_project
+        )
 
 
 def test_unmapped_public_operations_are_rejected() -> None:
