@@ -7,14 +7,11 @@ import {
 import {
   releaseTickerOverflow,
   reportTickerOverflow,
+  TICKER_MASK_PX,
 } from "../../lib/tickerClock";
 import { cn } from "../../lib/utils";
 
 type TickerTextProps = ComponentPropsWithoutRef<"span">;
-
-// The trailing-edge mask in base.css is this wide; the slide overshoots by
-// it so the end of the text clears the fade at the far stop.
-const TICKER_MASK_PX = 20;
 
 /**
  * Single-line text that slides to reveal its tail when it overflows its slot,

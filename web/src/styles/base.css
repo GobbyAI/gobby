@@ -103,19 +103,19 @@ body {
 }
 
 /* TickerText (ui/TickerText.tsx): overflowing single-line titles slide to
-   reveal their tail. lib/tickerClock.ts runs the slide as one Web Animations
-   transform per title on a shared start time, so they start together, each
-   parks at its tail, and the loop restarts once the longest is done. Keep the
-   clock out of CSS: an inherited, animated custom property restyles every row
-   on every frame, and that version crashed iOS Safari (#22281).
-   Off and reduced motion share one fallback: no promotion, no mask, so the
-   component's own text-overflow renders a plain ellipsis. */
+   reveal their tail in the reading direction. lib/tickerClock.ts runs one Web
+   Animations transform per title on a shared start time: all start together,
+   each parks at its tail, and all jump back once the longest is done. Keep the
+   clock out of CSS: an inherited, animated custom property restyled every row
+   per frame and crashed iOS Safari (#22281). Off and reduced motion fall back
+   to the component's own ellipsis: no promotion, no mask. */
 @media (prefers-reduced-motion: no-preference) {
-  /* The fade stays on the right in both directions: the inner span only ever
-     sits between 0 and -overflow, so the right edge is the clipped one. The
-     20px matches TICKER_MASK_PX, the overshoot that clears the tail. */
+  /* Fade the edge a title starts clipped at; 20px is TICKER_MASK_PX. */
   html[data-ticker-active]:not([data-ticker="off"]) .ticker--overflow {
     mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  }
+  html[data-ticker-active][data-ticker="right"] .ticker--overflow {
+    mask-image: linear-gradient(to left, #000 calc(100% - 20px), transparent);
   }
 
   /* A transform does not apply to an inline box. */

@@ -10,12 +10,17 @@ export const TICKER_SPEED_PX_PER_SEC: Record<TickerSpeed, number> = {
   fast: 42,
 };
 
-// One loop holds at the head for 10%, travels out for 40%, holds at the tail
-// for 10% and travels back for 40% — for the longest title. A shorter title
-// covers its own distance at the same pace, so it reaches its tail sooner and
-// parks there until the longest comes back past it.
-const HOLD_FRACTION = 0.1;
-const TRAVEL_FRACTION = 0.4;
+// The edge fade in base.css is this wide. Every slide overshoots by it so the
+// far end of the text clears the fade when it parks.
+export const TICKER_MASK_PX = 20;
+
+// One loop holds at the head for 20%, travels for 60% and holds at the tail
+// for 20% — for the longest title — then every title jumps back to its head
+// and goes again; it never travels back. A shorter title covers its own
+// distance at the same pace, so it reaches its tail sooner and parks there
+// until the loop restarts.
+const HOLD_FRACTION = 0.2;
+const TRAVEL_FRACTION = 0.6;
 // Floor so a one-word overflow doesn't twitch through its cycle.
 const MIN_CYCLE_SECONDS = 4;
 
@@ -35,21 +40,28 @@ let appliedSpan = 0;
 let appliedCycleMs = 0;
 
 /**
- * One title's slide within the shared loop. `overflow` is its own travel
- * distance and `span` the longest title's, so it reaches its tail when the
- * longest is `overflow / span` of the way out, and leaves when the longest
- * passes that point on the way back.
+ * One title's slide within the shared loop, in its reading direction. Left
+ * starts flush left and travels left; Right mirrors it for right-to-left
+ * readers, starting flush right and travelling right. `overflow` is the
+ * title's own travel distance, fade overshoot included, and `span` the
+ * longest title's, so it parks at its tail once the longest is
+ * `overflow / span` of the way there.
  */
-export function tickerKeyframes(overflow: number, span: number): Keyframe[] {
-  const reach = TRAVEL_FRACTION * (overflow / span);
-  const home = "translateX(0px)";
-  const tail = `translateX(${-overflow}px)`;
+export function tickerKeyframes(
+  overflow: number,
+  span: number,
+  reading: Exclude<TickerDirection, "off">,
+): Keyframe[] {
+  const [head, tail] =
+    reading === "left"
+      ? [0, -overflow]
+      : [TICKER_MASK_PX - overflow, TICKER_MASK_PX];
+  const arrive = HOLD_FRACTION + TRAVEL_FRACTION * (overflow / span);
   return [
-    { offset: 0, transform: home },
-    { offset: HOLD_FRACTION, transform: home },
-    { offset: HOLD_FRACTION + reach, transform: tail },
-    { offset: 1 - reach, transform: tail },
-    { offset: 1, transform: home },
+    { offset: 0, transform: `translateX(${head}px)` },
+    { offset: HOLD_FRACTION, transform: `translateX(${head}px)` },
+    { offset: arrive, transform: `translateX(${tail}px)` },
+    { offset: 1, transform: `translateX(${tail}px)` },
   ];
 }
 
@@ -111,19 +123,16 @@ function apply(changed?: HTMLElement): void {
   appliedSpan = span;
   appliedCycleMs = cycleMs;
 
-  const playback = direction === "right" ? "reverse" : "normal";
   for (const [inner, ticker] of tickers) {
     if (!retimeAll && inner !== changed) continue;
     stop(ticker);
     if (ticker.overflow <= 0) continue;
     // Recreated rather than retimed: pinned to the epoch, a new animation
     // lands in phase with the rest.
-    ticker.animation = inner.animate(tickerKeyframes(ticker.overflow, span), {
-      duration: cycleMs,
-      iterations: Infinity,
-      easing: "linear",
-      direction: playback,
-    });
+    ticker.animation = inner.animate(
+      tickerKeyframes(ticker.overflow, span, direction),
+      { duration: cycleMs, iterations: Infinity, easing: "linear" },
+    );
     ticker.animation.startTime = epoch;
   }
   root.setAttribute("data-ticker-active", "");

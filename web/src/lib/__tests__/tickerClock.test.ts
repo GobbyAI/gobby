@@ -82,24 +82,28 @@ describe("tickerClock", () => {
   });
 
   it("parks each title at its own tail on the longest title's loop", () => {
-    const offsets = (overflow: number) =>
-      clock.tickerKeyframes(overflow, 480).map((frame) => frame.offset);
+    const expectOffsets = (overflow: number, expected: number[]) => {
+      const offsets = clock
+        .tickerKeyframes(overflow, 480, "left")
+        .map((frame) => frame.offset);
+      expect(offsets).toHaveLength(expected.length);
+      expected.forEach((offset, index) => {
+        expect(offsets[index]).toBeCloseTo(offset, 10);
+      });
+    };
 
-    // The longest travels out over 10–50% and back over 60–100%.
-    expect(offsets(480)).toEqual([0, 0.1, 0.5, 0.6, 1]);
-    // A quarter of the distance at the same pace: tail at 20%, home from 90%.
-    const quarter = offsets(120);
-    [0, 0.1, 0.2, 0.9, 1].forEach((expected, index) => {
-      expect(quarter[index]).toBeCloseTo(expected, 10);
-    });
+    // The longest holds to 20%, travels to 80% and holds to the end, where the
+    // next iteration jumps it back to its head: no leg travels back.
+    expectOffsets(480, [0, 0.2, 0.8, 1]);
+    // A quarter of the distance at the same pace parks at its tail from 35%.
+    expectOffsets(120, [0, 0.2, 0.35, 1]);
     expect(
-      clock.tickerKeyframes(120, 480).map((frame) => frame.transform),
+      clock.tickerKeyframes(120, 480, "left").map((frame) => frame.transform),
     ).toEqual([
       "translateX(0px)",
       "translateX(0px)",
       "translateX(-120px)",
       "translateX(-120px)",
-      "translateX(0px)",
     ]);
   });
 
@@ -120,12 +124,12 @@ describe("tickerClock", () => {
     for (const animation of running()) {
       expect(animation.startTime).toBe(1000);
       expect(animation.options.duration).toBeCloseTo(
-        (480 / (0.4 * 24)) * 1000,
+        (480 / (0.6 * 24)) * 1000,
         5,
       );
       expect(animation.options.iterations).toBe(Infinity);
     }
-    expect(runningOn(short).keyframes[2]?.offset).toBeCloseTo(0.2, 10);
+    expect(runningOn(short).keyframes[2]?.offset).toBeCloseTo(0.35, 10);
   });
 
   it("derives the cycle from the widest overflow at the selected pace", () => {
@@ -134,13 +138,13 @@ describe("tickerClock", () => {
 
     clock.setTickerSpeed("fast");
     expect(runningOn(ticker).options.duration).toBeCloseTo(
-      (480 / (0.4 * clock.TICKER_SPEED_PX_PER_SEC.fast)) * 1000,
+      (480 / (0.6 * clock.TICKER_SPEED_PX_PER_SEC.fast)) * 1000,
       5,
     );
 
     clock.setTickerSpeed("slow");
     expect(runningOn(ticker).options.duration).toBeCloseTo(
-      (480 / (0.4 * clock.TICKER_SPEED_PX_PER_SEC.slow)) * 1000,
+      (480 / (0.6 * clock.TICKER_SPEED_PX_PER_SEC.slow)) * 1000,
       5,
     );
   });
@@ -154,28 +158,44 @@ describe("tickerClock", () => {
   it("keeps the loop's position when a longer title stretches the cycle", () => {
     const now = vi.spyOn(performance, "now").mockReturnValue(1000);
     const first = makeTicker();
-    clock.reportTickerOverflow(first, 240); // 25s loop
+    clock.reportTickerOverflow(first, 216); // 15s loop
 
-    now.mockReturnValue(1000 + 12_500); // halfway through it
+    now.mockReturnValue(1000 + 7_500); // halfway through it
     const longer = makeTicker();
-    clock.reportTickerOverflow(longer, 480); // 50s loop
+    clock.reportTickerOverflow(longer, 432); // 30s loop
 
-    // Still halfway: 13.5s now, minus half of the new 50s loop.
+    // Still halfway: 8.5s now, minus half of the new 30s loop.
     for (const animation of running()) {
-      expect(animation.startTime).toBeCloseTo(13_500 - 25_000, 6);
+      expect(animation.startTime).toBeCloseTo(8_500 - 15_000, 6);
     }
     expect(running()).toHaveLength(2);
   });
 
-  it("plays the same path in reverse for the Right setting", () => {
+  it("mirrors the path for right-to-left readers", () => {
     const ticker = makeTicker();
+    const transforms = () =>
+      runningOn(ticker).keyframes.map((frame) => frame.transform);
     clock.setTickerDirection("right");
     clock.reportTickerOverflow(ticker, 300);
-    expect(runningOn(ticker).options.direction).toBe("reverse");
+
+    // Starts flush right and travels right until its left end clears the
+    // 20px fade on that edge: mirrored in space, never played in reverse.
+    expect(transforms()).toEqual([
+      "translateX(-280px)",
+      "translateX(-280px)",
+      "translateX(20px)",
+      "translateX(20px)",
+    ]);
+    expect(runningOn(ticker).options.direction).toBeUndefined();
 
     clock.setTickerDirection("left");
     expect(running()).toHaveLength(1);
-    expect(runningOn(ticker).options.direction).toBe("normal");
+    expect(transforms()).toEqual([
+      "translateX(0px)",
+      "translateX(0px)",
+      "translateX(-300px)",
+      "translateX(-300px)",
+    ]);
   });
 
   it("stops every title when scrolling is switched off", () => {
@@ -260,5 +280,24 @@ describe("ticker stylesheet", () => {
       if (selector.includes(".activity-panel")) panelAnimations.push(selector);
     });
     expect(panelAnimations).toEqual([]);
+  });
+
+  it("fades the edge each reading direction starts clipped at", () => {
+    const fades = new Map<string, string>();
+    sheet.walkDecls("mask-image", (decl) => {
+      fades.set((decl.parent as Rule).selector, decl.value);
+    });
+
+    // Left starts flush left, clipped on the right; Right mirrors it.
+    expect(
+      fades.get(
+        'html[data-ticker-active]:not([data-ticker="off"]) .ticker--overflow',
+      ),
+    ).toMatch(/^linear-gradient\(to right,/);
+    expect(
+      fades.get(
+        'html[data-ticker-active][data-ticker="right"] .ticker--overflow',
+      ),
+    ).toMatch(/^linear-gradient\(to left,/);
   });
 });

@@ -18,9 +18,10 @@ export type VoiceInputMode = "ptt" | "vad";
  */
 export type Density = "comfortable" | "compact";
 /**
- * Row-title scrolling for the activity panel — off, or the direction a
- * too-long title travels to reveal its tail. Client-only for the same reason
- * as Density: the ui_settings API has no field for it.
+ * Row-title scrolling for the activity panel — off, or the reading direction a
+ * too-long title travels in to reveal its tail: left for left-to-right text,
+ * right for right-to-left. Client-only for the same reason as Density: the
+ * ui_settings API has no field for it.
  */
 export type TickerDirection = "off" | "left" | "right";
 export type TickerSpeed = "slow" | "normal" | "fast";
