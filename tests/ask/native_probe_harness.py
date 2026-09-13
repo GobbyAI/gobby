@@ -972,7 +972,11 @@ def _provision_private_parent_index(
     command_env = dict(os.environ)
     try:
         source_status_before = source_status("source_status_before")
-        resolved_head = run_command("source_head", ["git", "rev-parse", "HEAD"], cwd=source_root).stdout.decode().strip()
+        resolved_head = (
+            run_command("source_head", ["git", "rev-parse", "HEAD"], cwd=source_root)
+            .stdout.decode()
+            .strip()
+        )
         if resolved_head != source_commit:
             raise RuntimeError("probe caller HEAD differs from its required source commit")
         issued = manager.issue_tool_request(

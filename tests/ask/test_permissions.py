@@ -387,6 +387,7 @@ def _new_run(
         agent_name=name,
         workflow_name=ASK_PIPELINE_NAME if ask_member else None,
     )
+    SessionManager(db).update_terminal_pickup_metadata(child_session_id, agent_run_id=run.id)
     return run.id
 
 
@@ -490,10 +491,12 @@ async def test_managed_ask_resume_without_authority_fails_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("complete_agent", [False, True])
 async def test_ask_agent_permission_boundary(
     temp_db: HubDatabase,
     sample_project: dict[str, object],
     tmp_path: Path,
+    complete_agent: bool,
 ) -> None:
     project_id = str(sample_project["id"])
     admitted_at = datetime.now(UTC)
@@ -578,10 +581,11 @@ async def test_ask_agent_permission_boundary(
         name="ask-investigator-unbound",
     )
 
-    source_root = tmp_path / "source-snapshot"
+    source_root = tmp_path / "isolated-checkout"
     scratch_root = tmp_path / "agent-scratch"
-    source_root.mkdir()
     scratch_root.mkdir()
+    sessions.update(first_child.id, workspace_path=str(scratch_root))
+    sessions.update(successor_child.id, workspace_path=str(scratch_root))
     profile = compile_ask_runtime_profile(
         provider="claude",
         source_root=source_root,
@@ -948,6 +952,17 @@ async def test_ask_agent_permission_boundary(
         agent_run_id=successor_run_id,
         ask_run_id=ask_run.run_id,
     )
+    token = set_current_agent_run_id(successor_run_id)
+    try:
+        *_, metadata, event_root, _project = proxy._resolve_tool_event_context(successor_child.id)
+        assert event_root == str(source_root.resolve())
+        assert metadata["project_path"] == str(source_root.resolve())
+        sessions.update(successor_child.id, workspace_path=str(tmp_path / "foreign-scratch"))
+        with pytest.raises(AskPermissionDenied, match="session does not match"):
+            proxy._resolve_tool_event_context(successor_child.id)
+    finally:
+        sessions.update(successor_child.id, workspace_path=str(scratch_root))
+        reset_current_agent_run_id(token)
     request_kwargs = {
         "project_id": project_id,
         "session_id": successor_child.id,
@@ -1064,6 +1079,56 @@ async def test_ask_agent_permission_boundary(
     assert blocked["error_code"] == "TOOL_BLOCKED"
     assert "Ask investigator" in blocked["error"]
     assert calls == []
+
+    if complete_agent:
+        from gobby.agents.runner import AgentRunner
+        from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+        from gobby.mcp_proxy.services.tool_execution import _execute_tool_dispatch
+        from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+        from gobby.utils.session_context import session_context_for_test
+
+        observed: list[HookEvent] = []
+
+        def evaluate(event: HookEvent) -> HookResponse:
+            observed.append(event)
+            return HookResponse(decision="allow")
+
+        hook_manager._workflow_handler = cast(Any, SimpleNamespace(evaluate=evaluate))
+        runner = AgentRunner(temp_db, sessions)
+        registries.add_registry(
+            create_agents_registry(runner, session_manager=sessions, db=temp_db)
+        )
+        token = set_current_agent_run_id(successor_run_id)
+        try:
+            with session_context_for_test(successor_child.id):
+                result = await _execute_tool_dispatch(
+                    service=proxy,
+                    server_name="gobby-agents",
+                    tool_name="end_agent_run",
+                    arguments={
+                        "current_state": "Investigation complete.",
+                        "next_steps": ["Review the submitted answer."],
+                    },
+                    effective_session_id=successor_child.id,
+                    project_id=project_id,
+                    emit_after_workflow=True,
+                    timeout=None,
+                    wrapper_originated=False,
+                    intent=None,
+                    offload=False,
+                )
+            assert result["status"] == "success", result
+            completed = runner.get_run(successor_run_id)
+            assert completed is not None and completed.status == "success"
+            assert len(observed) == 1
+            assert observed[0].event_type is HookEventType.AFTER_TOOL
+            assert observed[0].cwd == str(source_root.resolve())
+            assert observed[0].data["tool_output"]["status"] == "success"
+            with pytest.raises(AskPermissionDenied, match="not live"):
+                permissions.resolve_authenticated(successor_run_id)
+        finally:
+            reset_current_agent_run_id(token)
+        return
 
     permissions.revoke_for_run(ask_run.run_id, reason="explicit_cancel")
     with pytest.raises(AskPermissionDenied, match="revoked"):

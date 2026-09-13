@@ -110,9 +110,12 @@ async def test_dispatch_offloads_after_after_tool_workflow_sees_full_result() ->
     async def execute_tool(**_kwargs: object) -> object:
         return full_result
 
-    with patch(
-        "gobby.mcp_proxy.services.tool_execution._execute_tool",
-        new=execute_tool,
+    with (
+        patch(
+            "gobby.mcp_proxy.services.tool_execution._execute_tool",
+            new=execute_tool,
+        ),
+        patch("gobby.mcp_proxy.services.tool_execution.build_after_tool_event", return_value=None),
     ):
         result = await _execute_tool_dispatch(
             service=service,
@@ -135,6 +138,7 @@ async def test_dispatch_offloads_after_after_tool_workflow_sees_full_result() ->
             "arguments": {"value": 1},
             "session_id": "session",
             "tool_output": full_result,
+            "completion_event": None,
         }
     ]
     assert offloader.calls == [

@@ -31,6 +31,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
@@ -39,6 +40,15 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture
+def workflow_runtime() -> Iterator[WorkflowEvaluationRuntime]:
+    runtime = WorkflowEvaluationRuntime()
+    try:
+        yield runtime
+    finally:
+        runtime.shutdown()
 
 
 @pytest.fixture(autouse=True)
@@ -70,8 +80,11 @@ class _DirectToolService:
         session_manager: SessionManager,
         project_id: str,
         project_path: Path,
+        workflow_runtime: WorkflowEvaluationRuntime,
     ) -> None:
-        workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db), enabled=True)
+        workflow_handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db), enabled=True, evaluation_runtime=workflow_runtime
+        )
         event_handlers = EventHandlers(session_manager=session_manager)  # type: ignore[arg-type]
         self._hook_manager = SimpleNamespace(
             _workflow_handler=workflow_handler,
@@ -172,6 +185,7 @@ def _seed_agent_variables(db: HubDatabase, session_id: str, *, spawned: bool) ->
 async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
     temp_db: HubDatabase,
     tmp_path: Path,
+    workflow_runtime: WorkflowEvaluationRuntime,
 ) -> None:
     """Direct MCP calls repair stale spawned status before review-gate rules run."""
     _load_interactive_review_block_rule(temp_db)
@@ -180,7 +194,9 @@ async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
     _seed_agent_variables(temp_db, child_session_id, spawned=False)
     session = session_manager.get(child_session_id)
     assert session is not None
-    service = _DirectToolService(temp_db, session_manager, session.project_id, tmp_path)
+    service = _DirectToolService(
+        temp_db, session_manager, session.project_id, tmp_path, workflow_runtime
+    )
 
     _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
@@ -199,6 +215,7 @@ async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
 async def test_direct_mcp_review_tool_still_blocks_interactive_session(
     temp_db: HubDatabase,
     tmp_path: Path,
+    workflow_runtime: WorkflowEvaluationRuntime,
 ) -> None:
     """The interactive protection still applies to non-spawned sessions."""
     _load_interactive_review_block_rule(temp_db)
@@ -207,7 +224,9 @@ async def test_direct_mcp_review_tool_still_blocks_interactive_session(
     _seed_agent_variables(temp_db, session_id, spawned=False)
     session = session_manager.get(session_id)
     assert session is not None
-    service = _DirectToolService(temp_db, session_manager, session.project_id, tmp_path)
+    service = _DirectToolService(
+        temp_db, session_manager, session.project_id, tmp_path, workflow_runtime
+    )
 
     _, _, _, error, _ = await apply_before_tool_enforcement(
         service,

@@ -14,7 +14,7 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
-from gobby.mcp_proxy.services.tool_execution import get_tool_schema as get_tool_schema_impl
+from gobby.mcp_proxy.services.tool_discovery import get_tool_schema as get_tool_schema_impl
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService, safe_truncate
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.results import create_results_registry

@@ -41,17 +41,17 @@ from .session_context import (
     resolve_platform_session_id,
     resolve_tool_event_context,
 )
+from .tool_discovery import (
+    get_tool_schema as get_tool_schema_impl,
+)
+from .tool_discovery import (
+    list_tools as list_tools_impl,
+)
 from .tool_execution import (
     call_tool as call_tool_impl,
 )
 from .tool_execution import (
     call_tool_by_name as call_tool_by_name_impl,
-)
-from .tool_execution import (
-    get_tool_schema as get_tool_schema_impl,
-)
-from .tool_execution import (
-    list_tools as list_tools_impl,
 )
 from .tool_proxy_constants import PROXY_NAMESPACE, SERVER_SUGGESTIONS
 from .tool_proxy_utils import safe_truncate
@@ -235,6 +235,7 @@ class ToolProxyService:
         arguments: dict[str, Any],
         session_id: str | None,
         tool_output: Any,
+        completion_event: Any = None,
     ) -> None:
         """Run workflow after_tool processing for direct MCP tool execution."""
         await apply_after_tool_workflow(
@@ -244,6 +245,7 @@ class ToolProxyService:
             arguments,
             session_id,
             tool_output,
+            completion_event,
         )
 
     async def list_tools(

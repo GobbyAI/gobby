@@ -692,8 +692,8 @@ def _policy_database(service: object) -> HubDatabase | None:
     return cast(HubDatabase | None, database)
 
 
-def current_ask_allowed_tools(service: object) -> frozenset[tuple[str, str]] | None:
-    """Return the authenticated Ask allowlist, or ``None`` for an ordinary caller."""
+def current_ask_principal(service: object) -> AskPrincipal | None:
+    """Return live authenticated Ask authority, or ``None`` for an ordinary caller."""
     agent_run_id = get_current_agent_run_id()
     if agent_run_id is None:
         return None
@@ -704,7 +704,13 @@ def current_ask_allowed_tools(service: object) -> frozenset[tuple[str, str]] | N
     if principal is None:
         return None
     _assert_live(principal)
-    return principal.allowed_tools
+    return principal
+
+
+def current_ask_allowed_tools(service: object) -> frozenset[tuple[str, str]] | None:
+    """Return the authenticated Ask allowlist, or ``None`` for an ordinary caller."""
+    principal = current_ask_principal(service)
+    return principal.allowed_tools if principal is not None else None
 
 
 def ask_tool_denial_reason(

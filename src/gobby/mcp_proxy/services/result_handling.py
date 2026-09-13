@@ -230,6 +230,7 @@ async def apply_after_tool_workflow(
     arguments: dict[str, Any],
     session_id: str | None,
     tool_output: Any,
+    completion_event: "HookEvent | None" = None,
 ) -> None:
     """Run workflow after_tool processing for direct MCP tool execution."""
     effective_session_id = await asyncio.to_thread(service._get_effective_session_id, session_id)
@@ -241,17 +242,12 @@ async def apply_after_tool_workflow(
     if workflow_handler is None:
         return
 
-    event = await asyncio.to_thread(
-        build_after_tool_event,
-        service=service,
-        effective_session_id=effective_session_id,
-        server_name=server_name,
-        tool_name=tool_name,
-        arguments=arguments,
-        tool_output=tool_output,
-    )
+    # Attribution was authenticated before dispatch: terminalizing tools and
+    # stage advancement must not force a second live-authority lookup here.
+    event = completion_event
     if event is None:
         return
+    event.data["tool_output"] = deepcopy(tool_output)
     try:
         response = await _evaluate_workflow_handler(workflow_handler, event)
     except Exception as exc:

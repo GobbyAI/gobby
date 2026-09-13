@@ -131,8 +131,23 @@ def resolve_tool_event_context(
                 machine_id = getattr(session, "machine_id", None)
                 workspace_path = getattr(session, "workspace_path", None)
                 if session_project_id and machine_id:
+                    from gobby.ask.permissions import AskPermissionDenied, current_ask_principal
                     from gobby.storage.project_checkouts import resolve_operation_root
 
+                    ask_principal = current_ask_principal(service)
+                    if ask_principal is not None:
+                        profile = ask_principal.runtime_profile
+                        if ask_principal.project_id != session_project_id or (
+                            workspace_path
+                            and Path(workspace_path).resolve()
+                            != Path(profile.scratch_root).resolve()
+                        ):
+                            raise AskPermissionDenied(
+                                "Ask tool session does not match its authority"
+                            )
+                        # Ask executes in private scratch, but project events belong
+                        # to its authenticated source checkout (including overlays).
+                        workspace_path = str(profile.source_root)
                     primary_root = resolve_operation_root(
                         session_storage.db,
                         session_project_id,

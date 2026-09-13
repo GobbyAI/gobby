@@ -1415,8 +1415,17 @@ class TestDirectMcpAfterToolWorkflow:
                 )
                 assert result[3:] == (None, None)
             else:
+                from gobby.mcp_proxy.services.result_handling import build_after_tool_event
+
                 await tool_proxy_with_hooks._apply_after_tool_workflow(
-                    "gobby-tasks", "list_tasks", {}, "session-123", {"success": True}
+                    "gobby-tasks",
+                    "list_tasks",
+                    {},
+                    "session-123",
+                    {"success": True},
+                    completion_event=build_after_tool_event(
+                        tool_proxy_with_hooks, "session-123", "gobby-tasks", "list_tasks", {}, None
+                    ),
                 )
 
         evaluation = asyncio.create_task(evaluate())

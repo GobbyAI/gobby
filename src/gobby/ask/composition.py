@@ -50,7 +50,26 @@ def build_ask_service(
     )
 
     async def cancel_agent(agent_run_id: str) -> None:
-        await services.run_db(agent_runner.cancel_run, agent_run_id)
+        from gobby.mcp_proxy.tools.agent_cancellation import terminate_agent_run
+
+        run = await services.run_db(agent_runner.get_run, agent_run_id)
+        if run is None:
+            return
+        result = await terminate_agent_run(
+            run=run,
+            runner=agent_runner,
+            agent_run_manager=agent_runner.run_storage,
+            db=services.database,
+            lifecycle_monitor=services.agent_lifecycle_monitor,
+            completion_registry=services.completion_registry,
+            task_manager=services.task_manager,
+            session_manager=services.session_manager,
+            effective_status="cancelled",
+        )
+        if not result.get("success"):
+            raise RuntimeError(
+                f"Ask agent termination failed: {result.get('error', 'unknown error')}"
+            )
 
     config_runtime = services.config_runtime
     daemon_config = (
