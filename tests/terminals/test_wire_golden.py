@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -20,6 +21,7 @@ from gobby.terminals.host_client import (
     decode_control_line,
     encode_control_line,
 )
+from gobby.terminals.host_control import HostControlClient
 
 pytestmark = pytest.mark.unit
 
@@ -218,6 +220,41 @@ def test_control_host_shutdown_round_trip() -> None:
     assert encode_control_line(
         {"id": "shutdown-1", "method": "host_shutdown", "grace_ms": 1000}
     ) == _golden("control_host_shutdown.json")
+
+
+@pytest.mark.asyncio
+async def test_legacy_control_client_adds_unique_request_ids() -> None:
+    reader = asyncio.StreamReader()
+    writes: asyncio.Queue[bytes] = asyncio.Queue()
+
+    class _Writer:
+        def write(self, data: bytes) -> None:
+            writes.put_nowait(data)
+
+        async def drain(self) -> None:
+            return None
+
+    client = HostControlClient(reader, cast(asyncio.StreamWriter, _Writer()))
+    request_ids: list[object] = []
+    for _ in range(2):
+        ping_task = asyncio.create_task(client.ping())
+        request = decode_control_line(await writes.get())
+        request_ids.append(request.get("id"))
+        reader.feed_data(
+            encode_control_line(
+                {
+                    "id": request.get("id"),
+                    "ok": True,
+                    "host_epoch": "epoch-1",
+                    "version": "0.1.0",
+                    "host_pid": 1234,
+                }
+            )
+        )
+        await ping_task
+
+    assert all(isinstance(request_id, str) for request_id in request_ids)
+    assert len(set(request_ids)) == 2
 
 
 def test_control_spawn_carries_reservation_identity() -> None:

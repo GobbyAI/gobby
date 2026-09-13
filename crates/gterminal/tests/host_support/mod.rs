@@ -184,7 +184,9 @@ pub fn recv_json(stream: &mut UnixStream) -> Value {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("read timeout");
-    let mut reader = BufReader::new(stream);
+    // This helper does not retain a BufReader between calls. A one-byte buffer
+    // prevents it from reading and then discarding the next correlated reply.
+    let mut reader = BufReader::with_capacity(1, stream);
     let mut line = String::new();
     reader.read_line(&mut line).expect("read response line");
     assert!(

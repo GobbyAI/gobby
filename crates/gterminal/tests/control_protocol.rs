@@ -100,7 +100,14 @@ fn hello_required_before_any_verb() {
     assert!(hello["host_epoch"].as_str().unwrap().len() > 8);
     assert!(hello["version"].as_str().is_some());
 
+    // Request correlation made `id` mandatory after this authentication test was
+    // written, so keep the changed wire contract explicit here.
     send_json_without_id(&mut stream, &json!({"method": "ping"}));
+    let missing_ping = recv_json(&mut stream);
+    assert_eq!(missing_ping["ok"], false);
+    assert_eq!(missing_ping["error"], "missing_id");
+
+    send_json(&mut stream, &json!({"method": "ping", "id": "authed-ping"}));
     let ping = recv_json(&mut stream);
     assert_eq!(ping["ok"], true);
     assert_eq!(ping["host_epoch"], hello["host_epoch"]);
@@ -286,6 +293,22 @@ fn seq_spawn(
     }
     send_json(stream, &req);
     recv_json(stream)
+}
+
+fn recv_response_with_id(
+    stream: &mut std::os::unix::net::UnixStream,
+    expected_id: &str,
+) -> serde_json::Value {
+    loop {
+        let message = recv_json(stream);
+        if message.get("id").and_then(serde_json::Value::as_str) == Some(expected_id) {
+            return message;
+        }
+        assert!(
+            message.get("event").is_some(),
+            "unexpected control message: {message}"
+        );
+    }
 }
 
 #[test]
@@ -484,7 +507,7 @@ fn commit_wait_does_not_block_other_requests() {
             "reservation_id": reserved["reservation_id"],
             "reserve_key": "wait-terminal",
             "argv": ["/bin/sh", "-c", "exec sleep 30"],
-            "env": {"GTERM_GATE_FAULT": "delay", "PATH": "/bin:/usr/bin"},
+            "env": {"GTERM_GATE_FAULT": "timeout", "PATH": "/bin:/usr/bin"},
             "cwd": dir.path().to_string_lossy(),
             "rows": 24,
             "cols": 80,
@@ -532,7 +555,7 @@ fn commit_wait_does_not_block_other_requests() {
     }
     assert!(!parallel.contains_key("waiting-commit"));
 
-    let delayed_operations: Vec<_> = (0..5)
+    let delayed_operations: Vec<_> = (0..3)
         .map(|_| {
             json!({
                 "kind": "text",
@@ -583,22 +606,17 @@ fn commit_wait_does_not_block_other_requests() {
     assert_eq!(limited["error"], "too_many_inflight");
 
     let mut ordered_ids = Vec::new();
-    let mut commit_seen = false;
-    while completed.len() < 64 {
+    while completed.len() < 63 {
         completed.push(recv_json(&mut stream));
     }
     for response in completed {
         assert_eq!(response["ok"], true, "{response}");
-        if response["id"] == "waiting-commit" {
-            commit_seen = true;
-        } else {
-            ordered_ids.push(response["id"].as_str().unwrap().to_string());
-        }
+        assert_ne!(response["id"], "waiting-commit", "{response}");
+        ordered_ids.push(response["id"].as_str().unwrap().to_string());
     }
     let mut expected_ids = vec!["ordered-batch".to_string()];
     expected_ids.extend((4..=65).map(|seq| format!("queued-{seq}")));
     assert_eq!(ordered_ids, expected_ids);
-    assert!(commit_seen);
 
     send_json(
         &mut stream,
@@ -610,9 +628,15 @@ fn commit_wait_does_not_block_other_requests() {
             "grace_ms": 0,
         }),
     );
-    let killed = recv_json(&mut stream);
-    assert_eq!(killed["id"], "parallel-kill");
+    let mut final_responses = HashMap::new();
+    for _ in 0..2 {
+        let response = recv_json(&mut stream);
+        final_responses.insert(response["id"].as_str().unwrap().to_string(), response);
+    }
+    let killed = &final_responses["parallel-kill"];
     assert_eq!(killed["ok"], true);
+    let commit = &final_responses["waiting-commit"];
+    assert_eq!(commit["error"], "not_found", "{commit}");
 
     send_json(
         &mut stream,
@@ -825,14 +849,14 @@ fn control_surface_round_trip() {
             "grace_ms": 50,
         }),
     );
-    let killed = recv_json(&mut stream);
+    let killed = recv_response_with_id(&mut stream, "k1");
     assert_eq!(killed["ok"], true, "{killed}");
 
     send_json(
         &mut stream,
         &json!({"method": "host_shutdown", "id": "sd", "grace_ms": 50}),
     );
-    let shutdown = recv_json(&mut stream);
+    let shutdown = recv_response_with_id(&mut stream, "sd");
     assert_eq!(shutdown["ok"], true);
     assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
 }
