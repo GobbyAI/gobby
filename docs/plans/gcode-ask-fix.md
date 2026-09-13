@@ -2,6 +2,37 @@
 
 **Plan ID:** gcode-ask-fix
 
+## Current direction — user instruction, 2026-09-13
+`kind: framing`
+
+Build the latest binaries, run `gcode ask` directly on the fourteen listed
+Game Goblins questions, and fix failures until it answers them correctly with
+supporting evidence. Use `/Users/josh/Projects/game-goblins`, its existing index,
+and the ordinary running daemon. Record the actual checkout commit and binary
+identity. Do not create evaluation worktrees, clones, private daemons, private
+database schemas, new project identities, or per-question/per-cohort indexes.
+Do not run an index build as evaluation preparation.
+
+This user instruction supersedes the historical sealed-probe admission gate,
+fresh/resumed probe prerequisite, pinned-commit worktree execution, and contained
+cohort apparatus described below and in the existing acceptance tasks. Those
+requirements must not block direct Ask execution. Keep production authentication,
+sandboxing and evidence checks; fix actual runtime defects when encountered.
+
+Use the fourteen question strings in `matrix.md`. Preserve each command, output,
+error and subsequent fix/retry in the existing evidence report. Assess answers
+against source available in the actual checkout. Q14's undefined "C3 commit"
+must be reported honestly; if clarification is needed, supply the commit ID
+`8b24ac26699aac8b24254a647aa70b208287b492` in a separately recorded follow-up.
+Never claim a frozen-commit benchmark comparison from a current-checkout run.
+
+Execution order: update this plan; coordinate the latest binary build/install
+and any necessary daemon restart; ask Q01 directly; fix any failure at its source;
+continue through Q14; record answers and checks; commit fixes and close the
+existing tasks against this user-authorized direction. Do not expand the harness
+or manufacture additional prerequisites. Earlier verification sections preserve
+historical evidence, including failures, rather than directing new probe work.
+
 ## Overview
 `kind: framing`
 
@@ -9,7 +40,7 @@ Complete the user-directed correction to epic #22010 under coordinator #22021.
 Ask uses the ordinary index of its caller's checkout, including worktree overlay
 visibility and dirty indexed files. Remove the snapshot build path and historical
 commit flags, preserve managed evidence authority and independent claim review,
-then close acceptance tasks on real service and frozen-cohort evidence.
+then close acceptance tasks on direct live Ask answers and focused verification.
 
 This is the execution plan for existing tasks, not a request to expand another
 task tree. The user supplied the implementation decisions and authorized execution.
@@ -26,10 +57,10 @@ The requested canonical artifact is `docs/plans/gcode-ask-fix.md`.
   isolated runtime home, scrubbed subprocess environment and sandbox denial of
   direct investigator access to the repository. Scratch and repository are disjoint.
 - Bind probes retain the 5-second config and 10-second content-search caps.
-- Frozen questions, source commits and gold criteria remain unchanged. The cohort
-  runs serially with deterministic retrieval, a 600-second budget, no count cap,
-  and one primary invocation per question. Preserve errors and interruptions;
-  separately label every retry. Never place answer keys in the indexed corpus.
+- Use the existing checkout/index for all fourteen questions, serially, with a
+  600-second run budget. Preserve errors and interruptions; separately label
+  every retry. Keep answer keys out of agent prompts and the indexed corpus.
+  Historical commit pins remain report context and do not trigger checkouts or indexing.
 - Preserve unrelated changes and coordinate native installation/restart through
   project messages. Install release executables by copying to a new inode and
   renaming. No full Python test suite.
@@ -516,48 +547,35 @@ Consumers unchanged:
 - 4.8.3 - Private grant locks and redundant owned prompt reads normalize without concealing foreign paths, write grants or denial precedence. test: `tests/ask/test_runtime_validation.py::test_policy_digest_normalizes_only_the_bound_grant_lock` and `tests/ask/test_runtime_validation.py::test_policy_digest_ignores_only_redundant_owned_prompt_reads`.
 - 4.8.4 - Real worktree Ask cites its checkout; fresh/resumed contained probe records actual boundary receipts after ordinary index preparation. Record every failed diagnostic and cleanup outcome before normal-loader admission. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
 
-## P5: Record the frozen cohort and close acceptance
+## P5: Ask the fourteen questions directly and close acceptance
 `kind: framing`
 
-### 5.1 Evaluate all fourteen frozen questions [category: test] (depends: 4.8)
+### 5.1 Verify fourteen live Ask answers [category: test] (depends: 4.8)
 `kind: deliverable`
 
 Targets:
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort.py::*` — scope-reason: prepare ordinary commit-pinned worktrees once and invoke flagless Ask.
-- `scratchpad/run_cohort.py`
-- `docs/evidence/wiki-bakeoff-code-2026-09/test_ask_cohort.py::*` — scope-reason: pin unchanged cohort and separate retrieval/answer scoring.
 - `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort_records.py::*` — scope-reason: own cohort provenance, contained runtime preparation, verified exports, separate scoring and report rendering.
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort_runtime.py::*` — scope-reason: own cohort provenance, contained runtime preparation, verified exports, separate scoring and report rendering.
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort_publication.py::*` — scope-reason: own cohort provenance, contained runtime preparation, verified exports, separate scoring and report rendering.
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_scoring.py::*` — scope-reason: own cohort provenance, contained runtime preparation, verified exports, separate scoring and report rendering.
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_scoring_retrieval.py::*` — scope-reason: own cohort provenance, contained runtime preparation, verified exports, separate scoring and report rendering.
-- `docs/evidence/wiki-bakeoff-code-2026-09/ask_report.py::*` — scope-reason: own cohort provenance, contained runtime preparation, verified exports, separate scoring and report rendering.
 
-**Research context:** #22020 freezes Q01–Q13 at
-0216f1e33f05962d49467d95fe84609041c6dba8 and Q14 at
-8b24ac26699aac8b24254a647aa70b208287b492. Create two game-goblins worktrees,
-index each once with the ordinary indexer, then ask without commit flags. Preserve
-all primary outputs, provenance, timings, errors and interruptions. Keep retries
-separate and never replace a primary result. Gold keys remain outside each corpus.
+**Research context:** The user explicitly replaced isolated frozen-cohort
+execution with direct use of the existing Game Goblins checkout and index.
+The fourteen prompts are already listed in `matrix.md`. Existing runner modules
+and probe records remain historical artifacts; extending them is unnecessary.
+The dependency on 4.8 orders edits to the shared report; its historical probe
+admission requirement is superseded by the current user direction above.
 
-Move cohort record identity, contained runtime preparation and publication archive
-verification out of ask_cohort.py into ask_cohort_records.py,
-ask_cohort_runtime.py and ask_cohort_publication.py. Move retrieval scoring and
-report rendering out of ask_scoring.py into ask_scoring_retrieval.py and
-ask_report.py. Keep the canonical runner below 850 lines.
-
-Score retrieval and answers separately, compare gold-span overlap to the 6/14
-baseline and name lost baseline hits. Explicitly verify Q14's nine changed paths,
-case-sensitive longest-prefix precedence, Hobby Supplies=2 and Sleeves: =4.
-A faithfully reported negative result is valid. Record evidence for original
-acceptance 3.2.1–3.2.3 without changing prompts, source commits or gold criteria.
+Run the installed CLI against the ordinary daemon and existing project. Start
+with Q01, diagnose failures from the actual run, fix the responsible code, rebuild
+or restart when required, and retry with the original failure preserved. Continue
+through all fourteen questions. Record actual commit, binary identity, commands,
+answers, citations, timing and errors in the existing report. Check meaningful
+answer correctness against repository source; report unknowns and any context
+needed by Q14. Do not substitute a successful process exit for a correct answer.
 
 **Acceptance:**
 
-- 5.1.1 - Frozen cohort/scoring contract passes unchanged prompt and source-commit checks. test: `docs/evidence/wiki-bakeoff-code-2026-09/test_ask_cohort.py::test_frozen_cohort_and_scoring_contract`.
-- 5.1.2 - Fourteen primary answers or failures are preserved with separate retrieval and answer scores. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
-- 5.1.3 - Baseline comparison and all specified Q14 checks are reported faithfully. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
+- 5.1.1 - All fourteen listed questions have direct CLI attempts against the existing checkout/index, with actual source and binary identity recorded. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
+- 5.1.2 - Runtime and answer defects are fixed and verified; original failures and separately identified retries remain visible. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
+- 5.1.3 - Each final answer is reviewed against supporting source, with limitations or required clarification explicit; current-checkout results are not represented as the historical frozen benchmark. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
 
 ## V1 Integration verification and completion
 `kind: verification`
@@ -580,8 +598,8 @@ uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-bas
 Format owned changed files before final verification; preserve foreign edits.
 After coordinated rebuild/install/restart, run the requested repository question
 with GOBBY_SESSION_ID=gobby#13038 and JSON output. Record bind duration, absence of
-a source checkout/new index project, successful index flush, and evidence from an
-ordinary Gobby worktree. Then execute the serial cohort and close #22019, #22020,
+a source checkout/new index project and successful index flush. Execute the fourteen
+questions directly against the existing Game Goblins checkout and close #22019, #22020,
 #22013, #22010 and #22021 as their real gates become satisfied, accounting for
 automatic ancestor closure. Commit only owned paths with the user-specified task
 tags; link every required commit and complete bounded criteria reviews.
@@ -598,8 +616,8 @@ tags; link every required commit and complete bounded criteria reviews.
 - [x] Repair exposed native failures and validate authenticated service fixtures.
 - [x] Fix managed transport, completion, submission schema and repair context.
 - [ ] Re-prove installed CLI acceptance after the final source changes.
-- [ ] Rebuild/install, coordinate restart and record repository/worktree smoke.
-- [ ] Run fourteen primaries and publish honest cohort scoring.
+- [ ] Rebuild/install latest binaries and coordinate any required restart.
+- [ ] Ask Q01–Q14 on the existing Game Goblins checkout/index; fix failures and record answers.
 - [ ] Finish checks, scoped commits, criteria reviews and task closures.
 
 ## V3 Execution checkpoint
