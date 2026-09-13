@@ -1274,8 +1274,9 @@ fn pane(ws: &Workspace, index: usize) -> PaneId {
 
 #[test]
 fn agent_row_click_routes_explicit_activation() {
-    // The pointer layer identifies the roster row; the async action layer
-    // opens or reveals its terminal without taking control.
+    // The pointer layer identifies the roster row. End-to-end tab activation
+    // and new-tab coverage lives in client_loop's async activation test
+    // because the action layer owns those effects.
     let mut ws = sidebar_workspace(3);
     set_attention(&mut ws, 3);
     let mut chrome = chrome();

@@ -4973,13 +4973,12 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         .expect("the spawned terminal attaches");
         settle_live_event().await;
         let before_jumps = websocket_requests(&mock, "terminal_take_control").len();
-        // Notification and attention jumps observe their target without
-        // taking control.
+        // OpenNotificationTarget: c, in the other tab.
         chord('o', KeyModifiers::NONE).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 1).await;
         // NextAttention (custom chord): b's terminal, back in the first tab.
         chord('f', KeyModifiers::NONE).await;
-        settle_live_event().await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 2).await;
         drop(input_tx);
         before_jumps
     };
@@ -5020,9 +5019,9 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "focus-direction, last-pane and tab switching move the lease"
     );
     assert_eq!(
-        targets.len(),
-        before_jumps,
-        "the toast target and attention jump do not take control"
+        &targets[before_jumps..],
+        ["terminal-c", "terminal-b"],
+        "the toast target and the attention jump cross tabs"
     );
     let tab = &chrome.tabs().tabs[0];
     assert!(tab.zoomed, "zoom toggles the active tab");
@@ -6297,6 +6296,10 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         .filter(|candidate| **candidate == pane)
         .count();
     assert_eq!(shown_count, 1, "{path:?} keeps one pane slot");
+    if matches!(path, ExplicitActivation::SidebarClick) {
+        assert_eq!(chrome.tabs().tabs.len(), 2, "the opened pane gets a tab");
+        assert_eq!(chrome.tabs().active_tab, 1, "the opened tab is active");
+    }
     let attaches = websocket_requests(&mock, "terminal_attach")
         .into_iter()
         .filter(|request| request.get("terminal_id") == Some(&json!(HOSTED)))
@@ -6306,7 +6309,10 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         .into_iter()
         .filter(|request| request.get("terminal_id") == Some(&json!(HOSTED)))
         .count();
-    assert_eq!(takes, 0, "{path:?} does not take control");
+    assert_eq!(
+        takes, 1,
+        "{path:?} takes control once across repeat activation"
+    );
     assert_eq!(
         websocket_requests(&mock, "terminal_create").len(),
         0,
@@ -6341,6 +6347,123 @@ async fn explicit_activation_opens_daemon_hosted_terminal_without_spawning() {
         attached += assert_daemon_hosted_activation(path).await;
     }
     assert_eq!(attached, 5, "every explicit activation path attaches once");
+    assert_agent_row_click_activates_tab_showing_existing_pane().await;
+}
+
+async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
+    const SHOWN: &str = "terminal-shown";
+    const TABBED: &str = "terminal-tabbed";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let roster = json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [sidebar_roster_entry("run:tabbed", "run-tabbed", TABBED)],
+    });
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&[SHOWN, TABBED]),
+        );
+        mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
+    }
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial rows");
+    let pane_of = |terminal_id| {
+        workspace
+            .pane_for_terminal(terminal_id)
+            .unwrap_or_else(|| panic!("pane for {terminal_id}"))
+    };
+    let (shown, tabbed) = (pane_of(SHOWN), pane_of(TABBED));
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(shown, SHOWN);
+    probe.open_tab(tabbed, TABBED);
+    probe.tabs_mut().active_tab = 0;
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_cell = |entry_id: &str| {
+        probe
+            .view
+            .agent_hit_areas
+            .iter()
+            .find(|(entry, _)| entry == entry_id)
+            .map(|(_, rect)| (rect.x + 1, rect.y))
+            .unwrap_or_else(|| panic!("row {entry_id} drawn"))
+    };
+    let tabbed_cell = row_cell("run:tabbed");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(shown, SHOWN);
+    chrome.open_tab(tabbed, TABBED);
+    chrome.tabs_mut().active_tab = 0;
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let before = websocket_requests(&mock, "terminal_take_control").len();
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            tabbed_cell.0,
+            tabbed_cell.1,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", before + 1).await;
+        drop(input_tx);
+        before
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, before) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    let targets: Vec<String> = websocket_requests(&mock, "terminal_take_control")
+        .into_iter()
+        .map(|request| {
+            request
+                .get("terminal_id")
+                .and_then(Value::as_str)
+                .expect("take-control target")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(&targets[before..], [TABBED]);
+    assert_eq!(chrome.tabs().tabs.len(), 2, "no duplicate tab opens");
+    assert_eq!(
+        chrome.tabs().active_tab,
+        1,
+        "the existing tab becomes active"
+    );
+    assert_eq!(chrome.focused_pane(), Some(tabbed));
+    mock.shutdown().await;
 }
 
 /// 2.2.2: two projects keep separate tab sets. Focusing the second swaps

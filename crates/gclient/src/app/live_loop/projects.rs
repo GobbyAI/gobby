@@ -23,7 +23,7 @@ use super::actions::{
     activate_live_tab, open_live_rename, spawn_live_shell, spawn_live_terminal, sync_live_chrome,
     terminate_live_terminal,
 };
-use super::control::observe_live_pane;
+use super::control::focus_live_pane;
 use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
@@ -56,9 +56,10 @@ pub async fn focus_project(
     restore_focused(workspace, chrome).await
 }
 
-/// Show the agent behind `entry_id` (its row's `focus` item): its project
-/// is focused first when it is another one, then its pane is revealed where
-/// a tab shows it or split into the active tab, and takes focus.
+/// Show the agent behind `entry_id` (its row's `focus` item, and its row's
+/// click): its project is focused first when it is another one, then its
+/// pane is revealed on the tab already showing it, or in a new tab when
+/// none does, and takes control the way any explicit activation does.
 pub async fn focus_agent(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -67,7 +68,7 @@ pub async fn focus_agent(
     let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? else {
         return Ok(());
     };
-    observe_live_pane(workspace, pane).await
+    focus_live_pane(workspace, pane).await
 }
 
 /// Open a fresh tab in the agent's project holding its pane, or focus the
@@ -83,7 +84,7 @@ pub async fn open_agent_in_new_tab(
     if !chrome.focus_pane(pane) {
         chrome.open_tab(pane, workspace.pane(pane).display_name());
     }
-    observe_live_pane(workspace, pane).await
+    focus_live_pane(workspace, pane).await
 }
 
 /// Reveal the agent's pane on the chrome the way its row's click does and
@@ -96,7 +97,9 @@ pub(super) async fn reveal_agent(
     let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
         return Ok(None);
     };
-    chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+    if !chrome.focus_pane(pane) {
+        chrome.open_tab(pane, workspace.pane(pane).display_name());
+    }
     Ok(Some(pane))
 }
 
@@ -109,7 +112,7 @@ pub(super) async fn focus_terminal(
 ) -> Result<(), FrameError> {
     let pane = terminal_pane(workspace, terminal_id).await?;
     chrome.reveal_pane(pane, workspace.pane(pane).display_name());
-    observe_live_pane(workspace, pane).await
+    focus_live_pane(workspace, pane).await
 }
 
 /// Tell the daemon the entry's prompt was seen, with the attention id the
