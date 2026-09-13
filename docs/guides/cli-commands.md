@@ -52,7 +52,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `plans` | Manage DB-backed plan records. | `src/gobby/cli/plans.py` |
 | `postgres` | Manage the PostgreSQL hub (status and migrations). | `src/gobby/cli/postgres.py` |
 | `profiles` | Manage build profile registry rows. | `src/gobby/cli/profiles.py` |
-| `projects` | Inspect known Gobby projects. | `src/gobby/cli/projects.py` |
+| `projects` | Inspect and manage project identities and local checkouts. | `src/gobby/cli/projects.py` |
 | `qdrant` | Manage Qdrant helper commands. | `src/gobby/cli/qdrant.py` |
 | `restart` | Restart the daemon. | `src/gobby/cli/daemon.py` |
 | `rules` | Manage workflow rules. | `src/gobby/cli/rules.py` |
@@ -879,6 +879,40 @@ gobby linear sync TASK
 gobby linear create TASK
 
 ```
+
+## `gobby projects`
+
+These are operator project-management commands. Agents discover projects with
+`gobby-hub:list_all_projects` and use destination MCP services for task/session
+lifecycle. Project names or UUIDs select shared identities; checkout paths belong
+to the calling machine.
+
+| Command | Behavior |
+| --- | --- |
+| `gobby projects list [--all] [--json]` | List non-deleted projects; default hides underscore-prefixed names. `--all` includes system names, not deleted rows. JSON includes this machine's checkout or null. |
+| `gobby projects show PROJECT [--json]` | Inspect one identity and its local checkout. |
+| `gobby projects rename PROJECT NEW_NAME` | Change shared project name. |
+| `gobby projects update PROJECT` | Set `--github-url`, `--github-repo`, `--linear-team-id`, or `--linear-project-id`; does not rebind a checkout. |
+| `gobby projects rebind PROJECT [PATH]` | Validate and rebind this machine's checkout; PATH defaults to cwd. Requires a matching project marker. Deleted projects stay deleted; use a UUID or marker to resolve ambiguous deleted names. |
+| `gobby projects repair [--fix]` | Inspect checkout drift from cwd; `--fix` registers a missing checkout with a valid marker/root. A changed root needs explicit rebind. |
+| `gobby projects refresh-verification [PROJECT]` | Preview verification-command changes to the selected checkout's `.gobby/project.json`. `--fix` writes; `--ai auto\|on\|off`, `--profile`, repeatable `--candidate`, and `--json` control synthesis/output. |
+| `gobby projects delete PROJECT --confirm NAME` | Soft-delete after exact-name confirmation; protected identities refuse. |
+| `gobby projects purge PROJECT --confirm NAME` | Permanently purge through the running daemon's lifecycle-safe service; exact-name confirmation does not override protection. |
+
+Use `gobby init` in an ordinary checkout to initialize its project marker and
+registration. Rebind validates an existing absolute normalized directory and the
+matching marker; it does not move files. Follow the emitted daemon-restart cache
+hint after coordinating active sessions. Never repair a foreign-machine path by
+changing shared identity or directly updating database rows.
+
+For a deterministic verification preview without model calls:
+
+```bash
+gobby projects refresh-verification --ai off --json
+```
+
+Source: `src/gobby/cli/projects.py`. See
+[machine/project ownership](shared-stack.md#machine-and-project-ownership).
 
 ## Hub Backup Disaster Recovery
 

@@ -1088,13 +1088,6 @@ def test_target_schema_assets_are_checkout_only() -> None:
     assert projects["columns"] == ["id", "name", "deleted_at"]
 
 
-def test_agent_spawn_resolves_machine_checkout_instead_of_logical_project_path() -> None:
-    source = (Path(__file__).parents[2] / "src/gobby/servers/routes/agent_spawn.py").read_text()
-
-    assert "project.repo_path" not in source
-    assert "require_root(task_manager.db, effective_project_id, require_machine_id())" in source
-
-
 def test_identity_repo_path_residue_allowlist() -> None:
     """Pin the exact gcode residue queries and their narrow historical allowlist."""
     source_roots = (

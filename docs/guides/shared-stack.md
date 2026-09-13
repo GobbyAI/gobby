@@ -7,10 +7,10 @@ local to each machine.
 
 **Exactly one daemon is active per shared hub.** The singleton lease is scoped to the
 shared database, so a second daemon pointed at the same datastores starts as a standby
-and exposes only the lease-control surface (`gobby lease status|acquire|release`) until
-it is promoted. This is the M0 transition shape, before `gdaemon` grows `hub` and `node`
-modes; at that point every machine runs a daemon simultaneously and only the hub holds
-datastore credentials. See `ROADMAP.md` decisions 11 and 13.
+and exposes only the standby health and lease-control surface until it is promoted.
+Operators inspect ownership with `gobby lease status` and use `gobby lease acquire`
+or `gobby lease release` for explicit transitions. This is the current implementation;
+independent simultaneously active hub/node execution remains roadmap work.
 
 ```text
 workstation daemon --+
@@ -27,8 +27,11 @@ so the Tailscale ACL is mandatory for Qdrant in M0.
 
 ## Hub setup
 
-Install the same Gobby version that the clients will run. The hub uses the default
-local datastore mode:
+These are operator procedures. Install the same Gobby version that the clients will
+run. The hub uses local datastore mode and needs an already provisioned absolute
+`files_home` in bootstrap, for example `/var/lib/gobby/files`. Do not use a literal
+tilde or `/`, and do not set `hub_daemon_url` on the local owner. Preserve an existing
+files tree; see [the install contract](hub-install-contract.md#files-and-client-credentials).
 
 ```bash
 gobby install
@@ -66,6 +69,7 @@ Install the exact Gobby version used by the hub. Before running the installer, c
 ```yaml
 datastore_mode: "remote"
 database_url: "postgresql://gobby:<password>@<hub-dns-name>:60891/gobby"
+hub_daemon_url: "https://<hub-daemon-dns-name>"
 postgres_pool:
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0
@@ -75,13 +79,19 @@ websocket_port: 60888
 ui_port: 60889
 ```
 
-Copy the hub's shared secret material into the client Gobby home and restrict it to the
-owner:
+Set `hub_daemon_url` to the authenticated HTTP(S) origin of the local files owner,
+not this client's origin or a datastore port. A remote bootstrap must not contain
+`files_home`. The owner must be reachable for the installer's profile probe.
+The singleton lease still limits which daemon can serve normal operations: remote
+mode does not promise concurrent active execution or make standby an owner-file server.
+
+Copy the hub's shared secret material into the client Gobby home and restrict the
+credentials and bootstrap to the owner:
 
 ```bash
 scp <hub>:~/.gobby/.secret_kek ~/.gobby/.secret_kek
 scp <hub>:~/.gobby/local_cli_token ~/.gobby/local_cli_token
-chmod 600 ~/.gobby/.secret_kek ~/.gobby/local_cli_token
+chmod 600 ~/.gobby/.secret_kek ~/.gobby/local_cli_token ~/.gobby/bootstrap.yaml
 ```
 
 Run the remote installer and start the client daemon:
@@ -94,8 +104,10 @@ gobby health
 ```
 
 In remote mode, `gobby install` skips Docker checks and local datastore provisioning.
-Its preflight checks the copied key and token, runs a PostgreSQL query, reads shared
-configuration and secrets, checks Qdrant health, and authenticates a FalkorDB `PING`.
+Its preflight checks the copied key and token, probes the owner's `/api/files/user-md`,
+runs a PostgreSQL query, reads shared configuration and secrets, checks Qdrant health,
+and authenticates a FalkorDB `PING`. The remote installer does not generate or rotate
+the copied token. A profile probe against a standby or remote target is not success.
 Any failed check aborts installation with endpoint-specific diagnostics.
 
 ## Tailnet-only web UI
@@ -138,6 +150,11 @@ tailnet.
 
 ## M0 acceptance checklist
 
+This is a historical physical-topology acceptance checklist, not evidence that
+the current deployment passed a multi-machine rehearsal. Revalidate its runbook
+against the installed version before an operator starts the campaign; the
+source/fixture audit of this guide does not perform that live cutover.
+
 Use the [remote Docker stack live-test runbook](remote-docker-acceptance.md) for the
 physical M0 acceptance run, together with the hub-PC move plan
 (`.gobby/plans/hub-pc-datastore-move.md`, R0-R7). The runbook writes captured artifacts
@@ -160,36 +177,34 @@ Completion record before closing #19600.
 | 12 | Docker workload returned; original bootstrap hash and containers restored | Phase 9 | `remote-stack-stop.txt`, `local-stack-start.txt`, `local-status-restored.txt`, `local-lease-restored.txt`, `local-schema-restored.json`, `local-stack-restored.txt` | |
 | 13 | Five-minute clean local-daemon observation window; sessions resumed and continued | Phase 9 | `local-status-restored.txt` | |
 
-_Status: not yet run. Blocked on the daemon stability checkpoint and the two lease and
-terminal machine-scoping pre-flight fixes tracked under #21363._
+_The original checklist recorded no results. Consult the campaign's task history
+for current physical-run evidence; old blocker IDs are not a live readiness check._
 
 ## M0 operating boundary
 
 PostgreSQL task/session metadata, memories, vector data, graph data, and shared
-configuration follow the user between machines. Each machine still owns its daemon,
-processes, tmux sessions, worktrees, clones, and transcript files. A client must never
-process another machine's filesystem paths or transcripts.
+configuration follow the user between machines. Each machine still owns its processes,
+tmux sessions, worktrees, clones, and local transcript paths. Shared metadata is not
+authorization to operate another machine's filesystem. Use session services for
+supported transcript and archive access.
 
-Attachment metadata that points at local blobs and code-index dirty-prune rows carry
-their originating `machine_id`. Cleanup and retry queries use that owner, so one daemon
-cannot delete another machine's blob metadata or retry its absolute checkout path.
-Indexed file paths remain project-root-relative and portable. Global `gcode prune`
-still reconciles shared datastore orphans, while it skips filesystem-based stale-root
-classification until #17435 and #17437 add authoritative machine-to-checkout mappings.
+Profile, personal files, and chat attachment bytes use the canonical hub files home;
+remote access forwards to its owner. Ordinary checkout roots are registered per
+machine/project, and indexed paths remain project-root-relative. Do not use another
+machine's checkout root for local pruning or repair.
 
 Before packing up on one machine:
 
-1. Commit and push work that the next machine needs. Identical checkout paths across
-   machines are strongly recommended.
+1. Commit and push work that the next machine needs. Register the destination
+   machine's checkout; identical absolute paths are not required by project identity.
 2. Release or explicitly hand off active task claims. Claims are session-bound and
    survive a daemon stop.
 3. Stop the first daemon before moving an unreleased claim. On the second machine,
    force-reclaim only through the explicit task-claim contract after verifying the
    first machine is stopped, then verify that the new local session owns the claim.
 
-Cross-machine transcript continuity is deferred to #17435. Until that work lands,
-pushing source and handing off claims provides task continuity; transcript files remain
-on their originating machine.
+Use supported session handoffs and archive retrieval for continuity; a shared session
+record does not make its originating local transcript path accessible everywhere.
 
 ## Upgrades: stop every daemon
 
@@ -215,10 +230,49 @@ Do not invent a sentinel machine or guess ownership.
 
 - Qdrant API-key configuration is deferred. Restrictive Tailscale ACLs remain mandatory
   for port 6333 in M0.
-- Hook-side `machine_id` fallback and full transcript continuity belong to #17435.
+- Machine IDs identify ownership, not connectivity. Inspect the destination checkout
+  and supported session archive access rather than assuming shared absolute paths.
 - Size PostgreSQL `max_connections` for all daemon pools plus concurrent CLI activity
   across every client. For two daemons, observe `pg_stat_activity` under realistic CLI
   churn and retain headroom for migrations and operator access. Validate the PostgreSQL
   default limit of 100 against the measured workload.
 
-_Last verified: 2026-08-05_
+## Machine and project ownership
+
+`gobby-hub:get_machine_id` reports the connected daemon's stable machine ID. Its
+resolver reads and caches `$GOBBY_HOME/machine_id` and can create it when absent.
+Do not distribute that file with shared credentials. Filesystem failures propagate;
+restore the correct Gobby home rather than inventing an ownership ID.
+
+An ordinary project's UUID is shared; `project_checkouts` maps each machine/project
+pair to its validated local root. `.gobby/project.json` must identify that same project.
+`_personal` is checkout-free and uses the hub-owned files home.
+See [project CLI operations](cli-commands.md#gobby-projects) and
+[project HTTP operations](http-endpoints.md#project-identity-and-checkouts).
+
+## Hub queries
+
+Agents discover and fetch schemas for the five `gobby-hub` tools. These inspect the
+connected hub; they do not transfer claims, manage projects, or control foreign terminals.
+
+| Tool | Scope and interpretation |
+| --- | --- |
+| `get_machine_id` | Connected daemon identity; normal resolver may initialize a missing file. |
+| `list_all_projects` | Non-deleted projects sorted by name, with all task/session row counts. Default excludes names prefixed `_orphaned`, `_migrated`, `_personal`, or `_global`; `include_system=true` includes them. No checkout path. |
+| `list_cross_project_tasks` | Latest updates first, default limit 50; optional stored `state` bucket filter. Result state is a structured lifecycle object. |
+| `list_cross_project_sessions` | Latest creations first, default limit 20; excludes system-source sessions, not closed or foreign-machine sessions. |
+| `hub_stats` | Task totals by stored state; non-system sessions by status; memory row count; project IDs represented in tasks/non-system sessions. |
+
+Cross-project task/session results do not apply project-list visibility filters.
+Their `count` is the returned count, and neither query offers an offset or cursor.
+Retain full UUID and `project_id` for follow-up through the destination service;
+unqualified `#N` references remain project-local. `create_task` accepts a selected
+project name or UUID through `project`, subject to its normal lifecycle requirements.
+
+`hub_stats.project_count` excludes empty projects, unlike `list_all_projects`.
+Its memory count also becomes zero when that subquery fails; verify an unexpected
+zero with memory diagnostics. The project HTTP API counts live sessions and open
+tasks instead. Separate aggregate queries are not one consistent snapshot.
+On `success=false`, inspect the error; an unavailable hub database is not an empty hub.
+
+_Last verified: 2026-09-12_

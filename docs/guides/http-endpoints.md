@@ -644,9 +644,15 @@ the MCP cleanup tool's Git-deletion options.
 | `GET` | `/api/files/git-status` | File-browser git status. |
 | `GET` | `/api/files/git-diff` | File-browser git diff. |
 | `GET` | `/api/projects` | List projects. |
+| `POST` | `/api/projects/init` | Initialize a directory with its validated project identity and local checkout. |
 | `GET` | `/api/projects/{project_id}` | Get a project. |
 | `PUT` | `/api/projects/{project_id}` | Update a project. |
+| `PATCH` | `/api/projects/{project_id}` | Update explicitly provided project fields. |
+| `GET` | `/api/projects/{project_id}/checkouts` | This daemon's checkout object or null. |
+| `POST` | `/api/projects/{project_id}/checkouts` | Register this daemon's validated root; 201 on insertion, 200 on same-root retry. |
+| `POST` | `/api/projects/{project_id}/checkouts/{machine_id}/rebind` | Rebind only this daemon's machine checkout. |
 | `DELETE` | `/api/projects/{project_id}` | Delete a project. |
+| `POST` | `/api/projects/{project_id}/purge` | Run lifecycle-safe permanent purge through the daemon service. |
 | `GET` | `/api/projects/{project_id}/github-triage` | Read GitHub triage config. |
 | `PUT` | `/api/projects/{project_id}/github-triage` | Update GitHub triage config. |
 | `GET` | `/api/config/schema` | Read config schema. |
@@ -669,6 +675,31 @@ the MCP cleanup tool's Git-deletion options.
 | `GET` | `/api/config/ui-settings` | Read UI settings. |
 | `GET` | `/api/config/tool-approvals/global` | Read global tool approval rules. |
 | `POST` | `/api/config/validation-detection/preview` | Preview merged validation-command matchers without persisting. |
+
+### Project identity and checkouts
+
+Project routes are authenticated operator/UI surfaces implemented by
+`src/gobby/servers/routes/projects.py`. Agents use `gobby-hub` for discovery and
+the destination MCP service for task/session lifecycle. Project responses carry
+the calling daemon's `checkout` object or null, not a globally usable root.
+Project statistics count live sessions, open tasks, and latest session activity;
+they are not the all-row counts returned by hub project discovery.
+
+Initialization accepts `{"path":"/absolute/checkout"}`. Checkout registration
+and rebind accept `{"root_path":"/absolute/checkout"}` and require a matching
+project marker, existing validated root, and local machine identity. A foreign
+`machine_id` is refused. Registration does not restore soft-deleted projects;
+rebind can update their checkout while leaving them deleted. Sentinel identities
+cannot acquire ordinary checkouts. Inspect structured checkout conflicts before
+repairing local marker/root state; do not overwrite identity to make a request pass.
+
+PUT and PATCH both apply explicitly supplied project fields. They do not move
+checkout roots. Approval-rule and validation-detection updates require a local
+checkout because those fields write its project file. Enabled Linear sync still
+requires both team and project bindings. DELETE soft-deletes and protects system
+projects; purge is a separate destructive service with readiness/protection checks.
+
+### Configuration surfaces
 
 These are operator/client HTTP surfaces; agents use the three `gobby-config`
 tools for public configuration. UI-setting and global tool-approval writes use

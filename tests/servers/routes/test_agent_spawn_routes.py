@@ -356,6 +356,7 @@ class TestSpawnAgent:
     def test_terminal_spawn_passes_daemon_config_for_sandbox_defaults(
         self,
         batch: bool,
+        tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
         client: TestClient,
         server: HTTPServer,
@@ -422,6 +423,7 @@ class TestSpawnAgent:
         assert await_args is not None
         kwargs = await_args.kwargs
         assert kwargs["daemon_config"] == config
+        assert kwargs["project_path"] == str((tmp_path / "spawn-test").resolve())
         assert "sandbox" not in kwargs
         assert "Counter agent_spawns_total not registered" not in caplog.text
 

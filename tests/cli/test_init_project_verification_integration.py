@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,42 +10,44 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.storage.projects import LocalProjectManager
+from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
 
 pytestmark = [pytest.mark.integration]
 
 
-def test_init_succeeds_with_array_package_json(tmp_path: Path) -> None:
+def test_init_succeeds_with_array_package_json(
+    tmp_path: Path, hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project_dir = tmp_path / "array-package"
     project_dir.mkdir()
     (project_dir / "package.json").write_text('["not", "an", "object"]', encoding="utf-8")
 
-    project = MagicMock()
-    project.id = "project-id"
-    project.name = "array-package"
-    project.created_at = datetime(2026, 1, 1, tzinfo=UTC)
-    project_manager = MagicMock()
-    project_manager.get_by_name.return_value = None
-    project_manager.create.return_value = project
+    machine_id = insert_isolated_machine(hub_db)
+    patch_local_machine_id(monkeypatch, machine_id)
 
     with (
         patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
         patch("gobby.utils.project_context.get_project_context", return_value=None),
         patch("gobby.utils.git.get_github_url", return_value=None),
         patch(
-            "gobby.cli.runtime.runtime_hub_database",
-            return_value=MagicMock(),
+            "gobby.cli.runtime.require_cli_database",
+            return_value=hub_db,
         ),
-        patch("gobby.storage.projects.LocalProjectManager", return_value=project_manager),
         patch("gobby.cli.init.resolve_native_bin", return_value=None),
         patch("gobby.cli.init._maybe_install_git_hooks_for_init"),
         patch("gobby.cli.init._maybe_run_linear_setup"),
     ):
         result = CliRunner().invoke(cli, ["init", "-C", str(project_dir)])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Initialized project 'array-package'" in result.output
     project_json = project_dir / ".gobby" / "project.json"
     saved = json.loads(project_json.read_text(encoding="utf-8"))
-    assert saved["id"] == "project-id"
+    project = LocalProjectManager(hub_db).get(saved["id"])
+    assert project is not None and project.name == "array-package"
     assert "verification" not in saved
-    project_manager.create.assert_called_once()
+    checkout = LocalProjectCheckoutManager(hub_db).get(machine_id, project.id)
+    assert checkout is not None and checkout.root_path == str(project_dir.resolve())

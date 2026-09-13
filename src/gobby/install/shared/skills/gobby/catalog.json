@@ -784,6 +784,38 @@
           "when": "Diagnosing desired/active differences or refreshing daemon and client settings"
         }
       ]
+    },
+    {
+      "name": "hub",
+      "description": "Identify machines and projects and query hub-wide activity",
+      "overview": "references/hub/overview.md",
+      "when": "Discovering shared projects or inspecting cross-project information",
+      "topics": [
+        {
+          "name": "identity",
+          "description": "Distinguish machine ownership and shared project identity",
+          "path": "references/hub/identity.md",
+          "when": "Interpreting ownership or cross-machine paths"
+        },
+        {
+          "name": "projects",
+          "description": "Discover projects and diagnose local checkout registration",
+          "path": "references/hub/projects.md",
+          "when": "Selecting projects or repairing checkout metadata"
+        },
+        {
+          "name": "queries",
+          "description": "Find tasks and sessions across projects",
+          "path": "references/hub/queries.md",
+          "when": "Querying cross-project activity"
+        },
+        {
+          "name": "aggregates",
+          "description": "Interpret hub counts and their scope",
+          "path": "references/hub/aggregates.md",
+          "when": "Reporting totals or comparing project statistics"
+        }
+      ]
     }
   ]
 }

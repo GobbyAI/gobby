@@ -39,17 +39,28 @@ Failure leaves the epoch available for `gobby hub-maintenance resume`.
 
 ## Files and client credentials
 
-Hub-local installation requires an existing absolute `files_home` and
-preserves its content. Remote clients use the hub owner for those files;
-they do not provision a second files home. See
+Hub-local installation requires an existing absolute, non-root `files_home` and
+preserves its content. Literal tildes are invalid. Local bootstrap rejects
+`hub_daemon_url`; remote bootstrap requires that HTTP(S) owner origin and rejects
+`files_home`. The owner origin must differ from the remote process's own origin.
+Remote clients use the hub owner for those files; they do not provision a second
+files home. See
 [hub-owned files home](../architecture/hub-owned-files-home.md).
 
-`gobby install` owns `$GOBBY_HOME/local_cli_token` (normally
+Local `gobby install` owns `$GOBBY_HOME/local_cli_token` (normally
 `~/.gobby/local_cli_token`) with mode `0600`. A database-unreachable install
 can still create the token file; daemon startup adopts its hash into the
 authentication configuration. Additional trusted client machines receive
 the same token with the same permissions.
 
+Remote installation requires the copied token and secret key; it never generates
+or rotates the shared token. Its authenticated owner-profile probe must succeed
+before datastore probes. Preserve each machine's own `machine_id` and register its
+ordinary checkout roots separately. A hub-visible project is not proof of a local
+checkout. See [machine and project ownership](shared-stack.md#machine-and-project-ownership).
+
 `gobby auth token --rotate` replaces the token and its stored hash. Copy
 the new token to additional client machines after rotation. Stateful daemon
 HTTP and WebSocket surfaces require authentication.
+
+_Last verified: 2026-09-12_

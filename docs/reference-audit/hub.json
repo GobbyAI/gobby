@@ -1,0 +1,555 @@
+{
+  "version": 1,
+  "capability": "hub",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/shared-stack.md",
+      "anchors": [
+        "hub-setup",
+        "client-setup",
+        "tailnet-only-web-ui",
+        "m0-acceptance-checklist",
+        "m0-operating-boundary",
+        "upgrades-stop-every-daemon",
+        "capacity-and-deferred-hardening",
+        "machine-and-project-ownership",
+        "hub-queries"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "path": "docs/guides/hub-install-contract.md",
+      "anchors": [
+        "existing-data",
+        "native-binaries-and-schema-changes",
+        "files-and-client-credentials"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "gobby-projects"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "source-control-files-projects-and-config",
+        "project-identity-and-checkouts"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-hub",
+      "tool": "get_machine_id",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/identity.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/hub.py",
+        "symbol": "create_hub_registry.get_machine_id"
+      },
+      "verification": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-hub",
+      "tool": "list_all_projects",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/hub.py",
+        "symbol": "create_hub_registry.list_all_projects"
+      },
+      "verification": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-hub",
+      "tool": "list_cross_project_tasks",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/queries.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/hub.py",
+        "symbol": "create_hub_registry.list_cross_project_tasks"
+      },
+      "verification": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-hub",
+      "tool": "list_cross_project_sessions",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/queries.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/hub.py",
+        "symbol": "create_hub_registry.list_cross_project_sessions"
+      },
+      "verification": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-hub",
+      "tool": "hub_stats",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/aggregates.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/hub.py",
+        "symbol": "create_hub_registry.hub_stats"
+      },
+      "verification": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects list",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "list_projects"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects show",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "show_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects rename",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "rename_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects delete",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "delete_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects purge",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "purge_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects rebind",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "rebind_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects update",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "update_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects refresh-verification",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "refresh_verification"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby projects repair",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/projects.py",
+        "symbol": "repair_project"
+      },
+      "verification": [
+        "cli-help",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby init",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/cli/init.py",
+        "symbol": "init"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/projects",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.list_projects"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/projects/init",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.init_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/projects/{project_id}",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.get_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/projects/{project_id}/checkouts",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.get_checkout"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/projects/{project_id}/checkouts",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.register_checkout"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/projects/{project_id}/checkouts/{machine_id}/rebind",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.rebind_checkout"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "route": "/api/projects/{project_id}",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.update_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "PATCH",
+      "route": "/api/projects/{project_id}",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.update_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "route": "/api/projects/{project_id}",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.delete_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/projects/{project_id}/purge",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.purge_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "schemas",
+      "command": "gobby-hub:list_tools; get_tool_schema for all five returned tools; gobby-tasks:create_task schema",
+      "result": "Five hub operations, exact defaults and optional filters verified. create_task project accepts name or UUID. No hub cursors or project mutations."
+    },
+    {
+      "id": "source-audit",
+      "command": "gcode outline/symbol-at/grep on hub registry, project CLI/routes, bootstrap, machine_id, project checkout fixtures, remote_preflight, datastores, daemon lease and files-home contract",
+      "result": "Verified identity initializer, project visibility, count semantics, query ordering, failure handling, local checkout ownership, operator mutations, bootstrap owner origin and remote profile preflight. Shared-stack physical checklist retained explicitly as historical, unexecuted evidence. Normative single-active-daemon and files-owner contracts preserved."
+    },
+    {
+      "id": "cli-help",
+      "command": "uv run gobby projects --help; uv run python using CliRunner to invoke every projects subcommand with --help",
+      "result": "All nine command help invocations exit 0; documented flags and arguments match."
+    },
+    {
+      "id": "checkout-red-green",
+      "command": "isolated pytest hub/project selection, then tests/storage/test_project_checkouts.py tests/servers/routes/test_agent_spawn_routes.py -q --tb=short",
+      "result": "Initial run 243 passed / 1 failed: stale assertion required synchronous require_root call after off-event-loop refactor 77ee66dca3. Removed implementation-text assertion and added actual spawn project_path assertion to existing single/batch API test. Rerun 68 passed in 16.07s."
+    },
+    {
+      "id": "focused-final",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_hub.py tests/integration/test_hub_query.py tests/utils/test_utils_machine_id.py tests/storage/test_project_checkouts.py tests/cli/test_projects.py tests/servers/routes/test_projects_routes.py tests/servers/routes/test_agent_spawn_routes.py tests/config/test_files_home.py tests/cli/test_datastores_expose.py tests/cli/test_projects_refresh_verification.py tests/cli/test_init_project_verification_integration.py tests/cli/test_cli_install.py tests/cli/test_install_coverage.py tests/cli/test_ui_coverage.py tests/test_daemon_lease.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "456 passed in 48.13s. Covers hub query semantics, machine ownership, project/checkout lifecycle, init, remote/bootstrap install, UI exposure, singleton lease and catalog. All state mutations use isolated fixtures. Final after-evidence-edit rerun recorded in session transcript."
+    },
+    {
+      "id": "links-catalog",
+      "command": "uv run python /tmp/gobby_hub_validate.py; isolated temporary 0600 bootstrap load of shared-stack YAML",
+      "result": "18 catalog capabilities, all 25 operation symbols, 55 local links/anchors valid. Exact remote bootstrap YAML accepted by load_bootstrap(resolve_database_url=True) without opening a connection."
+    },
+    {
+      "id": "quality",
+      "command": "uv run ruff check and format --check on three touched Python tests; uv run gobby test-quality audit and test-types audit on touched test paths with repository baselines; uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new; uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "Ruff clean, 3 formatted files; test-quality 62 tests across 3 paths, 0 issues; touched test-types 0 errors. Whole-tests type audit: 2218 files, 0 new errors, 8343 known baseline. Suppression ratchet 4285 files, 217 baseline, 0 new."
+    },
+    {
+      "id": "docs-review",
+      "command": "OCR delegate preview/rules plus review_reference_identity bounded review; additional init-test delta review",
+      "result": "14/14 owned paths reviewed, zero skipped, no remaining material findings. Review recall agrees with isolated fixture and observable-outcome testing; no normative contract rewritten to bless an implementation conflict."
+    },
+    {
+      "id": "init-red-green",
+      "command": "isolated pytest tests/cli/test_init_project_verification_integration.py -q --tb=short; then focused-final",
+      "result": "Broader run initially 455 passed / 1 failed: fake DB produced OverlayRegistrationRejectedError in marker-first initialization. Replaced fake project/database with isolated hub_db and synthetic registered machine, verified persisted UUID and checkout root. Corrected an intermediate HubDatabase import to storage.hub.protocol. Test passes in 0.77s, touched type audit 0 errors, integrated 456 pass."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Remote bootstrap example omitted required hub_daemon_url and bootstrap mode 0600; local setup omitted files_home prerequisites.",
+      "implementation": "src/gobby/config/bootstrap.py::_parse_mode_owner_fields; src/gobby/cli/installers/remote_preflight.py::run_remote_preflight",
+      "resolution": "Documented separate local/remote owner fields, owner-origin constraints, profile preflight and preserved credential permissions.",
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "Shared-stack text described local chat blobs, deferred authoritative checkout mapping and identical checkout paths as the current ownership model.",
+      "implementation": "src/gobby/storage/project_checkouts.py; src/gobby/files_home_proxy.py; src/gobby/paths.py",
+      "resolution": "Use current hub-owned personal/profile/chat files and machine/project checkout registrations; retain local execution ownership and single-active lease boundary. Historical physical checklist is not recast as completed verification.",
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "HTTP inventory omitted init, checkout registration/rebind, PATCH and purge; CLI inventory omitted detailed project operations.",
+      "implementation": "src/gobby/servers/routes/projects.py::create_projects_router; src/gobby/cli/projects.py",
+      "resolution": "Added current inventory and operator-only procedures, exact confirmation, restoration boundaries and recovery. Integration-specific subroutes remain owned by integrations.",
+      "evidence": [
+        "source-audit",
+        "cli-help",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "Hub tool descriptions do not explain inconsistent aggregate scopes, non-paginated counts or swallowed memory-count errors.",
+      "implementation": "src/gobby/mcp_proxy/tools/hub.py::create_hub_registry",
+      "resolution": "Documented current query scope and failure semantics without claiming exhaustive pagination or changing product operations. Unexpected zero memory count requires independent diagnostics.",
+      "evidence": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "Checkout storage test pinned obsolete synchronous spawn implementation text.",
+      "implementation": "tests/storage/test_project_checkouts.py; tests/servers/routes/test_agent_spawn_routes.py",
+      "resolution": "Replaced text check with existing API behavioral coverage of actual local checkout path for single and batch spawns.",
+      "evidence": [
+        "checkout-red-green",
+        "focused-final",
+        "quality"
+      ]
+    },
+    {
+      "finding": "Project-init integration test used stale MagicMock storage and fixed project-id/create expectations despite current marker-first UUID allocation.",
+      "implementation": "tests/cli/test_init_project_verification_integration.py; src/gobby/utils/project_init.py::_init_no_marker",
+      "resolution": "Use isolated hub storage, registered synthetic machine/cache fixture, and real project/checkout assertions while mocking external setup. Include CLI output on failure.",
+      "evidence": [
+        "init-red-green",
+        "focused-final",
+        "quality"
+      ]
+    }
+  ],
+  "coverage_notes": [
+    "25 primary operations: five MCP, ten CLI including init, ten HTTP method/route pairs.",
+    "Project integration status and GitHub triage subroutes belong to integrations; shared guide installer/lease/UI/auth/backup procedures belong to admin. Their topology/ownership statements are audited here; no live install, credential rotation or multi-machine cutover performed.",
+    "No active rule, profile, or workflow is asserted from bundled templates; installed-row inspection is unnecessary for these read-only hub tools.",
+    "Mutating verification uses isolated PostgreSQL schemas and temporary checkout fixtures with patched process/HTTP adapters. No live task/project data is mutated by examples.",
+    "Reference library completion/coverage checker is introduced later in P3; this leaf uses the current catalog validator and explicit source/schema/test evidence.",
+    "Review recall: test-fixtures:current-dependency-awaitability and test-quality-observable-outcomes-over-mock-interactions support the two fixture repairs. No active native binary is pinned or executed by the isolated init test."
+  ]
+}
