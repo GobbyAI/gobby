@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -669,3 +670,82 @@ def test_graph_citation_validates_canonical_owner_and_requires_inference() -> No
         "graph_owner_mismatch"
         in validate_claims(draft, corrupt_evidence, pinned_blobs=blobs).diagnostic_codes
     )
+
+
+@pytest.mark.parametrize("same_path", [False, True])
+def test_live_source_freshness_follows_claim_references(tmp_path: Path, same_path: bool) -> None:
+    from dataclasses import dataclass
+
+    from gobby.ask.claims import EvidenceScope
+    from gobby.ask.evidence_runtime import pinned_blobs
+    from gobby.ask.validation import _response_body, _source_identity, validate_claims
+    from gobby.ask.validation_models import SourceEvidenceItem
+
+    draft, evidence, blobs, _review = _valid_case()
+    record = evidence.records[0]
+    source = record.response.items[0]
+    assert isinstance(source, SourceEvidenceItem)
+    old_content = b"def alpha():\n    return 0\n"
+    old_excerpt = "    return 0\n"
+    old_source = source.model_copy(
+        update={
+            "path": source.path if same_path else "src/deleted.py",
+            "content_hash": hashlib.sha256(old_content).hexdigest(),
+            "excerpt": old_excerpt,
+            "excerpt_hash": hashlib.sha256(old_excerpt.encode()).hexdigest(),
+        }
+    )
+    old_source = old_source.model_copy(
+        update={
+            "evidence_id": _source_identity(evidence.repository_binding, old_source),
+        }
+    )
+    response = record.response.model_copy(update={"items": (old_source,)})
+    previous = record.model_copy(
+        update={
+            "invocation_id": "previous-query",
+            "response": response,
+            "response_hash": _json_hash(_response_body(response)),
+        }
+    )
+    manifest = evidence.model_copy(update={"records": (previous, record)})
+
+    # Repair can cite refreshed evidence while retaining the original query log.
+    report = validate_claims(draft, manifest, pinned_blobs=blobs)
+    assert report.accepted_claim_ids == ("claim-return", "claim-stable")
+    path = tmp_path / source.path
+    path.parent.mkdir(parents=True)
+    path.write_bytes(blobs[(source.path, source.content_hash)])
+
+    @dataclass
+    class SourceSnapshot:
+        binding: dict[str, object]
+        source_root: Path
+
+    snapshot = SourceSnapshot(evidence.repository_binding.model_dump(mode="json"), tmp_path)
+    assert pinned_blobs(snapshot, manifest, draft) == blobs
+
+    # All manifest records retain integrity checks, even those not cited.
+    tampered = previous.model_copy(update={"response_hash": "0" * 64})
+    invalid = validate_claims(
+        draft,
+        manifest.model_copy(update={"records": (tampered, record)}),
+        pinned_blobs=blobs,
+    )
+    assert "response_hash_mismatch" in invalid.diagnostic_codes
+
+    # Explicit evidence and invocation scopes depend on their full source sets.
+    for scope in (
+        EvidenceScope(description="Earlier evidence", evidence_ids=(old_source.evidence_id,)),
+        EvidenceScope(description="Earlier query", invocation_ids=(previous.invocation_id,)),
+    ):
+        scoped = draft.model_copy(
+            update={
+                "claims": (
+                    draft.claims[0].model_copy(update={"evidence_scope": scope}),
+                    draft.claims[1],
+                )
+            }
+        )
+        stale = validate_claims(scoped, manifest, pinned_blobs=blobs)
+        assert "source_content_missing" in stale.diagnostic_codes

@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.ask.artifacts import AskArtifactStore
+from gobby.ask.claims import AnswerDraft
 from gobby.ask.contracts import AskRunRecord, EvidenceReference
 from gobby.ask.permissions import AskAgentStage
 from gobby.ask.snapshots import SnapshotDriftError
 from gobby.ask.stages import AskAttemptStatus, AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
+from gobby.ask.validation import referenced_evidence_ids
 from gobby.ask.validation_models import (
     EvidenceManifest,
     GraphEvidenceItem,
@@ -288,11 +290,15 @@ def build_evidence_manifest(
 def pinned_blobs(
     snapshot: PreparedAskSnapshot,
     evidence: EvidenceManifest,
+    draft: AnswerDraft,
 ) -> dict[tuple[str, str], bytes]:
     source_root = snapshot.source_root.resolve()
+    referenced_ids = referenced_evidence_ids(draft, evidence)
     blobs: dict[tuple[str, str], bytes] = {}
     for record in evidence.records:
         for item in record.response.items:
+            if item.evidence_id not in referenced_ids:
+                continue
             source = item.source if isinstance(item, GraphEvidenceItem) else item
             if not isinstance(source, SourceEvidence):
                 continue

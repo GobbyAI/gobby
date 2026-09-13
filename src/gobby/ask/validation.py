@@ -245,6 +245,7 @@ def _record_supports_exhaustive_scope(record: RecordedEvidence) -> bool:
 def _validate_evidence_manifest(
     manifest: EvidenceManifest,
     pinned_blobs: Mapping[tuple[str, str], bytes],
+    referenced_ids: set[str],
 ) -> tuple[list[ValidationDiagnostic], dict[str, EvidenceItem], dict[str, list[RecordedEvidence]]]:
     diagnostics: list[ValidationDiagnostic] = []
     add = diagnostics.append
@@ -335,6 +336,12 @@ def _validate_evidence_manifest(
                 continue
             items[item.evidence_id] = item
             item_records[item.evidence_id] = [record]
+            if item.evidence_id not in referenced_ids and isinstance(
+                item, (SourceEvidenceItem, GraphEvidenceItem)
+            ):
+                # The immutable response remains checked above. A past, unused
+                # retrieval does not require its working-tree file to stay fresh.
+                continue
             if isinstance(item, SourceEvidenceItem):
                 item_diagnostics = _validate_source(item, binding, pinned_blobs)
             elif isinstance(item, GraphEvidenceItem):
@@ -514,6 +521,20 @@ def _citation_diagnostics(
     ]
 
 
+def referenced_evidence_ids(draft: AnswerDraft, evidence: EvidenceManifest) -> set[str]:
+    """Include citations and every item in an explicitly claimed query scope."""
+    evidence_ids = {citation.evidence_id for claim in draft.claims for citation in claim.citations}
+    invocation_ids: set[str] = set()
+    for claim in draft.claims:
+        if claim.evidence_scope is not None:
+            evidence_ids.update(claim.evidence_scope.evidence_ids)
+            invocation_ids.update(claim.evidence_scope.invocation_ids)
+    for record in evidence.records:
+        if record.invocation_id in invocation_ids:
+            evidence_ids.update(item.evidence_id for item in record.response.items)
+    return evidence_ids
+
+
 def validate_claims(
     draft: AnswerDraft,
     evidence: EvidenceManifest,
@@ -521,7 +542,9 @@ def validate_claims(
     pinned_blobs: Mapping[tuple[str, str], bytes],
 ) -> ClaimValidationReport:
     """Validate an immutable draft against recorded gcode evidence and pinned blobs."""
-    global_diagnostics, items, item_records = _validate_evidence_manifest(evidence, pinned_blobs)
+    global_diagnostics, items, item_records = _validate_evidence_manifest(
+        evidence, pinned_blobs, referenced_evidence_ids(draft, evidence)
+    )
     invocation_records = {record.invocation_id: record for record in evidence.records}
     if draft.run_id != evidence.run_id:
         global_diagnostics.append(

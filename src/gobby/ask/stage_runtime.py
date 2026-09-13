@@ -657,7 +657,7 @@ class AskStageRuntime:
         draft: AnswerDraft,
         evidence: EvidenceManifest,
     ) -> ClaimValidationReport:
-        source_blobs = await asyncio.to_thread(pinned_blobs, snapshot, evidence)
+        source_blobs = await asyncio.to_thread(pinned_blobs, snapshot, evidence, draft)
         report = validate_claims(draft, evidence, pinned_blobs=source_blobs)
         pointer = await asyncio.to_thread(
             artifacts.write_body,
