@@ -136,6 +136,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/436_add_session_heuristic_title_and_reasoning_effort.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 437,
+        filename: "437_add_ask_artifacts.sql",
+        checksum: "760f6ff692279b5f5130c5c5a24e06ac10899685ebea90a73313f1af0b5cc88f",
+        sql: include_str!("../../assets/schema/migrations/437_add_ask_artifacts.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

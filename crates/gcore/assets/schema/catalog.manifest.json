@@ -293,6 +293,26 @@
       "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
     },
     {
+      "name": "ask_artifacts.body",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "ask_artifacts.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "ask_artifacts.execution_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "ask_artifacts.kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "ask_artifacts.sha256",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
       "name": "attention_states.attention_id",
       "definition": "text|text|NO||NEVER"
     },
@@ -6479,6 +6499,22 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "ask_artifacts.ask_artifacts_execution_id_fkey",
+      "definition": "FOREIGN KEY (execution_id) REFERENCES pipeline_executions(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "ask_artifacts.ask_artifacts_kind_check",
+      "definition": "CHECK (kind ~ '^[a-z0-9_-]+$'::text)"
+    },
+    {
+      "name": "ask_artifacts.ask_artifacts_pkey",
+      "definition": "PRIMARY KEY (execution_id, kind, sha256)"
+    },
+    {
+      "name": "ask_artifacts.ask_artifacts_sha256_check",
+      "definition": "CHECK (sha256 ~ '^[a-f0-9]{64}$'::text)"
+    },
+    {
       "name": "attention_states.attention_states_check",
       "definition": "CHECK (state IS NULL OR attention_id IS NOT NULL AND reason IS NOT NULL AND kind IS NOT NULL AND fingerprint IS NOT NULL AND since IS NOT NULL)"
     },
@@ -8555,6 +8591,10 @@
       "definition": "CREATE UNIQUE INDEX agent_step_workflows_pkey ON $schema.agent_step_workflows USING btree (id)"
     },
     {
+      "name": "ask_artifacts_pkey",
+      "definition": "CREATE UNIQUE INDEX ask_artifacts_pkey ON $schema.ask_artifacts USING btree (execution_id, kind, sha256)"
+    },
+    {
       "name": "attention_states_pkey",
       "definition": "CREATE UNIQUE INDEX attention_states_pkey ON $schema.attention_states USING btree (entry_id)"
     },
@@ -8869,6 +8909,10 @@
     {
       "name": "idx_asi_step_workflow",
       "definition": "CREATE INDEX idx_asi_step_workflow ON $schema.agent_step_instances USING btree (agent_step_workflow_id)"
+    },
+    {
+      "name": "idx_ask_terminal_retention",
+      "definition": "CREATE INDEX idx_ask_terminal_retention ON $schema.pipeline_executions USING btree (completed_at, id) WHERE ((pipeline_name = 'native-ask'::text) AND (status = ANY (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text])))"
     },
     {
       "name": "idx_attention_states_blocked",
