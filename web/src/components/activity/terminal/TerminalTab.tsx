@@ -202,6 +202,7 @@ export function TerminalTab({
     retryWrite,
     discardWrite,
     resizeTerminal,
+    reportViewport,
     killSession,
     onOutput,
     onAttachHistory,
@@ -447,6 +448,11 @@ export function TerminalTab({
   const handleViewReady = useCallback(
     (rows: number, cols: number) => {
       const activeStreamingId = streamingIdRef.current;
+      // Reported before the attachment guard below: the grid routinely
+      // measures itself before the attach resolves, and the rendezvous needs
+      // both halves whichever lands first. It sends nothing on its own until
+      // an attachment exists to address the frame to.
+      if (rows > 0 && cols > 0) reportViewport(rows, cols);
       if (
         activeStreamingId === null ||
         selected === null ||
@@ -465,7 +471,14 @@ export function TerminalTab({
       }
       setReadyContext(terminalContext);
     },
-    [attachedKey, resizeTerminal, selected, selectedKey, terminalContext],
+    [
+      attachedKey,
+      reportViewport,
+      resizeTerminal,
+      selected,
+      selectedKey,
+      terminalContext,
+    ],
   );
 
   // Taking back after another session displaced this one needs the takeover

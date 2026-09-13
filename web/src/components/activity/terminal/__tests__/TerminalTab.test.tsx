@@ -184,6 +184,7 @@ function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
     detachSession: vi.fn(),
     clearAttachError: vi.fn(),
     refreshTerminal: vi.fn(),
+    reportViewport: vi.fn(),
     createSession: vi.fn(),
     killSession: vi.fn(),
     refreshSessions: vi.fn(),

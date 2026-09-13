@@ -1,4 +1,13 @@
-export const TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES = 16 * 1024 * 1024;
+/**
+ * What one attachment may accumulate before the client stops reassembling and
+ * asks for a fresh snapshot instead. Holding a partial message costs more than
+ * its payload — each fragment carries its own frame, timer slot and array entry
+ * — so the charge adds a flat per-fragment overhead. A flood of tiny fragments
+ * is the shape that actually starves the client, and payload bytes alone would
+ * not notice it.
+ */
+export const TERMINAL_FRAGMENT_BUDGET_BYTES = 256 * 1024;
+export const TERMINAL_FRAGMENT_OVERHEAD_BYTES = 256;
 export const TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES =
   64 * 1024 * 1024;
 export const TERMINAL_WS_FRAGMENT_REASSEMBLY_TIMEOUT_MS = 5000;
@@ -13,7 +22,8 @@ export type FragmentErrorCode =
 export interface TerminalWsReducerOptions {
   now?: () => number;
   timeoutMs?: number;
-  maxReassemblyBytes?: number;
+  budgetBytes?: number;
+  fragmentOverheadBytes?: number;
   maxSocketBytes?: number;
 }
 
@@ -24,6 +34,8 @@ interface BufferState {
   nextIndex: number;
   chunks: string[];
   bytes: number;
+  /** Payload bytes plus the per-fragment overhead charge. */
+  charged: number;
   startedAt: number;
 }
 
@@ -53,15 +65,31 @@ export function createTerminalWsReducer(
   const now = options.now ?? (() => Date.now());
   const timeoutMs =
     options.timeoutMs ?? TERMINAL_WS_FRAGMENT_REASSEMBLY_TIMEOUT_MS;
-  const maxReassembly =
-    options.maxReassemblyBytes ?? TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES;
+  const budget = options.budgetBytes ?? TERMINAL_FRAGMENT_BUDGET_BYTES;
+  const overhead =
+    options.fragmentOverheadBytes ?? TERMINAL_FRAGMENT_OVERHEAD_BYTES;
   const maxSocket =
     options.maxSocketBytes ?? TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES;
   const live = new Set<string>();
   const buffers = new Map<string, BufferState>();
   const applied: Record<string, unknown>[] = [];
   const errors: { code: FragmentErrorCode; attachment_id: string }[] = [];
+  // Attachments whose stream was abandoned mid-message: nothing from them is
+  // trusted until their replacement snapshot lands.
+  const pinned = new Set<string>();
+  const refreshRequests: string[] = [];
   let socketBytes = 0;
+
+  /**
+   * Abandon the attachment's stream and ask for a snapshot, once. A second
+   * over-budget fragment of the same doomed message must not queue a second
+   * refresh; the first one already covers everything that follows.
+   */
+  const requestRefresh = (attachmentId: string) => {
+    if (pinned.has(attachmentId)) return;
+    pinned.add(attachmentId);
+    refreshRequests.push(attachmentId);
+  };
 
   const dropBuffer = (attachmentId: string, code?: FragmentErrorCode) => {
     const current = buffers.get(attachmentId);
@@ -122,6 +150,7 @@ export function createTerminalWsReducer(
         nextIndex: 0,
         chunks: [],
         bytes: 0,
+        charged: 0,
         startedAt: now(),
       };
       buffers.set(attachmentId, current);
@@ -134,8 +163,12 @@ export function createTerminalWsReducer(
       dropBuffer(attachmentId, "fragment_sequence");
       return;
     }
-    if (current.bytes + decoded.length > maxReassembly) {
+    if (current.charged + decoded.length + overhead > budget) {
+      // Over budget the partial message is worthless: it can never complete,
+      // and the bytes already held are a torn prefix of a screen. Drop it and
+      // let the snapshot re-establish the truth.
       dropBuffer(attachmentId, "fragment_too_large");
+      requestRefresh(attachmentId);
       return;
     }
     if (socketBytes + decoded.length > maxSocket) {
@@ -144,6 +177,7 @@ export function createTerminalWsReducer(
     }
     current.chunks.push(new TextDecoder().decode(decoded));
     current.bytes += decoded.length;
+    current.charged += decoded.length + overhead;
     socketBytes += decoded.length;
     current.nextIndex += 1;
     if (message.more === true) return;
@@ -168,16 +202,30 @@ export function createTerminalWsReducer(
     get socketBytes() {
       return socketBytes;
     },
+    get refreshRequests(): readonly string[] {
+      return refreshRequests;
+    },
+    /** True while this attachment is waiting for its replacement snapshot. */
+    isPinned(attachmentId: string) {
+      return pinned.has(attachmentId);
+    },
+    /** Drain the pending refreshes so each one is sent exactly once. */
+    takeRefreshRequests(): string[] {
+      return refreshRequests.splice(0);
+    },
     markLive(attachmentId: string) {
       live.add(attachmentId);
     },
     finalize(attachmentId: string) {
       dropBuffer(attachmentId);
       live.delete(attachmentId);
+      pinned.delete(attachmentId);
     },
     disconnect() {
       for (const id of [...buffers.keys()]) dropBuffer(id);
       live.clear();
+      pinned.clear();
+      refreshRequests.splice(0);
     },
     tick(nowMs: number) {
       for (const [id, buffer] of [...buffers.entries()]) {
@@ -187,6 +235,18 @@ export function createTerminalWsReducer(
       }
     },
     push(message: Record<string, unknown>) {
+      const pinnedId = message.attachment_id;
+      if (typeof pinnedId === "string" && pinned.has(pinnedId)) {
+        // The snapshot is the rendezvous: it replaces history wholesale, so it
+        // is the first frame that can be trusted again. Everything else on a
+        // pinned attachment is pre-refresh output that would paint a torn
+        // screen, and finalization ends the attachment either way.
+        if (message.type === "terminal_attach_history") {
+          pinned.delete(pinnedId);
+        } else if (message.type !== "terminal_attachment_finalized") {
+          return;
+        }
+      }
       if (message.type === "terminal_ws_fragment") {
         pushFragment(message);
         return;

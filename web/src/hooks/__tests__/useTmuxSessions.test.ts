@@ -17,7 +17,7 @@ import {
 } from "../../test/mocks/websocket";
 import {
   createTerminalWsReducer,
-  TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+  TERMINAL_FRAGMENT_BUDGET_BYTES,
   TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
   TERMINAL_WS_SAFE_INTEGER_MAX,
 } from "../terminalWsFragments";
@@ -641,6 +641,42 @@ describe("useTmuxSessions", () => {
     expect(result.current.attachedTarget).toEqual({
       terminal_id: "term-gobby",
     });
+
+    // The rendezvous completes when the measured grid meets a live attachment,
+    // and the frame carries the attachment id the daemon keys on.
+    ws.send.mockClear();
+    act(() => result.current.reportViewport(24, 80));
+    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([
+      {
+        type: "terminal_set_viewport",
+        request_id: expect.any(String),
+        terminal_id: "term-gobby",
+        attachment_id: "stream-gobby",
+        rows: 24,
+        cols: 80,
+        kind: "viewport",
+      },
+    ]);
+
+    // Once per attachment: a re-measure of the same grid is not a new viewport.
+    ws.send.mockClear();
+    act(() => result.current.reportViewport(24, 80));
+    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([]);
+
+    // A refresh re-arms the same rendezvous and says why it was sent.
+    act(() => result.current.refreshTerminal("term-gobby", "gobby"));
+    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([
+      {
+        type: "terminal_set_viewport",
+        request_id: expect.any(String),
+        terminal_id: "term-gobby",
+        attachment_id: "stream-gobby",
+        rows: 24,
+        cols: 80,
+        kind: "refresh",
+      },
+    ]);
+
     ws.send.mockClear();
     grantControl(ws, result.current.takeControl, "stream-gobby");
     act(() => result.current.sendInput("pwd\r"));
@@ -671,18 +707,11 @@ describe("useTmuxSessions", () => {
       result.current.refreshTerminal("default-worker", "default");
       result.current.refreshTerminal("gobby-worker", "gobby");
     });
-    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([
-      {
-        type: "terminal_set_viewport",
-        request_id: expect.any(String),
-        terminal_id: "default-worker",
-      },
-      {
-        type: "terminal_set_viewport",
-        request_id: expect.any(String),
-        terminal_id: "gobby-worker",
-      },
-    ]);
+    // A viewport frame is addressed to an attachment: the daemon returns early
+    // without one. With nothing attached there is no frame to send, so a
+    // refresh for an unattached terminal is silence rather than a message the
+    // daemon drops on the floor.
+    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([]);
 
     ws.send.mockClear();
     act(() => result.current.attachSession("worker", "gobby"));
@@ -1683,10 +1712,11 @@ describe("useTmuxSessions", () => {
       true,
     );
 
-    expect(TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES).toBe(16 * 1024 * 1024);
+    expect(TERMINAL_FRAGMENT_BUDGET_BYTES).toBe(256 * 1024);
     const huge = createTerminalWsReducer({
       now: () => 0,
-      maxReassemblyBytes: 8,
+      budgetBytes: 8,
+      fragmentOverheadBytes: 0,
     });
     huge.markLive("att-a");
     huge.push({
