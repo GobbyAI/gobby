@@ -10,6 +10,8 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
+from .service import DISTILL_TOTAL_DEADLINE_SECONDS
+
 if TYPE_CHECKING:
     from gobby.config.sessions import FeedbackReviewConfig
     from gobby.feedback.service import FeedbackReviewService
@@ -20,7 +22,10 @@ FEEDBACK_REVIEW_CRON_JOB_NAME = "gobby:feedback-review"
 FEEDBACK_REVIEW_CRON_HANDLER = "feedback.review"
 FEEDBACK_REVIEW_CRON_DESCRIPTION = "Scheduled session-feedback review and task filing"
 # One distill call plus deterministic task filing; far under the dream sweep.
-FEEDBACK_REVIEW_TIMEOUT_SECONDS = 1800.0
+FEEDBACK_REVIEW_FINALIZE_GRACE_SECONDS = 300.0
+FEEDBACK_REVIEW_TIMEOUT_SECONDS = (
+    DISTILL_TOTAL_DEADLINE_SECONDS + FEEDBACK_REVIEW_FINALIZE_GRACE_SECONDS
+)
 
 CronHandler = Callable[[CronJob], Awaitable[str]]
 
