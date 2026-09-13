@@ -6,6 +6,8 @@ import hashlib
 import io
 import json
 import socket
+import subprocess
+import sys
 import tarfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -17,12 +19,6 @@ from typing import Literal, cast
 import pytest
 import yaml
 from ask_cohort import (
-    EXPECTED_TOOL_IDENTITIES,
-    AttemptError,
-    CommandResult,
-    PreparationError,
-    _daemon_json,
-    cohort_contract,
     load_prepared_manifest,
     prepare_cohort,
     primary_accounting,
@@ -33,13 +29,26 @@ from ask_cohort import (
 from ask_cohort import (
     run_supplement as _run_supplement,
 )
+from ask_cohort_records import (
+    EXPECTED_TOOL_IDENTITIES,
+    AttemptError,
+    CommandResult,
+    PreparationError,
+    cohort_contract,
+)
+from ask_cohort_runtime import (
+    _cached_runtime_grant,
+    _daemon_json,
+)
+from ask_report import render_report
 from ask_scoring import (
-    Q14_CHANGED_PATHS,
     build_answer_score,
     build_review_packet,
     citation_integrity,
-    render_report,
     score_packet,
+)
+from ask_scoring_retrieval import (
+    Q14_CHANGED_PATHS,
     score_retrieval,
     scoring_contract,
 )
@@ -420,7 +429,6 @@ def _contract() -> dict[str, object]:
                 "flags": [
                     {"name": name, "allowed_values": allowed}
                     for name, allowed in [
-                        ("--commit", []),
                         ("--timeout-seconds", []),
                         ("--retrieval", ["deterministic", "hybrid"]),
                         ("--background", []),
@@ -507,6 +515,10 @@ def _prepare(tmp_path: Path, *, daemon_port: int = 61999, trailing_slash: bool =
                     ("A", "tests/replenishment/test_store_targets.py"),
                 ]
             ).encode()
+        elif argv[-1] == "HEAD":
+            stdout = f"{Path(argv[2]).name}\n".encode()
+        elif "index" in argv:
+            stdout = b"{}"
         elif argv[-1].endswith("^{commit}"):
             stdout = f"{argv[-1][:-9]}\n".encode()
         elif argv[-1].endswith("^{tree}"):
@@ -515,17 +527,30 @@ def _prepare(tmp_path: Path, *, daemon_port: int = 61999, trailing_slash: bool =
             raise AssertionError(f"unexpected preflight command: {argv}")
         return CommandResult(exit_code=0, stdout=stdout, stderr=b"", wall_seconds=0.01)
 
+    def create_worktree(
+        identity: Mapping[str, object], environment: Mapping[str, str], commit: str, branch: str
+    ) -> dict[str, object]:
+        root = tmp_path / commit
+        root.mkdir()
+        return {
+            "id": f"worktree-{commit}",
+            "worktree_path": str(root),
+            "project_id": identity["project_id"],
+            "branch_name": branch,
+        }
+
     return prepare_cohort(
         runtime_identity_path=identity,
         gcode_binary=gcode,
         project_root=source_root,
         output_root=tmp_path / "cohort",
         command_runner=preflight,
+        worktree_creator=create_worktree,
         now=lambda: "2026-09-10T12:30:00+00:00",
     )
 
 
-def _failed_result(question_id: str, commit: str) -> dict[str, object]:
+def _failed_result(question_id: str, commit: str, project_root: str) -> dict[str, object]:
     return {
         "run_id": f"run-{question_id.lower()}",
         "status": "failed",
@@ -540,6 +565,7 @@ def _failed_result(question_id: str, commit: str) -> dict[str, object]:
         "tool_identities": list(EXPECTED_TOOL_IDENTITIES),
         "binding": {
             "project_id": "project-frozen-ask",
+            "repository_root": project_root,
             "commit_oid": commit,
             "tree_oid": "7" * 40 if question_id != "Q14" else "8" * 40,
             "retrieval_mode": "deterministic",
@@ -554,8 +580,8 @@ def _failed_result(question_id: str, commit: str) -> dict[str, object]:
     }
 
 
-def _completed_result(question_id: str, commit: str) -> dict[str, object]:
-    result = _failed_result(question_id, commit)
+def _completed_result(question_id: str, commit: str, project_root: str) -> dict[str, object]:
+    result = _failed_result(question_id, commit, project_root)
     result.update(
         {
             "status": "completed",
@@ -664,7 +690,9 @@ def test_prepare_normalizes_trailing_slash_daemon_endpoint(tmp_path: Path) -> No
 def test_frozen_cohort_and_scoring_contract() -> None:
     cohort = cohort_contract()
     scoring = scoring_contract()
-    runner_source = Path(__file__).with_name("ask_cohort.py").read_text(encoding="utf-8")
+    runner_source = "\n".join(
+        path.read_text(encoding="utf-8") for path in Path(__file__).parent.glob("ask_cohort*.py")
+    )
 
     assert tuple((item["id"], item["question"]) for item in cohort["questions"]) == (
         EXPECTED_QUESTIONS
@@ -703,6 +731,44 @@ def test_frozen_cohort_and_scoring_contract() -> None:
     )
 
 
+def test_retrieval_scorer_initializes_without_answer_report_import() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from ask_scoring_retrieval import score_retrieval; "
+                "score_retrieval('Q01', {'records': []}); print('initialized')"
+            ),
+        ],
+        cwd=Path(__file__).parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "initialized"
+
+
+def test_primary_runtime_probe_selects_primary_grant_with_two_overlay_grants(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _prepare(tmp_path)
+    manifest = load_prepared_manifest(manifest_path)
+    home = tmp_path / "contained-gobby-home"
+    grant_root = home / "grants" / ("a" * 16)
+    primary = grant_root / "project-frozen-ask.json"
+    payload = json.loads(primary.read_bytes())
+    for overlay in ("base-overlay", "change-overlay"):
+        overlay_path = grant_root / f"project-frozen-ask--{overlay}.json"
+        overlay_path.write_bytes(primary.read_bytes())
+        overlay_path.chmod(0o600)
+    assert _cached_runtime_grant(manifest, {"GOBBY_HOME": str(home)}) == payload["grant"]
+    primary.unlink()
+    with pytest.raises(PreparationError, match="exactly one"):
+        _cached_runtime_grant(manifest, {"GOBBY_HOME": str(home)})
+
+
 def test_prepare_freezes_cli_source_profiles_and_execution_gates(tmp_path: Path) -> None:
     manifest_path = _prepare(tmp_path)
     manifest_bytes = manifest_path.read_bytes()
@@ -711,9 +777,15 @@ def test_prepare_freezes_cli_source_profiles_and_execution_gates(tmp_path: Path)
     assert manifest["prepared_at"] == "2026-09-10T12:30:00+00:00"
     assert cast(dict[str, object], manifest["gcode"])["contract_version"] == 10
     assert cast(dict[str, object], manifest["source"])["commits"] == {
-        "0216f1e33f05962d49467d95fe84609041c6dba8": {"tree_oid": "7" * 40},
+        "0216f1e33f05962d49467d95fe84609041c6dba8": {
+            "tree_oid": "7" * 40,
+            "project_root": str((tmp_path / "0216f1e33f05962d49467d95fe84609041c6dba8").resolve()),
+            "worktree_id": "worktree-0216f1e33f05962d49467d95fe84609041c6dba8",
+        },
         "8b24ac26699aac8b24254a647aa70b208287b492": {
             "tree_oid": "8" * 40,
+            "project_root": str((tmp_path / "8b24ac26699aac8b24254a647aa70b208287b492").resolve()),
+            "worktree_id": "worktree-8b24ac26699aac8b24254a647aa70b208287b492",
             "first_parent_oid": "0216f1e33f05962d49467d95fe84609041c6dba8",
             "first_parent_changes": [
                 {"status": "M", "path": "config/replenishment.toml"},
@@ -775,7 +847,7 @@ def test_prepare_preserves_profiles_serialized_by_production_publication(
         deterministic,
         reviewed,
         request={"question": draft.question},
-        binding=evidence.snapshot_binding.model_dump(mode="json"),
+        binding=evidence.repository_binding.model_dump(mode="json"),
         profiles=production_profiles,
         tool_identities=("gobby-code@0.5.0",),
         attempt_history=({"attempt": 1, "status": "reviewed"},),
@@ -1069,7 +1141,7 @@ def test_runtime_isolation_drift_is_recorded_before_primary_and_export(tmp_path:
         return CommandResult(
             exit_code=0,
             stdout=json.dumps(
-                _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8", argv[2])
             ).encode(),
             stderr=b"",
             wall_seconds=1.0,
@@ -1121,7 +1193,7 @@ def test_primary_runner_is_serial_exact_and_append_only(
         )
         return CommandResult(
             exit_code=2,
-            stdout=json.dumps(_failed_result(question_id, source_commit)).encode(),
+            stdout=json.dumps(_failed_result(question_id, source_commit, argv[2])).encode(),
             stderr=b"Ask failed\n",
             wall_seconds=float(len(calls)),
         )
@@ -1137,11 +1209,11 @@ def test_primary_runner_is_serial_exact_and_append_only(
             if identifier == "Q14"
             else "0216f1e33f05962d49467d95fe84609041c6dba8"
         )
+        assert argv[2] == str((tmp_path / expected_commit).resolve())
+        assert "--commit" not in argv
         assert argv[5:] == (
             "ask",
             prompt,
-            "--commit",
-            expected_commit,
             "--timeout-seconds",
             "600",
             "--retrieval",
@@ -1174,7 +1246,7 @@ def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Pat
         return CommandResult(
             exit_code=2,
             stdout=json.dumps(
-                _failed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                _failed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8", argv[2])
             ).encode(),
             stderr=b"Ask failed\n",
             wall_seconds=1.0,
@@ -1212,7 +1284,7 @@ def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Pat
         )
         return CommandResult(
             exit_code=2,
-            stdout=json.dumps(_failed_result(question_id, commit)).encode(),
+            stdout=json.dumps(_failed_result(question_id, commit, argv[2])).encode(),
             stderr=b"Ask failed\n",
             wall_seconds=1.0,
         )
@@ -1327,7 +1399,7 @@ def test_export_oserror_is_typed_and_primary_is_not_replaced_on_resume(tmp_path:
             return CommandResult(
                 exit_code=0,
                 stdout=json.dumps(
-                    _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                    _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8", argv[2])
                 ).encode(),
                 stderr=b"",
                 wall_seconds=1.0,
@@ -1439,7 +1511,7 @@ def test_export_command_result_failures_preserve_completed_primary(
             return CommandResult(
                 exit_code=0,
                 stdout=json.dumps(
-                    _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                    _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8", argv[2])
                 ).encode(),
                 stderr=b"",
                 wall_seconds=1.0,
@@ -1484,7 +1556,7 @@ def test_keyboard_interrupt_during_export_is_persisted_and_stops_cohort(tmp_path
         return CommandResult(
             exit_code=0,
             stdout=json.dumps(
-                _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8", argv[2])
             ).encode(),
             stderr=b"",
             wall_seconds=1.0,
