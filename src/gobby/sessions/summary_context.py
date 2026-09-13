@@ -163,7 +163,7 @@ async def _build_summary_prompt_context(
         project_root,
     )
     missing_git_context = (
-        _missing_workspace_git_context(project_root) if has_session_edits else None
+        await _missing_workspace_git_context(project_root) if has_session_edits else None
     )
     structured_handoff_ctx = copy(handoff_ctx)
     if missing_git_context:

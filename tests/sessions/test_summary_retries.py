@@ -159,6 +159,10 @@ async def test_existing_session_checkout_git_failure_remains_retryable(
     tmp_path: Path,
 ) -> None:
     isolated = isolated_checkout_factory(temp_db, "transient-summary-git")
+    # The checkout must be a real worktree for this test's subject to exist: a
+    # workspace that is not a git repository is a permanent condition, answered
+    # by the missing-git-context guard, never by a retry.
+    subprocess.run(["git", "init", "-q"], cwd=isolated.root_path, check=True)
     transcript = tmp_path / "transient-summary-git.jsonl"
     transcript.write_bytes(GOLDEN.read_bytes())
     session = register(lifecycle, isolated.project.id, "transient-summary-git", str(transcript))

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import parse_terminal_context_value
-from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:
     from gobby.sessions.analyzer import HandoffContext
@@ -47,13 +47,27 @@ def resolve_session_workspace(session: Session, transcript_path: str | None = No
     return Path.cwd()
 
 
-def _missing_workspace_git_context(cwd: Path) -> str | None:
+async def _missing_workspace_git_context(cwd: Path) -> str | None:
+    """Report why git context is unavailable for a workspace, or None if it is usable.
+
+    Existing on disk is not enough. A workspace that survives as a plain directory
+    after its worktree is removed still fails every git query, and `git diff HEAD`
+    answers that by falling back to `--no-index` and printing a usage dump rather
+    than a clean error. Callers degrade on the message returned here, so proving
+    the workspace is still inside a worktree is what keeps that dump out of them.
+    """
     try:
         cwd.stat()
     except FileNotFoundError:
         return f"[git context unavailable: session workspace no longer exists: {cwd}]"
     except OSError:
         return None
+
+    probe = await daemon_git.run(["rev-parse", "--git-dir"], cwd=cwd, timeout=5.0)
+    if isinstance(probe, GitFailed) and "not a git repository" in probe.stderr.lower():
+        return f"[git context unavailable: session workspace is not a git repository: {cwd}]"
+    # Any other failure (timeout, unreadable config, dubious ownership) is not
+    # evidence that the repository is gone, so behavior stays as it was.
     return None
 
 
@@ -62,7 +76,7 @@ async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
     if not handoff_ctx.files_modified:
         return
 
-    missing_git_context = _missing_workspace_git_context(cwd)
+    missing_git_context = await _missing_workspace_git_context(cwd)
     if missing_git_context:
         handoff_ctx.git_status = missing_git_context
         return
