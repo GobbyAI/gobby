@@ -43,6 +43,11 @@ def local_provider_namespace(
     return f"{_LOCAL_PROVIDER_PREFIX}:{machine_id}:{digest}"
 
 
+def is_local_provider_namespace(provider: str) -> bool:
+    """Return whether a provider key belongs to reserved local context storage."""
+    return provider.strip().casefold().startswith(f"{_LOCAL_PROVIDER_PREFIX}:")
+
+
 class LocalContextStore:
     """Project local observations onto atomic provider capability snapshots."""
 

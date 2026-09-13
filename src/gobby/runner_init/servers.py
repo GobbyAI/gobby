@@ -18,22 +18,18 @@ import psycopg
 
 from gobby.ai.vision import build_daemon_vision_extract_service
 from gobby.app_context import ServiceContainer, set_app_context
-from gobby.config.app import deep_merge
+from gobby.config.ai import model_metadata_alias_source_key
+from gobby.config.app import DaemonConfig
 from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
+from gobby.providers.capabilities.local_context_config import configured_local_routes
+from gobby.providers.capabilities.local_context_refresh import LocalContextService
+from gobby.providers.capabilities.local_context_store import LocalContextStore
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
-from gobby.servers.provider_model_discovery import (
-    claude_uses_loopback_model_endpoint,
-    codex_uses_loopback_model_endpoint,
-    load_claude_settings,
-    load_codex_config,
-    load_qwen_settings,
-    qwen_uses_loopback_model_endpoint,
-)
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
@@ -53,17 +49,15 @@ logger = logging.getLogger(__name__)
 _CREDENTIAL_ISSUANCE_FAILED = "credential issuance failed"
 
 
-def _local_provider_metadata_exclusions() -> frozenset[str]:
-    providers: set[str] = set()
-    if codex_uses_loopback_model_endpoint(load_codex_config(logger=logger)):
-        providers.add("codex")
-    claude_settings = load_claude_settings(deep_merge=deep_merge, logger=logger)
-    if claude_uses_loopback_model_endpoint(claude_settings):
-        providers.add("claude")
-    qwen_settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
-    if qwen_uses_loopback_model_endpoint(qwen_settings):
-        providers.add("qwen")
-    return frozenset(providers)
+def _local_model_metadata_exclusions(
+    config: DaemonConfig,
+    *,
+    machine_id: str,
+) -> frozenset[tuple[str, str]]:
+    return frozenset(
+        model_metadata_alias_source_key(route.provider, route.model_id)
+        for route in configured_local_routes(config, machine_id=machine_id)
+    )
 
 
 def register_config_event_publisher(runner: GobbyRunner) -> None:
@@ -99,18 +93,33 @@ def init_servers(runner: GobbyRunner) -> None:
     web_chat_session_registry = WebChatSessionRegistry()
     runner.wake_dispatcher.set_web_chat_session_registry(web_chat_session_registry)
     http_server_ref: weakref.ReferenceType[HTTPServer] | None = None
+    if runner.machine_id is None:
+        raise RuntimeError("runner machine identity must be initialized before servers")
+    machine_id = runner.machine_id
+    run_db = getattr(runner.db_executor, "run", None)
+
+    def local_model_metadata_exclusions() -> frozenset[tuple[str, str]]:
+        active_config = (
+            runner.config_runtime.capture().snapshot.active
+            if runner.config_runtime.ready
+            else config
+        )
+        return _local_model_metadata_exclusions(active_config, machine_id=machine_id)
+
     provider_capability_store = ProviderCapabilityStore(runner.database)
+    local_context_store = LocalContextStore(provider_capability_store)
+    local_context_service = LocalContextService(local_context_store, run_db=run_db)
     model_metadata_store = ModelMetadataStore(runner.database)
     model_metadata_coverage_auditor = ModelMetadataCoverageAuditor(
         provider_capability_store,
         model_metadata_store,
         config.ai.model_metadata_aliases,
-        run_db=getattr(runner.db_executor, "run", None),
-        excluded_providers=_local_provider_metadata_exclusions,
+        run_db=run_db,
+        excluded_models=local_model_metadata_exclusions,
     )
     provider_capability_service = CapabilityRefreshCoordinator(
         provider_capability_store,
-        run_db=getattr(runner.db_executor, "run", None),
+        run_db=run_db,
         coverage_auditor=model_metadata_coverage_auditor,
     )
     provider_capability_service.prepare()
@@ -122,12 +131,10 @@ def init_servers(runner: GobbyRunner) -> None:
     generation_endpoint_health = GenerationEndpointHealthCoordinator(
         lambda: runner.config_runtime.capture().snapshot.active.ai.generation.endpoints
     )
-    if runner.machine_id is None:
-        raise RuntimeError("runner machine identity must be initialized before servers")
     provider_capacity_service = ProviderCapacityService.create_default(
         runner.database,
-        machine_id=runner.machine_id,
-        run_db=getattr(runner.db_executor, "run", None),
+        machine_id=machine_id,
+        run_db=run_db,
     )
 
     def tool_proxy_getter() -> object | None:
@@ -191,6 +198,7 @@ def init_servers(runner: GobbyRunner) -> None:
         provider_capacity_service=provider_capacity_service,
         provider_capability_service=provider_capability_service,
         provider_capability_resolver=provider_capability_resolver,
+        local_context_service=local_context_service,
         model_metadata_coverage_auditor=model_metadata_coverage_auditor,
         generation_endpoint_health=generation_endpoint_health,
         web_chat_runtime_manager=None,
