@@ -34,7 +34,7 @@ from .shared import (
     install_global_hooks,
     install_shared_content,
 )
-from .skill_install import backup_gobby_skills, install_router_skills_as_commands
+from .skill_install import install_router_skills_as_commands
 
 logger = logging.getLogger(__name__)
 
@@ -194,12 +194,6 @@ def install_claude(
 
     # Ensure directories exist
     claude_path.mkdir(parents=True, exist_ok=True)
-
-    # Backup existing gobby skills (now auto-synced from database)
-    skills_dir = claude_path / "skills"
-    backup_result = backup_gobby_skills(skills_dir)
-    if backup_result["backed_up"] > 0:
-        logger.info("Backed up %s existing gobby skills", backup_result["backed_up"])
 
     # Get source files
     install_dir = get_install_dir()

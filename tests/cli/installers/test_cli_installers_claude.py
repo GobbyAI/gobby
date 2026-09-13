@@ -126,6 +126,12 @@ class TestInstallClaude:
         }
         mock_mcp_config.return_value = {"success": True, "added": True}
 
+        custom_skill = temp_project / ".claude/skills/gobby-custom/SKILL.md"
+        prior_backup = temp_project / ".claude/skills.backup/gobby-custom/SKILL.md"
+        for path, content in ((custom_skill, "current custom"), (prior_backup, "prior backup")):
+            path.parent.mkdir(parents=True)
+            path.write_text(content)
+
         with (
             patch.object(Path, "home", return_value=mock_home_dir),
             patch(
@@ -139,6 +145,8 @@ class TestInstallClaude:
                 hook_timeout_seconds=150,
             )
 
+        assert custom_skill.read_text() == "current custom"
+        assert prior_backup.read_text() == "prior backup"
         assert result["success"] is True
         assert result["hooks_installed"]
         assert result["error"] is None
