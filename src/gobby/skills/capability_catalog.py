@@ -1,9 +1,10 @@
 """Validated, metadata-only catalog for Gobby capability routing."""
 
+import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 
@@ -45,6 +46,7 @@ class CapabilityCatalog(BaseModel):
 
     version: Literal[1]
     capabilities: tuple[Capability, ...]
+    folded_skills: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("version", mode="before")
     @classmethod
@@ -84,6 +86,21 @@ def validate_capability_catalog(catalog: CapabilityCatalog, skill_root: Path) ->
             if not target.is_file():
                 raise ValueError(f"{label}: missing reference file: {path}")
 
+    for name, destination in catalog.folded_skills.items():
+        if parse_instruction_requirement(name).path is not None:
+            raise ValueError(f"Folded skill name must be a plain identifier: {name}")
+        if destination not in identities:
+            raise ValueError(f"Folded skill {name}: unknown reference identity {destination}")
+
+
+def _unique_catalog_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate catalog key: {key}")
+        result[key] = value
+    return result
+
 
 def load_capability_catalog(skill_root: Path | None = None) -> CapabilityCatalog:
     """Load catalog metadata and check its files without loading instruction bodies."""
@@ -93,7 +110,10 @@ def load_capability_catalog(skill_root: Path | None = None) -> CapabilityCatalog
         skill_root = get_bundled_skills_path() / "gobby"
     path = skill_root / "catalog.json"
     try:
-        catalog = CapabilityCatalog.model_validate_json(path.read_text(encoding="utf-8"))
+        data = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_unique_catalog_object
+        )
+        catalog = CapabilityCatalog.model_validate(data)
         validate_capability_catalog(catalog, skill_root)
     except (OSError, ValueError) as exc:
         raise ValueError(f"Invalid capability catalog {path}: {exc}") from exc

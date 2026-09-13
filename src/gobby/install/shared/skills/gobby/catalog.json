@@ -1031,5 +1031,37 @@
         }
       ]
     }
-  ]
+  ],
+  "folded_skills": {
+    "tasks": "gobby:references/tasks/overview.md",
+    "live-session": "gobby:references/tasks/live-work.md",
+    "plan": "gobby:references/plan/overview.md",
+    "plan-draft": "gobby:references/plan/drafting.md",
+    "plan-enhance": "gobby:references/plan/enhancement.md",
+    "plan-mechanic": "gobby:references/plan/repair.md",
+    "plan-review": "gobby:references/plan/review.md",
+    "expand": "gobby:references/plan/expansion.md",
+    "expansion-agent-selection": "gobby:references/plan/expansion.md",
+    "build": "gobby:references/build/overview.md",
+    "build-coordinator": "gobby:references/build/coordination.md",
+    "handoff-discipline": "gobby:references/sessions/handoffs.md",
+    "persona": "gobby:references/agents/personas.md",
+    "memory": "gobby:references/memory/overview.md",
+    "review-learning": "gobby:references/memory/review-lessons.md",
+    "code-index": "gobby:references/code-index/overview.md",
+    "loading-skills": "gobby:references/skills/loading.md",
+    "writing-skills": "gobby:references/skills/authoring.md",
+    "build-rule": "gobby:references/rules/authoring.md",
+    "mcp-servers": "gobby:references/mcp-servers/overview.md",
+    "pipelines-and-cron": "gobby:references/pipelines/overview.md",
+    "source-control": "gobby:references/source-control/overview.md",
+    "clones": "gobby:references/source-control/clones.md",
+    "merge": "gobby:references/source-control/merge-campaigns.md",
+    "merge-expert": "gobby:references/source-control/merge-campaigns.md",
+    "review": "gobby:references/review/overview.md",
+    "epic-review": "gobby:references/review/epic.md",
+    "intro": "gobby:references/intro/overview.md",
+    "development-discipline": "gobby:references/development/obligations.md",
+    "channel-parity": "gobby:references/development/channels.md"
+  }
 }

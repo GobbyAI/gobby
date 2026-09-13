@@ -4,6 +4,9 @@ description: "Router contract for provider-aware Gobby help and installed skill 
 version: "3.0.0"
 category: core
 triggers: help
+metadata:
+  gobby:
+    audience: all
 ---
 
 # Gobby Router

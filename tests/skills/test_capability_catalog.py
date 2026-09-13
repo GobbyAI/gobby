@@ -120,5 +120,38 @@ def test_catalog_rejects_instruction_bodies(tmp_path: Path, catalog_data: dict[s
         load_capability_catalog(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"tasks": "gobby:references/tasks/missing.md"},
+        {"tasks": "tasks"},
+        {"gobby:references/tasks/overview.md": "gobby:references/tasks/overview.md"},
+    ],
+)
+def test_catalog_rejects_invalid_folded_skill_mapping(
+    tmp_path: Path, catalog_data: dict[str, Any], mapping: dict[str, str]
+) -> None:
+    catalog_data["folded_skills"] = mapping
+    _write_catalog(tmp_path, catalog_data)
+    with pytest.raises(ValueError, match="Folded skill"):
+        load_capability_catalog(tmp_path)
+
+
+def test_catalog_rejects_duplicate_folded_names(tmp_path: Path) -> None:
+    (tmp_path / "catalog.json").write_text(
+        '{"version": 1, "capabilities": [], "folded_skills": {"tasks": "a", "tasks": "b"}}'
+    )
+    with pytest.raises(ValueError, match="Duplicate catalog key: tasks"):
+        load_capability_catalog(tmp_path)
+
+
+def test_bundled_catalog_maps_all_thirty_folded_skills() -> None:
+    catalog = load_capability_catalog()
+    assert len(catalog.folded_skills) == 30
+    assert catalog.folded_skills["live-session"] == "gobby:references/tasks/live-work.md"
+    assert "brevity" not in catalog.folded_skills
+    assert "gusto" not in catalog.folded_skills
+
+
 def test_bundled_catalog_is_valid() -> None:
     assert load_capability_catalog().version == 1

@@ -1,6 +1,7 @@
 """Tests for bundled skill synchronization on daemon startup."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -10,7 +11,17 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.skills import LocalSkillManager, SkillFile, SkillScopeConflictError
 
 
+def _write_bundled_router(root: Path) -> None:
+    router = root / "gobby"
+    router.mkdir(exist_ok=True)
+    (router / "SKILL.md").write_text(
+        "---\nname: gobby\ndescription: R\nmetadata: {gobby: {}}\n---\n"
+    )
+    (router / "catalog.json").write_text('{"version": 1, "capabilities": []}\n')
+
+
 def _write_bundled_skill(root: Path, *, scripts: dict[str, str]) -> Path:
+    _write_bundled_router(root)
     skill_dir = root / "scriptful"
     skill_dir.mkdir(exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
@@ -51,6 +62,146 @@ REMOVED_BUNDLED_SKILLS = (
 class TestSyncBundledSkills:
     """Test sync_bundled_skills function."""
 
+    def test_migration_failure_prevents_retirement_until_repaired(
+        self, db: HubDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+        from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+        defaults = SessionVariableDefaultManager(db)
+        malformed = defaults.create("required_skills", "tasks", tags=["gobby"])
+        old = skill_manager.create_skill(
+            name="retired-fixture",
+            description="Old bundle",
+            content="Old instructions",
+            source="installed",
+            metadata={"gobby": {"audience": "all"}},
+        )
+        failed = sync_bundled_skills(db)
+        assert failed["success"] is False
+        assert failed["orphaned"] == 0
+        assert any(malformed.id in error for error in failed["errors"])
+        assert skill_manager.get_by_name(old.name) == old
+        defaults.update(malformed.id, default_value=["tasks"])
+        retried = sync_bundled_skills(db)
+        assert retried["success"] is True, retried["errors"]
+        assert retried["requirements_updated"] == 1
+        assert skill_manager.get_by_name(old.name) is None
+        assert defaults.get(malformed.id).default_value == ["gobby:references/tasks/overview.md"]
+
+    def test_missing_router_prevents_retirement(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        old = skill_manager.create_skill(
+            name="old-bundled",
+            description="Old bundle",
+            content="Instructions",
+            source="installed",
+            metadata={"gobby": {"audience": "all"}},
+        )
+        skill = tmp_path / "standalone"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("---\nname: standalone\ndescription: Fixture\n---\nBody")
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+        result = sync_bundled_skills(db)
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert any("router is missing" in error for error in result["errors"])
+        assert skill_manager.get_by_name(old.name) == old
+
+    def test_upgrade_repairs_original_bundled_router_ownership(
+        self, db: HubDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        from gobby.skills.sync import get_bundled_skills_path, sync_bundled_skills
+
+        original = skill_manager.create_skill(
+            name="gobby",
+            description="Original router",
+            content="Old router",
+            source="installed",
+            source_type="filesystem",
+            source_path=str(get_bundled_skills_path() / "gobby" / "SKILL.md"),
+        )
+        result = sync_bundled_skills(db)
+        assert result["success"] is True, result["errors"]
+        repaired = skill_manager.get_by_name("gobby")
+        assert repaired is not None
+        assert repaired.id == original.id
+        assert repaired.metadata is not None and "gobby" in repaired.metadata
+        assert repaired.content != original.content
+
+    def test_custom_router_blocks_migration_and_retirement(
+        self, db: HubDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        custom = skill_manager.create_skill(
+            name="gobby",
+            description="Custom router",
+            content="My instructions",
+            source="installed",
+            source_type="local",
+        )
+        old = skill_manager.create_skill(
+            name="retired-fixture",
+            description="Old bundle",
+            content="Old instructions",
+            source="installed",
+            metadata={"gobby": {"audience": "all"}},
+        )
+        result = sync_bundled_skills(db)
+        assert result["success"] is False
+        assert result["orphaned"] == 0
+        assert any("resolve the router override" in error for error in result["errors"])
+        assert skill_manager.get_by_name("gobby") == custom
+        assert skill_manager.get_by_name(old.name) == old
+
+    def test_write_failure_preserves_orphans_until_successful_retry(
+        self,
+        db: HubDatabase,
+        skill_manager: LocalSkillManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        old = skill_manager.create_skill(
+            name="retired-fixture",
+            description="Previously bundled skill",
+            content="Old instructions",
+            metadata={"gobby": {"audience": "all"}},
+            source="installed",
+            source_type="filesystem",
+        )
+        _write_bundled_skill(tmp_path, scripts={})
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+        with patch.object(
+            LocalSkillManager, "create_skill_with_files", side_effect=OSError("write failed")
+        ):
+            failed = sync_bundled_skills(db)
+
+        assert failed["success"] is False
+        assert failed["orphaned"] == 0
+        assert any("write failed" in error for error in failed["errors"])
+        preserved = skill_manager.get_by_name(old.name)
+        assert preserved is not None
+        assert preserved.id == old.id
+
+        retried = sync_bundled_skills(db)
+        assert retried["success"] is True
+        assert retried["orphaned"] == 1
+        assert skill_manager.get_by_name(old.name) is None
+        assert skill_manager.get_by_name("scriptful") is not None
+        repeated = sync_bundled_skills(db)
+        assert repeated["success"] is True
+        assert repeated["orphaned"] == 0
+
     @pytest.fixture
     def db(self, temp_db: HubDatabase) -> HubDatabase:
         """Create a test database."""
@@ -82,6 +233,7 @@ class TestSyncBundledSkills:
             "---\nname: oversized\ndescription: fixture\n---\n" + ("é" * 40),
             encoding="utf-8",
         )
+        _write_bundled_router(skills_path)
         monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: skills_path)
         store = ConfigStore(db)
         store.initialize()
@@ -162,7 +314,7 @@ class TestSyncBundledSkills:
         result = sync_bundled_skills(db)
 
         # Should have synced skills
-        assert result["success"] is True
+        assert result["success"] is True, result["errors"]
         assert result["synced"] > 0
 
         # Skills are directly visible (source='installed')
@@ -813,7 +965,7 @@ def test_sync_updates_full_owned_fields_and_applies_enabled_policy(
     skill_dir = _write_bundled_skill(tmp_path, scripts={"run.js": "v1\n"})
     monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
     storage = LocalSkillManager(temp_db)
-    assert sync_bundled_skills(temp_db)["synced"] == 1
+    assert sync_bundled_skills(temp_db)["synced"] == 2
     skill = storage.get_by_name("scriptful")
     assert skill is not None
     storage.update_skill(skill.id, enabled=False)
@@ -856,7 +1008,7 @@ def test_sync_publishes_revision_atomically(
     monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
     storage = LocalSkillManager(temp_db)
     if branch != "create":
-        assert sync_bundled_skills(temp_db)["synced"] == 1
+        assert sync_bundled_skills(temp_db)["synced"] == 2
         skill = storage.get_by_name("scriptful")
         assert skill is not None
         storage.update_skill(skill.id, enabled=False)

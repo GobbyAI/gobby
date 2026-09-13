@@ -95,11 +95,29 @@ def inspect_skill_composition(
     )
     skills_by_name = {skill.name: skill for skill in visible_skills}
 
+    from gobby.skills.instruction_requirements import parse_instruction_requirement
+
+    configuration_errors = [*required_errors, *additional_errors]
+    storage = LocalSkillManager(db)
+    reference_paths: dict[str, set[str]] = {}
     for name in checked:
-        skill = skills_by_name.get(name)
+        try:
+            requirement = parse_instruction_requirement(name)
+        except ValueError:
+            configuration_errors.append(f"invalid_instruction_requirement:{name}")
+            continue
+        skill = skills_by_name.get(requirement.skill)
         if skill is None:
             unknown.append(name)
             continue
+        if requirement.path is not None:
+            if skill.id not in reference_paths:
+                reference_paths[skill.id] = {
+                    file.path for file in storage.get_skill_files(skill.id)
+                }
+            if requirement.path not in reference_paths[skill.id]:
+                unknown.append(name)
+                continue
         if not skill.enabled:
             disabled.append(name)
         allowed_tools.update(skill.allowed_tools or ())
@@ -111,5 +129,5 @@ def inspect_skill_composition(
         unknown_skills=tuple(unknown),
         disabled_skills=tuple(disabled),
         allowed_tools=tuple(sorted(allowed_tools)),
-        configuration_errors=(*required_errors, *additional_errors),
+        configuration_errors=tuple(configuration_errors),
     )

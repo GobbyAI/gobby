@@ -69,7 +69,19 @@ def _is_gobby_owned(skill: Skill) -> bool:
 
     Gobby-owned skills have a 'gobby' key in their metadata dict.
     """
-    return bool(skill.metadata and "gobby" in skill.metadata)
+    if skill.source != "installed" or skill.project_id is not None:
+        return False
+    if skill.metadata and "gobby" in skill.metadata:
+        return True
+    # The original router shipped without the metadata marker. Its exact
+    # installed bundle provenance permits repairing that row on upgrade.
+    return bool(
+        skill.name == "gobby"
+        and skill.source_type == "filesystem"
+        and skill.source_path
+        and Path(skill.source_path).resolve()
+        == (get_bundled_skills_path() / "gobby" / "SKILL.md").resolve()
+    )
 
 
 def _sync_single_skill(
@@ -313,11 +325,38 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
                     "error": str(e),
                 },
             )
+            result["success"] = False
             result["errors"].append(error_msg)
 
-    # Orphan cleanup: soft-delete gobby-owned installed skills whose
-    # SKILL.md was removed from disk
-    if parsed_skills and not load_errors:
+    if result["success"] and "gobby" not in on_disk:
+        result["success"] = False
+        result["errors"].append(
+            "Bundled gobby router is missing; restore the complete skill bundle"
+        )
+    if result["success"]:
+        from gobby.skills.capability_catalog import load_capability_catalog
+        from gobby.skills.reference_migration import migrate_instruction_requirements
+
+        try:
+            catalog = load_capability_catalog(skills_path / "gobby")
+            router = storage.get_by_name("gobby", project_id=None)
+            if router is None or not _is_gobby_owned(router):
+                raise ValueError(
+                    "Custom gobby router overrides the bundle; resolve the router override "
+                    "before migrating requirements or retiring bundled skills"
+                )
+            migration = migrate_instruction_requirements(db, catalog)
+            result["requirements_updated"] = migration.updated
+            result["warnings"].extend(migration.warnings)
+            result["errors"].extend(migration.errors)
+            result["success"] = not migration.errors
+        except Exception as e:
+            result["success"] = False
+            result["errors"].append(f"Failed to migrate instruction requirements: {e}")
+
+    # Retire absent bundled entrypoints only after the router and requirements
+    # have both synced successfully.
+    if result["success"]:
         all_installed = storage.list_skills(project_id=None, include_global=False, limit=-1)
         for skill in all_installed:
             if _is_gobby_owned(skill) and skill.name not in on_disk:
@@ -327,6 +366,9 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
                     extra={"skill_name": skill.name, "path": str(skill.source_path)},
                 )
                 result["orphaned"] += 1
+
+    if not result["success"]:
+        return result
 
     # Heal project-scoped rows sourced from bundled template trees: they
     # shadow the installed rows synced above with stale template content

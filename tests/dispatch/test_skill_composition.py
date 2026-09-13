@@ -55,6 +55,62 @@ def _agent(name: str = "composition-agent") -> AgentDefinitionBody:
     )
 
 
+@pytest.mark.parametrize("enabled,present", [(True, True), (False, True), (True, False)])
+def test_skill_composition_resolves_exact_references(
+    temp_db: HubDatabase, enabled: bool, present: bool
+) -> None:
+    from gobby.storage.skills import SkillFile
+
+    storage = LocalSkillManager(temp_db)
+    router = storage.create_skill(
+        name="gobby",
+        description="Router",
+        content="Router menu",
+        enabled=enabled,
+        allowed_tools=["Read"],
+    )
+    path = "references/tasks/overview.md"
+    if present:
+        storage.set_skill_files(
+            router.id,
+            [
+                SkillFile(
+                    id="",
+                    skill_id=router.id,
+                    path=path,
+                    file_type="reference",
+                    content="Task instructions",
+                    content_hash="fixture",
+                )
+            ],
+        )
+    reference = f"gobby:{path}"
+    report = inspect_skill_composition(
+        temp_db,
+        project_id=TEST_PROJECT_ID,
+        agent_body=None,
+        additional_skills=(reference,),
+    )
+    assert report.valid is (enabled and present)
+    assert report.checked_skills == (reference,)
+    assert report.unknown_skills == (() if present else (reference,))
+    assert report.disabled_skills == ((reference,) if present and not enabled else ())
+    assert report.allowed_tools == (("Read",) if present else ())
+
+
+def test_skill_composition_rejects_invalid_reference_path(temp_db: HubDatabase) -> None:
+    report = inspect_skill_composition(
+        temp_db,
+        project_id=TEST_PROJECT_ID,
+        agent_body=None,
+        additional_skills=("gobby:references/../secret.md",),
+    )
+    assert report.valid is False
+    assert report.configuration_errors == (
+        "invalid_instruction_requirement:gobby:references/../secret.md",
+    )
+
+
 def test_skill_composition_reports_unknown_skill(temp_db: HubDatabase) -> None:
     _skill(temp_db, "required-skill")
 
