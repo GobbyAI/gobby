@@ -129,7 +129,7 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = _serve_mock_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):

@@ -48,7 +48,10 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     storage.get_pending_sync_files.return_value = [pending_file]
     storage.get_file.return_value = pending_file
     services = SimpleNamespace(
-        startup_ready=True, shutdown_in_progress=False, http_admission_closed=False
+        startup_ready=True,
+        shutdown_in_progress=False,
+        http_admission_closed=False,
+        stop_ask_services=AsyncMock(),
     )
     release_cleanup = asyncio.Event()
     entered = {name: asyncio.Event() for name in ("maintenance", "projection")}
@@ -97,6 +100,7 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     )
     runner.lifecycle_manager = SimpleNamespace(stop=AsyncMock())
     runner.agent_lifecycle_monitor = None
+    runner.coordination_wait_service = None
     runner.cron_scheduler = None
     runner.message_processor = None
     runner.communications_manager = None
@@ -105,6 +109,18 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     runner.vector_store = None
     runner.mcp_proxy = SimpleNamespace(disconnect_all=AsyncMock())
     runner.database = MagicMock()
+    ask_cleanup_states: list[tuple[bool, bool, bool]] = []
+
+    async def stop_ask_services() -> None:
+        ask_cleanup_states.append(
+            (
+                services.startup_ready,
+                services.shutdown_in_progress,
+                runner.database.close.called,
+            )
+        )
+
+    services.stop_ask_services.side_effect = stop_ask_services
     server = uvicorn.Server(uvicorn.Config(app=MagicMock()))
 
     async def server_done() -> None:
@@ -144,12 +160,14 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     assert services.startup_ready is False
     assert services.shutdown_in_progress is True
     assert services.http_admission_closed is True
+    assert ask_cleanup_states == [(False, True, False)]
+    services.stop_ask_services.assert_awaited_once_with()
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
     assert pending_file.vectors_synced is False
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
     # The next worker can retry the same pending version after restart.
-    gateway.vector_sync_file = AsyncMock()
+    gateway.vector_sync_file = AsyncMock(return_value={"success": True})
     await _sync_pass(storage, gateway, config, batch_size=1)
     storage.mark_vectors_synced.assert_called_once_with(pending_file.id, pending_file.content_hash)

@@ -757,6 +757,9 @@ async def shutdown_daemon_services(
                 if services is not None:
                     services.startup_ready = False
                     services.shutdown_in_progress = True
+                    stop_ask_services = getattr(services, "stop_ask_services", None)
+                    if stop_ask_services is not None:
+                        await stop_ask_services()
                 graceful_timeout = asyncio.timeout_at(graceful_deadline)
                 try:
                     async with graceful_timeout:

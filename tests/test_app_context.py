@@ -23,6 +23,33 @@ def _make_container(**overrides: Any) -> ServiceContainer:
     return ServiceContainer(**defaults)
 
 
+@pytest.mark.asyncio
+async def test_stop_ask_services_drains_all_projects_once() -> None:
+    stopped: list[str] = []
+
+    class StoppableService:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def stop(self) -> None:
+            stopped.append(self.name)
+
+    startup = StoppableService("home")
+    other = StoppableService("other")
+    container = _make_container(
+        project_id="home", ask_service_factory={"home": startup, "other": other}.__getitem__
+    )
+    container.get_ask_service("home")
+    container.get_ask_service("other")
+
+    container.shutdown_in_progress = True
+    await container.stop_ask_services()
+
+    assert sorted(stopped) == ["home", "other"]
+    assert container.get_ask_service("home") is None
+    assert container.get_ask_service("new-project") is None
+
+
 def test_get_ask_service_uses_shared_project_cache() -> None:
     created: list[str] = []
     services_by_project: dict[str, object] = {}

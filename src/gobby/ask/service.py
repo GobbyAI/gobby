@@ -94,6 +94,7 @@ class AskService:
         self.now = now or (lambda: datetime.now(UTC))
         self._restart_owner_id = str(uuid4())
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._stopping = False
         self.stage_runtime = AskStageRuntime(
             storage=storage,
             stages=stages,
@@ -109,6 +110,14 @@ class AskService:
             fault_injector=self._fault,
         )
         self.evidence = self.stage_runtime.evidence
+
+    async def stop(self) -> None:
+        """Drain owned tasks while their database and evidence resources are available."""
+        self._stopping = True
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def start(
         self,
@@ -397,6 +406,10 @@ class AskService:
         inputs: dict[str, Any],
         caller_session_id: str,
     ) -> None:
+        if self._stopping:
+            # An admitted start/resume may finish persisting after shutdown begins.
+            # Leave its durable execution for the next daemon to recover.
+            return
         existing = self._tasks.get(record.run_id)
         if existing is not None and not existing.done():
             return

@@ -327,9 +327,20 @@ class ServiceContainer:
             _logger.warning("Failed to lazily create PipelineExecutor: %s", e)
             return None
 
+    async def stop_ask_services(self) -> None:
+        """Stop every instantiated project service before closing shared storage."""
+        services = {
+            id(service): cast("AskService", service)
+            for cached in self._project_infra_cache.values()
+            if (service := cached.get("ask_service")) is not None
+        }
+        if self.ask_service is not None:
+            services[id(self.ask_service)] = self.ask_service
+        await asyncio.gather(*(service.stop() for service in services.values()))
+
     def get_ask_service(self, project_id: str) -> AskService | None:
         """Return one Ask service per project within this runtime epoch."""
-        if not project_id:
+        if not project_id or self.shutdown_in_progress:
             return None
         if project_id == self.project_id and self.ask_service is not None:
             return self.ask_service

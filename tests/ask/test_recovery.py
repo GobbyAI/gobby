@@ -224,6 +224,66 @@ def waiting_run(
 
 
 @pytest.mark.asyncio
+async def test_stop_waits_for_owned_pipeline_cleanup(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, _registry = waiting_run
+    executor = _CancellingPipelineExecutor()
+    service.pipeline_executor = executor
+    service._ensure_task(
+        record,
+        service._pipeline(record.run_id),
+        service.storage.execution_inputs(record.run_id),
+        "original-caller",
+    )
+    await executor.started.wait()
+    task = service._tasks[record.run_id]
+    stopping = asyncio.create_task(service.stop())
+    try:
+        await executor.cleaning_up.wait()
+        assert not stopping.done()
+        assert service.storage.manager.get_execution(record.run_id) is not None
+    finally:
+        executor.release_cleanup.set()
+        await stopping
+    assert task.cancelled()
+    assert not service._tasks
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_admitted_start_cannot_spawn_after_shutdown(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service, record, _registry = waiting_run
+    entered = threading.Event()
+    release = threading.Event()
+    bind = service.storage.bind_execution_context
+
+    def delayed_bind(run_id: str, *, project_root: Path, caller_session_id: str) -> dict[str, Any]:
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release admitted start")
+        return bind(run_id, project_root=project_root, caller_session_id=caller_session_id)
+
+    monkeypatch.setattr(service.storage, "bind_execution_context", delayed_bind)
+    starting = asyncio.create_task(
+        service.start(record.request, project_root=tmp_path, caller_session_id="original-caller")
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        await service.stop()
+    finally:
+        release.set()
+    result = await starting
+    assert not service._tasks
+    execution = service.storage.manager.get_execution(result.run_id)
+    assert execution is not None and execution.status == ExecutionStatus.PENDING
+
+
+@pytest.mark.asyncio
 async def test_wait_without_local_executor_times_out_without_changing_run(
     waiting_run: tuple[AskService, AskRunRecord, CompletionEventRegistry],
 ) -> None:

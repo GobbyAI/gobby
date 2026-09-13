@@ -161,6 +161,7 @@ def create_base_patches(
         mock_http.app.state = State()
         mock_http.port = 60887
     set_mock_default(mock_http, "_terminate_streamable_http_sessions", AsyncMock())
+    set_mock_default(mock_http.services, "stop_ask_services", AsyncMock())
 
     mock_agent_monitor = AsyncMock()
     mock_agent_monitor.recover_or_cleanup_agents.return_value = (0, 0)
