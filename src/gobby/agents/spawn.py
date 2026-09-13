@@ -28,6 +28,7 @@ from gobby.agents.spawners import (
     create_prompt_file,
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_local_api_token
 
@@ -257,6 +258,20 @@ def prepare_terminal_spawn(
     try:
         child_session = session_manager.create_child_session(config)
         child_session_id = child_session.id
+
+        seeded_effort = observed_reasoning_effort(
+            {
+                "effective_reasoning_effort": effective_reasoning_effort,
+                "requested_reasoning_effort": requested_reasoning_effort,
+            }
+        )
+        if seeded_effort is not None:
+            updated_child = session_manager._storage.update(
+                child_session.id,
+                reasoning_effort=seeded_effort,
+            )
+            if updated_child is not None:
+                child_session = updated_child
 
         if initial_variables:
             from gobby.workflows.state_manager import SessionVariableManager

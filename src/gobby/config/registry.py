@@ -679,6 +679,7 @@ def _supplemental_key_specs() -> tuple[ConfigKeySpec, ...]:
         ("fontSize", int | None),
         ("model", str | None),
         ("theme", str | None),
+        ("readingDirection", Literal["auto", "ltr", "rtl"] | None),
         ("defaultChatMode", str | None),
         ("sttEnabled", bool | None),
         ("ttsEnabled", bool | None),

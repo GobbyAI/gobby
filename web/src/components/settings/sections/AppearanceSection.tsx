@@ -5,6 +5,7 @@ import { Input } from "../../ui/Input";
 import type { SegmentedControlOption } from "../../ui/SegmentedControl";
 import type {
   Density,
+  ReadingDirection,
   Theme,
   TickerDirection,
   TickerSpeed,
@@ -29,6 +30,13 @@ const DENSITY_OPTIONS: readonly SegmentedControlOption<Density>[] = [
   { value: "comfortable", label: "Comfortable" },
   { value: "compact", label: "Compact" },
 ];
+
+const READING_DIRECTION_OPTIONS: readonly SegmentedControlOption<ReadingDirection>[] =
+  [
+    { value: "auto", label: "Auto" },
+    { value: "ltr", label: "Left to right" },
+    { value: "rtl", label: "Right to left" },
+  ];
 
 const TICKER_DIRECTION_OPTIONS: readonly SegmentedControlOption<TickerDirection>[] =
   [
@@ -71,7 +79,7 @@ function AppearanceField({
   children,
 }: AppearanceFieldProps) {
   return (
-    <div className="flex flex-row flex-wrap items-center justify-between gap-4">
+    <div className="flex flex-row flex-wrap items-center justify-between gap-4 [unicode-bidi:isolate]">
       <div className="flex min-w-0 flex-col gap-1">
         {htmlFor ? (
           <label
@@ -98,6 +106,7 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
   const {
     settings,
     updateTheme,
+    updateReadingDirection,
     updateDensity,
     updateFontSize,
     updatePlanPendingVariant,
@@ -117,6 +126,18 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
           value={settings.theme}
           options={THEME_OPTIONS}
           onChange={updateTheme}
+        />
+      </AppearanceField>
+
+      <AppearanceField
+        label="Reading direction"
+        description="Follow your browser language or pin the interface direction."
+      >
+        <SegmentedControl<ReadingDirection>
+          ariaLabel="Reading direction"
+          value={settings.readingDirection}
+          options={READING_DIRECTION_OPTIONS}
+          onChange={updateReadingDirection}
         />
       </AppearanceField>
 

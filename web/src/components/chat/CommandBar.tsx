@@ -68,7 +68,10 @@ export function CommandBar({
               {showTitle ? ":" : ""}
             </span>
           )}
-          <span className="command-bar-title min-w-0 flex-1 basis-auto overflow-hidden text-left [font-weight:var(--font-weight-medium)] text-ellipsis whitespace-nowrap text-[var(--text-primary)] max-md:max-w-none">
+          <span
+            dir="auto"
+            className="command-bar-title min-w-0 flex-1 basis-auto overflow-hidden text-left [font-weight:var(--font-weight-medium)] text-ellipsis whitespace-nowrap text-[var(--text-primary)] [unicode-bidi:isolate] max-md:max-w-none"
+          >
             {showTitle ? titleText : ""}
           </span>
           <DropdownCaret />

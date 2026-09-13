@@ -34,29 +34,54 @@ class _TitleFieldMixin:
         """Refresh automatic prefixes without changing suffixes or provenance."""
         rows = self.db.fetchall(
             """
-            SELECT s.id, s.title, s.title_source, s.seq_num, s.project_id,
+            SELECT s.id, s.title, s.title_source, s.heuristic_title, s.seq_num, s.project_id,
                    p.name AS project_name
             FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
-            WHERE s.title_source IN ('provisional', 'task') AND s.seq_num IS NOT NULL
+            WHERE (s.title_source IN ('provisional', 'heuristic', 'task')
+                   OR s.heuristic_title IS NOT NULL)
+              AND s.seq_num IS NOT NULL
             """
         )
         changed = 0
         for row in rows:
             title = row["title"] or ""
             project = str(row["project_name"] or "").strip() or str(row["project_id"])
-            prefix = re.match(r"^(?:\([^)]*#\d+\)|[^\s:()]+#\d+):", title)
-            if prefix is None:
-                continue
-            normalized = f"{project}#{row['seq_num']}:" + title[prefix.end() :]
-            if normalized == title:
+
+            def normalize(
+                value: str,
+                project_name: str = project,
+                session_seq_num: object = row["seq_num"],
+            ) -> str:
+                prefix = re.match(r"^(?:\([^)]*#\d+\)|[^\s:()]+#\d+)(?=:|$)", value)
+                return (
+                    f"{project_name}#{session_seq_num}" + value[prefix.end() :]
+                    if prefix is not None
+                    else value
+                )
+
+            normalized = normalize(title)
+            heuristic = str(row["heuristic_title"] or "")
+            normalized_heuristic = normalize(heuristic) or None
+            if normalized == title and normalized_heuristic == (heuristic or None):
                 continue
             with self.db.transaction() as conn:
                 cursor = conn.execute(
                     """
-                    UPDATE sessions SET title = %s, updated_at = %s
-                    WHERE id = %s AND title = %s AND title_source = %s
+                    UPDATE sessions
+                    SET title = %s, heuristic_title = %s, updated_at = %s
+                    WHERE id = %s AND title IS NOT DISTINCT FROM %s
+                      AND title_source IS NOT DISTINCT FROM %s
+                      AND heuristic_title IS NOT DISTINCT FROM %s
                     """,
-                    (normalized, utc_now(), row["id"], title, row["title_source"]),
+                    (
+                        normalized,
+                        normalized_heuristic,
+                        utc_now(),
+                        row["id"],
+                        row["title"],
+                        row["title_source"],
+                        row["heuristic_title"],
+                    ),
                 )
                 applied = bool(cursor.rowcount)
             if applied:
@@ -73,6 +98,7 @@ class _TitleFieldMixin:
         title: str,
         *,
         title_source: str | None = MANUAL_TITLE_SOURCE,
+        allow_task_fallback: bool = False,
     ) -> Session | None:
         """Update session title."""
         current = self.get(session_id)
@@ -93,6 +119,7 @@ class _TitleFieldMixin:
                 title=title,
                 title_source_is_set=title_source is not None,
                 title_source=title_source,
+                allow_task_fallback=allow_task_fallback,
                 updated_at=now,
             )
         updated = self.get(session_id)

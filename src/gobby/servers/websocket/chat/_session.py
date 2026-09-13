@@ -352,6 +352,10 @@ class ChatSessionMixin:
             )
         if not effective_provider:
             effective_provider = _normalize_web_chat_provider(provider)
+        if effective_reasoning_effort is None and existing_db_session is not None:
+            stored_effort = getattr(existing_db_session, "reasoning_effort", None)
+            if isinstance(stored_effort, str) and stored_effort.strip():
+                effective_reasoning_effort = stored_effort.strip()
         if not effective_provider and daemon_cfg is not None:
             configured_binding = _first_configured_chat_binding(daemon_cfg)
             if configured_binding is not None:
@@ -663,6 +667,17 @@ class ChatSessionMixin:
                 session._on_mode_persist(pending_mode)
             except Exception:
                 logger.debug("Failed to persist pending chat_mode", exc_info=True)
+
+        if session_manager and session.db_session_id and effective_reasoning_effort is not None:
+            try:
+                await run_db(
+                    self,
+                    session_manager.update,
+                    session.db_session_id,
+                    reasoning_effort=effective_reasoning_effort,
+                )
+            except Exception:
+                logger.debug("Failed to persist web-chat reasoning effort", exc_info=True)
 
         # Consume any pending worktree override (from set_worktree) up front so a
         # refusal below never leaves it queued for an unrelated later start.

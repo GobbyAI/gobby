@@ -19,6 +19,7 @@ UI_SETTINGS_KEYS = (
     "fontSize",
     "model",
     "theme",
+    "readingDirection",
     "defaultChatMode",
     "sttEnabled",
     "ttsEnabled",

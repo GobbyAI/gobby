@@ -99,6 +99,16 @@ describe("TickerText", () => {
     expect(ticker.style.color).toBe("rgb(1, 2, 3)");
   });
 
+  it("isolates mixed-direction row titles", () => {
+    stubWidths({ content: 120, slot: 200 });
+    const { container } = render(<TickerText>Session عنوان 42</TickerText>);
+    const ticker = container.firstElementChild as HTMLElement;
+    const text = ticker.firstElementChild as HTMLElement;
+
+    expect(ticker).toHaveAttribute("dir", "auto");
+    expect(text).toHaveClass("[unicode-bidi:isolate]");
+  });
+
   it("cancels its animation and releases the clock when it unmounts", () => {
     stubWidths({ content: 320, slot: 200 });
     const { unmount } = render(<TickerText>too long</TickerText>);

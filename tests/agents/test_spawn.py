@@ -107,6 +107,38 @@ class TestPrepareTerminalSpawnMetadata:
         assert sm.update_terminal_pickup_metadata.call_count == 1
         assert sm.update_terminal_pickup_metadata.call_args is not None
 
+    @pytest.mark.parametrize(
+        ("requested", "effective", "expected"),
+        [("medium", "high", "high"), ("low", None, "low")],
+    )
+    def test_seeds_child_reasoning_effort_from_launch_metadata(
+        self,
+        requested: str,
+        effective: str | None,
+        expected: str,
+    ) -> None:
+        sm = _make_session_manager()
+        child: MagicMock = sm.create_child_session.return_value
+        child.reasoning_effort = None
+
+        def persist_reasoning_effort(session_id: str, *, reasoning_effort: str) -> MagicMock:
+            assert session_id == child.id
+            child.reasoning_effort = reasoning_effort
+            return child
+
+        sm._storage.update.side_effect = persist_reasoning_effort
+
+        prepare_terminal_spawn(
+            session_manager=sm,
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            requested_reasoning_effort=requested,
+            effective_reasoning_effort=effective,
+        )
+
+        assert child.reasoning_effort == expected
+
     def test_agent_run_id_format(self) -> None:
         """agent_run_id is a canonical uuid string."""
         sm = _make_session_manager()

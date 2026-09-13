@@ -251,7 +251,9 @@ export function ResumeSessionModal({
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
+                    dir="auto"
                     style={{
+                      unicodeBidi: "isolate",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",

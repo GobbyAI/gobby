@@ -68,6 +68,7 @@ def _apply_session_update(
         title=title,
         title_source_is_set=title_source_is_set,
         title_source=title_source,
+        allow_task_fallback=False,
         updated_at=updated_at,
     )
 
@@ -80,6 +81,7 @@ class _BulkUpdateMixin:
         external_id: str | None = None,
         source: str | None = None,
         model: str | None = None,
+        reasoning_effort: str | None | UnsetType = UNSET,
         chat_mode: str | None = None,
         session_type: str | None = None,
         transcript_path: str | None | UnsetType = UNSET,
@@ -102,6 +104,7 @@ class _BulkUpdateMixin:
             external_id: New external ID (optional)
             source: New provider/source (optional)
             model: New model identifier (optional)
+            reasoning_effort: Latest trustworthy reasoning effort; None clears it
             chat_mode: New chat mode (optional)
             session_type: New session type (optional)
             transcript_path: New transcript path; None clears it
@@ -126,6 +129,8 @@ class _BulkUpdateMixin:
             values["source"] = source
         if model is not None:
             values["model"] = model
+        if is_set(reasoning_effort):
+            values["reasoning_effort"] = reasoning_effort
         if chat_mode is not None:
             if chat_mode not in self._VALID_CHAT_MODES:
                 raise ValueError(

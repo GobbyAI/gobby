@@ -10,6 +10,8 @@ import psycopg
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.session_types import has_prior_session_activity
+from gobby.sessions.reasoning_effort import observed_reasoning_effort
+from gobby.sessions.title_lifecycle import promote_heuristic_title
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import (
     capability_menu,
@@ -112,6 +114,15 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("BEFORE_AGENT: session %s, prompt_len=%s", session_id, len(prompt))
+
+            if self._session_manager and not event.metadata.get("_native_subagent_binding"):
+                try:
+                    promote_heuristic_title(self._session_manager, session_id, prompt)
+                    effort = observed_reasoning_effort(input_data)
+                    if effort is not None:
+                        self._session_manager.update(session_id, reasoning_effort=effort)
+                except (psycopg.Error, KeyError, TypeError, ValueError) as e:
+                    self.logger.warning("Failed to persist session prompt metadata: %s", e)
 
             # A new parent turn cannot inherit live subagents from the previous
             # turn. Reset both values together to recover from missed stop hooks.
@@ -260,6 +271,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return
 
         prompt_surface: Literal["persona", "agent"] = "agent" if is_spawned_agent else "persona"
+        definition_surface: Literal["spawn", "persona"] = (
+            "spawn" if prompt_surface == "agent" else "persona"
+        )
+        if not agent_body.supports_surface(definition_surface):
+            return
         preamble = agent_body.prompt_for(prompt_surface)
         if preamble:
             if response.context:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -196,6 +197,55 @@ class TestCancelActiveChat:
         mixin._cancel_tts.assert_awaited_once_with("conv-xyz")
         assert mixin._cancel_tts.await_count == 1
         assert mixin._cancel_tts.await_args is not None
+
+
+class TestChatTurnReasoningPersistence:
+    @pytest.mark.asyncio
+    async def test_message_effort_updates_runtime_and_durable_session(
+        self,
+        mixin: DummyMixin,
+    ) -> None:
+        updates: list[tuple[str, dict[str, str]]] = []
+        sent_messages: list[str] = []
+
+        async def empty_stream() -> AsyncIterator[object]:
+            if False:
+                yield object()
+
+        class FakeSession:
+            db_session_id = "db-session"
+            model = None
+            reasoning_effort: str | None = None
+
+            def send_message(self, content: str) -> AsyncIterator[object]:
+                sent_messages.append(content)
+                return empty_stream()
+
+        class FakeSessionManager:
+            db = None
+
+            def update(self, session_id: str, **values: str) -> None:
+                updates.append((session_id, values))
+
+        session = FakeSession()
+        mixin._chat_sessions["conv-effort"] = session
+        mixin.session_manager = FakeSessionManager()
+
+        await mixin._run_chat_turn(
+            conversation_id="conv-effort",
+            content="Investigate effort persistence",
+            model=None,
+            transport=MagicMock(),
+            reasoning_effort="xhigh",
+        )
+
+        assert session.reasoning_effort == "xhigh"
+        assert sent_messages == ["Investigate effort persistence"]
+        assert updates == [
+            ("db-session", {"reasoning_effort": "xhigh"}),
+            ("db-session", {"status": "active"}),
+            ("db-session", {"status": "paused"}),
+        ]
 
 
 class TestConfigureChatSession:

@@ -818,11 +818,13 @@ class TestUISettings:
             desired_values={},
             active_values={
                 "ui_settings.fontSize": 18,
+                "ui_settings.readingDirection": "rtl",
                 "ui_settings.voiceInputMode": "vad",
             },
         )
 
         assert client.get("/api/config/ui-settings").json() == {
             "fontSize": 18,
+            "readingDirection": "rtl",
             "voiceInputMode": "vad",
         }

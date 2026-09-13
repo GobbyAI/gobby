@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 PROVISIONAL_TITLE_SOURCE = "provisional"
+HEURISTIC_TITLE_SOURCE = "heuristic"
 TASK_TITLE_SOURCE = "task"
 MANUAL_TITLE_SOURCE = "manual"
 
@@ -52,7 +53,17 @@ def format_provisional_session_title(
     source: str,
 ) -> str:
     """Return the deterministic title for a session without an open claim."""
-    return f"{project_name.strip()}#{session_seq_num}: {provider_title_label(source)}"
+    del source
+    return f"{project_name.strip()}#{session_seq_num}"
+
+
+def format_heuristic_session_title(
+    project_name: str,
+    session_seq_num: int,
+    heuristic: str,
+) -> str:
+    """Return the deterministic display title for a prompt heuristic."""
+    return f"{project_name.strip()}#{session_seq_num}: {heuristic.strip()}"
 
 
 def format_task_session_title(

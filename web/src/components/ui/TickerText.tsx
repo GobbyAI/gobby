@@ -54,6 +54,7 @@ export function TickerText({ children, className, ...rest }: TickerTextProps) {
   return (
     <span
       {...rest}
+      dir={rest.dir ?? "auto"}
       ref={ref}
       className={cn(
         "ticker block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap",
@@ -61,7 +62,10 @@ export function TickerText({ children, className, ...rest }: TickerTextProps) {
         className,
       )}
     >
-      <span ref={innerRef} className="ticker__inner inline">
+      <span
+        ref={innerRef}
+        className="ticker__inner inline [unicode-bidi:isolate]"
+      >
         {children}
       </span>
     </span>

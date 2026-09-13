@@ -33,6 +33,7 @@ from ._registration_cache import (
 from ._renumber import _RenumberMixin
 from ._terminal import _TerminalMixin
 from ._title_defaults import (
+    HEURISTIC_TITLE_SOURCE,
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     TASK_TITLE_SOURCE,
@@ -76,6 +77,7 @@ class SessionManager(
     _session_metadata_lock: threading.Lock
 
     _VALID_TITLE_SOURCES: ClassVar[set[str]] = {
+        HEURISTIC_TITLE_SOURCE,
         MANUAL_TITLE_SOURCE,
         PROVISIONAL_TITLE_SOURCE,
         TASK_TITLE_SOURCE,

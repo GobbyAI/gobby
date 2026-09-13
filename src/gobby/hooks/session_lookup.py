@@ -334,6 +334,7 @@ class SessionLookupService:
             event.session_id,
             event.source.value,
         )
+        event.metadata["_native_subagent_binding"] = True
         return owner.id
 
     def _resolve_uncached_session_id(

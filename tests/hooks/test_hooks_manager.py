@@ -587,7 +587,7 @@ class TestHookManagerBeforeAgent:
         activate.assert_called_once()
         assert first_prompt.metadata.get("_platform_session_id")
 
-    def test_first_codex_prompt_persists_provisional_title_and_terminal_identity(
+    def test_first_codex_prompt_persists_heuristic_title_and_terminal_identity(
         self,
         hook_manager_with_mocks: HookManager,
         temp_dir: Path,
@@ -623,6 +623,7 @@ class TestHookManagerBeforeAgent:
                 "prompt": "Fix the hook regression",
                 "cwd": str(temp_dir),
                 "terminal_context": terminal_context,
+                "effective_reasoning_effort": "high",
             },
             machine_id=LOCAL_MACHINE_ID,
         )
@@ -632,7 +633,10 @@ class TestHookManagerBeforeAgent:
         with (
             patch(
                 "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-            ) as schedule_rename,
+            ) as initial_rename,
+            patch(
+                "gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"
+            ) as promoted_rename,
             patch(
                 "gobby.hooks.terminal_context.psutil.Process",
                 return_value=SimpleNamespace(
@@ -649,15 +653,17 @@ class TestHookManagerBeforeAgent:
         assert session is not None
         # An automatic title carries the project-scoped session ref so it reads as
         # generated rather than human-authored (#21151).
-        assert session.title == f"(test-project#{session.seq_num}): Codex"
-        assert session.title_source == "provisional"
+        assert session.title == f"test-project#{session.seq_num}: Fix hook regression"
+        assert session.title_source == "heuristic"
+        assert session.reasoning_effort == "high"
         assert session.terminal_context is not None
         for key, value in {**terminal_context, "cwd": str(temp_dir)}.items():
             assert session.terminal_context[key] == value
         assert session.terminal_context["parent_name"] == "codex"
         assert isinstance(session.terminal_context["parent_create_time"], float)
-        schedule_rename.assert_called_once()
-        scheduled_session, scheduled_title = schedule_rename.call_args.args
+        initial_rename.assert_called_once()
+        promoted_rename.assert_called_once()
+        scheduled_session, scheduled_title = promoted_rename.call_args.args
         assert scheduled_session.id == session_id
         assert scheduled_session.ref == session.ref
         # The tmux window carries the persisted title verbatim, prefix included, so the
@@ -684,6 +690,84 @@ class TestHookManagerBeforeAgent:
 
         response = hook_manager_with_mocks.handle(event)
         assert response.decision == "allow"
+
+    def test_ordinary_spawned_session_promotes_its_own_title(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        manager = hook_manager_with_mocks
+        project = LocalProjectManager(manager._session_manager.db).get_by_name("test-project")
+        assert project is not None
+        child_id = manager._session_manager.register_session(
+            external_id="spawned-child-external",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project.id,
+            project_path=str(temp_dir),
+            agent_depth=1,
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="spawned-child-external",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Investigate spawned worker behavior", "cwd": str(temp_dir)},
+            machine_id=LOCAL_MACHINE_ID,
+        )
+
+        response = manager.handle(event)
+
+        assert response.decision == "allow"
+        child = manager._session_manager.get(child_id)
+        assert child is not None
+        assert child.agent_depth == 1
+        assert child.title == f"test-project#{child.seq_num}: Investigate spawned worker behavior"
+        assert child.title_source == "heuristic"
+
+    def test_internal_native_subagent_prompt_does_not_title_parent(
+        self,
+        hook_manager_with_mocks: HookManager,
+        sample_session_start_event: HookEvent,
+    ) -> None:
+        hook_manager_with_mocks.handle(sample_session_start_event)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=sample_session_start_event.session_id,
+            source=sample_session_start_event.source,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Internal delegated investigation"},
+            metadata={"_native_subagent_binding": True},
+            machine_id=LOCAL_MACHINE_ID,
+        )
+
+        with patch("gobby.hooks.event_handlers._agent.promote_heuristic_title") as promote:
+            response = hook_manager_with_mocks.handle(event)
+
+        assert response.decision == "allow"
+        promote.assert_not_called()
+
+    def test_spawn_only_fallback_definition_does_not_log_persona_injection_error(
+        self,
+        hook_manager_with_mocks: HookManager,
+        sample_session_start_event: HookEvent,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        hook_manager_with_mocks.handle(sample_session_start_event)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=sample_session_start_event.session_id,
+            source=sample_session_start_event.source,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Check fallback persona behavior"},
+            machine_id=LOCAL_MACHINE_ID,
+        )
+
+        with caplog.at_level(logging.ERROR, logger="gobby.hooks"):
+            response = hook_manager_with_mocks.handle(event)
+
+        assert response.decision == "allow"
+        assert "does not support the 'persona' surface" not in caplog.text
 
 
 class TestHookManagerToolEvents:

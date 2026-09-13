@@ -8,6 +8,7 @@ from datetime import datetime
 from gobby.storage.hub.protocol import Transaction
 
 from ._title_defaults import (
+    HEURISTIC_TITLE_SOURCE,
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     TASK_TITLE_SOURCE,
@@ -21,12 +22,42 @@ TITLE_UPDATE_ALLOWED_SQL = f"""
         AND current_session.title_source IS DISTINCT FROM '{MANUAL_TITLE_SOURCE}'
     )
     OR (
+        incoming.title_source = '{HEURISTIC_TITLE_SOURCE}'
+        AND (
+            current_session.title_source IS NULL
+            OR current_session.title_source IN (
+                '{PROVISIONAL_TITLE_SOURCE}',
+                '{HEURISTIC_TITLE_SOURCE}'
+            )
+            OR (
+                current_session.title_source = '{TASK_TITLE_SOURCE}'
+                AND incoming.allow_task_fallback
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM tasks
+                    WHERE claimed_by_session_id = current_session.id
+                      AND closed_at IS NULL
+                )
+            )
+        )
+    )
+    OR (
         COALESCE(incoming.title_source, '{PROVISIONAL_TITLE_SOURCE}')
             = '{PROVISIONAL_TITLE_SOURCE}'
         AND (
             NULLIF(BTRIM(current_session.title), '') IS NULL
             OR current_session.title_source IS NULL
             OR current_session.title_source = '{PROVISIONAL_TITLE_SOURCE}'
+            OR (
+                current_session.title_source = '{TASK_TITLE_SOURCE}'
+                AND incoming.allow_task_fallback
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM tasks
+                    WHERE claimed_by_session_id = current_session.id
+                      AND closed_at IS NULL
+                )
+            )
         )
     )
 )
@@ -49,6 +80,7 @@ def apply_title_mutation(
     title: str | None,
     title_source_is_set: bool,
     title_source: str | None,
+    allow_task_fallback: bool,
     updated_at: datetime,
 ) -> TitleMutationResult | None:
     """Apply a title pair mutation according to persisted ownership."""
@@ -79,8 +111,8 @@ def apply_title_mutation(
             title_source = incoming.title_source,
             updated_at = %s
         FROM (
-            VALUES (%s::text, %s::text)
-        ) AS incoming(title, title_source)
+            VALUES (%s::text, %s::text, %s::boolean)
+        ) AS incoming(title, title_source, allow_task_fallback)
         WHERE current_session.id = %s
           AND {TITLE_UPDATE_ALLOWED_SQL}
           AND (
@@ -88,7 +120,7 @@ def apply_title_mutation(
               OR current_session.title_source IS DISTINCT FROM incoming.title_source
           )
         """,  # nosec B608
-        (updated_at, desired_title, desired_title_source, session_id),
+        (updated_at, desired_title, desired_title_source, allow_task_fallback, session_id),
     )
     applied = bool(cursor.rowcount and cursor.rowcount > 0)
     return TitleMutationResult(

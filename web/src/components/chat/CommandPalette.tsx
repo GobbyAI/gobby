@@ -460,7 +460,10 @@ function SessionItem({
       >
         {seqLabel}
       </span>
-      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">
+      <span
+        dir="auto"
+        className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)] [unicode-bidi:isolate]"
+      >
         {titleText}
       </span>
       <span className="command-palette-item-time shrink-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">

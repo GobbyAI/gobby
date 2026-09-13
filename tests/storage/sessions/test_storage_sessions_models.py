@@ -114,6 +114,36 @@ class TestSession:
         assert session.to_dict()["title_source"] == "manual"
         assert session.to_brief()["title_source"] == "manual"
 
+    @pytest.mark.parametrize("reasoning_effort", [None, "xhigh"])
+    def test_full_and_brief_expose_nullable_effort_but_hide_heuristic(
+        self,
+        reasoning_effort: str | None,
+    ) -> None:
+        session = Session(
+            id="sess-effort",
+            external_id="ext-effort",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id="proj-1",
+            title="proj#1: Repair session titles",
+            title_source="heuristic",
+            heuristic_title="proj#1: Repair session titles",
+            reasoning_effort=reasoning_effort,
+            status="active",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch=None,
+            parent_session_id=None,
+            created_at=datetime(2026, 4, 16, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
+        )
+
+        for record in (session.to_dict(), session.to_brief()):
+            assert record["reasoning_effort"] == reasoning_effort
+            assert record["title_source"] == "heuristic"
+            assert "heuristic_title" not in record
+
     @pytest.mark.parametrize("status", ["paused", "awaiting_handoff"])
     def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self, status: str) -> None:
         """Eligible tmux sessions remain attachable while liveness metadata exists."""

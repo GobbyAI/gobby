@@ -6,7 +6,11 @@ import {
   reportTickerOverflow,
   TICKER_SPEED_PX_PER_SEC,
 } from "../../lib/tickerClock";
-import { cacheBustedIconHref, useSettings } from "../useSettings";
+import {
+  cacheBustedIconHref,
+  resolveReadingDirection,
+  useSettings,
+} from "../useSettings";
 
 function iconLink() {
   return document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
@@ -30,6 +34,7 @@ describe("useSettings", () => {
     document.documentElement.removeAttribute("data-density");
     document.documentElement.removeAttribute("data-ticker");
     document.documentElement.removeAttribute("data-ticker-active");
+    document.documentElement.removeAttribute("dir");
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: false })),
@@ -42,6 +47,7 @@ describe("useSettings", () => {
     document.documentElement.removeAttribute("data-density");
     document.documentElement.removeAttribute("data-ticker");
     document.documentElement.removeAttribute("data-ticker-active");
+    document.documentElement.removeAttribute("dir");
     delete (Element.prototype as Partial<Element>).animate;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -78,6 +84,24 @@ describe("useSettings", () => {
     });
     expect(iconLink()).toHaveAttribute("href", "/logo-light.png?v=2");
     expect(appleTouchIconLink()).toHaveAttribute("href", "/logo-light.png?v=2");
+  });
+
+  it("resolves automatic reading direction and applies explicit RTL", async () => {
+    expect(resolveReadingDirection("auto", "ar-SA")).toBe("rtl");
+    expect(resolveReadingDirection("auto", "az-Arab")).toBe("rtl");
+    expect(resolveReadingDirection("auto", "pa-Arab")).toBe("rtl");
+    expect(resolveReadingDirection("auto", "en-US")).toBe("ltr");
+    expect(resolveReadingDirection("auto", "unknown")).toBe("ltr");
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({ readingDirection: "rtl" }),
+    );
+
+    renderHook(() => useSettings());
+
+    await waitFor(() =>
+      expect(document.documentElement).toHaveAttribute("dir", "rtl"),
+    );
   });
 
   it("normalizes and persists plan pending variant", async () => {
@@ -153,6 +177,19 @@ describe("useSettings", () => {
         expected_revision: 4,
         values: { ui_settings: { theme: "light", fontSize: 16 } },
       });
+    });
+
+    act(() => result.current.updateReadingDirection("rtl"));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([, init]) => {
+        if (init?.method !== "PATCH") return false;
+        return (
+          JSON.parse(String(init.body)).values.ui_settings.readingDirection ===
+          "rtl"
+        );
+      });
+      expect(patchCall).toBeDefined();
     });
   });
 

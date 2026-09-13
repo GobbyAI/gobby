@@ -61,7 +61,7 @@ paths. Registration reuses canonical identity rather than creating a duplicate.
 | Runtime | Status, source, session type, terminal context, parent session, agent depth |
 | Work trace | Transcript path, rendered message counts, task links, commit window |
 | Handoff | Authored `handoff_markdown`, delivery receipts, separate archival `summary_markdown` |
-| Usage | Input, output, cache-write, cache-read token counts, model |
+| Usage | Input, output, cache-write, cache-read token counts, model, latest trustworthy reasoning effort |
 | Safety | Dirty-file baseline, edit marker, sandbox flags, approved tools |
 
 `agent_depth` separates human sessions from spawned agent sessions. Depth `0`
@@ -84,6 +84,26 @@ that a run or its assigned task has completed.
 The public `get_current_session` helper accepts `claude`, `grok`,
 `qwen`, `codex`, `droid`, and `agy`. Pipeline and system sessions are created
 by internal automation.
+
+## Titles, Reasoning Effort, And Reading Direction
+
+New eligible sessions start with the provisional title `project#session_ref`. The
+first persisted user prompt promotes that to `project#session_ref: <summary>`, using
+up to four meaningful words and a 60-character suffix. Title precedence is manual,
+then the latest active task, then the saved heuristic, then the provisional title.
+The first heuristic is saved even while a manual or task title is visible, so it can
+reappear when that higher-priority title no longer applies. Clearing a session carries
+only a manual title to its successor; automatic titles are generated again.
+
+Full and brief `/api/sessions` records expose nullable `reasoning_effort`, representing
+the latest trustworthy effective effort or, when no effective value is known, the
+requested/configured effort. `heuristic_title` remains internal, while the public
+`title_source` may be `heuristic`.
+
+The web UI persists `ui_settings.readingDirection` as `auto`, `ltr`, or `rtl`. `auto`
+uses the browser locale and falls back to LTR. The resolved direction is applied to the
+document, while mixed-direction session and activity titles use bidi isolation so their
+prefixes and text remain readable.
 
 ## CLI Commands
 
@@ -574,4 +594,4 @@ stop or turn-end event does not release the agent run.
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-13_

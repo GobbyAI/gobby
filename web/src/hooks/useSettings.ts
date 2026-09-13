@@ -9,6 +9,7 @@ import { configurationClient } from "../api/config";
 import { setTickerDirection, setTickerSpeed } from "../lib/tickerClock";
 
 export type Theme = "dark" | "light" | "system";
+export type ReadingDirection = "auto" | "ltr" | "rtl";
 export type VoiceInputMode = "ptt" | "vad";
 /**
  * Display density for the app chrome. Client-only: persisted to localStorage
@@ -31,6 +32,7 @@ export interface Settings {
   model: string; // Selected LLM model short name
   chatMode: ChatMode; // Active chat mode
   theme: Theme; // UI theme
+  readingDirection: ReadingDirection;
   defaultChatMode: ChatMode; // Default mode for new conversations
   sttEnabled: boolean;
   ttsEnabled: boolean;
@@ -53,6 +55,7 @@ const DEFAULT_SETTINGS: Settings = {
   model: "opus",
   chatMode: "plan",
   theme: "dark",
+  readingDirection: "auto",
   defaultChatMode: "plan",
   sttEnabled: false,
   ttsEnabled: false,
@@ -75,6 +78,7 @@ type PersistableKey =
   | "fontSize"
   | "model"
   | "theme"
+  | "readingDirection"
   | "defaultChatMode"
   | "sttEnabled"
   | "ttsEnabled"
@@ -84,6 +88,7 @@ const PERSISTABLE_KEYS: PersistableKey[] = [
   "fontSize",
   "model",
   "theme",
+  "readingDirection",
   "defaultChatMode",
   "sttEnabled",
   "ttsEnabled",
@@ -111,6 +116,42 @@ function saveToLocalStorage(settings: Settings): void {
 }
 
 const DENSITY_VALUES: readonly Density[] = ["comfortable", "compact"];
+const READING_DIRECTIONS: readonly ReadingDirection[] = ["auto", "ltr", "rtl"];
+const RTL_LANGUAGES = new Set([
+  "ar",
+  "ckb",
+  "dv",
+  "fa",
+  "he",
+  "ku",
+  "ps",
+  "sd",
+  "ug",
+  "ur",
+  "yi",
+]);
+
+export function resolveReadingDirection(
+  value: ReadingDirection,
+  locale = typeof navigator === "undefined" ? "" : navigator.language,
+): "ltr" | "rtl" {
+  if (value !== "auto") return value;
+  try {
+    const parsedLocale = new Intl.Locale(locale) as Intl.Locale & {
+      getTextInfo?: () => { direction?: string };
+      textInfo?: { direction?: string };
+    };
+    const localeDirection =
+      parsedLocale.getTextInfo?.().direction ?? parsedLocale.textInfo?.direction;
+    if (localeDirection === "rtl" || localeDirection === "ltr") {
+      return localeDirection;
+    }
+  } catch {
+    // Invalid or unsupported locales use the conservative fallback below.
+  }
+  const language = locale.trim().toLowerCase().split(/[-_]/, 1)[0];
+  return RTL_LANGUAGES.has(language) ? "rtl" : "ltr";
+}
 
 function normalizeDensity(value: unknown): Density {
   return DENSITY_VALUES.includes(value as Density)
@@ -164,6 +205,13 @@ function normalizePersistedSettings(value: unknown): Partial<Settings> {
   }
   if (settings.density !== undefined && settings.density !== null) {
     normalized.density = normalizeDensity(settings.density);
+  }
+  if (settings.readingDirection !== undefined) {
+    normalized.readingDirection = READING_DIRECTIONS.includes(
+      settings.readingDirection as ReadingDirection,
+    )
+      ? (settings.readingDirection as ReadingDirection)
+      : DEFAULT_SETTINGS.readingDirection;
   }
   if (
     settings.tickerDirection !== undefined &&
@@ -320,6 +368,12 @@ export function useSettings() {
     }
   }, [settings.theme]);
 
+  useEffect(() => {
+    document.documentElement.dir = resolveReadingDirection(
+      settings.readingDirection,
+    );
+  }, [settings.readingDirection]);
+
   // Apply display density to document (client-only; see Density type). Mirrors
   // the theme effect so the preference takes hold app-wide on mount and on any
   // change, regardless of which surface toggled it.
@@ -395,6 +449,13 @@ export function useSettings() {
     [updateSettings],
   );
 
+  const updateReadingDirection = useCallback(
+    (readingDirection: ReadingDirection) => {
+      updateSettings({ readingDirection });
+    },
+    [updateSettings],
+  );
+
   const updateSttEnabled = useCallback(
     (sttEnabled: boolean) => {
       updateSettings({ sttEnabled });
@@ -454,6 +515,7 @@ export function useSettings() {
     updateModel,
     updateChatMode,
     updateTheme,
+    updateReadingDirection,
     updateDefaultChatMode,
     updateSttEnabled,
     updateTtsEnabled,

@@ -141,6 +141,7 @@ def update_existing_session(
         title=title if is_set(title) else None,
         title_source_is_set=is_set(title_source),
         title_source=title_source if is_set(title_source) else None,
+        allow_task_fallback=False,
         updated_at=now,
     )
     updated = manager.get(existing.id)

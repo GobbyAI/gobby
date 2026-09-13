@@ -337,6 +337,7 @@ def test_subagent_start_with_parent_tty_binds_without_registering() -> None:
 
     assert result == "parent-live"
     assert event.metadata["_platform_session_id"] == "parent-live"
+    assert event.metadata["_native_subagent_binding"] is True
     assert "_session_just_materialized" not in event.metadata
     session_manager.register_session.assert_not_called()
 

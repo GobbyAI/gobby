@@ -22,6 +22,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     model: "opus",
     chatMode: "plan",
     theme: "dark",
+    readingDirection: "auto",
     defaultChatMode: "plan",
     sttEnabled: false,
     ttsEnabled: false,
@@ -41,6 +42,7 @@ function makeClient(settings: Settings): UseSettingsReturn {
     updateModel: vi.fn(),
     updateChatMode: vi.fn(),
     updateTheme: vi.fn(),
+    updateReadingDirection: vi.fn(),
     updateDefaultChatMode: vi.fn(),
     updateSttEnabled: vi.fn(),
     updateTtsEnabled: vi.fn(),
@@ -94,6 +96,18 @@ describe("AppearanceSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
 
     expect(client.resetSettings).toHaveBeenCalledOnce();
+  });
+
+  it("routes reading direction changes through the shared settings client", () => {
+    const client = makeClient(makeSettings({ readingDirection: "auto" }));
+    renderSection(client);
+
+    const group = screen.getByRole("radiogroup", { name: "Reading direction" });
+    fireEvent.click(
+      within(group).getByRole("radio", { name: "Right to left" }),
+    );
+
+    expect(client.updateReadingDirection).toHaveBeenCalledWith("rtl");
   });
 
   it("routes a density change to updateDensity", () => {

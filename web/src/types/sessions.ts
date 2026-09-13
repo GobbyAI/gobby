@@ -25,6 +25,7 @@ export interface GobbySession {
   title_source?: string | null;
   status: string;
   model: string | null;
+  reasoning_effort?: string | null;
   message_count: number;
   created_at: string;
   updated_at: string;

@@ -24,6 +24,7 @@ from gobby.servers.websocket.chat._stream_persistence import ChatStreamPersisten
 from gobby.servers.websocket.chat._stream_transport import WebSocketChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
+from gobby.servers.websocket.db import run_db
 
 if TYPE_CHECKING:
     from websockets.asyncio.server import ServerConnection
@@ -213,6 +214,18 @@ class ChatStreamingMixin:
 
             if reasoning_effort is not None:
                 session.reasoning_effort = reasoning_effort
+                session_manager = getattr(self, "session_manager", None)
+                db_session_id = getattr(session, "db_session_id", None)
+                if session_manager is not None and isinstance(db_session_id, str):
+                    try:
+                        await run_db(
+                            self,
+                            session_manager.update,
+                            db_session_id,
+                            reasoning_effort=reasoning_effort,
+                        )
+                    except Exception:
+                        logger.debug("Failed to persist web-chat reasoning effort", exc_info=True)
 
             await self._maybe_switch_model(
                 session,
