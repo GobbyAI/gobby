@@ -1010,6 +1010,21 @@ fn tool_chat_overlay_migration_converges_a_database_missing_the_issuer_grants() 
         .iter()
         .find(|candidate| candidate.version == 432)
         .expect("migration 432 must stay registered");
+    // Reconstruct the five-argument issuer this historical migration repairs.
+    // Later caller-root issuance replaces it with a six-argument function.
+    client.batch_execute(
+        "DROP FUNCTION gobby_agent_auth.issue_tool_principal(\
+             uuid, uuid, uuid, timestamp with time zone, text, text)",
+    )?;
+    client.batch_execute(migration.sql)?;
+    client.batch_execute(
+        "ALTER FUNCTION gobby_agent_auth.issue_tool_principal(\
+             uuid, uuid, uuid, timestamp with time zone, text) OWNER TO gobby_agent_issuer; \
+         REVOKE ALL ON FUNCTION gobby_agent_auth.issue_tool_principal(\
+             uuid, uuid, uuid, timestamp with time zone, text) FROM PUBLIC; \
+         GRANT EXECUTE ON FUNCTION gobby_agent_auth.issue_tool_principal(\
+             uuid, uuid, uuid, timestamp with time zone, text) TO gobby_daemon_runtime",
+    )?;
 
     let owner_user_id = Uuid::new_v4();
     let machine_id = Uuid::new_v4();

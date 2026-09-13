@@ -122,6 +122,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         session_id: UUID,
         agent_run_id: UUID | None,
         expires_at: datetime,
+        requested_project_path: str | None = None,
     ) -> ManagedCredential:
         issued_at = datetime.now(UTC)
         normalized_expiry = self._validate_expiry(issued_at, expires_at)
@@ -133,7 +134,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             if owner_kind == "tool_chat":
                 row = self._database.fetchone(
                     f"""SELECT * FROM {self.auth_schema}.issue_tool_principal(
-                        %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s
                     )""",
                     (
                         managed_execution_id,
@@ -141,6 +142,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                         self._machine_id,
                         normalized_expiry,
                         password,
+                        requested_project_path,
                     ),
                 )
             else:
@@ -368,6 +370,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             session_id=session_id,
             agent_run_id=None,
             expires_at=expires_at,
+            requested_project_path=authorized_path,
         )
         return ManagedToolCredential(
             credential=credential,

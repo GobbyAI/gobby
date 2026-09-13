@@ -1711,6 +1711,13 @@ def test_issue_tool_request_accepts_registered_overlay_without_primary(  # tdd-r
         assert lease is not None
         assert lease.project_id == fixture.project_id
         assert Path(lease.project_path).resolve() == overlay.resolve()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            binding = admin.execute(
+                "SELECT code_overlay_project_id = gobby_agent_auth.code_index_project_id(%s) "
+                "FROM gobby_agent_auth.principal_bindings WHERE managed_execution_id = %s",
+                (overlay_path, lease.credential.managed_execution_id),
+            ).fetchone()
+        assert binding == (True,)
     finally:
         if lease is not None:
             manager.revoke(
@@ -1723,6 +1730,53 @@ def test_issue_tool_request_accepts_registered_overlay_without_primary(  # tdd-r
                 (fixture.project_id,),
             )
         manager.close()
+
+
+def test_tool_request_primary_root_overrides_session_overlay(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id",
+        lambda: str(fixture.machine_id),
+    )
+    worktree_id = uuid4()
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            "INSERT INTO public.worktrees "
+            "(id, project_id, machine_id, branch_name, worktree_path, agent_session_id) "
+            "VALUES (%s, %s, %s, 'session-overlay', %s, %s)",
+            (
+                worktree_id,
+                fixture.project_id,
+                fixture.machine_id,
+                str(tmp_path / "session-overlay"),
+                fixture.session_id,
+            ),
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    lease: ManagedToolCredential | None = None
+    try:
+        lease = manager.issue_tool_request(
+            session_id=fixture.session_id,
+            requested_project_path=str(Path(f"/tmp/checkout-{fixture.machine_id}").resolve()),
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            binding = admin.execute(
+                "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings "
+                "WHERE managed_execution_id = %s",
+                (lease.credential.managed_execution_id,),
+            ).fetchone()
+        assert binding == (None,)
+    finally:
+        if lease is not None:
+            manager.revoke(lease.credential.managed_execution_id, reason="primary-root-test")
+        manager.close()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute("DELETE FROM public.worktrees WHERE id = %s", (worktree_id,))
 
 
 def test_issue_tool_request_resolves_symlinked_overlay_to_registered_path(

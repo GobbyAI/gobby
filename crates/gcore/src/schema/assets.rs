@@ -120,6 +120,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "d170cbbb75ea311a8f768fb53dffec0b72e8ba71b9b6e88da251b2911f5e0170",
         sql: include_str!("../../assets/schema/migrations/434_canonical_task_config_keys.sql"),
     },
+    EmbeddedMigration {
+        version: 435,
+        filename: "435_bind_tool_grants_to_requested_checkout.sql",
+        checksum: "f636cf590a56f7ea7e31f07d4eb2dd6bc4379a6c39e23f018dcd42f702cc3e0e",
+        sql: include_str!(
+            "../../assets/schema/migrations/435_bind_tool_grants_to_requested_checkout.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
