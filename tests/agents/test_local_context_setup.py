@@ -528,7 +528,7 @@ async def test_codex_auto_switch_uses_concrete_wire_model_and_context(
         observation: LocalContextObservation | None,
     ) -> None:
         persisted.append((route, observation))
-        events.append("persist")
+        events.append(f"persist:{route.model_id if route is not None else 'unknown'}")
 
     def add_handler(method: str, handler: Any) -> None:
         handlers.setdefault(method, []).append(handler)
@@ -573,12 +573,18 @@ async def test_codex_auto_switch_uses_concrete_wire_model_and_context(
         await session.switch_model(requested_selector)
         _ = [event async for event in session.send_message("hello")]
 
-    assert events == ["ensure", "refresh", "persist", "turn"]
+    assert events == [
+        "ensure",
+        "persist:unknown",
+        "refresh",
+        f"persist:{concrete_model}",
+        "turn",
+    ]
     assert session.model == requested_selector
     assert session._model == concrete_model
     assert session._local_context_route is not None
     assert session._local_context_route.model_id == concrete_model
-    assert session._local_context_observation is persisted[0][1]
+    assert session._local_context_observation is persisted[-1][1]
     assert client.start_turn.await_args is not None
     assert client.start_turn.await_args.kwargs["model"] == concrete_model
 
@@ -612,6 +618,69 @@ async def test_codex_failed_switch_restores_previous_model(
     assert session.model == "endpoint:metal/old-model"
     assert session._model == "old-model"
     refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_codex_cancelled_refresh_invalidates_previous_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://127.0.0.1:8000/v1",
+        model="auto",
+    )
+    concrete_model = "Qwen/Qwen2.5-Coder-32B-Instruct"
+    old_route = endpoint_route(
+        machine_id=_MACHINE_ID,
+        endpoint_name="metal",
+        endpoint=endpoint,
+        model_id="old-model",
+    )
+    old_observation = _observation(old_route)
+    persisted: list[tuple[LocalContextRoute | None, LocalContextObservation | None]] = []
+
+    async def cancel_refresh(
+        selector: str,
+    ) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+        assert selector == f"endpoint:metal/{concrete_model}"
+        raise asyncio.CancelledError
+
+    def persist(
+        _manager: Any,
+        _session_id: str,
+        route: LocalContextRoute | None,
+        observation: LocalContextObservation | None,
+    ) -> None:
+        persisted.append((route, observation))
+
+    backend = CodexWebChatBackend(client=MagicMock(), generation_endpoint=endpoint)
+    session = CodexManagedChatSession(
+        conversation_id="codex-local",
+        _backend=backend,
+        _model="old-model",
+        _model_selector="endpoint:metal/old-model",
+    )
+    session._local_context_refresher = cancel_refresh
+    session._session_manager_ref = SimpleNamespace(db=MagicMock())
+    session.db_session_id = "db-session"
+    monkeypatch.setattr(
+        "gobby.servers.websocket.chat.backends.codex.ensure_local_model",
+        AsyncMock(return_value=concrete_model),
+    )
+
+    with patch(
+        "gobby.sessions.context_usage.persist_local_context_variables",
+        side_effect=persist,
+    ):
+        await session._set_local_context(old_route, old_observation)
+        with pytest.raises(asyncio.CancelledError):
+            await session.switch_model("endpoint:metal/auto")
+
+    assert session.model == "endpoint:metal/auto"
+    assert session._model == concrete_model
+    assert session._local_context_route is None
+    assert session._local_context_observation is None
+    assert persisted == [(old_route, old_observation), (None, None)]
 
 
 @pytest.mark.asyncio

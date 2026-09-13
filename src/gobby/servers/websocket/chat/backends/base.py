@@ -244,6 +244,7 @@ class ManagedChatSessionBase:
 
     async def switch_model(self, new_model: str) -> None:
         await self._backend.switch_model(self, new_model)
+        await self._set_local_context(None, None)
         if self._local_context_refresher is not None:
             context_model = new_model
             selector = parse_endpoint_model_selector(new_model)
