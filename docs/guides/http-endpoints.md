@@ -745,6 +745,7 @@ UI-setting/global-approval save routes. YAML replacement also requires
 | `POST` | `/api/code-index/prune` | Operator-only global maintenance; optional JSON `force`, `retention_days`. |
 | `GET` | `/api/metrics/current` | Current metrics snapshot. |
 | `GET` | `/api/metrics/snapshots` | Historical metric snapshots; `hours` 1–24 and `limit` 1–1440 (defaults 1 and 120). |
+| `GET` | `/api/observations/unmodeled` | Debug listing of unmodeled transcript observations; optional `source`, `kind`, and `limit` 1–500 (default 50). Response includes `count_semantics`. |
 | `GET` | `/api/pipelines/executions` | List pipeline executions. |
 | `GET` | `/api/pipelines/executions/search` | Search pipeline executions. |
 | `GET` | `/api/pipelines/{execution_id}` | Get pipeline execution. |
