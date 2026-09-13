@@ -315,11 +315,15 @@ async def test_cooperative_completion_persists_final_closed_task_details(
     ]
 
 
-@pytest.mark.asyncio
-async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
+async def _assert_classified_exit(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
-) -> None:
+    *,
+    early_exit: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    expected_reason = "early_exit" if early_exit else "task_blocker"
+    expected_status = "incomplete" if early_exit else "blocked"
+    step_metadata = {"incomplete_step": "implement"} if early_exit else {}
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Report a blocker",
@@ -389,7 +393,8 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
     run_storage.complete.side_effect = persist_run
     runner.complete_run.side_effect = complete_run
     session_vars: dict[str, Any] = {
-        "blocker_handed_off": True,
+        "blocker_handed_off": not early_exit,
+        "_agent_early_exit_step": "implement",
         "task_edited_files": {run.task_id: ["src/dirty.py"]},
     }
     variable_manager = MagicMock()
@@ -455,29 +460,30 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
         result = await get_result(run_id=run.id)
 
     assert termination["success"] is True
-    assert termination["terminal_reason"] == "task_blocker"
+    assert termination["terminal_reason"] == expected_reason
     runner.complete_run.assert_called_once_with(
         run.id,
         result=None,
-        terminal_reason="task_blocker",
+        terminal_reason=expected_reason,
     )
     run_storage.complete.assert_called_once_with(
         run_id=run.id,
         result=None,
         tool_calls_count=0,
         turns_used=0,
-        terminal_reason="task_blocker",
+        terminal_reason=expected_reason,
     )
-    assert completion_call["terminal_reason"] == "task_blocker"
+    assert completion_call["terminal_reason"] == expected_reason
     assert completion_call["notify_result"] == {
-        "status": "blocked",
+        "status": expected_status,
         "run_id": run.id,
         "dirty_paths": ["src/dirty.py"],
-        "terminal_reason": "task_blocker",
+        "terminal_reason": expected_reason,
+        **step_metadata,
     }
     assert 'dirty_paths=["src/dirty.py"]' in completion_call["message"]
-    assert result["status"] == "blocked"
-    assert result["terminal_reason"] == "task_blocker"
+    assert result["status"] == expected_status
+    assert result["terminal_reason"] == expected_reason
     assert result["result"] == blocker_text
     assert result["dirty_paths"] == ["src/dirty.py"]
     assert notifications == [
@@ -485,13 +491,37 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
             "parent-session",
             f'Agent {run.id} completed; dirty_paths=["src/dirty.py"]',
             {
-                "status": "blocked",
+                "status": expected_status,
                 "run_id": run.id,
                 "dirty_paths": ["src/dirty.py"],
-                "terminal_reason": "task_blocker",
+                "terminal_reason": expected_reason,
+                **step_metadata,
                 "completion_id": run.id,
             },
         )
     ]
     assert not registry.is_registered(run.id)
     dirty_paths.assert_called_with({"src/dirty.py"}, "/repo")
+    return termination, result, notifications[0][2]
+
+
+@pytest.mark.asyncio
+async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    await _assert_classified_exit(temp_db, sample_project, early_exit=False)
+
+
+@pytest.mark.asyncio
+async def test_self_termination_early_exit_returns_success_and_notifies_incomplete(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    termination, result, notification = await _assert_classified_exit(
+        temp_db, sample_project, early_exit=True
+    )
+    assert termination["success"] is True
+    assert result["status"] == "incomplete"
+    assert notification["terminal_reason"] == "early_exit"
+    assert notification["incomplete_step"] == "implement"

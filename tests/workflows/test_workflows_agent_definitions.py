@@ -329,7 +329,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "additional_skills" in load_skills["status_message"]
     assert "additional_skills_loaded" in agent["step_workflow"]["variables"]
     assert "skill_loaded(skill)" in str(load_skills["transitions"])
-    assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
+    assert "gobby-agents:end_agent_run" not in _blocked_mcp_tools(implement)
     assert "_skipped_stages" not in implement["status_message"]
     assert "manifest" in implement["status_message"]
     assert "close_task" in implement["status_message"]
@@ -432,6 +432,7 @@ def test_agent_definition_model_preserves_skills_blocks() -> None:
         {
             "name": "backend-developer",
             "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
             "skills": {
                 "baseline": ["Python backend"],
                 "tool_allowlist": ["pytest", "ruff"],

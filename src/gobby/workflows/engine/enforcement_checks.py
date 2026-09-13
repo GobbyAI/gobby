@@ -28,6 +28,14 @@ logger = logging.getLogger("gobby.workflows.engine.enforcement")
 
 _DENIAL_COUNTS_VARIABLE = "_enforcement_denial_counts"
 _TERMINAL_DENIAL_COUNT = 3
+_CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
+    {
+        "gobby-sessions:set_handoff",
+        "gobby-sessions:feedback",
+        "gobby-skills:get_skill_file",
+        "gobby-skills:get_skill_files",
+    }
+)
 
 
 def _step_tool_block_guidance(step_name: str) -> str:
@@ -533,6 +541,43 @@ class EnforcementCheckMixin:
             if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
                 return None
 
+        # Cooperative exit must remain reachable through every step restriction.
+        tool_input = event.data.get("tool_input") or {}
+        if is_gobby_call_tool(tool_name) and isinstance(tool_input, dict):
+            mcp_key = f"{tool_input.get('server_name', '')}:{tool_input.get('tool_name', '')}"
+            if mcp_key == "gobby-agents:end_agent_run":
+                granted = step.allowed_mcp_tools == "all" or self._mcp_tool_matches(
+                    mcp_key, step.allowed_mcp_tools
+                )
+                if granted or self._bound_task_is_terminal(session_id):
+                    variables["_agent_early_exit_step"] = None
+                    return None
+                arguments = self._step_handler_tool_input(tool_input)
+                if not arguments.get("blockers"):
+                    reason = self._record_enforcement_denial(
+                        session_id=session_id,
+                        rule="step-end-agent-run-blockers",
+                        target=f"mcp:{mcp_key}",
+                        reason=(
+                            "An exit outside the exit step must list blockers. "
+                            f"Provide blockers to end the run from step '{step.name}'."
+                        ),
+                        step=step,
+                        instance=instance,
+                    )
+                    self._audit_step_tool_call(
+                        session_id,
+                        wf_name,
+                        step.name,
+                        tool_name,
+                        "block",
+                        reason=reason,
+                        mcp_key=mcp_key,
+                    )
+                    return HookResponse(decision="block", reason=reason)
+                variables["_agent_early_exit_step"] = step.name
+                return None
+
         # Check native tool allow-list
         if step.allowed_tools != "all":
             if canonical_tool not in {
@@ -622,14 +667,6 @@ class EnforcementCheckMixin:
                     mcp_tool_name=mcp_tool_name,
                 )
 
-                # A run whose bound task is already terminal has nothing left
-                # for the step to enforce; blocking end_agent_run then strands
-                # a finished worker in a spurious error state (#19554).
-                if mcp_key == "gobby-agents:end_agent_run" and self._bound_task_is_terminal(
-                    session_id
-                ):
-                    return None
-
                 # Explicit blocks override default grants and allow-list exemptions.
                 if mcp_key and step.blocked_mcp_tools:
                     if self._mcp_tool_matches(mcp_key, step.blocked_mcp_tools):
@@ -682,8 +719,8 @@ class EnforcementCheckMixin:
                     )
                     return None
 
-                # Structured handoff preserves the active agent and is capability-neutral.
-                if mcp_tool_name == "set_handoff":
+                # These calls preserve access to handoff obligations in every step.
+                if mcp_key in _CAPABILITY_NEUTRAL_MCP_TOOLS:
                     return None
 
                 if mcp_key and step.allowed_mcp_tools != "all":

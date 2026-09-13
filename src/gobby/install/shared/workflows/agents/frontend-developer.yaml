@@ -222,7 +222,6 @@ step_workflow:
         - "gobby-tasks:reopen_task"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
-        - "gobby-agents:end_agent_run"
       on_mcp_success:
         - server: gobby-tasks
           tool: close_task

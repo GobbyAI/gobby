@@ -2,7 +2,7 @@ tags: [context-handoff, skill-discovery, gobby, default]
 
 rules:
   require-handoff-feedback-before-authoring:
-    description: "Require the current-epoch survey before handoff schema discovery or submission"
+    description: "Require the current-epoch survey before handoff or agent exit"
     event: before_tool
     enabled: true
     priority: 22
@@ -12,11 +12,17 @@ rules:
       and (
         (event.data.get('mcp_server') == 'gobby-sessions'
          and event.data.get('mcp_tool') == 'set_handoff')
+        or (event.data.get('mcp_server') == 'gobby-agents'
+            and event.data.get('mcp_tool') == 'end_agent_run')
         or (
           (event.data.get('mcp_tool') == 'get_tool_schema'
            or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
-          and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-sessions'
-          and (tool_input.get('tool_name') or tool_input.get('tool')) == 'set_handoff'
+          and (
+            ((tool_input.get('server_name') or tool_input.get('server')) == 'gobby-sessions'
+             and (tool_input.get('tool_name') or tool_input.get('tool')) == 'set_handoff')
+            or ((tool_input.get('server_name') or tool_input.get('server')) == 'gobby-agents'
+                and (tool_input.get('tool_name') or tool_input.get('tool')) == 'end_agent_run')
+          )
         )
       )
     effects:
@@ -30,7 +36,9 @@ rules:
           Keep current continuation state and fresh epoch friction, including resolved friction.
           Never copy earlier reflections; record only actual recurrence. Use readable sentences.
           For necessary live detail after pruning, reference a permitted Markdown working-notes
-          file by project-relative path; never move cumulative history into it. Call set_handoff last.
+          file by project-relative path; never move cumulative history into it.
+          Interactive sessions call set_handoff last; spawned agents call end_agent_run last,
+          after feedback.
           Use clear_session=false inside tasks; clear_session=true only between
           tasks after task closure. Do not repeat feedback already submitted this epoch.
 

@@ -64,12 +64,15 @@ When the configured feedback survey applies, submit the epoch's feedback first.
 If there is nothing to report, use `feedback(observations=[])`. Do not submit a
 duplicate acknowledgment for the same epoch or call it human-reviewed. Actionable
 defects follow the found-work ladder; feedback is not a substitute for fixing or
-handing work to its active owner. Call `set_handoff` last.
+handing work to its active owner. Interactive sessions call `set_handoff` last.
+Spawned agents submit feedback first and call `end_agent_run` as their last call.
 
 Use `clear_session=false` during planning, review, or ongoing task work. Use
 `true` only for a root/coordinator moving to another task after closing the
 current task. A spawned worker finishes with structured `end_agent_run`, including
-the coordinator's next actions; raw turn-end does not end an agent run.
+the coordinator's next actions and closed task refs in `references`; raw turn-end
+does not end an agent run. An exit outside the exit step while the bound task is
+open requires `blockers` and reports `incomplete` to the parent.
 
 After a terminal result reports `handoff_staged` and `delivery_pending`, yield.
 Delivery starts after successful tool completion; staged success is not proof

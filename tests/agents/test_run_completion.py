@@ -286,3 +286,19 @@ async def test_shared_checkout_without_attribution_does_not_claim_all_dirty_path
         )
 
     assert dirty_paths == []
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_exit_notification_reports_incomplete_for_early_exit(blocked: bool) -> None:
+    from gobby.agents.run_completion import build_agent_exit_notification
+    from gobby.storage.agents._constants import DELIBERATE_STOP_TERMINAL_REASONS
+
+    reason, payload, _ = build_agent_exit_notification(
+        "run",
+        variables={"_agent_early_exit_step": "implement", "blocker_handed_off": blocked},
+        dirty_paths=["src/work.py"],
+    )
+    assert reason == ("task_blocker" if blocked else "early_exit")
+    assert payload["status"] == ("blocked" if blocked else "incomplete")
+    assert payload.get("incomplete_step") == (None if blocked else "implement")
+    assert "early_exit" not in DELIBERATE_STOP_TERMINAL_REASONS
