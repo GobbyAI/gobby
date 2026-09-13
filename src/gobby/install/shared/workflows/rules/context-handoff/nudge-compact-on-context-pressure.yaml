@@ -9,11 +9,11 @@ rules:
     when: "variables.get('context_compact_guidance_message')"
     effects:
       - type: load_skill
-        skill: handoff-discipline
+        skill: gobby:references/sessions/handoffs.md
         when: >-
           not variables.get('handoff_pull_pending')
           and variables.get('context_compact_guidance_kind') in ('warn', 'block', 'unknown')
-          and not skill_loaded('handoff-discipline')
+          and not skill_loaded('gobby:references/sessions/handoffs.md')
       - type: inject_context
         template: |
           {{ variables.get('context_compact_guidance_message') }}
@@ -28,11 +28,11 @@ rules:
     when: "variables.get('context_compact_guidance_message')"
     effects:
       - type: load_skill
-        skill: handoff-discipline
+        skill: gobby:references/sessions/handoffs.md
         when: >-
           not variables.get('handoff_pull_pending')
           and variables.get('context_compact_guidance_kind') in ('warn', 'block', 'unknown')
-          and not skill_loaded('handoff-discipline')
+          and not skill_loaded('gobby:references/sessions/handoffs.md')
       - type: inject_context
         template: |
           {{ variables.get('context_compact_guidance_message') }}

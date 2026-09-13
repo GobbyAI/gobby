@@ -24,7 +24,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
-SKILL = "handoff-discipline"
+SKILL = "gobby:references/sessions/handoffs.md"
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ async def test_handoff_requires_feedback_even_with_skill_loaded(
     engine = RuleEngine(db)
     event = _tool_event("gobby-sessions", "set_handoff", {"clear_session": False}, shape)
     variables: dict[str, Any] = {
-        "loaded_skills": [SKILL],
+        "loaded_skill_references": [SKILL],
         "project": {"name": "gobby"},
     }
     blocked = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
@@ -100,7 +100,7 @@ async def test_schema_discovery_requires_feedback_then_handoff_skill(
     skill_block = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert skill_block.decision == "block"
     assert skill_fetch_directive(SKILL) in (skill_block.reason or "")
-    variables["loaded_skills"] = [SKILL]
+    variables["loaded_skill_references"] = [SKILL]
     allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert allowed.decision != "block"
 
@@ -109,7 +109,10 @@ async def test_schema_discovery_requires_feedback_then_handoff_skill(
 @pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
 async def test_clear_requires_closed_tasks(db: HubDatabase, shape: str) -> None:
     engine = RuleEngine(db)
-    variables: dict[str, Any] = {"loaded_skills": [SKILL], "claimed_tasks": {"task": "#1"}}
+    variables: dict[str, Any] = {
+        "loaded_skill_references": [SKILL],
+        "claimed_tasks": {"task": "#1"},
+    }
     event = _tool_event("gobby-sessions", "set_handoff", {"clear_session": True}, shape)
     blocked = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert blocked.decision == "block"
@@ -160,7 +163,7 @@ async def test_authoring_requires_loaded_skill(
     assert skill_fetch_directive(SKILL) in (blocked.reason or "")
     assert "cumulative history" in (blocked.reason or "")
 
-    variables["loaded_skills"] = ["tasks", SKILL]
+    variables["loaded_skill_references"] = ["gobby:references/tasks/overview.md", SKILL]
     allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert allowed.decision != "block"
 
@@ -194,7 +197,11 @@ async def test_startup_restraint_respects_pull_order_and_explicit_opt_out(
         event,
         session_id=SESSION_ID,
         variables={
-            "loaded_skills": ["loading-skills", "memory", "brevity"],
+            "loaded_skills": ["brevity"],
+            "loaded_skill_references": [
+                "gobby:references/skills/loading.md",
+                "gobby:references/memory/overview.md",
+            ],
             "handoff_pull_pending": pending,
             "restraint_disabled": disabled,
             "servers_listed": True,
@@ -238,7 +245,11 @@ async def test_warning_loads_follow_model_threshold_and_loaded_state(
         data={},
     )
     variables: dict[str, Any] = {
-        "loaded_skills": ["loading-skills", "memory", "brevity", "restraint"],
+        "loaded_skills": ["brevity", "restraint"],
+        "loaded_skill_references": [
+            "gobby:references/skills/loading.md",
+            "gobby:references/memory/overview.md",
+        ],
         "servers_listed": True,
     }
     engine = RuleEngine(db)
@@ -252,11 +263,11 @@ async def test_warning_loads_follow_model_threshold_and_loaded_state(
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert (skill_fetch_directive(SKILL) in (response.context or "")) is expected
 
-    variables["loaded_skills"].append(SKILL)
+    variables["loaded_skill_references"].append(SKILL)
     loaded = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert skill_fetch_directive(SKILL) not in (loaded.context or "")
 
-    variables["loaded_skills"] = []
+    variables["loaded_skill_references"] = []
     variables["handoff_pull_pending"] = True
     pending = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert skill_fetch_directive(SKILL) not in (pending.context or "")
@@ -266,13 +277,17 @@ async def test_warning_loads_follow_model_threshold_and_loaded_state(
 @pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
 @pytest.mark.parametrize(
     "arguments,allowed",
-    [({"name": SKILL}, True), ({"cursor": "next-page"}, True), ({"name": "python"}, False)],
+    [
+        ({"name": "gobby", "path": "references/sessions/handoffs.md"}, True),
+        ({"cursor": "next-page"}, True),
+        ({"name": "python"}, False),
+    ],
 )
 async def test_context_limit_allows_handoff_skill_and_continuation(
     db: HubDatabase, shape: str, arguments: dict[str, Any], allowed: bool
 ) -> None:
     response = await RuleEngine(db).evaluate(
-        _tool_event("gobby-skills", "get_skill", arguments, shape),
+        _tool_event("gobby-skills", "get_skill_file", arguments, shape),
         session_id=SESSION_ID,
         variables={
             "context_compact_mid_turn_pressure_band": "block",
@@ -286,7 +301,7 @@ async def test_context_limit_allows_handoff_skill_and_continuation(
 @pytest.mark.parametrize("boundary", ["compact", "clear"])
 async def test_context_reset_rearms_authoring_gate(db: HubDatabase, boundary: str) -> None:
     engine = RuleEngine(db)
-    variables: dict[str, Any] = {"loaded_skills": [SKILL]}
+    variables: dict[str, Any] = {"loaded_skill_references": [SKILL]}
     reset = HookEvent(
         event_type=HookEventType.SESSION_START,
         session_id=SESSION_ID,

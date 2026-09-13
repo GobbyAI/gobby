@@ -240,7 +240,7 @@ class TestBlockPlanModeClearSession:
             {
                 "plan_mode": True,
                 "is_spawned_agent": False,
-                "loaded_skills": ["handoff-discipline"],
+                "loaded_skill_references": ["gobby:references/sessions/handoffs.md"],
             },
         )
 
@@ -258,7 +258,7 @@ class TestBlockPlanModeClearSession:
             {
                 "plan_mode": False,
                 "is_spawned_agent": False,
-                "loaded_skills": ["handoff-discipline"],
+                "loaded_skill_references": ["gobby:references/sessions/handoffs.md"],
             },
         )
 

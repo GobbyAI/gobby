@@ -25,7 +25,7 @@ rules:
           Call gobby-sessions:feedback to submit the current-epoch survey first,
           with at most 3 observations, or observations=[] when there is nothing to report.
           Submission acknowledges feedback; it does not mark it human-reviewed.
-          Then load handoff-discipline and keep the rendered handoff within 10,000
+          Then load gobby:references/sessions/handoffs.md and keep the rendered handoff within 10,000
           JSON-escaped characters, including headings. Call set_handoff last.
           Use clear_session=false inside tasks; clear_session=true only between
           tasks after task closure. Do not repeat feedback already submitted this epoch.
@@ -51,7 +51,7 @@ rules:
     enabled: true
     priority: 24
     when: >
-      not skill_loaded('handoff-discipline')
+      not skill_loaded('gobby:references/sessions/handoffs.md')
       and (event.data.get('mcp_tool') == 'get_tool_schema'
            or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
       and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-sessions'
@@ -59,7 +59,7 @@ rules:
     effects:
       - type: block
         reason: |
-          {{ skill_fetch_directive("handoff-discipline") }}
+          {{ skill_fetch_directive("gobby:references/sessions/handoffs.md") }}
           Submit required feedback first, then author within the 10,000 JSON-escaped
           character limit. Use clear_session=false inside tasks and clear_session=true
           only between tasks after closure.
@@ -69,12 +69,12 @@ rules:
     event: before_tool
     enabled: true
     priority: 24
-    when: "not skill_loaded('handoff-discipline')"
+    when: "not skill_loaded('gobby:references/sessions/handoffs.md')"
     effects:
       - type: block
         mcp_tools:
           - "gobby-sessions:set_handoff"
           - "gobby-agents:end_agent_run"
         reason: |
-          {{ skill_fetch_directive("handoff-discipline") }}
+          {{ skill_fetch_directive("gobby:references/sessions/handoffs.md") }}
           Before retrying, revise the handoff to current state and concrete next actions. Do not paste cumulative history, previous handoffs, raw logs, or completed ledgers; reference durable evidence instead.

@@ -25,7 +25,7 @@ def _context(
     session_type: str = "terminal",
     agent_run_id: str | None = None,
     agent_depth: int = 0,
-    loaded_skills: object = ("live-session",),
+    loaded_skill_references: object = ("gobby:references/tasks/live-work.md",),
 ) -> RegistryContext:
     ctx = cast(
         RegistryContext,
@@ -43,10 +43,10 @@ def _context(
             session_var_manager=SimpleNamespace(
                 get_variables=MagicMock(
                     return_value={
-                        "loaded_skills": (
-                            list(loaded_skills)
-                            if isinstance(loaded_skills, tuple)
-                            else loaded_skills
+                        "loaded_skill_references": (
+                            list(loaded_skill_references)
+                            if isinstance(loaded_skill_references, tuple)
+                            else loaded_skill_references
                         )
                     }
                 )
@@ -56,7 +56,7 @@ def _context(
     return ctx
 
 
-def test_authorizes_root_terminal_with_live_session_skill() -> None:
+def test_authorizes_root_terminal_with_live_work_reference() -> None:
     ctx = _context()
 
     error = live_session_label_change_error(
@@ -70,13 +70,13 @@ def test_authorizes_root_terminal_with_live_session_skill() -> None:
 
 
 @pytest.mark.parametrize(
-    ("session_type", "agent_run_id", "agent_depth", "loaded_skills", "expected_error"),
+    ("session_type", "agent_run_id", "agent_depth", "loaded_skill_references", "expected_error"),
     [
         pytest.param(
             "agent",
             None,
             0,
-            ("live-session",),
+            ("gobby:references/tasks/live-work.md",),
             "interactive terminal",
             id="non-terminal",
         ),
@@ -84,7 +84,7 @@ def test_authorizes_root_terminal_with_live_session_skill() -> None:
             "terminal",
             "run-1",
             0,
-            ("live-session",),
+            ("gobby:references/tasks/live-work.md",),
             "Spawned and automated",
             id="agent-run",
         ),
@@ -92,7 +92,7 @@ def test_authorizes_root_terminal_with_live_session_skill() -> None:
             "terminal",
             None,
             1,
-            ("live-session",),
+            ("gobby:references/tasks/live-work.md",),
             "Spawned and automated",
             id="agent-depth",
         ),
@@ -101,7 +101,7 @@ def test_authorizes_root_terminal_with_live_session_skill() -> None:
             None,
             0,
             [],
-            "Load the live-session skill",
+            "references/tasks/live-work.md",
             id="skill-not-loaded",
         ),
     ],
@@ -110,14 +110,14 @@ def test_rejects_unauthorized_session_shapes(
     session_type: str,
     agent_run_id: str | None,
     agent_depth: int,
-    loaded_skills: object,
+    loaded_skill_references: object,
     expected_error: str,
 ) -> None:
     ctx = _context(
         session_type=session_type,
         agent_run_id=agent_run_id,
         agent_depth=agent_depth,
-        loaded_skills=loaded_skills,
+        loaded_skill_references=loaded_skill_references,
     )
     error = live_session_label_change_error(
         ctx,
@@ -253,3 +253,33 @@ async def test_all_mutation_entry_points_reject_missing_session_context(
 
     assert "active session context" in result["error"]
     getattr(mock_task_manager, manager_method).assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "variables, authorized",
+    [
+        ({"loaded_skills": ["gobby"]}, False),
+        ({"loaded_skills": ["live-session"]}, False),
+        ({"loaded_skills": ["gobby:references/tasks/live-work.md"]}, False),
+        ({"loaded_skill_references": ["gobby:references/tasks/overview.md"]}, False),
+        ({"loaded_skill_references": ["gobby:references/tasks/live-work.md"]}, True),
+    ],
+)
+def test_reference_contract_4_1_3(variables: dict[str, list[str]], authorized: bool) -> None:
+    """Only completed live-work guidance satisfies interactive label authorization."""
+    ctx = _context()
+    assert ctx.session_var_manager is not None
+    cast(MagicMock, ctx.session_var_manager.get_variables).return_value = variables
+    error = live_session_label_change_error(ctx, [], ["live-session"], session_id=SESSION_ID)
+    assert (error is None) is authorized
+    if not authorized:
+        assert error is not None
+        assert "get_skill_file" in error
+        assert "references/tasks/live-work.md" in error
+
+    automated = _context(agent_run_id="run-1")
+    assert automated.session_var_manager is not None
+    cast(MagicMock, automated.session_var_manager.get_variables).return_value = variables
+    error = live_session_label_change_error(automated, [], ["live-session"], session_id=SESSION_ID)
+    assert error is not None
+    assert "Spawned and automated" in error

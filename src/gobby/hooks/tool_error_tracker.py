@@ -166,6 +166,15 @@ def _composed_target(readable: str, digest_basis: str) -> str:
 
 def extract_target_key(data: Mapping[str, Any], arguments: Mapping[str, Any]) -> str:
     """Extract one bounded, exact-match target identity."""
+    tool_name = str(data.get("mcp_tool") or data.get("tool_name", "")).lower()
+    if tool_name == "get_skill_file":
+        identity = {
+            key: arguments[key]
+            for key in ("name", "skill_id", "path", "cursor")
+            if key in arguments
+        }
+        return f"args:{_digest(_canonical_json(identity))}"
+
     raw_paths = data.get("canonical_file_paths")
     paths = (
         sorted(path for path in raw_paths if isinstance(path, str))

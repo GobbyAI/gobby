@@ -16,13 +16,13 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey via feedback or set_handoff |
 | `context-handoff` | `context-handoff/` | 7 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
-| `build-coordinator` | `build-coordinator/` | 1 | Require build-coordinator guidance for Gobby build work |
-| `code-index` | `code-index/` | 5 | Require code-index guidance and prefer `gcode` for search and source navigation |
+| `build-coordinator` | `build-coordinator/` | 1 | Require the build/coordination reference for Gobby build work |
+| `code-index` | `code-index/` | 5 | Require the code-index/overview reference and prefer `gcode` for search and source navigation |
 | `monolith-enforcement` | `monolith-enforcement/` | 4 | Require same-session decomposition before writes, commits, task transitions, and turn end |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
-| `skill-discovery` | `skill-discovery/` | 27 | Bootstrap ordered core guidance each context epoch, require language skills on first file write, require the impeccable design contract on first UI file write, require a plan skill on plan-artifact writes, require the code-review skill on the first commit, list skill hubs once per session, and reset loading tracking |
+| `skill-discovery` | `skill-discovery/` | 27 | Bootstrap ordered core guidance each context epoch, require language skills on first file write, require the impeccable design contract on first UI file write, require a plan reference on plan-artifact writes, require the code-review skill on the first commit, list skill hubs once per session, and reset loading tracking |
 | `brevity` | `brevity/` | 5 | Handle opt-out phrases, drift detection and next-turn feedback, and per-turn reinforcement |
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
 | `development-discipline` | `development-discipline/` | 1 | Block the first source write until developer test and structural guidance is loaded |
@@ -77,7 +77,7 @@ its block is actually delivered. Consequences for stop-gate authors:
   their `block` effects through the block-gates path, so the state is consumed
   twice.
 - Real-engine `turn_end` tests must seed `_memory_initial_stop_checked: true` or
-  `loaded_skills: ["memory"]`, or the priority-1 memory gate wins the turn end.
+  `loaded_skill_references: ["gobby:references/memory/overview.md"]`, or the priority-1 memory gate wins the turn end.
 
 Override mechanics are documented in `docs/guides/workflow-rules.md`
 (Hard-Coded Engine Behaviors).

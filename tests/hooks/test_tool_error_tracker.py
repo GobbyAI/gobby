@@ -479,3 +479,17 @@ def test_no_resolvable_session_never_mutates_error_state() -> None:
 
     assert variables.upserts == []
     assert variables.resolutions == []
+
+
+def test_reference_error_identity_includes_skill_and_ignores_projection() -> None:
+    arguments = {"name": "gobby", "path": "references/memory/overview.md"}
+    expected = extract_target_key({"tool_name": "get_skill_file"}, arguments)
+    assert expected != extract_target_key(
+        {"tool_name": "get_skill_file"}, {**arguments, "name": "custom"}
+    )
+    assert expected != extract_target_key(
+        {"tool_name": "get_skill_file"}, {**arguments, "path": "references/tasks/overview.md"}
+    )
+    assert expected == extract_target_key(
+        {"mcp_tool": "get_skill_file"}, {**arguments, "brief": False}
+    )

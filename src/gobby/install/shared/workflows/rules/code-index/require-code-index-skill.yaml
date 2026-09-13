@@ -105,16 +105,16 @@ rules:
     priority: 30
     when: >
       variables.get('code_index_available')
-      and not skill_loaded('code-index')
+      and not skill_loaded('gobby:references/code-index/overview.md')
       and not has_open_tool_error(
-        "gobby-skills/get_skill",
-        {"name": "code-index"}
+        "gobby-skills/get_skill_file",
+        {"name": "gobby", "path": "references/code-index/overview.md"}
       )
       and not variables.get('code_index_preflight_warning')
       and navigation_requires_index(event.data)
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("code-index") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, choose by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
+        reason: '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, choose by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
 
   prefer-gcode-for-code-search:
     description: "Block broad shell search in indexed projects after code-index is loaded"
@@ -123,7 +123,7 @@ rules:
     priority: 31
     when: >
       variables.get('code_index_available')
-      and skill_loaded('code-index')
+      and skill_loaded('gobby:references/code-index/overview.md')
       and not variables.get('code_index_preflight_warning')
       and navigation_requires_index(event.data, 'search')
     effects:
@@ -137,7 +137,7 @@ rules:
     priority: 31
     when: >
       variables.get('code_index_available')
-      and skill_loaded('code-index')
+      and skill_loaded('gobby:references/code-index/overview.md')
       and not variables.get('code_index_preflight_warning')
       and navigation_requires_index(event.data, 'enumerate')
     effects:
@@ -151,7 +151,7 @@ rules:
     priority: 31
     when: >
       variables.get('code_index_available')
-      and skill_loaded('code-index')
+      and skill_loaded('gobby:references/code-index/overview.md')
       and not variables.get('code_index_preflight_warning')
       and navigation_requires_index(event.data, 'read')
     effects:

@@ -254,7 +254,10 @@ def _status_gate_variables(
     claimed = claimed_tasks or {"task-1": "#1"}
     return {
         "require_commit_before_status": True,
-        "loaded_skills": ["tasks"],
+        "loaded_skill_references": [
+            "gobby:references/tasks/overview.md",
+            "gobby:references/tasks/closing.md",
+        ],
         "task_claimed": bool(claimed),
         "claimed_tasks": claimed,
         "active_task_id": active_task_id,
@@ -700,7 +703,8 @@ class TestRequireTaskBeforeEdit:
                 "require_task_before_edit": True,
                 "task_claimed": False,
                 "plan_mode": False,
-                "loaded_skills": ["development-discipline", "json", "restraint"],
+                "loaded_skills": ["json", "restraint"],
+                "loaded_skill_references": ["gobby:references/development/obligations.md"],
             },
         )
 
@@ -776,7 +780,11 @@ PYEOF"""
         variables = {
             "require_task_before_edit": True,
             "task_claimed": False,
-            "loaded_skills": ["python", "tasks"],
+            "loaded_skills": ["python"],
+            "loaded_skill_references": [
+                "gobby:references/tasks/overview.md",
+                "gobby:references/tasks/closing.md",
+            ],
             "brevity_disabled": True,
             "skill_discovery_instructions_shown": True,
         }
@@ -817,7 +825,11 @@ PYEOF"""
         variables = {
             "require_task_before_edit": True,
             "task_claimed": False,
-            "loaded_skills": ["python", "tasks"],
+            "loaded_skills": ["python"],
+            "loaded_skill_references": [
+                "gobby:references/tasks/overview.md",
+                "gobby:references/tasks/closing.md",
+            ],
             "brevity_disabled": True,
             "skill_discovery_instructions_shown": True,
         }
@@ -1362,14 +1374,18 @@ class TestRequireTasksSkillForMutations:
         assert body.event.value == "before_tool"
         assert "variables.get('_agent_type') == 'default'" in (body.when or "")
         assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
-        assert body.effects[0].reason == _skill_fetch_template("tasks")
+        assert body.effects[0].reason is not None
+        assert "gobby:references/tasks/overview.md" in body.effects[0].reason
+        assert "gobby:references/tasks/closing.md" in body.effects[0].reason
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("agent_type", "loaded_skills", "expected"),
+        ("agent_type", "loaded_skill_references", "expected"),
         [
             pytest.param("default", [], "block", id="interactive-default"),
-            pytest.param("default", ["tasks"], "allow", id="already-loaded"),
+            pytest.param(
+                "default", ["gobby:references/tasks/overview.md"], "allow", id="already-loaded"
+            ),
             pytest.param("backend-developer", [], "allow", id="specialized-developer"),
             pytest.param("qa-reviewer", [], "allow", id="specialized-reviewer"),
             pytest.param("pipeline", [], "allow", id="pipeline"),
@@ -1379,7 +1395,7 @@ class TestRequireTasksSkillForMutations:
         self,
         db: HubDatabase,
         agent_type: str,
-        loaded_skills: list[str],
+        loaded_skill_references: list[str],
         expected: str,
     ) -> None:
         _sync_bundled(db)
@@ -1407,7 +1423,10 @@ class TestRequireTasksSkillForMutations:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": agent_type, "loaded_skills": loaded_skills},
+            variables={
+                "_agent_type": agent_type,
+                "loaded_skill_references": loaded_skill_references,
+            },
         )
 
         assert response.decision == expected
@@ -1534,7 +1553,8 @@ class TestRequireClaimedTaskExtraSkills:
             variables={
                 "task_claimed": True,
                 "claimed_task_extra_skills": ["context7", "test-driven-development"],
-                "loaded_skills": ["python", "development-discipline", "restraint"],
+                "loaded_skills": ["python", "restraint"],
+                "loaded_skill_references": ["gobby:references/development/obligations.md"],
             },
         )
 
@@ -1571,12 +1591,8 @@ class TestRequireClaimedTaskExtraSkills:
                 "task_claimed": True,
                 "enforce_tdd": False,
                 "claimed_task_extra_skills": ["context7"],
-                "loaded_skills": [
-                    "python",
-                    "development-discipline",
-                    "context7",
-                    "restraint",
-                ],
+                "loaded_skills": ["python", "context7", "restraint"],
+                "loaded_skill_references": ["gobby:references/development/obligations.md"],
             },
         )
 
@@ -2007,7 +2023,12 @@ class TestBlockNeedsReviewInteractive:
     async def test_submit_for_review_blocks_interactive_session(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = {"loaded_skills": ["tasks"]}
+        variables = {
+            "loaded_skill_references": [
+                "gobby:references/tasks/overview.md",
+                "gobby:references/tasks/closing.md",
+            ]
+        }
 
         response = await engine.evaluate(
             self._review_event("submit_for_review"),
@@ -2024,7 +2045,10 @@ class TestBlockNeedsReviewInteractive:
         engine = RuleEngine(db)
         variables = {
             "is_spawned_agent": True,
-            "loaded_skills": ["tasks"],
+            "loaded_skill_references": [
+                "gobby:references/tasks/overview.md",
+                "gobby:references/tasks/closing.md",
+            ],
         }
 
         response = await engine.evaluate(
@@ -2040,7 +2064,12 @@ class TestBlockNeedsReviewInteractive:
     async def test_approve_review_blocks_interactive_session(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = {"loaded_skills": ["tasks"]}
+        variables = {
+            "loaded_skill_references": [
+                "gobby:references/tasks/overview.md",
+                "gobby:references/tasks/closing.md",
+            ]
+        }
 
         response = await engine.evaluate(
             self._review_event("approve_review"),
@@ -2151,7 +2180,10 @@ class TestBlockReopenTask:
         claimed_variables = {
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#1"},
-            "loaded_skills": ["tasks"],
+            "loaded_skill_references": [
+                "gobby:references/tasks/overview.md",
+                "gobby:references/tasks/closing.md",
+            ],
         }
         claimed_response = await engine.evaluate(
             claimed_event,
@@ -2183,7 +2215,10 @@ class TestBlockReopenTask:
             variables={
                 "task_claimed": True,
                 "claimed_tasks": {"uuid-1": "#1"},
-                "loaded_skills": ["tasks"],
+                "loaded_skill_references": [
+                    "gobby:references/tasks/overview.md",
+                    "gobby:references/tasks/closing.md",
+                ],
             },
         )
 
@@ -2203,11 +2238,13 @@ class TestRequireTasksSkillOnMutationSchema:
         assert body.event.value == "before_tool"
         assert "task_mutation_requires_tasks_skill" in (body.when or "")
         assert "_agent_type" in (body.when or "")
-        assert "not skill_loaded('tasks')" in (body.when or "")
+        assert "not skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
         assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == _skill_fetch_template("tasks")
+        assert body.effects[0].reason is not None
+        assert "gobby:references/tasks/overview.md" in body.effects[0].reason
+        assert "gobby:references/tasks/closing.md" in body.effects[0].reason
 
 
 class TestRequireTasksSkillMutationDefinition:
@@ -2222,7 +2259,7 @@ class TestRequireTasksSkillMutationDefinition:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
-        assert "not skill_loaded('tasks')" in (body.when or "")
+        assert "not skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
 
     def test_blocks_with_task_transitions_directive(self, db, manager) -> None:
         """The rule should block with the canonical directive."""
@@ -2236,7 +2273,9 @@ class TestRequireTasksSkillMutationDefinition:
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
         assert len(block_effects) == 1
-        assert block_effects[0].reason == _skill_fetch_template("tasks")
+        assert block_effects[0].reason is not None
+        assert "gobby:references/tasks/overview.md" in block_effects[0].reason
+        assert "gobby:references/tasks/closing.md" in block_effects[0].reason
         assert set_effects == []
 
 
@@ -2250,9 +2289,11 @@ class TestTaskMutationSkillGateRoutes:
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
-        assert "skill_loaded('tasks')" in (body.when or "")
+        assert "skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
         assert body.effects is not None
-        assert body.effects[0].reason == _skill_fetch_template("tasks")
+        assert body.effects[0].reason is not None
+        assert "gobby:references/tasks/overview.md" in body.effects[0].reason
+        assert "gobby:references/tasks/closing.md" in body.effects[0].reason
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
@@ -2262,9 +2303,11 @@ class TestTaskMutationSkillGateRoutes:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "task_mutation_requires_tasks_skill" in (body.when or "")
-        assert "skill_loaded('tasks')" in (body.when or "")
+        assert "skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
         assert body.effects is not None
-        assert body.effects[0].reason == _skill_fetch_template("tasks")
+        assert body.effects[0].reason is not None
+        assert "gobby:references/tasks/overview.md" in body.effects[0].reason
+        assert "gobby:references/tasks/closing.md" in body.effects[0].reason
 
     @pytest.mark.asyncio
     async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:
@@ -2289,7 +2332,14 @@ class TestTaskMutationSkillGateRoutes:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": "default", "loaded_skills": ["tasks", "restraint"]},
+            variables={
+                "_agent_type": "default",
+                "loaded_skills": ["restraint"],
+                "loaded_skill_references": [
+                    "gobby:references/tasks/overview.md",
+                    "gobby:references/tasks/closing.md",
+                ],
+            },
         )
 
         assert blocked.decision == "block"
@@ -2319,7 +2369,13 @@ class TestTaskMutationSkillGateRoutes:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
+            variables={
+                "_agent_type": "default",
+                "loaded_skill_references": [
+                    "gobby:references/tasks/overview.md",
+                    "gobby:references/tasks/closing.md",
+                ],
+            },
         )
 
         assert blocked.decision == "block"
@@ -2350,7 +2406,14 @@ class TestTaskMutationSkillGateRoutes:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": "default", "loaded_skills": ["tasks", "restraint"]},
+            variables={
+                "_agent_type": "default",
+                "loaded_skills": ["restraint"],
+                "loaded_skill_references": [
+                    "gobby:references/tasks/overview.md",
+                    "gobby:references/tasks/closing.md",
+                ],
+            },
         )
 
         assert blocked.decision == "block"
@@ -2412,7 +2475,13 @@ class TestTaskMutationSkillGateRoutes:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
+            variables={
+                "_agent_type": "default",
+                "loaded_skill_references": [
+                    "gobby:references/tasks/overview.md",
+                    "gobby:references/tasks/closing.md",
+                ],
+            },
         )
 
         assert blocked.decision == "block"
@@ -2721,3 +2790,51 @@ class TestWriteRouteParity:
         assert data["canonical_tool_kind"] == expected_kind
         assert data.get("canonical_repo_mutation", False) is repo_mutation
         assert decision is requires_task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["direct", "proxy", "schema"])
+async def test_reference_contract_4_1_2(db: HubDatabase, route: str) -> None:
+    """Task mutations require their completed operation guidance on every route."""
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("require-tasks-skill-for-mutations",),
+        )
+    engine = RuleEngine(db)
+    overview = "gobby:references/tasks/overview.md"
+    closing = "gobby:references/tasks/closing.md"
+    for operation in ("update_task", "close_task"):
+        tool_input, data = TestRequireTasksSkillForMutations._event_shape(
+            route, "gobby-tasks", operation
+        )
+        data["tool_input"] = tool_input
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+        for references in ([], [overview], [overview, closing]):
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables={
+                    "_agent_type": "default",
+                    "loaded_skills": ["gobby", "tasks"],
+                    "loaded_skill_references": references,
+                },
+            )
+            expected = (
+                "allow"
+                if overview in references and (operation != "close_task" or closing in references)
+                else "block"
+            )
+            assert response.decision == expected
+            if expected == "block":
+                required = overview if overview not in references else closing
+                assert response.reason is not None
+                assert skill_fetch_directive(required) in response.reason

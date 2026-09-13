@@ -7,6 +7,7 @@ from collections.abc import Iterable
 import psycopg
 
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.skills.instruction_requirements import instruction_fetch_directive, instruction_is_loaded
 from gobby.utils.session_context import get_current_session_id
 
 LIVE_SESSION_LABEL = "live-session"
@@ -44,7 +45,7 @@ def live_session_label_change_error(
         variables = ctx.session_var_manager.get_variables(resolved_session_id)
     except (KeyError, LookupError, ValueError, psycopg.Error):
         return "Changing the live-session label requires readable session state."
-    loaded_skills = variables.get("loaded_skills")
-    if not isinstance(loaded_skills, list) or "live-session" not in loaded_skills:
-        return "Load the live-session skill before changing the live-session label."
+    requirement = "gobby:references/tasks/live-work.md"
+    if not instruction_is_loaded(requirement, variables):
+        return instruction_fetch_directive(requirement)
     return None

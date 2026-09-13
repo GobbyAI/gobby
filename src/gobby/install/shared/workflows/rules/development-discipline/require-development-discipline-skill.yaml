@@ -7,9 +7,9 @@ rules:
     enabled: true
     priority: 30
     when: >
-      not skill_loaded('development-discipline')
+      not skill_loaded('gobby:references/development/obligations.md')
       and event.data.get('canonical_tool_kind') == 'write'
       and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("development-discipline") }}'
+        reason: '{{ skill_fetch_directive("gobby:references/development/obligations.md") }}'

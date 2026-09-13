@@ -300,7 +300,10 @@ TURN_END_OVERRIDES = [
 def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, Any]:
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,
-        "loaded_skills": ["memory", "handoff-discipline"],
+        "loaded_skill_references": [
+            "gobby:references/memory/overview.md",
+            "gobby:references/sessions/handoffs.md",
+        ],
         "_memory_pending_task_reviews": list(pending),
         "_memory_review_stop_delivered": False,
         "_gobby_feedback_epoch_submitted": True,
@@ -388,12 +391,12 @@ class TestLayeredMemoryGuidance:
         assert effects[0].variable == "_memory_initial_stop_checked"
         assert effects[0].value is True
         assert getattr(effects[0], "delivery", None) == "eager"
-        assert "skill_loaded('memory')" in (effects[0].when or "")
+        assert "skill_loaded('gobby:references/memory/overview.md')" in (effects[0].when or "")
         assert "has_open_tool_error" in (effects[0].when or "")
         assert effects[1].type == "block"
         assert effects[1].acknowledge_variable == "_memory_initial_stop_checked"
         assert getattr(effects[1], "delivery", None) == "on_receipt"
-        assert "not skill_loaded('memory')" in (effects[1].when or "")
+        assert "not skill_loaded('gobby:references/memory/overview.md')" in (effects[1].when or "")
         assert "has_open_tool_error" in (effects[1].when or "")
 
     def test_matching_fetch_failure_fails_initial_stop_open(
@@ -479,14 +482,16 @@ class TestLayeredMemoryGuidance:
         second = await engine.evaluate(event, SESSION_ID, variables)
 
         assert first.decision == "block"
-        assert skill_fetch_directive("memory") in (first.reason or "")
+        assert skill_fetch_directive("gobby:references/memory/overview.md") in (first.reason or "")
         assert variables["_memory_initial_stop_checked"] is True
         assert "check-memory-guidance-on-initial-stop" not in (second.reason or "")
 
     @pytest.mark.asyncio
     async def test_loaded_skill_passes_initial_gate_without_block(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        variables = _initial_gate_variables(loaded_skills=["memory"])
+        variables = _initial_gate_variables(
+            loaded_skill_references=["gobby:references/memory/overview.md"]
+        )
 
         response = await RuleEngine(db).evaluate(_turn_end_event(), SESSION_ID, variables)
 
@@ -515,10 +520,14 @@ class TestLayeredMemoryGuidance:
 
         assert overridden.decision == decision
         assert marker in (overridden.reason or "")
-        assert skill_fetch_directive("memory") not in (overridden.reason or "")
+        assert skill_fetch_directive("gobby:references/memory/overview.md") not in (
+            overridden.reason or ""
+        )
         assert overridden_flag is False
         assert delivered.decision == "block"
-        assert skill_fetch_directive("memory") in (delivered.reason or "")
+        assert skill_fetch_directive("gobby:references/memory/overview.md") in (
+            delivered.reason or ""
+        )
         assert variables["_memory_initial_stop_checked"] is True
 
     @pytest.mark.asyncio
@@ -548,7 +557,9 @@ class TestLayeredMemoryGuidance:
         response = await RuleEngine(db).evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
-        assert skill_fetch_directive("memory") in (response.reason or "")
+        assert skill_fetch_directive("gobby:references/memory/overview.md") in (
+            response.reason or ""
+        )
         assert variables["_memory_initial_stop_checked"] is True
 
 
@@ -791,7 +802,7 @@ class TestPostCloseMemoryReviewRules:
         variables = _review_variables(
             _pending_review("#42", "Completed work."),
             _memory_initial_stop_checked=False,
-            loaded_skills=[],
+            loaded_skill_references=[],
             open_tool_errors=[],
             # The research-feedback stop gate shares this trigger; keep it quiet
             # so the aggregate counts only the two memory gates.

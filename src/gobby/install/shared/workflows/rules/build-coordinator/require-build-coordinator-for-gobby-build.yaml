@@ -7,7 +7,7 @@ rules:
     enabled: true
     priority: 23
     when: >
-      not skill_loaded('build-coordinator')
+      not skill_loaded('gobby:references/build/coordination.md')
       and source != 'pipeline'
       and (
         variables.get('is_spawned_agent')
@@ -17,4 +17,4 @@ rules:
       and is_gobby_build_command(tool_input.get('command') or tool_input.get('cmd'))
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("build-coordinator") }}'
+        reason: '{{ skill_fetch_directive("gobby:references/build/coordination.md") }}'

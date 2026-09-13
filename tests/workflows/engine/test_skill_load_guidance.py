@@ -111,3 +111,26 @@ def test_guidance_keeps_explicit_handler_target() -> None:
     guidance = skill_load_block_guidance(step)
 
     assert 'get_skill", {"name":"plan-review"}' in guidance
+
+
+def test_hook_reference_fetch_injects_directive_without_instruction_body() -> None:
+    from gobby.hooks.dispatchers.mcp import format_discovery_result
+    from gobby.skills.formatting import skill_fetch_directive
+
+    result = {
+        "file": {
+            "skill_name": "gobby",
+            "path": "references/tasks/closing.md",
+            "content": "Private instruction body must be explicitly loaded.",
+        },
+        "page": {"complete": False, "next_cursor": "opaque"},
+    }
+    for payload in (result, {"result": result}):
+        guidance = format_discovery_result({"tool": "get_skill_file", "result": payload})
+        assert guidance == skill_fetch_directive("gobby:references/tasks/closing.md")
+        assert "Private instruction body" not in guidance
+    for skill_file in ({}, {"skill_name": "gobby", "path": "references/../secret.md"}):
+        assert (
+            format_discovery_result({"tool": "get_skill_file", "result": {"file": skill_file}})
+            == ""
+        )

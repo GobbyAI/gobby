@@ -9,12 +9,12 @@ rules:
     when: >
       not variables.get('handoff_pull_pending')
       and (
-        not skill_loaded('loading-skills')
+        not skill_loaded('gobby:references/skills/loading.md')
         or (
-          not skill_loaded('memory')
+          not skill_loaded('gobby:references/memory/overview.md')
           and not has_open_tool_error(
-            "gobby-skills/get_skill",
-            {"name": "memory"}
+            "gobby-skills/get_skill_file",
+            {"name": "gobby", "path": "references/memory/overview.md"}
           )
         )
         or (
@@ -28,15 +28,15 @@ rules:
       )
     effects:
       - type: load_skill
-        skill: loading-skills
-        when: "not skill_loaded('loading-skills')"
+        skill: gobby:references/skills/loading.md
+        when: "not skill_loaded('gobby:references/skills/loading.md')"
       - type: load_skill
-        skill: memory
+        skill: gobby:references/memory/overview.md
         when: >
-          not skill_loaded('memory')
+          not skill_loaded('gobby:references/memory/overview.md')
           and not has_open_tool_error(
-            "gobby-skills/get_skill",
-            {"name": "memory"}
+            "gobby-skills/get_skill_file",
+            {"name": "gobby", "path": "references/memory/overview.md"}
           )
       - type: load_skill
         skill: brevity

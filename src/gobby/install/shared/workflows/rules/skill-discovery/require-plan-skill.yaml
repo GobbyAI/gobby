@@ -7,14 +7,14 @@ rules:
     enabled: true
     priority: 30
     when: >
-      not skill_loaded('plan')
-      and not skill_loaded('plan-draft')
-      and not skill_loaded('plan-review')
-      and not skill_loaded('plan-enhance')
+      not skill_loaded('gobby:references/plan/overview.md')
+      and not skill_loaded('gobby:references/plan/drafting.md')
+      and not skill_loaded('gobby:references/plan/review.md')
+      and not skill_loaded('gobby:references/plan/enhancement.md')
       and event.data.get('canonical_tool_kind') == 'write'
       and '.gobby/plans/' in normalize_path(event.data.get('canonical_file_path', ''))
     effects:
       - type: block
         reason: |
-          {{ skill_fetch_directive("plan") }}
+          {{ skill_fetch_directive("gobby:references/plan/overview.md") }}
           `.gobby/plans/` is the canonical file authority for dependent multi-deliverable plans. Write the complete draft there when permissions allow, or materialize the complete conversational draft staged in the session handoff before file-based validation. Atomic deliverables stay in the task workflow, and plan registration waits for a real expansion root.

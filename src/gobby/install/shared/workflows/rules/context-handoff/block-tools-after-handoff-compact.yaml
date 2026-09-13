@@ -27,9 +27,12 @@ rules:
       )
       and not (
         event.data.get('mcp_server') == 'gobby-skills'
-        and event.data.get('mcp_tool') == 'get_skill'
+        and event.data.get('mcp_tool') == 'get_skill_file'
         and (
-          ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'handoff-discipline'
+          (
+            ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'gobby'
+            and ((tool_input.get('arguments') or tool_input) or {}).get('path') == 'references/sessions/handoffs.md'
+          )
           or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
         )
       )

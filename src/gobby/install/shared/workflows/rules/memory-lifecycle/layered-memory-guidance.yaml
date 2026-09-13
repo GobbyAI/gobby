@@ -12,21 +12,21 @@ rules:
         variable: _memory_initial_stop_checked
         value: true
         when: >
-          skill_loaded('memory')
+          skill_loaded('gobby:references/memory/overview.md')
           or has_open_tool_error(
-            "gobby-skills/get_skill",
-            {"name": "memory"}
+            "gobby-skills/get_skill_file",
+            {"name": "gobby", "path": "references/memory/overview.md"}
           )
       - type: block
         delivery: on_receipt
         when: >
-          not skill_loaded('memory')
+          not skill_loaded('gobby:references/memory/overview.md')
           and not has_open_tool_error(
-            "gobby-skills/get_skill",
-            {"name": "memory"}
+            "gobby-skills/get_skill_file",
+            {"name": "gobby", "path": "references/memory/overview.md"}
           )
         acknowledge_variable: _memory_initial_stop_checked
-        reason: '{{ skill_fetch_directive("memory") }}'
+        reason: '{{ skill_fetch_directive("gobby:references/memory/overview.md") }}'
 
   remind-memory-guidance-on-later-turns:
     description: "Inject concise memory judgment on later parent-user prompts"

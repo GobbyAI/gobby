@@ -23,6 +23,7 @@ from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.instruction_requirements import parse_instruction_requirement
 
 
 def run_coro_blocking(
@@ -226,6 +227,17 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         lines.append('Search hubs: search_hub(query="...", hub_name="optional") on gobby-skills')
         lines.append("</available-skill-hubs>")
         return "\n".join(lines)
+
+    elif tool == "get_skill_file":
+        skill_file = result.get("file") or result.get("result", {}).get("file") or {}
+        name, path = skill_file.get("skill_name"), skill_file.get("path")
+        if not isinstance(name, str) or not isinstance(path, str):
+            return ""
+        try:
+            requirement = parse_instruction_requirement(f"{name}:{path}")
+        except ValueError:
+            return ""
+        return skill_fetch_directive(requirement.identity)
 
     elif tool == "get_skill":
         skill = result.get("skill") or result.get("result", {}).get("skill") or {}

@@ -80,12 +80,12 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
             "tool_input": {
                 "server_name": "gobby-skills",
                 "tool_name": "get_skill",
-                "arguments": {"name": "build-coordinator"},
+                "arguments": {"name": "brevity"},
             },
             "tool_output": {
                 "success": True,
                 "result": {
-                    "skill": {"name": "build-coordinator", "content": "instructions"},
+                    "skill": {"name": "brevity", "content": "instructions"},
                     "page": {"complete": True, "next_cursor": None},
                 },
             },
@@ -131,7 +131,7 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
     assert call_response.decision == "allow"
 
     variables = session_vars.get_variables(platform_session_id)
-    assert variables["loaded_skills"] == ["build-coordinator"]
+    assert variables["loaded_skills"] == ["brevity"]
 
 
 @pytest.mark.asyncio
@@ -250,6 +250,8 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
         )
     )
     assert lifecycle_response.decision == "block"
-    assert skill_fetch_directive("tasks") in (lifecycle_response.reason or "")
+    assert skill_fetch_directive("gobby:references/tasks/overview.md") in (
+        lifecycle_response.reason or ""
+    )
 
     await load_and_observe()

@@ -8,8 +8,20 @@ rules:
     priority: 24
     when: >
       variables.get('_agent_type') == 'default'
-      and not skill_loaded('tasks')
+      and (
+        not skill_loaded('gobby:references/tasks/overview.md')
+        or (
+          (
+            event.data.get('mcp_tool') == 'close_task'
+            or (tool_input.get('tool_name') or tool_input.get('tool')) == 'close_task'
+          )
+          and not skill_loaded('gobby:references/tasks/closing.md')
+        )
+      )
       and task_mutation_requires_tasks_skill(tool_input, event.data)
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("tasks") }}'
+        reason: >-
+          {{ skill_fetch_directive("gobby:references/tasks/overview.md"
+             if not skill_loaded('gobby:references/tasks/overview.md')
+             else "gobby:references/tasks/closing.md") }}

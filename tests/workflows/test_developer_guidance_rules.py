@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 GUIDANCE_RULES = {
-    "require-development-discipline-skill": "development-discipline",
+    "require-development-discipline-skill": "gobby:references/development/obligations.md",
     "require-restraint-skill": "restraint",
 }
 
@@ -91,9 +91,11 @@ def test_guidance_rule_structure(
 @pytest.mark.parametrize(
     ("loaded_skills", "blocked_skill"),
     [
-        pytest.param(["restraint"], "development-discipline", id="discipline-missing"),
         pytest.param(
-            ["development-discipline"],
+            ["restraint"], "gobby:references/development/obligations.md", id="discipline-missing"
+        ),
+        pytest.param(
+            ["gobby:references/development/obligations.md"],
             "restraint",
             id="restraint-missing",
         ),
@@ -109,7 +111,10 @@ async def test_each_guidance_skill_independently_gates_source_writes(
     response = await RuleEngine(temp_db).evaluate(
         _write_event(),
         session_id=SESSION_ID,
-        variables={"loaded_skills": loaded_skills},
+        variables={
+            "loaded_skills": [item for item in loaded_skills if ":references/" not in item],
+            "loaded_skill_references": [item for item in loaded_skills if ":references/" in item],
+        },
     )
 
     assert response.decision == "block"
@@ -124,7 +129,10 @@ async def test_guidance_gates_allow_loaded_and_non_source_writes(temp_db: HubDat
     loaded = await engine.evaluate(
         _write_event(),
         session_id=SESSION_ID,
-        variables={"loaded_skills": list(GUIDANCE_RULES.values())},
+        variables={
+            "loaded_skills": ["restraint"],
+            "loaded_skill_references": [GUIDANCE_RULES["require-development-discipline-skill"]],
+        },
     )
     markdown = await engine.evaluate(
         _write_event("/project/docs/notes.md"),
@@ -159,7 +167,7 @@ async def test_root_graph_expansion_requires_restraint(
         session_id=SESSION_ID,
         variables={
             "is_spawned_agent": False,
-            "loaded_skills": ["development-discipline"],
+            "loaded_skill_references": ["gobby:references/development/obligations.md"],
         },
     )
     allowed = await engine.evaluate(
@@ -167,7 +175,8 @@ async def test_root_graph_expansion_requires_restraint(
         session_id=SESSION_ID,
         variables={
             "is_spawned_agent": False,
-            "loaded_skills": list(GUIDANCE_RULES.values()),
+            "loaded_skills": ["restraint"],
+            "loaded_skill_references": [GUIDANCE_RULES["require-development-discipline-skill"]],
         },
     )
 

@@ -53,11 +53,16 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
 
 
 def _skill_tool_error_record(skill_name: str) -> dict[str, Any]:
-    arguments = {"name": skill_name}
+    if skill_name.startswith("gobby:references/"):
+        arguments = {"name": "gobby", "path": skill_name.split(":", 1)[1]}
+        tool_name = "get_skill_file"
+    else:
+        arguments = {"name": skill_name}
+        tool_name = "get_skill"
     timestamp = "2026-07-26T12:00:00+00:00"
     return {
-        "tool": "gobby-skills/get_skill",
-        "target_key": extract_target_key({"tool_name": "get_skill"}, arguments),
+        "tool": f"gobby-skills/{tool_name}",
+        "target_key": extract_target_key({"tool_name": tool_name}, arguments),
         "error": "Workflow evaluation timed out after 15s",
         "first_at": timestamp,
         "last_at": timestamp,
@@ -231,7 +236,12 @@ class TestLanguageSkillWriteTargetContract:
 
 
 class TestDefaultAgentCoreSkillBootstrap:
-    CORE_SKILLS = ("loading-skills", "memory", "brevity", "restraint")
+    CORE_SKILLS = (
+        "gobby:references/skills/loading.md",
+        "gobby:references/memory/overview.md",
+        "brevity",
+        "restraint",
+    )
 
     @staticmethod
     def _turn_event(prompt: str = "Continue.") -> HookEvent:
@@ -276,7 +286,8 @@ class TestDefaultAgentCoreSkillBootstrap:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "loaded_skills": list(self.CORE_SKILLS) if reset_source else [],
+            "loaded_skills": list(self.CORE_SKILLS[2:]) if reset_source else [],
+            "loaded_skill_references": list(self.CORE_SKILLS[:2]) if reset_source else [],
             "skill_discovery_instructions_shown": True,
             "_memory_initial_stop_checked": False,
             "open_tool_errors": [],
@@ -292,6 +303,7 @@ class TestDefaultAgentCoreSkillBootstrap:
             )
             await engine.evaluate(reset, session_id=SESSION_ID, variables=variables)
             assert variables["loaded_skills"] == []
+            assert variables["loaded_skill_references"] == []
 
         response = await engine.evaluate(
             self._turn_event(),
@@ -316,16 +328,19 @@ class TestDefaultAgentCoreSkillBootstrap:
                 "loaded_skills": [],
                 "skill_discovery_instructions_shown": True,
                 "_memory_initial_stop_checked": False,
-                "open_tool_errors": [_skill_tool_error_record("memory")],
+                "open_tool_errors": [
+                    _skill_tool_error_record("gobby:references/memory/overview.md")
+                ],
                 "servers_listed": True,
             },
         )
 
         context = response.context or ""
         expected = [
-            skill_fetch_directive(skill) for skill in ("loading-skills", "brevity", "restraint")
+            skill_fetch_directive(skill)
+            for skill in ("gobby:references/skills/loading.md", "brevity", "restraint")
         ]
-        assert skill_fetch_directive("memory") not in context
+        assert skill_fetch_directive("gobby:references/memory/overview.md") not in context
         assert [context.index(directive) for directive in expected] == sorted(
             context.index(directive) for directive in expected
         )
@@ -337,7 +352,8 @@ class TestDefaultAgentCoreSkillBootstrap:
             self._turn_event(),
             session_id=SESSION_ID,
             variables={
-                "loaded_skills": list(self.CORE_SKILLS),
+                "loaded_skills": list(self.CORE_SKILLS[2:]),
+                "loaded_skill_references": list(self.CORE_SKILLS[:2]),
                 "skill_discovery_instructions_shown": True,
                 "_memory_initial_stop_checked": True,
                 "servers_listed": True,
@@ -354,7 +370,7 @@ class TestDefaultAgentCoreSkillBootstrap:
             self._turn_event("stop brevity"),
             session_id=SESSION_ID,
             variables={
-                "loaded_skills": ["loading-skills", "memory"],
+                "loaded_skill_references": list(self.CORE_SKILLS[:2]),
                 "skill_discovery_instructions_shown": True,
                 "_memory_initial_stop_checked": True,
                 "brevity_disabled": False,
@@ -418,7 +434,11 @@ class TestListSkillHubsOncePerSession:
             }
 
         variables: dict[str, Any] = {
-            "loaded_skills": ["loading-skills", "memory", "brevity"],
+            "loaded_skills": ["brevity"],
+            "loaded_skill_references": [
+                "gobby:references/skills/loading.md",
+                "gobby:references/memory/overview.md",
+            ],
             "servers_listed": True,
         }
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
@@ -434,7 +454,7 @@ class TestListSkillHubsOncePerSession:
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.context is not None
-        assert skill_fetch_directive("loading-skills") not in response.context
+        assert skill_fetch_directive("gobby:references/skills/loading.md") not in response.context
         assert "<available-skill-hubs>" in response.context
         assert "- clawdhub (clawdhub, auth: not required)" in response.context
         assert variables["skill_discovery_instructions_shown"] is True
@@ -468,7 +488,9 @@ class TestListSkillHubsOncePerSession:
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        assert skill_fetch_directive("loading-skills") not in (response.context or "")
+        assert skill_fetch_directive("gobby:references/skills/loading.md") not in (
+            response.context or ""
+        )
         assert "skill_discovery_instructions_shown" not in variables
 
     @pytest.mark.asyncio
@@ -481,7 +503,11 @@ class TestListSkillHubsOncePerSession:
             return {"success": False, "result": {"error": "hub manager unavailable"}}
 
         variables: dict[str, Any] = {
-            "loaded_skills": ["loading-skills", "memory", "brevity"],
+            "loaded_skills": ["brevity"],
+            "loaded_skill_references": [
+                "gobby:references/skills/loading.md",
+                "gobby:references/memory/overview.md",
+            ],
             "servers_listed": True,
         }
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
@@ -3046,7 +3072,12 @@ class TestRequirePlanSkillStructure:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.when is not None
-        for skill in ("plan", "plan-draft", "plan-review", "plan-enhance"):
+        for skill in (
+            "gobby:references/plan/overview.md",
+            "gobby:references/plan/drafting.md",
+            "gobby:references/plan/review.md",
+            "gobby:references/plan/enhancement.md",
+        ):
             assert f"not skill_loaded('{skill}')" in body.when
         assert "event.data.get('canonical_tool_kind') == 'write'" in body.when
         assert "'.gobby/plans/' in" in body.when
@@ -3063,7 +3094,9 @@ class TestRequirePlanSkillStructure:
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason is not None
-        assert body.effects[0].reason.startswith(_skill_fetch_template("plan"))
+        assert body.effects[0].reason.startswith(
+            _skill_fetch_template("gobby:references/plan/overview.md")
+        )
 
     @pytest.mark.asyncio
     async def test_installed_rule_evaluation_includes_current_plan_routing_guidance(
@@ -3090,7 +3123,7 @@ class TestRequirePlanSkillStructure:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert skill_fetch_directive("plan") in response.reason
+        assert skill_fetch_directive("gobby:references/plan/overview.md") in response.reason
         assert "canonical file authority for dependent multi-deliverable plans" in response.reason
         assert "materialize the complete conversational draft" in response.reason
         assert "Atomic deliverables stay in the task workflow" in response.reason
@@ -3114,7 +3147,7 @@ class TestRequirePlanSkillCondition:
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
-        variables = {"loaded_skills": loaded_skills or []}
+        variables = {"loaded_skill_references": loaded_skills or []}
         if injected_skills is not None:
             variables["injected_skills"] = injected_skills
         context = {
@@ -3158,7 +3191,15 @@ class TestRequirePlanSkillCondition:
     def test_skips_non_plan_artifact_targets(self, file_path: str) -> None:
         assert self._eval(file_path) is False
 
-    @pytest.mark.parametrize("skill", ["plan", "plan-draft", "plan-review", "plan-enhance"])
+    @pytest.mark.parametrize(
+        "skill",
+        [
+            "gobby:references/plan/overview.md",
+            "gobby:references/plan/drafting.md",
+            "gobby:references/plan/review.md",
+            "gobby:references/plan/enhancement.md",
+        ],
+    )
     def test_skips_when_any_plan_family_skill_loaded(self, skill: str) -> None:
         assert self._eval("/project/.gobby/plans/design.md", loaded_skills=[skill]) is False
 
@@ -3166,7 +3207,13 @@ class TestRequirePlanSkillCondition:
         assert self._eval("/project/.gobby/plans/design.md", loaded_skills=["yaml"]) is True
 
     def test_does_not_skip_when_legacy_injected(self) -> None:
-        assert self._eval("/project/.gobby/plans/design.md", injected_skills=["plan"]) is True
+        assert (
+            self._eval(
+                "/project/.gobby/plans/design.md",
+                injected_skills=["gobby:references/plan/overview.md"],
+            )
+            is True
+        )
 
     def test_skips_reads_of_plan_artifacts(self) -> None:
         assert self._eval("/project/.gobby/plans/design.md", canonical_tool_kind="read") is False
@@ -3838,8 +3885,8 @@ class TestCodeIndexRuleCondition:
 
     CONDITION = (
         "variables.get('code_index_available') "
-        "and not skill_loaded('code-index') "
-        'and not has_open_tool_error("gobby-skills/get_skill", {"name": "code-index"}) '
+        "and not skill_loaded('gobby:references/code-index/overview.md') "
+        'and not has_open_tool_error("gobby-skills/get_skill_file", {"name": "gobby", "path": "references/code-index/overview.md"}) '
         "and not variables.get('code_index_preflight_warning') "
         "and not event.data.get('canonical_code_index_navigation') "
         "and event.data.get('canonical_code_navigation_broad') "
@@ -3858,7 +3905,7 @@ class TestCodeIndexRuleCondition:
         open_tool_errors: Any = None,
     ) -> bool:
         variables = {
-            "loaded_skills": loaded_skills or [],
+            "loaded_skill_references": loaded_skills or [],
             "code_index_available": code_index_available,
         }
         if open_tool_errors is not None:
@@ -3898,10 +3945,17 @@ class TestCodeIndexRuleCondition:
         assert self._eval(code_index_available=False) is False
 
     def test_skips_when_already_loaded(self) -> None:
-        assert self._eval(loaded_skills=["code-index"]) is False
+        assert self._eval(loaded_skills=["gobby:references/code-index/overview.md"]) is False
 
     def test_skips_for_exact_code_index_skill_load_error(self) -> None:
-        assert self._eval(open_tool_errors=[_skill_tool_error_record("code-index")]) is False
+        assert (
+            self._eval(
+                open_tool_errors=[
+                    _skill_tool_error_record("gobby:references/code-index/overview.md")
+                ]
+            )
+            is False
+        )
 
     def test_does_not_skip_for_unrelated_skill_load_error(self) -> None:
         assert self._eval(open_tool_errors=[_skill_tool_error_record("brevity")]) is True
@@ -3931,17 +3985,17 @@ class TestRequireCodeIndexSkillStructure:
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "variables.get('code_index_available')" in body.when
-        assert "not skill_loaded('code-index')" in body.when
+        assert "not skill_loaded('gobby:references/code-index/overview.md')" in body.when
         assert "not has_open_tool_error(" in body.when
-        assert '"gobby-skills/get_skill"' in body.when
-        assert '{"name": "code-index"}' in body.when
+        assert '"gobby-skills/get_skill_file"' in body.when
+        assert '"path": "references/code-index/overview.md"' in body.when
         assert "not variables.get('code_index_preflight_warning')" in body.when
         assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         reason = body.effects[0].reason
         assert reason is not None
-        assert _skill_fetch_template("code-index") in reason
+        assert _skill_fetch_template("gobby:references/code-index/overview.md") in reason
         assert "If that call fails, its recorded failure fails this rule open" in reason
         assert '`gcode search-symbol "name"`' in reason
         assert '`gcode grep -w "identifier" -m 50`' in reason
@@ -3998,7 +4052,9 @@ class TestCodeIndexNavigationRules:
     @staticmethod
     def _variables(*, loaded: bool = True, used: bool = False) -> dict[str, Any]:
         return {
-            "loaded_skills": ["code-index"] if loaded else [],
+            "loaded_skill_references": ["gobby:references/code-index/overview.md"]
+            if loaded
+            else [],
             "code_index_available": True,
             "code_index_navigation_used_this_turn": used,
             "turn_written_paths": [],
@@ -4064,7 +4120,7 @@ class TestCodeIndexNavigationRules:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert skill_fetch_directive("code-index") in response.reason
+        assert skill_fetch_directive("gobby:references/code-index/overview.md") in response.reason
         assert "If that call fails, its recorded failure fails this rule open" in response.reason
 
     @pytest.mark.asyncio
@@ -4119,8 +4175,8 @@ class TestCodeIndexNavigationRules:
         state_manager = SessionVariableManager(db)
         code_index_identity = (
             "gobby-skills",
-            "get_skill",
-            {"name": "code-index"},
+            "get_skill_file",
+            {"name": "gobby", "path": "references/code-index/overview.md"},
         )
         track_proxy_outcome(
             state_manager,
@@ -4155,11 +4211,14 @@ class TestCodeIndexNavigationRules:
             session_id,
             code_index_identity,
             code_index_identity,
-            {"success": True, "skill": {"name": "code-index"}},
+            {
+                "success": True,
+                "file": {"skill_name": "gobby", "path": "references/code-index/overview.md"},
+            },
             "executed",
         )
         variables["open_tool_errors"] = state_manager.get_variables(session_id)["open_tool_errors"]
-        assert variables["loaded_skills"] == []
+        assert variables["loaded_skill_references"] == []
         assert variables["open_tool_errors"] == []
 
         retry = await engine.evaluate(
@@ -5275,3 +5334,67 @@ class TestCodeIndexNavigationRules:
 
         assert blocked.decision == "block"
         assert allowed.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_reference_contract_4_1_1(db: HubDatabase) -> None:
+    """Bootstrap preserves order, handoff timing, and the exact memory failure exception."""
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("bootstrap-default-agent-core-skills",),
+        )
+    engine = RuleEngine(db)
+    requirements = (
+        "gobby:references/skills/loading.md",
+        "gobby:references/memory/overview.md",
+        "brevity",
+        "restraint",
+    )
+    event = TestDefaultAgentCoreSkillBootstrap._turn_event()
+    for pending, failed, custom in (
+        (True, False, False),
+        (False, False, False),
+        (False, True, False),
+        (False, True, True),
+    ):
+        errors = [_skill_tool_error_record(requirements[1])] if failed else []
+        if custom:
+            errors[0]["target_key"] = extract_target_key(
+                {"tool_name": "get_skill_file"},
+                {"name": "custom", "path": "references/memory/overview.md"},
+            )
+        response = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "loaded_skills": ["gobby"],
+                "handoff_pull_pending": pending,
+                "open_tool_errors": errors,
+            },
+        )
+        context = response.context or ""
+        expected = (
+            []
+            if pending
+            else [
+                requirement
+                for requirement in requirements
+                if not (failed and not custom and requirement == requirements[1])
+            ]
+        )
+        for requirement in requirements:
+            assert (skill_fetch_directive(requirement) in context) is (requirement in expected)
+        positions = [context.index(skill_fetch_directive(item)) for item in expected]
+        assert positions == sorted(positions)
+    response = await engine.evaluate(
+        event,
+        session_id=SESSION_ID,
+        variables={
+            "loaded_skills": list(requirements[2:]),
+            "loaded_skill_references": list(requirements[:2]),
+        },
+    )
+    assert not response.context
