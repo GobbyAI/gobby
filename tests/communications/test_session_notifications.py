@@ -68,6 +68,7 @@ def _transition(status: str = "paused") -> SessionStatusTransition:
         seq_num=42,
         title="Index docs",
         source="codex",
+        session_ref="gobby#42",
     )
 
 
@@ -127,7 +128,7 @@ async def test_pause_notification_preserves_full_assistant_text_and_choice_butto
     await service.route_transition(_transition())
 
     call = manager.send_event.await_args
-    assert call.args[1].startswith(f"#42 - Index docs - Paused\n\n{long_preface}")
+    assert call.args[1].startswith(f"gobby#42 - Index docs - Paused\n\n{long_preface}")
     assert call.args[1].endswith(
         "Mode\nChoose the execution mode.\n"
         "• Fast — Use cached results.\n"
@@ -173,7 +174,7 @@ async def test_non_question_pause_gets_continue_button() -> None:
 
     call = manager.send_event.await_args
     assert call.args[1] == (
-        "#42 - Index docs - Paused\n\n"
+        "gobby#42 - Index docs - Paused\n\n"
         "Waiting for the next instruction.\n\n"
         "Reply to any part of this message with custom instructions."
     )
@@ -246,6 +247,7 @@ async def test_restart_recovery_waits_600_seconds_and_reports_compaction_failure
         seq_num=42,
         title="Index docs",
         source="codex",
+        ref="gobby#42",
     )
 
     await service.start()
@@ -255,7 +257,7 @@ async def test_restart_recovery_waits_600_seconds_and_reports_compaction_failure
     sleep.assert_awaited_once_with(600.0)
     call = manager.send_event.await_args
     assert call.args[1] == (
-        "#42 - Index docs - Compaction failed\n\n"
+        "gobby#42 - Index docs - Compaction failed\n\n"
         "Reply to any part of this message with custom instructions."
     )
     assert call.kwargs["event_id"] == (f"{SESSION_ID}:compact-failed:{STARTED_AT.isoformat()}")
@@ -281,13 +283,14 @@ async def test_compact_deadline_routes_real_post_compact_output_as_normal_pause(
         seq_num=42,
         title="Index docs",
         source="codex",
+        ref="gobby#42",
     )
 
     await service._evaluate_at_deadline(SESSION_ID, STARTED_AT)
 
     call = manager.send_event.await_args
     assert call.args[1] == (
-        "#42 - Index docs - Paused\n\n"
+        "gobby#42 - Index docs - Paused\n\n"
         "The recovered agent output.\n\n"
         "Reply to any part of this message with custom instructions."
     )

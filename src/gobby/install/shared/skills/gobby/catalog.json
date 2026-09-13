@@ -816,6 +816,50 @@
           "when": "Reporting totals or comparing project statistics"
         }
       ]
+    },
+    {
+      "name": "communications",
+      "description": "Manage external channels, messages, identities, and event delivery",
+      "overview": "references/communications/overview.md",
+      "when": "Working with external communication channels or automatic notifications",
+      "topics": [
+        {
+          "name": "channels",
+          "description": "Discover and manage external channels",
+          "path": "references/communications/channels.md",
+          "when": "Adding, removing, or diagnosing channels"
+        },
+        {
+          "name": "messages",
+          "description": "Retrieve and deliver external messages",
+          "path": "references/communications/messages.md",
+          "when": "Reading history or sending authorized messages"
+        },
+        {
+          "name": "attachments",
+          "description": "Deliver workspace files through channels",
+          "path": "references/communications/attachments.md",
+          "when": "Sending images or documents"
+        },
+        {
+          "name": "identities",
+          "description": "Inspect and change external identity session links",
+          "path": "references/communications/identities.md",
+          "when": "Managing external user associations"
+        },
+        {
+          "name": "routing",
+          "description": "Select destinations and responder projects",
+          "path": "references/communications/routing.md",
+          "when": "Diagnosing routing or changing project bindings"
+        },
+        {
+          "name": "subscriptions",
+          "description": "Manage scoped automatic event delivery",
+          "path": "references/communications/subscriptions.md",
+          "when": "Creating, changing, or diagnosing event subscriptions"
+        }
+      ]
     }
   ]
 }

@@ -29,8 +29,6 @@ Defaults:
 |-------|---------|
 | `communications.enabled` | `false` |
 | `communications.webhook_base_url` | `""` |
-| `communications.inbound_enabled` | `true` |
-| `communications.outbound_enabled` | `true` |
 | `communications.auto_create_sessions` | `true` |
 | `communications.channel_defaults.rate_limit_per_minute` | `30` |
 | `communications.channel_defaults.burst` | `5` |
@@ -39,8 +37,8 @@ Defaults:
 | `communications.channel_defaults.retention_days` | `90` |
 
 `communications.enabled` controls manager, route, adapter, polling, cleanup,
-and MCP registration. The current runtime parses `inbound_enabled` and
-`outbound_enabled` but does not use them as traffic gates.
+and MCP registration. There are no separate `inbound_enabled` or
+`outbound_enabled` fields in the current configuration model.
 
 An enabled `gobby_chat` channel is created automatically when the adapter is
 registered and no such channel exists.
@@ -89,7 +87,7 @@ The router is mounted at `/api/comms` when communications are enabled.
 | `POST` | `/api/comms/send` | Send through a named active channel. |
 | `GET` | `/api/comms/channels` | List channels with `active` and `init_error` state. |
 | `POST` | `/api/comms/channels` | Create and initialize a channel. |
-| `PUT` | `/api/comms/channels/{channel_id}` | Replace non-secret config, update secrets, and/or change `enabled`. |
+| `PUT` | `/api/comms/channels/{channel_id}` | Rename, replace non-secret config, update secrets, and/or change `enabled`. |
 | `DELETE` | `/api/comms/channels/{channel_id}` | Remove a channel by UUID. |
 | `GET` | `/api/comms/channels/{channel_id}/status` | Get active, polling, capability, and initialization state. |
 | `GET` | `/api/comms/messages` | List stored messages with filters. |
@@ -119,11 +117,12 @@ curl -X POST http://127.0.0.1:60887/api/comms/send \
   }'
 ```
 
-`PUT /api/comms/channels/{channel_id}` replaces the channel's non-secret
+`PUT /api/comms/channels/{channel_id}` accepts a non-empty `name` to rename
+the channel. When `config` is supplied, it replaces the channel's non-secret
 configuration wholesale. Include every non-secret field that must remain;
 omitted non-secret fields are removed. Existing `$secret:` fields omitted from
 `config` are preserved, and supplied `secrets` are updated separately. A
-successful update deactivates and reinitializes the live adapter. Verify
+successful update deactivates the live adapter and reinitializes it if enabled. Verify
 `active` and `init_error` through the channel status endpoint after each
 change. The [Telegram safe-update procedure](telegram.md#safe-channel-updates)
 shows authenticated read-modify-write.
@@ -159,6 +158,13 @@ When the manager is available, the proxy registers `gobby-communications`:
 when adapter-specific metadata is required. `thread_id` is copied to the
 platform reply/thread field and overrides a thread remembered for the session.
 
+`send_attachment` requires an existing regular file inside the resolved
+workspace. Paths are expanded and resolved before the containment check, so
+symlinks cannot select a file outside that workspace. An unavailable workspace,
+missing file, directory, or out-of-workspace file returns `success: false`
+before delivery. The manager also checks the adapter's attachment-size limit;
+inspect the returned message status and error to confirm delivery.
+
 For Telegram, `inline_keyboard` accepts rows of `{text, value}` buttons and
 requires `session_id` so selected values can return to the originating
 session. `callback_ttl_seconds` controls the bounded callback lifetime.
@@ -181,8 +187,8 @@ Non-alphanumeric characters become underscores and the name is uppercased.
 The channel config stores `$secret:NAME` references. `webhook_secret` is kept
 in the channel's dedicated secret field, omitted from API responses, resolved
 before adapter initialization, and resolved again for inbound verification.
-Plaintext webhook secrets from older rows are migrated into `SecretStore` at
-startup.
+Use a channel update with `secrets.webhook_secret` to replace a plaintext
+value with a managed secret reference; startup does not perform this conversion.
 
 Use the `secrets` object for credentials:
 
@@ -255,8 +261,8 @@ The responder turns approved inbound messages into persistent `ChatSession`
 turns and streams the result back through the originating channel. It is
 configured per channel inside `config`.
 
-Telegram adds first-`/start` owner binding, passive group context, a restricted
-default agent, persistent channel project selection, STT/TTS, and platform
+Telegram adds first-`/start` owner binding, passive group context, a default
+coordinator persona, persistent channel project selection, STT/TTS, and platform
 commands. Those operator-facing details are authoritative in
 [Telegram responder, projects, and models](telegram.md#responder-projects-and-models).
 
@@ -321,6 +327,7 @@ different groups stay isolated. Turns for one conversation are serialized;
 different conversations can run concurrently.
 
 Supported commands are `/new`, `/reset`, `/stop`, `/status`, and `/help`.
+Telegram also supports `/subscriptions` for the channel's event subscriptions.
 Telegram shows a typing indicator during a turn and edits the first response
 message as text streams. Other adapters receive the finalized response unless
 they implement message editing.
@@ -337,7 +344,10 @@ Provider webhook URL:
 https://<your-gobby-host>/api/comms/webhooks/<channel-name>
 ```
 
-Include `:60887` when the public endpoint exposes the daemon port directly.
+Use a public port supported by the provider. Telegram supports webhook ports
+443, 80, 88, and 8443; put a reverse proxy in front of the daemon's 60887 port
+rather than registering that port directly. See the
+[Telegram webhook FAQ](https://core.telegram.org/bots/faq#i-39m-having-problems-with-webhooks).
 The POST route passes the raw body, parsed JSON when applicable, and
 lower-cased headers to the adapter. Verification runs before parsing.
 
@@ -459,7 +469,8 @@ Scope rules:
 
 Event patterns use glob matching. A pattern without wildcard characters is an
 exact match; patterns such as `session.agent.*` match multiple event names.
-Every matching channel receives the event. Lower priority values route first.
+Every matching channel receives the event once. Higher priority values route
+first; ties use creation time, then subscription ID.
 Disabled subscriptions remain visible to administrative lists and do not
 deliver. Deterministic source event IDs suppress replayed delivery once per
 channel.
@@ -480,7 +491,7 @@ controls plus **Enable all** and **Disable all**.
 
 Telegram pause deliveries include the complete last visible assistant message
 and support structured option buttons, exact live native-plan choices for
-Claude, Codex, Droid, Grok, and Qwen, a **Continue** button for other pauses,
+Claude, Codex, Droid, Grok, Qwen, and AGY, a **Continue** button for other pauses,
 and an explicit native-reply prompt on every persisted message chunk. Native
 plan callbacks revalidate the pane and use the provider keystroke registry.
 Replies and Continue actions enter the existing inter-session mailbox with a
@@ -508,7 +519,7 @@ With `auto_create_sessions: true`, direct-message sessions use:
 
 ```text
 external_id = comms:<channel_id>:<external_user_id>
-machine_id = comms
+machine_id = <local-machine-uuid>
 source = comms
 ```
 
@@ -516,12 +527,16 @@ Group sessions use:
 
 ```text
 external_id = comms:<channel_id>:group:<chat_id>
-machine_id = comms
+machine_id = <local-machine-uuid>
 source = comms
 ```
 
-Identity records keep sender attribution. Group context belongs to the group
-session instead of one sender's identity.
+Topic messages use `comms:<channel_id>:topic:<chat_id>:<thread_id>` as their
+external session ID. Session registration resolves the local machine UUID;
+`comms` is the session source, not a machine identity.
+
+Identity records keep sender attribution. Group and topic context belongs to
+the conversation session instead of one sender's identity.
 
 ## Troubleshooting
 
@@ -545,4 +560,4 @@ Telegram-specific token, privacy, proxy, media-service, authorization, and
 provider/model diagnostics live in
 [Telegram troubleshooting](telegram.md#troubleshooting).
 
-_Last verified: 2026-07-25_
+_Last verified: 2026-09-12_

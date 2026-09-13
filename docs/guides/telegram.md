@@ -244,7 +244,8 @@ Only user `123456789` can wake the bot, and the message must mention it.
 
 This complete example keeps DMs owner-only, permits two additional users in
 one group, requires mentions by default, and lets a second group respond
-without mentions:
+without mentions. The `"*"` entry also lets the owner wake the bot by mention
+in any other group it joins; omit that entry to accept only the named groups:
 
 ```json
 {
@@ -304,7 +305,7 @@ authorization rules apply after Telegram delivery.
 
 | Operation | Telegram setup | Gobby setup |
 |-----------|----------------|-------------|
-| Mention-only | Privacy enabled is sufficient. Telegram delivers commands, replies, and messages addressed to the bot. | Keep `require_mention: true`. |
+| Mention-gated | With privacy enabled, use a reply to the bot or a command explicitly addressed to it; arbitrary text containing `@botname` is not a documented delivery guarantee. | Keep `require_mention: true`; Gobby recognizes its username in delivered text or a reply to its own message. |
 | Passive observation | Disable privacy mode with BotFather `/setprivacy`, or make the bot a group administrator. | Authorize the group and users, and keep `require_mention: true` so non-waking messages become passive context. |
 | Respond to every authorized message | Privacy disabled or bot-administrator access. | Set `require_mention: false`. |
 
@@ -315,7 +316,8 @@ platform authority for privacy behavior.
 
 ## Safe channel updates
 
-`PUT /api/comms/channels/{id}` replaces the entire non-secret `config_json`.
+When `config` is supplied, `PUT /api/comms/channels/{id}` replaces the entire
+non-secret `config_json`.
 Omitted non-secret fields are removed. Existing omitted `$secret:` references
 are preserved, and values supplied in `secrets` are updated separately.
 
@@ -346,7 +348,7 @@ jq -cn --argjson config "$UPDATED_CONFIG" '{"config": $config}' |
 
 curl -fsS "$GOBBY_API/api/comms/channels/$CHANNEL_ID/status" \
   -H "Authorization: Bearer $GOBBY_TOKEN" |
-  jq '{active, polling, init_error, capabilities}'
+  jq '{active, is_polling, init_error, supports_webhooks, supports_polling}'
 ```
 
 The update deactivates and reinitializes the live adapter. Require
@@ -375,7 +377,10 @@ rotates it.
 
 Telegram uses the shared communications responder:
 
-- The default agent is the restricted `comms-agent` in normal chat mode.
+- The default agent is `comms-agent` in normal chat mode. Its installed persona
+  instructs it to answer operational questions and delegate edits and shell work;
+  this instruction is not itself a tool-permission boundary. Inspect the installed
+  agent definition and applicable rules when checking enforcement.
 - The default project is Gobby's Personal project.
 - `responder.provider` and `responder.model` override the daemon's provider and
   model selection.
@@ -431,8 +436,10 @@ Project selection applies to future turns and survives daemon restarts.
 ## Actionable session notifications
 
 Subscriptions for session pause and expiry events produce concise lifecycle
-messages such as `#42 - Index docs - Paused` and
-`#42 - Index docs - Expired`. Provisional titles contain only the provider
+messages such as `gobby#42 - Index docs - Paused` and
+`gobby#42 - Index docs - Expired`. References include the project; when a
+resolved reference is unavailable, the project UUID prefixes the sequence
+number. Provisional titles contain only the provider
 label, so the session reference appears once. The message
 includes the complete last visible assistant response while omitting provider
 details, session UUIDs, compaction summaries, continuation prompts, and injected
@@ -464,7 +471,7 @@ delivered to the live pane.
 A pause caused only by compaction machinery is held for up to 600 seconds. Gobby
 re-reads the session and transcript at the deadline: real agent output produces
 the normal paused message, a still-paused session with no real activity produces
-`#<session-ref> - <title> - Compaction failed`, and a resumed or superseded
+`<project>#<session-number> - <title> - Compaction failed`, and a resumed or superseded
 session produces no notification. Pending evaluations recover after daemon
 restart.
 
@@ -506,14 +513,16 @@ Button selections return their configured value to the supplied session.
 Callback tokens are opaque, single-use, scoped to their chat, topic, and
 session, and stored in memory until they expire.
 
-Send an existing local file with `send_attachment`:
+Send an existing regular file inside the resolved workspace with
+`send_attachment`. The tool resolves symlinks and rejects paths outside the
+workspace before delivery:
 
 ```json
 {
   "tool": "send_attachment",
   "arguments": {
     "channel": "personal-telegram",
-    "file_path": "/absolute/path/report.pdf",
+    "file_path": "/absolute/path/to/workspace/report.pdf",
     "caption": "Nightly report",
     "session_id": "#9574"
   }
@@ -555,11 +564,11 @@ endpoint, and other files use the document endpoint.
 | Numeric-ID administration | `allow_from` and `groups` use stable numeric Telegram IDs. Gobby does not authorize by username. |
 | Group administration | There is no in-chat group-admin command. Use the authenticated daemon API and complete config replacement. |
 | Attachment size | Gobby accepts Telegram attachments up to 50 MiB. Provider-side limits can differ by operation. |
-| Captions | Outbound attachment captions use the first 1,024-character formatted chunk. |
+| Captions | Non-voice attachments use the first 1,024-character formatted chunk as the caption and send remaining chunks as text messages. A continuation failure can occur after the media was already delivered. |
 | Text messages | Formatted output is split into 4,096-character messages. |
 | Passive context | At most 20 messages and 8,000 characters are inserted into a waking group turn. |
 | Inline keyboard shape | Maximum 8 rows, 8 buttons per row, 32 total buttons, 64 characters of button text, and 1,024 bytes per button value. |
-| Callback lifetime | `callback_ttl_seconds` is clamped to 1–3,600 seconds; callbacks are in-memory, single-use, and unavailable after daemon restart. |
+| Callback lifetime | `callback_ttl_seconds` must be an integer from 1 to 3,600; invalid or out-of-range values fail. Callbacks are in-memory, single-use, and unavailable after daemon restart. |
 | Compaction grace | Compaction-only pauses wait up to 600 seconds before a failure notification; pending evaluations recover after daemon restart. |
 | Voice STT | Requires the shared speech-to-text service; without it, the stored voice attachment and available message text remain. |
 | Voice TTS | Requires a configured TTS provider and `ffmpeg`; synthesis, encoding, or send failure falls back to the text response. |
@@ -595,4 +604,4 @@ platform limits and rate guidance remain governed by the
 [telegram-features]: https://core.telegram.org/bots/features
 [telegram-faq]: https://core.telegram.org/bots/faq
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-12_

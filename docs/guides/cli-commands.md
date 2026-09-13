@@ -28,7 +28,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `auth` | Reset the installed account password and manage the local daemon API token. | `src/gobby/cli/auth.py` |
 | `build` | Start and control lifecycle automation for plans, epics, and tasks. | `src/gobby/cli/build.py` |
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
-| `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
+| `comms` | Manage external communication channels and event subscriptions. | `src/gobby/cli/communications.py` |
 | `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
 | `datastores` | Manage hub-side shared datastores: `expose`, `rotate-password`. | `src/gobby/cli/datastores.py` |
 | `embeddings` | Inspect the model catalog and health; start, inspect, resume, or abort a staged model switch. See [AI configuration](ai-configuration.md#changing-the-embedding-model). | `src/gobby/cli/embeddings.py` |
@@ -1008,6 +1008,11 @@ gobby comms send CHANNEL MESSAGE
 gobby comms channels list
 gobby comms channels add CHANNEL_TYPE NAME
 gobby comms channels remove NAME
+gobby comms subscriptions create NAME --channel CHANNEL --event PATTERN [--project PROJECT | --global]
+gobby comms subscriptions list [--project PROJECT | --global]
+gobby comms subscriptions get SUBSCRIPTION_ID
+gobby comms subscriptions update SUBSCRIPTION_ID --priority 10 --disabled
+gobby comms subscriptions delete SUBSCRIPTION_ID
 ```
 
 `gobby sync` writes the shared installed rows that every session reads. While a
