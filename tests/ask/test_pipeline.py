@@ -70,7 +70,7 @@ def test_repair_is_needed_only_for_unresolved_question_parts(
     deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
     reviewed = validate_review(draft, evidence, deterministic, review)
     assert deterministic.is_valid
-    assert reviewed.accepted_claim_ids == (() if missing_parts else accepted_ids)
+    assert reviewed.accepted_claim_ids == accepted_ids
     assert AskStageRuntime._needs_repair(draft, deterministic, reviewed) is needs_repair
 
 

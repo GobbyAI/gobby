@@ -187,7 +187,7 @@ def _validate_git_metadata(
             _diagnostic("git_metadata_mismatch", "nonempty comparison is missing a changed path")
         )
     record_body = None if item.changed_path is None else item.changed_path.model_dump(mode="json")
-    expected_record_hash = _rust_json_hash(record_body)
+    expected_record_hash = _rust_json_hash([record_body, item.patch])
     if item.record_hash != expected_record_hash:
         diagnostics.append(
             _diagnostic("git_record_hash_mismatch", "commit metadata record hash is invalid")
@@ -513,7 +513,7 @@ def _citation_diagnostics(
         diagnostics.append(_diagnostic("citation_type_mismatch", "citation type is wrong"))
     else:
         git_selector = citation.model_dump(mode="json", exclude={"citation_type", "run_id"})
-        recorded_git = item.model_dump(mode="json", exclude={"item_type"})
+        recorded_git = item.model_dump(mode="json", exclude={"item_type", "patch"})
         if git_selector != recorded_git:
             diagnostics.append(
                 _diagnostic("git_metadata_mismatch", "Git metadata citation selector is stale")
@@ -715,11 +715,11 @@ def validate_review(
     reviewed_parts = {
         part_id for claim_id in candidates for part_id in claim_map[claim_id].question_part_ids
     }
-    if set(review.missing_question_parts) != part_ids - reviewed_parts:
+    if (part_ids - reviewed_parts) - set(review.missing_question_parts):
         diagnostics.append(
             _diagnostic(
                 "invalid_question_coverage",
-                "review missing-part diagnostics do not match accepted claim coverage",
+                "review omits a question part with no accepted claims",
             )
         )
     if diagnostics:

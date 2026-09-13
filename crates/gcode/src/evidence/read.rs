@@ -275,7 +275,16 @@ fn commit_items(library: &EvidenceLibrary, commit_oid: &str) -> Result<Vec<Evide
     records
         .into_iter()
         .map(|changed_path| {
-            let record_hash = canonical_hash(&changed_path)?;
+            let patch = match &changed_path {
+                Some(path) => super::provenance::read_patch(
+                    &library.repository_root,
+                    &commit.comparison_parent_oid,
+                    commit_oid,
+                    path,
+                )?,
+                None => String::new(),
+            };
+            let record_hash = canonical_hash(&(&changed_path, &patch))?;
             let evidence_id = format!(
                 "commit:{}",
                 canonical_hash(&(
@@ -296,6 +305,7 @@ fn commit_items(library: &EvidenceLibrary, commit_oid: &str) -> Result<Vec<Evide
                 changed_paths_digest: commit.changed_paths_digest.clone(),
                 changed_path_count: commit.changed_paths.len(),
                 changed_path,
+                patch,
                 record_hash,
             }))
         })

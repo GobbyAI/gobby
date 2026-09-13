@@ -8,6 +8,41 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
+pub(super) fn read_patch(
+    repo_root: &Path,
+    parent_oid: &str,
+    commit_oid: &str,
+    path: &ChangedPath,
+) -> Result<String> {
+    let mut args = vec![
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-renames",
+        "--diff-algorithm=myers",
+        "--no-indent-heuristic",
+        "--unified=3",
+        parent_oid,
+        commit_oid,
+        "--",
+    ];
+    if path.old_exclusion.is_none()
+        && let Some(old) = path.old_path.as_deref()
+    {
+        args.push(old);
+    }
+    if path.new_exclusion.is_none()
+        && let Some(new) = path.new_path.as_deref()
+    {
+        args.push(new);
+    }
+    if args.last() == Some(&"--") {
+        return Ok(String::new());
+    }
+    git_text(repo_root, &args)
+}
+
 pub(super) fn load_commit_binding(repo_root: &Path, commit_oid: &str) -> Result<CommitBinding> {
     let parents = git_text(repo_root, &["show", "-s", "--format=%P", commit_oid])?;
     let parent_oids = parents

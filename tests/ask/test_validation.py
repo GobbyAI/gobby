@@ -265,6 +265,14 @@ def test_claim_validation_and_review_gates() -> None:
     reviewed = validate_review(draft, evidence, valid, review)
     assert reviewed.accepted_claim_ids == ("claim-return", "claim-stable")
 
+    semantic_gap = review.model_copy(
+        update={"missing_question_parts": (draft.question_parts[0].id,)}
+    )
+    partial = validate_review(draft, evidence, valid, semantic_gap)
+    assert partial.accepted_claim_ids == reviewed.accepted_claim_ids
+    assert partial.missing_question_parts == semantic_gap.missing_question_parts
+    assert not partial.diagnostics
+
     citation = draft.claims[0].citations[0]
     cross_run = draft.model_copy(
         update={
@@ -431,7 +439,8 @@ def test_typed_git_metadata_citation_binds_canonical_comparison(
         "comparison_kind": "first_parent",
         "changed_paths_digest": _json_hash([changed_path], sort_keys=False),
     }
-    record_hash = _json_hash(changed_path, sort_keys=False)
+    patch = "@@ -1 +1 @@\n-old value\n+new value\n"
+    record_hash = _json_hash([changed_path, patch], sort_keys=False)
     evidence_id = "commit:" + _json_hash(
         [
             commit_oid,
@@ -453,6 +462,7 @@ def test_typed_git_metadata_citation_binds_canonical_comparison(
         "changed_paths_digest": commit["changed_paths_digest"],
         "changed_path_count": 1,
         "changed_path": changed_path,
+        "patch": patch,
         "record_hash": record_hash,
     }
     response = body["records"][0]["response"]
@@ -520,6 +530,17 @@ def test_typed_git_metadata_citation_binds_canonical_comparison(
     )
     report = validate_claims(altered, evidence, pinned_blobs=blobs)
     assert "git_metadata_mismatch" in report.diagnostic_codes
+
+    response["items"][-1]["patch"] += "tampered\n"
+    response["bounds"]["serialized_item_bytes"] = sum(
+        len(json.dumps(item, separators=(",", ":")).encode()) for item in response["items"]
+    )
+    body["records"][0]["response_hash"] = _json_hash(response)
+    tampered = EvidenceManifest.model_validate(body)
+    assert (
+        "git_record_hash_mismatch"
+        in validate_claims(metadata_draft, tampered, pinned_blobs=blobs).diagnostic_codes
+    )
 
 
 def test_negative_scope_requires_complete_evidence() -> None:

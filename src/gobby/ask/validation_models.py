@@ -86,6 +86,7 @@ class CommitMetadataEvidenceItem(_FrozenModel):
     changed_paths_digest: Sha256Digest
     changed_path_count: int = Field(ge=0)
     changed_path: ChangedPathSelector | None = None
+    patch: str
     record_hash: Sha256Digest
 
 

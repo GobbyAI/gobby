@@ -832,10 +832,15 @@ fn assert_continuation_binding(library: &EvidenceLibrary) -> anyhow::Result<()> 
 
 #[test]
 fn commit_metadata_can_read_history_without_rebinding_the_source_index() -> anyhow::Result<()> {
-    let (temporary, binding) = source_repo()?;
+    let (temporary, mut binding) = source_repo()?;
     let repo = temporary.path();
+    std::fs::write(repo.join("history.txt"), "historical value\n")?;
+    git(repo, &["add", "history.txt"])?;
+    binding.commit_oid = commit(repo, "historical change")?;
+    binding.tree_oid = git(repo, &["rev-parse", "HEAD^{tree}"])?;
+    std::fs::write(repo.join("history.txt"), "current value\n")?;
     std::fs::write(repo.join("later.txt"), "later\n")?;
-    git(repo, &["add", "later.txt"])?;
+    git(repo, &["add", "history.txt", "later.txt"])?;
     let later = commit(repo, "later change")?;
     let current_binding = RepositoryBinding {
         commit_oid: later.clone(),
@@ -863,6 +868,12 @@ fn commit_metadata_can_read_history_without_rebinding_the_source_index() -> anyh
         };
         assert_eq!(item.commit_oid, binding.commit_oid);
         assert_ne!(item.commit_oid, later);
+        assert!(item.patch.contains("+historical value"));
+        assert!(!item.patch.contains("current value"));
+        assert_eq!(
+            item.record_hash,
+            super::source::canonical_hash(&(&item.changed_path, &item.patch))?
+        );
         assert_ne!(
             item.changed_path.and_then(|path| path.new_path),
             Some("later.txt".to_string())

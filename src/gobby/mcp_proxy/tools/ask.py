@@ -237,6 +237,7 @@ def create_ask_registry(
             '{"kind":"range","path":"relative/file","start_line":1,"end_line":40}, or '
             '{"kind":"symbol","path":"relative/file","qualified_name":"Class.method"}, '
             'or {"kind":"commit_metadata","commit_oid":"full 40-character commit hash"}. '
+            "Commit metadata includes each changed path and its first-parent Git patch. "
             "Omit commit_oid for the recorded HEAD; an explicit commit reads its first-parent "
             "change metadata without changing the source index. "
             "Graph selector has query callers/callees/usages/"

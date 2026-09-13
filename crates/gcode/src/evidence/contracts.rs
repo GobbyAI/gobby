@@ -328,6 +328,7 @@ pub struct CommitMetadataEvidence {
     pub changed_path_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_path: Option<ChangedPath>,
+    pub patch: String,
     pub record_hash: String,
 }
 

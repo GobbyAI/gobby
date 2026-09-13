@@ -201,7 +201,11 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
             {
                 "citation_type": "git_metadata",
                 "run_id": record.run_id,
-                **{key: value for key, value in metadata_item.items() if key != "item_type"},
+                **{
+                    key: value
+                    for key, value in metadata_item.items()
+                    if key not in {"item_type", "patch"}
+                },
             }
         )
         assert not {"line_start", "line_end", "byte_start", "byte_end"} & metadata_item.keys()
