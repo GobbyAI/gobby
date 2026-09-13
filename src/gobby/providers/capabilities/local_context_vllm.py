@@ -139,20 +139,19 @@ async def discover_vllm_context(
     instances: list[LocalContextInstance] = []
     catalog: VLLMServedCatalog | None = None
     try:
-        url = httpx.URL(vllm_models_url(identity.api_base)).copy_with(
+        configured = httpx.URL(identity.api_base)
+        path = configured.path.rstrip("/")
+        if not path.endswith("/v1"):
+            path = f"{path}/v1"
+        api_base = configured.copy_with(
+            path=path,
             username=None,
             password=None,
             query=None,
             fragment=None,
         )
-        provenance["api_base"] = str(
-            httpx.URL(vllm_api_base(identity.api_base)).copy_with(
-                username=None,
-                password=None,
-                query=None,
-                fragment=None,
-            )
-        ).rstrip("/")
+        url = api_base.copy_with(path=f"{path}/models")
+        provenance["api_base"] = str(api_base).rstrip("/")
         headers = {"Authorization": f"Bearer {identity.api_key}"} if identity.api_key else {}
         response = await client.get(
             url,

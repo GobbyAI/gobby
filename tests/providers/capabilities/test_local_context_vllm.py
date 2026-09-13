@@ -187,6 +187,26 @@ async def test_vllm_native_path_and_optional_auth() -> None:
     assert observation.effective_limit == 8192
 
 
+@pytest.mark.parametrize(
+    "api_base",
+    (
+        "http://private-user:private-password@localhost:8000/v1?token=private-query",
+        "http://private-user:private-password@localhost:8000/v1#private-fragment",
+    ),
+)
+async def test_vllm_strips_query_and_fragment_before_appending_models(api_base: str) -> None:
+    identity = replace(IDENTITY, api_base=api_base)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("http://localhost:8000/v1/models")
+        return httpx.Response(200, json={"data": [{"id": MODEL, "max_model_len": 8192}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        observation = await discover_vllm_context(client, identity, MODEL)
+
+    assert observation.provenance["api_base"] == "http://localhost:8000/v1"
+
+
 async def test_vllm_cancellation_propagates() -> None:
     def respond(_request: httpx.Request) -> httpx.Response:
         raise asyncio.CancelledError
