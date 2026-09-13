@@ -1,0 +1,993 @@
+{
+  "version": 1,
+  "capability": "integrations",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/integrations.md",
+      "anchors": [
+        "integrations-guide",
+        "integration-surface",
+        "prerequisites",
+        "github",
+        "link-a-repository",
+        "configure-background-synchronization-and-triage",
+        "import-issues",
+        "sync-a-linked-task-to-its-issue",
+        "create-a-pull-request-for-a-task",
+        "github-mcp-tools",
+        "linear",
+        "inspect-available-teams",
+        "link-or-set-up-linear",
+        "import-issues-1",
+        "sync-one-task",
+        "sync-the-project",
+        "create-a-linear-issue-from-a-task",
+        "state-mapping",
+        "troubleshooting",
+        "see-also"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "sync-triage-source-review",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Whole guide, including examples, provider/operation tables, constraints and recovery."
+    },
+    {
+      "path": "docs/guides/hook-schemas.md",
+      "anchors": [
+        "hook-schemas",
+        "overview",
+        "http-request-envelope",
+        "http-response-semantics",
+        "daemon-down-critical-posture",
+        "runtime-schema-compatibility",
+        "native-to-workflow-mapping",
+        "semantic-rule-events",
+        "claude-code",
+        "agy",
+        "qwen",
+        "codex",
+        "grok",
+        "droid",
+        "common-payload-fields",
+        "provider-payload-examples",
+        "claude-code-1",
+        "agy-1",
+        "qwen-1",
+        "codex-1",
+        "droid-1",
+        "grok-1",
+        "unified-hookevent-model",
+        "unified-hookresponse-model",
+        "response-translation",
+        "context-fields",
+        "blocking-and-tool-control",
+        "integration-example"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "provider-source-review",
+        "native-regressions",
+        "cli-hook-floor",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Whole guide, including examples, provider/operation tables, constraints and recovery."
+    },
+    {
+      "path": "docs/guides/ghook-user-guide.md",
+      "anchors": [
+        "ghook-user-guide",
+        "installation",
+        "first-run-on-macos",
+        "how-it-works",
+        "planned-shutdown-fail-open-handling",
+        "terminal-context",
+        "cli-surface",
+        "exit-codes",
+        "wiring-ghook-into-claude-code",
+        "codex-qwen-droid-grok-agy",
+        "diagnose-mode",
+        "machine-identity",
+        "inbox--replay",
+        "quarantine",
+        "troubleshooting",
+        "ghook-no-mode-specified",
+        "--gobby-owned-requires---cli-and---type",
+        "hook-fires-but-daemon-never-receives-it",
+        "hook-returns-exit-2-unexpectedly",
+        "sandbox-fs-read-denials-macos",
+        "schema-version-mismatch"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "provider-source-review",
+        "native-regressions",
+        "cli-hook-floor",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Whole guide, including examples, provider/operation tables, constraints and recovery."
+    },
+    {
+      "path": "docs/guides/webhooks-and-plugins.md",
+      "anchors": [
+        "webhooks-and-plugin-extension-guide",
+        "choosing-a-webhook-surface",
+        "hook-extension-webhooks",
+        "endpoint-fields",
+        "event-names",
+        "payload-shape",
+        "blocking-webhooks",
+        "cli-and-http-management",
+        "pipeline-webhooks",
+        "shared-transport-and-workflow-action-model",
+        "plugin-development-status",
+        "troubleshooting",
+        "see-also"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "webhook-source-review",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Whole guide, including examples, provider/operation tables, constraints and recovery."
+    },
+    {
+      "path": "docs/guides/webhook-action-schema.md",
+      "anchors": [
+        "webhook-transport-and-workflow-action-model",
+        "action-model-schema",
+        "required-fields",
+        "optional-fields",
+        "retry-and-capture-metadata",
+        "live-transport-api",
+        "hook-dispatcher-stack",
+        "pipeline-notifications",
+        "parse-only-example",
+        "validation-and-serialization",
+        "related-files"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "webhook-source-review",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Whole guide, including examples, provider/operation tables, constraints and recovery."
+    },
+    {
+      "path": "docs/guides/github-issue-triage.md",
+      "anchors": [
+        "github-issue-triage",
+        "architecture",
+        "setup",
+        "labels",
+        "comments",
+        "judgment",
+        "audit-tables",
+        "qdrant-indexing",
+        "runbook",
+        "limitations"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "sync-triage-source-review",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Whole guide, including examples, provider/operation tables, constraints and recovery."
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "integrations-and-resource-portability",
+        "gobby-hooks-and-gobby-webhooks"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "webhook-source-review",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Only integration and hook/webhook command sections; remainder owned by other capabilities."
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "post-apihooksexecute"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "registered-tool-schemas",
+        "focused-sync-triage-final",
+        "webhook-source-review",
+        "catalog-links-symbols-final",
+        "independent-documentation-review"
+      ],
+      "audit_status": "verified",
+      "scope": "Hook/webhook route table, hook envelope section and three project integration routes only; remaining sections owned by other capabilities."
+    }
+  ],
+  "operations": [
+    {
+      "surface": "cli",
+      "command": "gobby github setup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_setup"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby github status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_status"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby github link",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_link"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby github unlink",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_unlink"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby github import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_import"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby github sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_sync"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby github pr",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/github.py",
+        "symbol": "github_pr"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear teams",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_teams"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_status"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear link",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_link"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear unlink",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_unlink"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear setup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_setup"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_import"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_sync"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear sync-all",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_sync_all"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby linear create",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/cli/linear.py",
+        "symbol": "linear_create"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hooks list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "hooks_list"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hooks test",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "hooks_test"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hooks run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "hooks_run"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hooks status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "hooks_status"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hooks disable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "hooks_disable"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hooks enable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "hooks_enable"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby webhooks list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/webhooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "webhooks_list"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby webhooks test",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/webhooks.md",
+      "implementation": {
+        "path": "src/gobby/cli/extensions.py",
+        "symbol": "webhooks_test"
+      },
+      "verification": [
+        "cli-registry",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "import_github_issues",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_github.py",
+        "symbol": "create_github_registry.import_github_issues"
+      },
+      "verification": [
+        "registered-tool-schemas"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "link_task_to_github_issue",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_github.py",
+        "symbol": "create_github_registry.link_task_to_github_issue"
+      },
+      "verification": [
+        "registered-tool-schemas"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "close_linked_github_issue",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "create_stage_ops_registry.close_linked_github_issue"
+      },
+      "verification": [
+        "registered-tool-schemas"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/hooks/execute",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/hooks.py",
+        "symbol": "create_hooks_router.execute_hook"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "provider-transport"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/webhooks",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/webhooks.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/webhooks.py",
+        "symbol": "create_webhooks_router.list_webhooks"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/webhooks/test",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/webhooks.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/mcp/webhooks.py",
+        "symbol": "create_webhooks_router.test_webhook"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/github/webhooks/triage/{project_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/webhooks.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/github_triage.py",
+        "symbol": "create_github_triage_router.github_triage_webhook"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/projects/{project_id}/github-triage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.get_github_triage_config"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "route": "/api/projects/{project_id}/github-triage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.update_github_triage_config"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/projects/{project_id}/integrations/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/external.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/projects.py",
+        "symbol": "create_projects_router.get_integrations_status"
+      },
+      "verification": [
+        "source-inventory",
+        "focused-python-initial"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "shared_surfaces": [
+    {
+      "capability": "source-control",
+      "operations": [
+        "open_delivery_pr",
+        "record_merge_result"
+      ],
+      "reason": "PR and merge lifecycle stay in source-control; linked issue closure is covered here too."
+    },
+    {
+      "capability": "communications",
+      "operations": [
+        "channel webhooks"
+      ],
+      "reason": "Channel signature validation and routing stay in communications."
+    },
+    {
+      "capability": "config",
+      "operations": [
+        "project fields and daemon configuration"
+      ],
+      "reason": "Use the config/project owner for configuration writes; this audit owns integration semantics."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-inventory",
+      "status": "passed",
+      "description": "Current CLI callbacks/Click registry, registered task tools, hook dispatch and provider contracts, ghook queue/receipt/diagnose, webhook transport and model callers, GitHub/Linear sync and triage inspected. Per-guide anchors and supporting evidence recorded."
+    },
+    {
+      "id": "cli-registry",
+      "status": "passed",
+      "command": "uv run python: imported github/linear/hooks/webhooks Click groups and enumerated commands/parameters without invoking callbacks",
+      "result": "24 concrete subcommands inspected"
+    },
+    {
+      "id": "registered-tool-schemas",
+      "status": "passed",
+      "command": "get_tool_schema(gobby-tasks-ops, import_github_issues/link_task_to_github_issue/close_linked_github_issue)",
+      "result": "All three current schemas fetched in session #12910"
+    },
+    {
+      "id": "focused-python-initial",
+      "status": "passed",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py tests/cli/test_github_coverage.py tests/cli/test_linear_coverage.py tests/github_triage/test_github_triage_service.py tests/servers/routes/test_github_triage_webhooks.py tests/servers/routes/test_project_github_triage_config.py tests/hooks/test_webhooks.py tests/hooks/test_config_hook_extensions.py tests/workflows/test_pipeline_webhooks.py tests/workflows/test_webhook_action.py tests/utils/test_webhook_transport.py -q --tb=short",
+      "result": "303 passed in 17.70s; before edits"
+    },
+    {
+      "id": "native-regressions",
+      "status": "passed",
+      "command": "cargo nextest run -p gobby-hooks",
+      "result": "183 passed, 0 skipped in 7.607s; includes three new project-disable CLI contract tests"
+    },
+    {
+      "id": "native-lint",
+      "status": "passed",
+      "command": "cargo clippy -p gobby-hooks --all-targets -- -D warnings; cargo fmt -p gobby-hooks -- --check",
+      "result": "Both commands separately passed"
+    },
+    {
+      "id": "native-test-quality",
+      "status": "passed",
+      "command": "uv run gobby test-quality audit crates/ghook/tests/contract.rs --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "1 file,47 tests,0 issues"
+    },
+    {
+      "id": "native-cutover",
+      "status": "passed",
+      "command": "cargo build --release -p gobby-hooks; new-inode copy/replace; installed binary smoke using temporary project/state and --enqueue-only",
+      "result": "Commit d571ec32f1 installed; inode 400836134 -> 402217572; schema identity unchanged; disabled skips malformed stdin without spool, re-enable enqueues; no live daemon request"
+    },
+    {
+      "id": "cli-hook-floor",
+      "status": "passed",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py tests/servers/routes/test_hooks_agy_dispatch.py -q --tb=short",
+      "result": "114 passed in 12.81s after CLI capability/env-status edits; later fixture cleanup verified in focused-sync-triage-final."
+    },
+    {
+      "id": "python-quality",
+      "status": "passed",
+      "command": "uv run gobby test-quality audit tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "2 files,77 tests,0 issues"
+    },
+    {
+      "id": "python-lint",
+      "status": "passed",
+      "command": "uv run ruff check src/gobby/cli/extensions.py tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py; uv run ruff format --check same paths; uv run mypy src/gobby/cli/extensions.py",
+      "result": "All commands separately passed before annotation cleanup"
+    },
+    {
+      "id": "catalog-links-symbols-initial",
+      "status": "passed",
+      "command": "uv run python /tmp/gobby_integrations_validate.py",
+      "result": "23 capabilities,34 operation symbols,78 local links/anchors passed before final guide anchor inventory; superseded by catalog-links-symbols-final."
+    },
+    {
+      "id": "catalog-cli-docs-initial",
+      "status": "passed",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_capability_catalog.py tests/docs/test_github_issue_triage_docs.py tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py -q --tb=short",
+      "result": "96 passed in0.28s after fixture annotation cleanup; guide link correction and audit edits followed."
+    },
+    {
+      "id": "python-types",
+      "status": "passed",
+      "command": "uv run gobby test-types audit tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py --baseline .gobby/test-types-baseline.json --fail-on-new",
+      "result": "2files,0errors after fixing two encountered baseline untyped fixtures; baseline not modified."
+    },
+    {
+      "id": "sync-triage-source-review",
+      "status": "passed",
+      "description": "Read GitHubSyncService.import_github_issues, MCP create_github_registry.import_github_issues, LinearTaskOpsMixin.import_linear_issues/pull_linear_updates/sync_all/sync_active_forward, GitHubIssueTriageService._judge/_triage_issue_locked/apply_triage_outcome and DeliveryProcessor.process/recover. Verified imports, timestamp precedence, lifecycle projection, cursor retention, deterministic gates, build approval and lease recovery."
+    },
+    {
+      "id": "provider-source-review",
+      "status": "passed",
+      "description": "Imported all six current event maps/contracts and compared guide mappings; read HookEvent/HookResponse, Grok lifecycle translation, provider capabilities, ghook diagnose and CLI registry, quarantine writer and inbox drain. Corrected omitted mappings, Grok sessionId, model fields and receipt settlement. Inspected hooks route timeout branch and native retry-backpressure branch against test_timeout_with_capability_returns_503_adapter_timeout."
+    },
+    {
+      "id": "webhook-source-review",
+      "status": "passed",
+      "description": "Read WebhookAction.from_dict, RetryConfig.from_dict, WebhookNotifier, WebhookEndpointConfig, config expansion, WebhookDispatcher payload and delivery, synchronous blocking dispatcher, WebhookTransport.execute and runtime environment expansion. WebhookAction occurrence inventory found model-only runtime ownership. Corrected stale notifier docstring."
+    },
+    {
+      "id": "focused-sync-triage-final",
+      "status": "passed",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/sync/test_github_sync.py tests/sync/test_linear_sync.py tests/sync/test_external_coordinator.py tests/sync/test_github_issue_sync.py tests/github_triage/test_github_triage_service.py tests/skills/test_capability_catalog.py tests/docs/test_github_issue_triage_docs.py tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py tests/workflows/test_pipeline_webhooks.py tests/workflows/test_webhook_action.py -q --tb=short",
+      "result": "355 passed in 12.30s. Later reference wording qualification is documentation-only."
+    },
+    {
+      "id": "independent-python-review",
+      "status": "passed",
+      "description": "Mendel reviewed three changed CLI Python/test files via OCR and complete diffs: 3/3 files, 100%, no skips, no material findings. Confirmed diagnostic no-envelope-ID receipt boundary."
+    },
+    {
+      "id": "independent-documentation-review",
+      "status": "passed",
+      "description": "Mendel reviewed 16 paths: eight scoped guides, five references, catalog, audit and notifier docstring; 100% coverage, no skips. One medium duplicate-before-judge qualification fixed and rechecked; no remaining material findings."
+    },
+    {
+      "id": "catalog-links-symbols-final",
+      "status": "passed",
+      "command": "uv run python /tmp/gobby_integrations_validate.py",
+      "result": "23 capabilities,34 operation symbols,79 local links/anchors and populated guide anchor inventories passed."
+    },
+    {
+      "id": "python-lint-final",
+      "status": "passed",
+      "command": "uv run ruff check src/gobby/cli/extensions.py src/gobby/workflows/pipeline_webhooks.py tests/cli/test_cli_extensions.py tests/cli/test_extensions_coverage.py; uv run ruff format --check same paths; uv run mypy src/gobby/cli/extensions.py src/gobby/workflows/pipeline_webhooks.py",
+      "result": "Separately executed: Ruff clean,4 files formatted,mypy clean."
+    }
+  ],
+  "discrepancies": [
+    {
+      "id": "project-disable-not-consumed",
+      "finding": "hooks disable persisted a boolean that ghook never read.",
+      "resolution": "Fixed in d571ec32f1: consume explicit true from resolved project and AGY workspace root, preserve malformed-marker posture and provider skip output; installed and fixture verified."
+    },
+    {
+      "id": "hook-test-capability",
+      "finding": "Synthetic hooks test omitted request-carried response capability and was rejected before adapter evaluation.",
+      "resolution": "Added shared capability constant and CLI regression assertion; verified alongside route capability-floor tests."
+    },
+    {
+      "id": "env-disable-status",
+      "finding": "hooks status treated every non-empty GOBBY_HOOKS_DISABLED value as disabled while ghook only honors 1.",
+      "resolution": "Match exact value 1; parameterized status tests cover 1,0,true,empty."
+    },
+    {
+      "id": "linear-setup-drift",
+      "finding": "Guide advertised removed setup/auto-sync flags, omitted team-wide import opt-in, and misstated inbound state projection.",
+      "resolution": "Corrected current Click syntax, setup enablement and mapping semantics."
+    },
+    {
+      "id": "github-intake-auth",
+      "finding": "Guide claimed disabled intake returns403 and used retired enabled config field; duplicate description implied original row state changed.",
+      "resolution": "Document uniform401 auth, independent sync_enabled/triage_enabled, and duplicate return semantics."
+    },
+    {
+      "id": "native-guide-drift",
+      "finding": "Guide claimed unknown CLI fallback, pre-stdin shutdown preflight and unconditional spool/delete; omitted unmanaged bypass, enqueue-only, schema identity and receipts.",
+      "resolution": "Corrected from current native source; provider mapping/guide audit completed."
+    },
+    {
+      "id": "pipeline-webhook-expansion",
+      "finding": "Guide promised environment interpolation and POST/PUT-only methods; notifier passes endpoint strings literally and shared transport supports five methods.",
+      "resolution": "Corrected pipeline examples and model/runtime boundary; test_pipeline_webhooks explicitly asserts literal Authorization placeholder."
+    },
+    {
+      "id": "webhook-test-boundary",
+      "finding": "Management test route uses direct httpx, unlike runtime hardened transport.",
+      "resolution": "Document test as real basic-delivery diagnostic, not runtime policy proof."
+    },
+    {
+      "id": "triage-judge-default",
+      "finding": "Guide claimed missing judge implements and all semantic duplicates dedup.",
+      "resolution": "Source _judge escalates absent/failed/malformed judges; duplicate checks run first, >=0.97 can close and lower-confidence matches escalate. Corrected guide and reference; confirmed by focused triage tests."
+    },
+    {
+      "id": "linear-cursor-and-import-overwrite",
+      "finding": "Guide omitted cursor retention on errors/deferred work and MCP-vs-CLI GitHub import overwrite/lifecycle differences.",
+      "resolution": "Documented pull failure suppressing push and cursor advancement, timestamp checks and MCP field overwrite without remote lifecycle projection."
+    },
+    {
+      "id": "provider-schema-drift",
+      "finding": "Provider tables omitted new Claude/Codex/Grok hooks and models omitted lifecycle evidence/display fields; evaluation timeout paragraph contradicted current capability retry path.",
+      "resolution": "Added mappings and fields, distinguished Grok wait/interruption dispositions, documented route/native 503 retry with concrete test evidence."
+    },
+    {
+      "id": "diagnose-and-recovery-claims",
+      "finding": "Guide overstated diagnose equivalence, unconditional inbox removal, status visibility for quarantined stdin and guaranteed sandbox recovery.",
+      "resolution": "Documented diagnose scope, receipt settlement, quarantine inspection and direct-POST fallback limits. Removed unsupported installation/signing assertions."
+    },
+    {
+      "id": "pipeline-notifier-docstring",
+      "finding": "Notifier docstring claimed secret interpolation despite literal values.",
+      "resolution": "Corrected docstring to match unchanged implementation and existing literal-header tests."
+    }
+  ],
+  "live_state": {
+    "assertions": "No rules, profiles, pipelines, endpoints or issue integrations asserted active from templates. No project integration configuration changed.",
+    "native_coordination": "Session #12967 message 30b8879f-c46d-4007-93c5-971db8b21b7b confirmed standalone ghook safe; no gterm/gcode/gdaemon promotion or host replacement."
+  },
+  "native_cli": [
+    {
+      "command": "ghook --gobby-owned --cli=NAME --type=EVENT [--detach] [--enqueue-only]",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": "crates/ghook/src/main.rs::main",
+      "verification": [
+        "native-regressions"
+      ]
+    },
+    {
+      "command": "ghook --diagnose --cli=NAME --type=EVENT",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": "crates/ghook/src/main.rs::main",
+      "verification": [
+        "native-regressions"
+      ]
+    },
+    {
+      "command": "ghook --version",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": "crates/ghook/src/main.rs::main",
+      "verification": [
+        "native-regressions"
+      ]
+    },
+    {
+      "command": "ghook schema-identity --json",
+      "reference": "src/gobby/install/shared/skills/gobby/references/integrations/hooks.md",
+      "implementation": "crates/ghook/src/main.rs::main",
+      "verification": [
+        "native-regressions"
+      ]
+    }
+  ],
+  "verification_limits": [
+    "No external issue writes, real webhook sends or live project hook-disable mutation performed.",
+    "No full pytest suite requested or run.",
+    "Guide audit is scoped to integrations; shared CLI and HTTP sections outside the listed scope belong to other capability deliverables."
+  ]
+}

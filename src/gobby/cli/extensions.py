@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from gobby.cli.mcp_proxy import call_mcp_api, check_daemon_running, get_daemon_client
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ def hooks_test(ctx: click.Context, hook_type: str, source: str, json_format: boo
     # Build test payload
     test_payload = {
         "schema_version": 1,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
         "enqueued_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "critical": False,
         "hook_type": hook_type,
@@ -311,7 +313,7 @@ def hooks_status(json_format: bool) -> None:
             logger.debug("Failed to read project config %s: %s", project_json_path, e)
 
     # Check env var
-    env_disabled = bool(os.environ.get("GOBBY_HOOKS_DISABLED"))
+    env_disabled = os.environ.get("GOBBY_HOOKS_DISABLED") == "1"
 
     rtk_output: dict[str, Any]
     try:

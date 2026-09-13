@@ -889,21 +889,44 @@ for scheduling and reject ordinary toggle/delete. See [cron scheduler](./cron-sc
 ## Integrations And Resource Portability
 
 ```bash
-gobby github status
-gobby github link REPO_URL
+gobby github status [--project REF] [--all] [--json]
+gobby github setup [--repo OWNER/REPO] [--sync | --no-sync] [--triage | --no-triage]
+gobby github link OWNER/REPO
 gobby github unlink
-gobby github import [OPTIONS]
+gobby github import [OWNER/REPO] [--labels LABELS] [--state open|closed|all] [--json]
 gobby github sync TASK
-gobby github pr TASK [OPTIONS]
+gobby github pr TASK --head BRANCH [--base main] [--draft] [--json]
 
-gobby linear status
+gobby linear teams [--json]
+gobby linear status [--project REF] [--all] [--json]
+gobby linear setup --bootstrap [--team-id TEAM] [--project-id LINEAR_PROJECT]
 gobby linear link TEAM_ID
 gobby linear unlink
-gobby linear import [OPTIONS]
+gobby linear import [TEAM_ID] [--state STATE] [--labels LABELS] [--allow-team-wide] [--json]
 gobby linear sync TASK
-gobby linear create TASK
-
+gobby linear sync-all [TEAM_ID] [--forward] [--json]
+gobby linear create TASK [--team TEAM_ID] [--json]
 ```
+
+These are operator integration procedures. See [Integrations](./integrations.md)
+for setup options, sync scope and recovery. Agents use the registered task MCP
+tools for lifecycle mutations. Quote task references in a shell (`'#123'`).
+
+## `gobby hooks` and `gobby webhooks`
+
+| Command | Behavior |
+| --- | --- |
+| `gobby hooks list [--json]` | List normalized event names locally; this is not an inventory of enabled rules. |
+| `gobby hooks status [--json]` | Inspect project verification settings, disable flags and installed RTK rule diagnostics. |
+| `gobby hooks run STAGE [--dry-run] [--verbose] [--json]` | Run project verification for `pre-commit`, `pre-push`, or `pre-merge`; dry-run only lists commands. |
+| `gobby hooks disable` / `gobby hooks enable` | Set/remove the project-root `hooks_disabled` flag. Operator control; not an agent gate workaround. |
+| `gobby hooks test HOOK_TYPE [--source CLI] [--json]` | Send a synthetic event through the daemon; can trigger real hook effects. |
+| `gobby webhooks list [--json]` | Inspect configured hook-extension endpoints. |
+| `gobby webhooks test NAME [--event EVENT] [--json]` | Send one outbound test request; not a runtime policy simulation. |
+
+Use an isolated daemon/receiver for mutating verification. See
+[ghook](./ghook-user-guide.md) for native dispatch and
+[webhooks](./webhooks-and-plugins.md) for transport and blocking semantics.
 
 ## `gobby projects`
 

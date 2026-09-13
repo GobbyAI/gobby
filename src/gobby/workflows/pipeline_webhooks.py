@@ -146,7 +146,7 @@ class WebhookNotifier:
         Args:
             url: Target URL
             method: Supported HTTP method.
-            headers: Request headers. Only explicit webhook secrets are interpolated.
+            headers: Request headers, passed literally without interpolation.
             payload: JSON payload to send
         """
         try:

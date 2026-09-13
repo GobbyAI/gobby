@@ -1,51 +1,68 @@
 # ghook User Guide
 
-ghook is the sandbox-tolerant hook dispatcher Gobby uses to receive lifecycle and tool-use events from host AI CLIs (Claude Code, Codex, Factory Droid, Grok, Qwen CLI, and AGY). It enqueues an envelope to `~/.gobby/hooks/inbox/` *before* attempting to POST to the local Gobby daemon — so the daemon's drain worker can replay any envelope whose POST was lost to a sandbox FS-read denial, a network blip, or a daemon restart.
+ghook receives lifecycle and tool-use events from Claude Code, Codex, Factory
+Droid, Grok, Qwen CLI, and AGY. Managed hook dispatch normally enqueues an
+envelope to `$GOBBY_HOME/hooks/inbox/` before attempting delivery, so the daemon
+can replay an interrupted delivery. If enqueue fails, the live path attempts a
+bounded direct POST; `--enqueue-only` cannot use that fallback.
 
 You don't usually invoke ghook directly. The Gobby installer wires it into each host CLI's hook configuration. This guide explains what it does, how to verify it's working, and how to wire it manually if you need to.
 
 ## Installation
 
-If you use [Gobby](https://github.com/GobbyAI/gobby), ghook is already installed and wired into your supported AI CLIs.
+The Gobby installer installs ghook and wires the selected supported AI CLIs.
+Verify the installed binary and provider configuration after installation.
 
-Otherwise, install from a release binary or crates.io:
+Use the managed [installation procedure](./admin-operations.md) for normal
+operation. Contributors can build the package from this checkout:
 
 ```bash
-cargo install gobby-hooks
+cargo build --release -p gobby-hooks
 ```
 
-The binary is named `ghook` (the package is `gobby-hooks` to disambiguate from singular use; the binary stays short).
+The binary is named `ghook`. A contributor build is not an installation: use
+the repository's coordinated native cutover and new-inode installation procedure.
 
 ### First run on macOS
 
-Binaries downloaded from a GitHub release archive via a browser land with the `com.apple.quarantine` extended attribute, which Gatekeeper rejects on first run with "ghook cannot be opened because the developer cannot be verified." The binaries are already ad-hoc signed by the Rust linker; the quarantine flag is the blocker, not the signature. Clear it with:
-
-```bash
-xattr -d com.apple.quarantine ~/.gobby/bin/ghook
-```
-
-Or right-click the binary in Finder and choose *Open* once to approve it. `cargo install gobby-hooks` is unaffected — locally compiled binaries never get the quarantine attribute. Archives fetched via `curl`/`wget` also skip it.
+If macOS refuses to execute the installed binary, inspect the reported signing or
+quarantine error and follow the managed [installation and recovery guide](./admin-operations.md).
+Do not assume every launch failure is a quarantine problem. Contributor installs
+must replace the binary through a new inode, as described above.
 
 ## How It Works
 
 ```text
 host AI CLI fires hook
   └─ runs ghook --gobby-owned --cli=<c> --type=<t>
-      ├─ Stop/pre-compact: planned-shutdown marker + daemon health preflight
-      │   └─ fresh marker + unreachable daemon → {"continue":true}; no stdin/enqueue
+      ├─ reject unsupported CLI; honor environment/project hook disable
       ├─ resolves project root (walk up from cwd to .gobby/project.json or .gobby/gcode.json)
       ├─ reads stdin (the host CLI's hook payload)
+      ├─ resolve payload workspace fallback; skip unmanaged projects
+      ├─ Stop/pre-compact: fresh shutdown marker + unreachable daemon → provider skip
       ├─ stamps machine_id + os, or machine_id_error when unavailable
       ├─ enriches input_data with terminal_context (for lifecycle hooks)
       ├─ writes envelope atomically to ~/.gobby/hooks/inbox/
       └─ POSTs Python-compatible hook payload to the Gobby daemon
-          ├─ 2xx → map provider action → write + flush stdout → delete inbox file
+          ├─ 2xx → map provider action → write + flush stdout → settle inbox file
           │        └─ mapping or stdout failure → retain inbox file for recovery
           └─ failure → leave inbox file, return Python-dispatcher-compatible stdout/stderr/exit
                        └─ daemon's drain worker replays on next tick
 ```
 
-Spool-first ordering is the whole point. If anything between ghook and the daemon goes wrong (sandbox FS denial, network blip, daemon restart), the envelope is already on disk and the daemon will pick it up on its next drain pass. Replay is invisible to the host CLI; the host-visible result follows the current per-CLI hook protocol.
+Replay cannot retroactively deliver a decision to a finished host invocation.
+The live invocation follows the provider response protocol. A daemon delivery
+receipt replaces the original envelope only after stdout succeeds; the drain
+worker then acknowledges that receipt. Without a receipt, successful delivery
+removes the file. Mapping, stdout, or receipt-write failures retain the original.
+
+Dispatch skips unmanaged directories without enqueueing. A project marker,
+managed environment identity, or payload project identity establishes managed
+context; AGY can resolve a marker from `workspacePaths`. Environment project ID
+takes precedence over marker ID and payload project ID. `GOBBY_HOOKS_DISABLED=1`
+skips before any dispatch side effects. `gobby hooks disable` and `enable`, run
+at the project root, set/remove the boolean `hooks_disabled` in `project.json`;
+the dispatcher also finds this flag from nested directories and AGY workspaces.
 
 ### Planned Shutdown Fail-Open Handling
 
@@ -53,8 +70,8 @@ When Gobby intentionally stops or restarts the daemon, a host CLI may fire a
 Stop or pre-compact hook after the daemon has already exited. For Stop and the
 three registered pre-compact spellings (`pre-compact`, `PreCompact`, and
 `pre_compact`), `ghook` checks
-`$GOBBY_HOME/shutdown_intent_active.json` before project lookup, stdin reads,
-terminal-context injection, or enqueue.
+`$GOBBY_HOME/shutdown_intent_active.json` after project/stdin resolution and
+managed-context checks, before terminal-context injection or enqueue.
 
 A marker is accepted when its `timestamp` is fresh and either its `intent` is
 `stop` or `restart`, or its `source` starts with `cli_`, `http_`, `service_`, or
@@ -62,7 +79,7 @@ A marker is accepted when its `timestamp` is fresh and either its `intent` is
 maintenance CLI refreshes it on run/resume and clears it when the campaign is
 released or aborted.
 If `{daemon_url}/api/health` is unreachable during that fresh window,
-`ghook` prints `{"continue":true}` and exits 0. This check is an aliveness
+`ghook` emits the provider's skip response and exits 0. This check is an aliveness
 probe only: any HTTP response from the endpoint counts as reachable, including
 4xx/5xx, and does not imply the daemon is healthy.
 
@@ -97,12 +114,13 @@ tmux fields while the remaining process context is still captured.
 
 ## CLI Surface
 
-ghook has three modes. Exactly one must be selected.
+Select the mode matching the operation:
 
 ```text
-ghook --gobby-owned --cli=<c> --type=<t> [--detach]
+ghook --gobby-owned --cli=<c> --type=<t> [--detach] [--enqueue-only]
 ghook --diagnose    --cli=<c> --type=<t>
 ghook --version
+ghook schema-identity --json
 ```
 
 | Flag | Mode | Purpose |
@@ -113,6 +131,8 @@ ghook --version
 | `--cli` | required for dispatch/diagnose | Host CLI name: `claude`, `codex`, `qwen`, `droid`, `grok`, `agy`. Case-insensitive. |
 | `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex/Qwen, `PreInvocation`/`PreToolUse` for AGY, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
 | `--detach` | dispatch | After enqueue and project-root walk-up, call `setsid(2)` to escape the host CLI's process group before the POST. Useful for hooks where the host CLI tears down its session immediately. |
+| `--enqueue-only` | dispatch | Durably queue the event and return the provider skip response without live POST. Cannot supply a synchronous decision. |
+| `schema-identity --json` | metadata | Print the embedded datastore schema contract; no runtime stamp write. |
 
 ### Exit Codes
 
@@ -213,9 +233,9 @@ provider JSON on stdout with exit `0`, including
 `hookSpecificOutput.additionalContext`.
 
 For every CLI, a daemon 2xx becomes acknowledged only after the mapped provider
-action has been written and stdout has flushed. ghook then removes the inbox
-envelope. Mapping errors, stdout errors, and crashes before removal leave the
-file for daemon recovery.
+action has been written and stdout has flushed. ghook then settles the inbox
+file through the receipt-or-removal procedure above. Mapping errors, stdout
+errors, and crashes before settlement leave the file for daemon recovery.
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
@@ -233,17 +253,21 @@ its other hooks, including `Stop`. Successful Qwen responses, including a
 blocking `Stop`, are serialized to stdout with exit `0` so Qwen can consume the
 structured decision and reason.
 
-Unknown `--cli` values fall back to conservative Claude-like dispatch behavior on the live path. Diagnose mode still reports unknown CLIs as unrecognized.
+Unknown `--cli` values return `{}` with exit 2 before dispatch side effects.
+Diagnose mode reports them as unrecognized.
 
 ## Diagnose Mode
 
-`ghook --diagnose` is the fastest way to confirm a hook is wired correctly. It runs the same configuration resolution as `--gobby-owned` but skips the network and the envelope write — pure introspection.
+`ghook --diagnose` inspects endpoint, CLI and current-directory configuration
+without dispatching a hook. It does not prove the host invokes ghook, resolve
+stdin workspace identities, or report the effective project disable flag.
+The following is an illustrative subset of its output; versions and local values vary.
 
 ```bash
 $ ghook --diagnose --cli=claude --type=session-start
 {
   "schema_version": 2,
-  "ghook_version": "0.7.3",
+  "ghook_version": "<installed version>",
   "cli": "claude",
   "hook_type": "session-start",
   "source": "claude",
@@ -252,8 +276,8 @@ $ ghook --diagnose --cli=claude --type=session-start
   "daemon_url": "http://127.0.0.1:60887",
   "daemon_host": "127.0.0.1",
   "daemon_port": 60887,
-  "project_root": "/Users/josh/Projects/gobby",
-  "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+  "project_root": "/path/to/project",
+  "project_id": "<project UUID>",
   "terminal_context_preview": {
     "parent_pid": 72441,
     "tty": "/dev/ttys005",
@@ -263,24 +287,27 @@ $ ghook --diagnose --cli=claude --type=session-start
     "...": "..."
   },
   "cli_recognized": true,
-  "install_method": "github-release",
-  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.3/ghook-aarch64-apple-darwin.tar.gz"
+  "install_method": null,
+  "install_source_url": null
 }
 ```
 
 Look for:
 
-- **`cli_recognized: true`** — confirms ghook knows about this CLI explicitly. Unknown CLIs fall back to conservative Claude-like live dispatch behavior.
+- **`cli_recognized: true`** — confirms ghook knows this CLI; unknown CLIs are rejected by live dispatch.
 - **`critical: true/false`** — does ghook consider this hook type critical under the current per-CLI hook protocol?
 - **`terminal_context_enabled: true`** — this recognized CLI lifecycle hook
   receives terminal context. `terminal_context_preview` shows the captured
   values; unavailable tmux fields are `null`.
 - **`daemon_url`** — where will the POST go? If this is wrong, check
   `GOBBY_DAEMON_URL`, `GOBBY_PORT`, then `~/.gobby/bootstrap.yaml`.
-- **`project_root` / `project_id`** — did ghook correctly walk up from cwd to the project? `null` means no `.gobby/project.json` or `.gobby/gcode.json` marker was found — daemon will receive the envelope without an `X-Gobby-Project-Id` header.
+- **`project_root` / `project_id`** — marker lookup from the current directory. Diagnose does not consume provider stdin, so this view does not include payload workspace fallback. No marker and no other managed identity makes live dispatch skip.
+- **`local_token_file_present` / `auth_401_remediation`** — local token availability and recovery instructions; never print the token itself.
+- **`failure_dir` / `recent_failure_count` / `recent_failures`** — recorded delivery failure diagnostics.
 - **`install_method` / `install_source_url`** — how this `ghook` binary got installed (e.g. `github-release`, `crates-binstall`, `cargo-install`). Both are `null` when the binary was installed without a sidecar-writing installer (e.g. plain `cargo install gobby-hooks`). Useful in bug reports — it tells maintainers exactly which install path a user is on.
 
-The diagnose JSON is validated against `crates/ghook/schemas/diagnose-output.v2.schema.json` in tests, so the schema is stable.
+The complete diagnose JSON is validated against
+`crates/ghook/schemas/diagnose-output.v2.schema.json` in tests.
 
 ### Machine Identity
 
@@ -305,7 +332,10 @@ Envelopes spool to `~/.gobby/hooks/inbox/<prefix>-<ts13>-<uuid>.json`:
 | `uuid` | Random v4 — disambiguates within the same millisecond |
 | `.tmp` suffix | Intermediate write; never a valid replay target. `atomic_write` does write→fsync→rename so the drain only ever sees fully-written envelopes. |
 
-**Don't touch this directory by hand.** The daemon's drain worker owns it. If you need to clear stuck envelopes, stop the daemon first, delete the files, then start it again.
+The daemon owns this queue. Preserve original envelopes and receipts when
+investigating failures; deleting them loses recovery evidence and may lose
+undelivered events. Diagnose and repair the receiver first. Any operator queue
+repair needs a coordinated daemon stop and a backup of the affected files.
 
 ### Quarantine
 
@@ -314,7 +344,10 @@ Malformed stdin (the host CLI sent something that isn't valid JSON) lands in `~/
 - `<stem>.json` — body containing the raw stdin bytes, base64-encoded.
 - `<stem>.meta.json` — sidecar with `reason: "malformed_stdin"`, the JSON parse error, and the same base64 payload.
 
-The drain never replays quarantined envelopes — they surface via `gobby status` and daemon logs so you can investigate.
+The drain only scans immediate inbox files, so it never replays the quarantine
+subdirectory. Inspect the quarantine pair and hook diagnostics when investigating
+malformed input; daemon-side quarantine failures are logged. Quarantine retention
+is bounded, so preserve relevant evidence before it expires.
 
 ## Troubleshooting
 
@@ -334,14 +367,21 @@ Both flags are mandatory in dispatch mode. Check the hook entry in your host CLI
 
 ### Hook returns exit 2 unexpectedly
 
-The hook matched a critical dispatcher path and failed or was blocked. The envelope is still spooled — check `~/.gobby/hooks/inbox/` for a `c-...json` file. The daemon will replay it.
+Inspect stderr and diagnose output. Exit 2 can mean a critical delivery failure,
+invalid arguments, unsupported CLI, malformed input, or provider-specific denial.
+Only successfully enqueued envelopes can replay; malformed input uses quarantine,
+and a successfully delivered denial may already have settled its inbox file.
 
 ### Sandbox FS-read denials (macOS)
 
-The whole point of ghook's design is that this case is survivable. The envelope is written before the POST is attempted, and project-root walk-up happens before any potential `--detach`. If you see the daemon receive the envelope on the *next* hook fire instead of immediately, that's the drain worker doing its job — not a bug.
+Check which path was denied. A successfully enqueued envelope remains available
+for daemon replay after a delivery failure. An inbox write failure instead uses
+the bounded direct-POST fallback, except in `--enqueue-only` mode. If both paths
+fail, no durable recovery is guaranteed. Project-root lookup runs before detach;
+detaching does not grant filesystem access.
 
 ### Schema version mismatch
 
 Envelopes carry `schema_version: 1`. If the daemon rejects envelopes for being a newer version than it understands, the daemon needs updating. ghook's `--version` command writes `~/.gobby/bin/.ghook-runtime.json` so the daemon can detect this.
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-13_

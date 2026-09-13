@@ -24,7 +24,7 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | Qwen CLI | Current PascalCase (`SessionStart`, `PreToolUse`, `Stop`) | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
-| Grok CLI | snake_case (`session_start`, `pre_tool_use`) | `session_id` | HTTP hook command |
+| Grok CLI | snake_case (`session_start`, `pre_tool_use`) | `sessionId` normalized to `session_id` | HTTP hook command |
 
 ## HTTP Request Envelope
 
@@ -41,6 +41,7 @@ the older flat shape without `schema_version` is no longer accepted.
 ```json
 {
   "schema_version": 1,
+  "response_capability": "hook-response.v1",
   "critical": false,
   "enqueued_at": "2026-05-07T15:00:00Z",
   "source": "claude",
@@ -59,6 +60,13 @@ the older flat shape without `schema_version` is no longer accepted.
 `codex`, or `droid`. `hook_type` is the provider hook name that the selected
 adapter understands.
 
+The request must also advertise `response_capability: "hook-response.v1"`.
+Missing or older capabilities are rejected before adapter evaluation even when
+the installed binary's runtime stamp is compatible. Managed ghook supplies this
+field, the local bearer credential, and the envelope identity. A custom client
+must implement the current response and delivery-receipt protocol before
+advertising the capability; adding the string alone is not an implementation.
+
 ## HTTP Response Semantics
 
 Gobby hook delivery is at-least-once. Clients should treat HTTP 409 with
@@ -66,6 +74,13 @@ Gobby hook delivery is at-least-once. Clients should treat HTTP 409 with
 the same `X-Gobby-Envelope-Id`, not as a terminal failure. Retry with
 exponential backoff and the same envelope ID; the daemon replays a stored
 terminal response once the original delivery finishes.
+
+Managed ghook settles a delivered envelope only after mapping and flushing the
+provider response. When a receipt is returned it replaces the original inbox
+file with a delivery receipt for acknowledgement. A plain 2xx or a successful
+POST is not proof that context reached the host. Retry backpressure is HTTP 503
+with `status: "retry"`; ghook retains the envelope and continues even for a
+critical hook. Other 503 responses follow the failure matrix.
 
 ### Daemon-Down Critical Posture
 
@@ -99,10 +114,14 @@ and `pre-compact`; Codex, Qwen, and Droid `SessionStart`, `SessionEnd`, and
 no critical native event: PreInvocation, PreToolUse, PostToolUse,
 PostInvocation, and Stop are all non-critical.
 
-This transport policy is intentionally narrower than the daemon's evaluation
-failure posture. Once a request reaches the daemon, every `Stop` / `stop` hook
-fails closed on an evaluation exception or timeout, regardless of source. Any
-hook whose envelope explicitly carries `critical: true` also fails closed.
+Evaluation exceptions fail closed for `Stop` / `stop` and envelopes carrying
+`critical: true`. Evaluation timeouts on capability-bearing requests instead
+return HTTP 503 with `status: "retry"` and `retry_kind: "adapter_timeout"`.
+Managed ghook retains that envelope and lets the current invocation continue,
+including critical hooks. An outstanding adapter worker retains its processing
+lease until finalization. This retry behavior is implemented in the hooks route
+and covered by `tests/servers/routes/test_hooks_agy_dispatch.py`; it must not be
+described as a synchronous fail-closed timeout guarantee.
 
 `ghook` is versioned and released from the authoritative
 [`GobbyAI/gobby`](https://github.com/GobbyAI/gobby/tree/0.5.0/crates/ghook)
@@ -122,7 +141,7 @@ An absent stamp does not degrade health so existing installations continue to
 run until ghook has emitted runtime metadata. A malformed stamp, envelope schema
 mismatch, or ghook version below the managed minimum does degrade health. The
 daemon currently accepts envelope schema `1`; its ghook floor comes directly
-from the managed binary version policy (`0.7.1` at this verification date), so a
+from the managed binary version policy, so a
 pin update also updates the runtime compatibility threshold.
 
 ## Native To Workflow Mapping
@@ -147,14 +166,18 @@ passes kebab-case hook types to the daemon.
 | Native Hook Type | Hook Event Name | Raw Workflow Event | Semantic Event |
 | --- | --- | --- | --- |
 | `session-start` | `SessionStart` | `session_start` | `session_start` |
+| `setup` | `Setup` | `setup` | `setup` |
 | `instructions-loaded` | `InstructionsLoaded` | `instructions_loaded` | raw only |
 | `user-prompt-submit` | `UserPromptSubmit` | `before_agent` | `turn_start` |
+| `user-prompt-expansion` | `UserPromptExpansion` | `user_prompt_expansion` | `user_prompt_expansion` |
 | `pre-tool-use` | `PreToolUse` | `before_tool` | `before_tool` |
 | `permission-request` | `PermissionRequest` | `permission_request` | `permission_request` |
 | `post-tool-use` | `PostToolUse` | `after_tool` | `after_tool` |
 | `post-tool-use-failure` | `PostToolUseFailure` | `after_tool` | `after_tool` |
+| `post-tool-batch` | `PostToolBatch` | `post_tool_batch` | `post_tool_batch` |
 | `permission-denied` | `PermissionDenied` | `permission_denied` | `permission_denied` |
 | `notification` | `Notification` | `notification` | `notification` |
+| `message-display` | `MessageDisplay` | `message_display` | `message_display` |
 | `subagent-start` | `SubagentStart` | `subagent_start` | `subagent_start` |
 | `subagent-stop` | `SubagentStop` | `subagent_stop` | `subagent_stop` |
 | `task-created` | `TaskCreated` | `task_created` | `task_created` |
@@ -164,6 +187,7 @@ passes kebab-case hook types to the daemon.
 | `teammate-idle` | `TeammateIdle` | `teammate_idle` | `teammate_idle` |
 | `config-change` | `ConfigChange` | `config_change` | `config_change` |
 | `cwd-changed` | `CwdChanged` | `cwd_changed` | `cwd_changed` |
+| `directory-added` | `DirectoryAdded` | `directory_added` | `directory_added` |
 | `file-changed` | `FileChanged` | `file_changed` | `file_changed` |
 | `worktree-create` | `WorktreeCreate` | `worktree_create` | `worktree_create` |
 | `worktree-remove` | `WorktreeRemove` | `worktree_remove` | `worktree_remove` |
@@ -231,6 +255,12 @@ integration, but they are not the installed terminal hook contract.
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
 does not accept `additionalContext` for those hooks.
 
+Codex also sends `Interrupt`, normalized as `interrupt`. This is interruption
+evidence, not a turn-end gate. ghook emits no stdout for this event, including
+disabled, unmanaged, malformed, timeout and stale-daemon response paths.
+The adapter also maps `SubagentStart`, `SubagentStop`, and `SessionEnd` to
+`subagent_start`, `subagent_stop`, and `session_end`, respectively.
+
 ### Grok
 
 Grok uses lowercase snake-case native hook names and camelCase payload fields.
@@ -251,6 +281,14 @@ Grok uses lowercase snake-case native hook names and camelCase payload fields.
 | `permission_denied` | `permission_denied` | `permission_denied` |
 | `subagent_start` | `subagent_start` | `subagent_start` |
 | `subagent_stop` | `subagent_stop` | `subagent_stop` |
+| `pending_interaction` | `notification` | wait evidence |
+| `interaction_resolved` | `notification` | wait-resolution evidence |
+| `stop_cancelled` | `stop` or `interrupt` | disposition-dependent |
+
+For `stop_cancelled`, `stop_reason: user_interrupt` together with
+`cancelled_by: user` becomes `interrupt`; other cancellations carry the
+`ended_non_user` disposition. These lifecycle fields distinguish interruption
+and provider waits from a completed user turn.
 
 ### Droid
 
@@ -288,6 +326,10 @@ Shell-like tools normalize to `Bash`. Common Qwen/AGY tool names also map to
 Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 
 ## Provider Payload Examples
+
+These are provider payload fragments, not complete HTTP requests. Wrap them in
+the versioned, authenticated envelope above for an actual transport request;
+normally the installed ghook does that work.
 
 ### Claude Code
 
@@ -441,7 +483,10 @@ through a CLI shell tool that reports a definitive exit code.
 
 ## Unified HookEvent Model
 
-All adapter events are normalized to this internal dataclass:
+All adapter events are normalized to the internal dataclass in
+`src/gobby/hooks/events.py`. Its core fields are shown below; the implementation
+also carries turn disposition, wait identity/resolution, provider turn key,
+request ID and protocol cursor.
 
 ```python
 @dataclass
@@ -475,6 +520,7 @@ class HookResponse:
     context: str | None = None
     system_message: str | None = None
     reason: str | None = None
+    display_content: str | None = None
 
     modified_input: dict[str, Any] | None = None
     auto_approve: bool = False
@@ -517,7 +563,8 @@ Adapters translate these fields into the native response schema for each CLI.
 | `watch_paths` | Claude dynamic `FileChanged` watch paths |
 | `worktree_path` | Claude `WorktreeCreate` output |
 | `elicitation_*` | Claude elicitation response fields |
-| `modify_args` | Qwen `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig` |
+| `display_content` | Claude `MessageDisplay` replacement delta |
+| `modify_args` | ACP adapter `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig`; not Qwen's native terminal hook surface |
 
 For AGY `PreToolUse`, the supported decisions are `allow`, `deny`, `ask`, and
 `deny_unless_prior_grant`; `modified_input` maps to `overwrite`.
@@ -528,48 +575,17 @@ never emits `injectSteps.toolCall` because the provider treats it as fatal.
 
 ## Integration Example
 
-Custom dispatchers should use the shared `/api/hooks/execute` endpoint and pass
-the provider source explicitly:
+Use the managed dispatcher in provider hook configuration:
 
-```python
-#!/usr/bin/env python3
-import json
-import sys
-
-import requests
-
-GOBBY_URL = "http://127.0.0.1:60887/api/hooks/execute"
-
-
-def main() -> None:
-    source = sys.argv[1]
-    hook_type = sys.argv[2]
-    input_data = json.load(sys.stdin)
-
-    response = requests.post(
-        GOBBY_URL,
-        json={
-            "schema_version": 1,
-            "source": source,
-            "hook_type": hook_type,
-            "input_data": input_data,
-        },
-        timeout=5,
-    )
-    result = response.json()
-    print(json.dumps(result))
-
-    if source in {"agy", "qwen"}:
-        sys.exit(0)
-    sys.exit(0 if result.get("continue", True) else 1)
-
-
-if __name__ == "__main__":
-    main()
+```text
+ghook --gobby-owned --cli=claude --type=pre-tool-use
 ```
 
-AGY and Qwen communicate block decisions in JSON; their hook commands should
-exit `0` so the CLI treats the hook response as successful rather than a hook
-process failure.
+The provider supplies its native JSON on stdin. Do not replace this with a
+minimal HTTP script: authentication, spool durability, capability negotiation,
+duplicate handling, provider exit/output mapping and delivery receipts all belong
+to the transport contract. See [ghook](./ghook-user-guide.md) for installation,
+diagnose mode and failure recovery. Operator `gobby hooks test` is a synthetic
+diagnostic and does not establish that a real host rendered context.
 
-_Last verified: 2026-08-30 against Qwen Code 0.19.10 and AGY 1.1.24 response records_
+_Last verified: 2026-09-13_

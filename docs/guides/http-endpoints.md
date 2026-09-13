@@ -370,20 +370,23 @@ context and enforcement; the direct path is not a workflow bypass.
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/hooks/execute` | Execute a CLI hook envelope through the adapter layer. |
-| `GET` | `/api/webhooks` | List configured MCP webhooks. |
-| `POST` | `/api/webhooks/test` | Test an MCP webhook. |
+| `GET` | `/api/webhooks` | List configured hook-extension endpoints and enabled state. |
+| `POST` | `/api/webhooks/test` | Send one real outbound request to a configured endpoint (`name`, optional `event_type`). |
 | `POST` | `/api/github/webhooks/triage/{project_id}` | Receive GitHub issue triage webhook events. |
 
 ### `POST /api/hooks/execute`
 
 Required body fields: `schema_version` (must be `1`), `hook_type`, and
 `source`. Requests without `schema_version: 1` are rejected with HTTP 400.
+The ingress also requires `response_capability: "hook-response.v1"`; a
+compatible installed runtime stamp does not substitute for this request field.
 `hook_type` is the provider's native hook name (e.g. `UserPromptSubmit` for
 Codex), not a semantic rule event.
 
 ```json
 {
   "schema_version": 1,
+  "response_capability": "hook-response.v1",
   "hook_type": "UserPromptSubmit",
   "source": "codex",
   "input_data": {
@@ -396,6 +399,13 @@ Hook rule authors should use semantic lifecycle events such as `turn_start` and
 `turn_end`. Raw provider/runtime events such as `before_agent`, `after_agent`,
 and `stop` are adapter details. Agent termination is a separate lifecycle step
 and still requires `end_agent_run`.
+
+Use managed `ghook` delivery for provider hooks: it handles authentication,
+durable envelopes, duplicate retries, provider output and delivery receipts.
+Synthetic hook execution can trigger real workflow effects. The webhook test
+route is operator-only and uses a simplified HTTP path; it does not verify
+runtime event filtering, retries, address policy, or blocking decisions.
+See [Hook Schemas](./hook-schemas.md) and [Webhooks](./webhooks-and-plugins.md).
 
 ## Tasks And Stages
 
@@ -666,6 +676,7 @@ the MCP cleanup tool's Git-deletion options.
 | `POST` | `/api/projects/{project_id}/purge` | Run lifecycle-safe permanent purge through the daemon service. |
 | `GET` | `/api/projects/{project_id}/github-triage` | Read GitHub triage config. |
 | `PUT` | `/api/projects/{project_id}/github-triage` | Update GitHub triage config. |
+| `GET` | `/api/projects/{project_id}/integrations/status` | Read GitHub/Linear readiness, saved configuration and reconciliation health. |
 | `GET` | `/api/config/schema` | Read config schema. |
 | `GET` | `/api/config/values` | Read config values. |
 | `PATCH` | `/api/config/values` | Validate and atomically set/unset public values with `expected_revision`. |

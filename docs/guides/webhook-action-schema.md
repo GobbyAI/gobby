@@ -93,6 +93,11 @@ pins target addresses; disables redirects and environment proxy inheritance;
 caps response bodies; and sanitizes transport errors. Address policy is chosen
 by the caller through `allow_private_addresses`.
 
+The timeout is a shared deadline across DNS resolution, attempts and backoff.
+The default address policy rejects non-public destinations. The hook webhook
+management test route uses a separate simple HTTP request and is not a test of
+these runtime transport guarantees.
+
 `execute()` returns `WebhookTransportResult`, containing:
 
 - `success`
@@ -148,9 +153,10 @@ capture_response:
   status_var: response_status
 ```
 
-The `${secrets.API_TOKEN}` value remains literal in this model. Runtime hook and
-pipeline surfaces perform their own configuration expansion before calling the
-transport.
+The `${secrets.API_TOKEN}` value remains literal in this model. Runtime hook
+extensions expand their configured URL and header values. The pipeline model
+and notifier pass endpoint URL and headers literally; they do not expand this
+syntax or environment variables. See the [pipeline notification boundary](./webhooks-and-plugins.md#pipeline-webhooks).
 
 ## Validation And Serialization
 
@@ -169,4 +175,4 @@ populated optional fields plus the stored `method` and `timeout`.
 - [Webhooks And Plugins](./webhooks-and-plugins.md)
 - [Rules](./rules.md)
 
-_Last verified: 2026-08-02_
+_Last verified: 2026-09-13_

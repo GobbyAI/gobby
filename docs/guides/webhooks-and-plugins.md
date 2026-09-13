@@ -59,7 +59,7 @@ warning).
 | `url` | string | required | HTTP endpoint that receives JSON POSTs |
 | `events` | list[string] | `[]` | Empty list means all hook events |
 | `headers` | dict[string,string] | `{}` | Merged with Gobby's JSON and event headers |
-| `timeout` | float | `10.0` | Per-request timeout, 1 to 60 seconds |
+| `timeout` | float | `10.0` | Total transport deadline including DNS, attempts and backoff, 1 to 60 seconds |
 | `retry_count` | int | `3` | Retries after the first attempt, 0 to 10 |
 | `retry_delay` | float | `1.0` | Initial retry delay, doubled after each retry |
 | `can_block` | bool | `false` | Allows a webhook response to block the hook action |
@@ -74,7 +74,11 @@ User-Agent: Gobby-Webhook/1.0
 X-Gobby-Event: <event_type>
 ```
 
-Custom headers override or extend those defaults.
+Custom headers override or extend those defaults. Runtime delivery rejects
+non-public resolved addresses, pins the destination, disables redirects and
+environment proxy inheritance, and bounds response bodies. A retry count is a
+ceiling: the transport deadline and blocking-effect deadline can end delivery
+earlier.
 
 ### Event Names
 
@@ -164,6 +168,14 @@ The CLI calls these daemon routes:
 | `GET` | `/api/webhooks` | List configured hook webhook endpoints |
 | `POST` | `/api/webhooks/test` | Send a test payload to one endpoint |
 
+These are operator operations. `test` sends a real outbound request. Use a
+fixture receiver and temporary daemon configuration for verification. It checks
+the global and endpoint enabled flags, then sends one simplified test payload
+using `httpx`; it does not exercise runtime event filtering, blocking decisions,
+retry policy, runtime expansion, or the hardened transport's address policy.
+Success here proves basic delivery only. Never use it as evidence that a blocking
+gate or production retry path works.
+
 ## Pipeline Webhooks
 
 Pipeline webhooks live inside a `type: pipeline` workflow definition. They are
@@ -175,19 +187,17 @@ type: pipeline
 
 steps:
   - id: run_checks
-    exec: "uv run pytest tests/release -v"
+    exec: "printf 'release checks go here\\n'"
 
 webhooks:
   on_approval_pending:
-    url: "${REVIEW_WEBHOOK_URL}"
+    url: "https://receiver.example.com/review"
     method: POST
-    headers:
-      Authorization: "Bearer ${REVIEW_WEBHOOK_TOKEN}"
   on_complete:
-    url: "${PIPELINE_WEBHOOK_URL}"
+    url: "https://receiver.example.com/pipeline"
     method: POST
   on_failure:
-    url: "${PIPELINE_WEBHOOK_URL}"
+    url: "https://receiver.example.com/pipeline"
     method: POST
 ```
 
@@ -196,8 +206,14 @@ Pipeline webhook endpoints support:
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `url` | string | required | Target URL |
-| `method` | string | `POST` | Runtime sender supports `POST` and `PUT` |
-| `headers` | dict[string,string] | `{}` | Header values expand `${VAR}` from the environment |
+| `method` | string | `POST` | Validated by the shared transport (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) |
+| `headers` | dict[string,string] | `{}` | Passed literally by the notifier |
+
+The pipeline model and notifier do not interpolate `${VAR}` or `$secret:NAME`.
+Supply resolved endpoint configuration through the configuration owner's secure
+provisioning path; do not commit credentials or assume the hook-extension
+expansion rules apply to pipelines. The example uses placeholder public URLs
+and must be configured before execution.
 
 Approval-pending payloads include `execution_id`, `pipeline_name`, `step_id`,
 `token`, `message`, `approve_url`, `reject_url`, and `status`. Completion
@@ -270,4 +286,4 @@ Use these supported extension points instead:
 - [HTTP Endpoints](./http-endpoints.md) - Webhook management routes.
 - [Configuration](./configuration.md) - Daemon config shape and expansion rules.
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-13_

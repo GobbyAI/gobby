@@ -354,6 +354,7 @@ class TestHooksRun:
 class TestHooksStatus:
     """Tests for hooks status command (lines 259-366)."""
 
+    @pytest.mark.parametrize("disabled_value", ["1", "0", "true", ""])
     @patch("gobby.utils.project_context.get_hooks_config")
     @patch("gobby.utils.project_context.get_verification_config")
     def test_hooks_status_json(
@@ -362,6 +363,7 @@ class TestHooksStatus:
         mock_hooks: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
+        disabled_value: str,
     ) -> None:
         mock_verif.return_value = None
         mock_hooks.return_value = None
@@ -374,12 +376,15 @@ class TestHooksStatus:
                 side_effect=RuntimeError("status unavailable"),
             ),
         ):
-            result = runner.invoke(hooks, ["status", "--json"])
+            result = runner.invoke(
+                hooks, ["status", "--json"], env={"GOBBY_HOOKS_DISABLED": disabled_value}
+            )
 
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "global_installed" in data
         assert "hooks_disabled" in data
+        assert data["env_disabled"] is (disabled_value == "1")
         assert data["rtk"]["health"] == "unknown"
 
     @patch("gobby.utils.project_context.get_hooks_config")

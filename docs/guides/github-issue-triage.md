@@ -6,7 +6,8 @@ webhooks, or local setups that cannot receive public GitHub traffic.
 
 ## Architecture
 
-The Mermaid diagram below is the source-of-truth architecture render.
+The diagram summarizes the service flow; implementation and installed
+configuration determine behavior.
 
 ```mermaid
 flowchart TD
@@ -53,12 +54,16 @@ flowchart TD
 
 Use `GET /api/projects/{project_id}/github-triage` to inspect the saved project
 configuration. Inbound webhooks return `202 Accepted` after validation and
-delivery persistence. Disabled triage returns `403`; missing, invalid, or
-unauthorized webhook input returns `401`.
+delivery persistence. Missing or invalid signatures, unresolved secrets,
+unknown/deleted projects, disabled sync and triage, or disabled webhook intake
+return the same `401` authentication response. Validation checks the signature
+before exposing project enablement state. Other invalid webhook input also
+returns `401`.
 
 Project config fields:
 
-- `enabled`: enables triage for webhook and reconcile paths.
+- `sync_enabled`: enables issue synchronization independently of automated triage.
+- `triage_enabled`: enables judgment and automated triage outcomes.
 - `webhook_enabled`: allows inbound webhook deliveries.
 - `repositories`: `owner/repo` values. If empty, legacy project `github_repo`
   is used as a single-repo fallback.
@@ -82,7 +87,8 @@ Delivery statuses in `gh_triage_deliveries` are `pending`, `processing`,
 `processed`, `ignored`, `duplicate`, and `error`. `ping` deliveries are recorded
 as `processed`, `issues` deliveries for `opened`, `edited`, and `reopened` start
 as `pending`, unsupported events or actions are recorded as `ignored`, and a
-repeated `X-GitHub-Delivery` is recorded as `duplicate`.
+repeated `X-GitHub-Delivery` returns `duplicate` without replacing the original
+delivery row's processing status.
 
 ## Labels
 
@@ -116,10 +122,14 @@ after validating the outcome.
 
 The service applies deterministic checks before any injected judge:
 
-1. Project-scoped semantic duplicates become `dedup`.
+1. Project-scoped semantic duplicates with similarity at least `0.97` become
+   `dedup` and may close the duplicate issue. Lower-scoring matches escalate
+   without closing it.
 2. Issues labeled `gobby:ignore` become `skip`.
 3. If a judge is configured, it returns the structured verdict.
-4. Without a judge, the fallback verdict is `implement`.
+4. A missing, failed, or malformed judge result becomes `escalate` for human
+   review. Implementation and build dispatch require explicit approval from
+   a configured judge.
 
 Pull requests are skipped before duplicate search or judgment.
 
@@ -144,15 +154,18 @@ that project.
 
 - Delivery returns `202` but nothing happens: inspect `gh_triage_deliveries`
   status and `error`.
-- Delivery is stuck in `processing`: another worker claimed the pending row; use
-  the row timestamps and daemon logs to determine whether it is still active or
-  failed before retrying.
+- Delivery is stuck in `processing`: inspect lease timestamps and daemon logs.
+  Cancellation deliberately leaves the claim for lease-based recovery; do not
+  reset it while the worker could still be active. Transient failures return to
+  `pending` with retry timing until the attempt limit; terminal failures become
+  `error` and are not retried by duplicate delivery of the same ID.
 - Duplicate webhook delivery: same `X-GitHub-Delivery` is accepted as duplicate
   and not processed again.
 - Webhook signature failure: verify the GitHub webhook secret matches the
   configured `webhook_secret_ref`.
-- Missed webhook: wait for the external issue sync coordinator's next
-reconciliation interval.
+- Missed webhook: check saved enablement, connector readiness, last error and
+  next retry through the integration status endpoint, then allow the external
+  issue sync coordinator's next reconciliation interval.
 - Merge did not close issue: verify the task has `github_repo` and
   `github_issue_number`, and that the merge agent called
   `gobby-tasks-ops:close_linked_github_issue`.
@@ -165,4 +178,4 @@ documented default. Triage judgment is structured and side-effect-free; Python
 owns task creation, GitHub comments, labels, issue closing, vector writes, and
 build routing.
 
-_Last verified: 2026-08-06_
+_Last verified: 2026-09-13_

@@ -998,6 +998,38 @@
           "when": "Setting up client access or diagnosing reconnect and protocol failures"
         }
       ]
+    },
+    {
+      "name": "integrations",
+      "description": "Connect hooks, webhooks, extension packages and external issue trackers",
+      "overview": "references/integrations/overview.md",
+      "when": "Setting up or diagnosing external integration boundaries",
+      "topics": [
+        {
+          "name": "hooks",
+          "description": "Wire provider hooks and diagnose delivery",
+          "path": "references/integrations/hooks.md",
+          "when": "Handling native events, hook failures or Git verification"
+        },
+        {
+          "name": "webhooks",
+          "description": "Configure and troubleshoot webhook surfaces",
+          "path": "references/integrations/webhooks.md",
+          "when": "Connecting receivers or investigating notification and blocking failures"
+        },
+        {
+          "name": "plugins",
+          "description": "Choose a supported extension mechanism",
+          "path": "references/integrations/plugins.md",
+          "when": "Installing plugins or replacing retired action examples"
+        },
+        {
+          "name": "external",
+          "description": "Connect GitHub and Linear issue workflows",
+          "path": "references/integrations/external.md",
+          "when": "Setting up issue imports, synchronization or triage"
+        }
+      ]
     }
   ]
 }

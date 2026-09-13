@@ -19,6 +19,7 @@ from gobby.cli.extensions import (
     _get_hook_description,
 )
 from gobby.hooks.events import HookEventType
+from gobby.hooks.runtime_compat import envelope_has_hook_response_capability
 
 pytestmark = pytest.mark.unit
 
@@ -34,14 +35,14 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def mock_daemon_client():
+def mock_daemon_client() -> MagicMock:
     """Create a mock daemon client."""
     client = MagicMock()
     return client
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> MagicMock:
     """Create a mock daemon config."""
     config = MagicMock()
     config.daemon_port = 9876
@@ -261,6 +262,9 @@ class TestHooksTestCommand:
         assert "Source: claude" in result.output
         assert "Decision: success" in result.output
         assert "Reason: Test hook executed successfully" in result.output
+        payload = mock_call_api.call_args.kwargs["json_data"]
+        assert payload["schema_version"] == 1
+        assert envelope_has_hook_response_capability(payload.get("response_capability"))
 
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")

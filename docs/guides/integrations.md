@@ -35,9 +35,11 @@ gobby mcp-proxy list-tools --server github
 gobby mcp-proxy list-tools --server linear
 ```
 
-Use `gobby mcp-proxy add-server` or `gobby mcp-proxy import-server` to add
-missing servers. See [mcp-tools.md](./mcp-tools.md) for the proxy model and
-progressive discovery workflow.
+Configure missing servers through the [MCP server guide](./mcp-tools.md#templates-and-instances).
+See [mcp-tools.md](./mcp-tools.md) for progressive discovery. The commands in
+this guide are operator procedures. Agents use registered lifecycle MCP tools
+for task mutations; listing these procedures does not authorize an external
+issue update, comment, PR, or automation change.
 
 ## GitHub
 
@@ -61,6 +63,24 @@ Remove the default repo with:
 gobby github unlink
 ```
 
+### Configure background synchronization and triage
+
+Linking a repository alone does not enable background automation. Inspect the
+saved configuration and connector readiness with `gobby github status --json`
+(`--project REF` selects another project; `--all` lists all projects).
+
+```bash
+gobby github setup --repo owner/repo --sync --no-triage
+```
+
+`setup` accepts repeatable `--repo`, independent `--sync/--no-sync`,
+`--triage/--no-triage`, `--webhook/--no-webhook`, `--webhook-secret-ref`, and
+a positive `--interval`. It checks repository access before enabling sync or
+triage. With neither sync nor triage flag, setup enables sync unless triage is
+already enabled. Read the resulting saved values; do not infer active state
+from a template. Webhook intake and triage side effects are described in
+[GitHub Issue Triage](./github-issue-triage.md).
+
 ### Import issues
 
 ```bash
@@ -70,7 +90,9 @@ gobby github import [REPO] [--labels LABELS] [--state open|closed|all] [--json]
 If `REPO` is omitted, Gobby uses the repo from `gobby github link`. `--labels`
 accepts a comma-separated list. Imported issues are deduplicated by
 `github_repo` plus `github_issue_number`; re-importing updates the existing task
-instead of creating another one.
+instead of creating another one. CLI import preserves newer local changes when
+both local and remote timestamps are available; otherwise it reconciles remote
+title/body, mapped labels and open/closed state.
 
 Example:
 
@@ -100,7 +122,7 @@ task as `github_pr_number`.
 Example:
 
 ```bash
-gobby github pr #123 --head task-123-fix-login --base main --draft
+gobby github pr '#123' --head task-123-fix-login --base main --draft
 ```
 
 ### GitHub MCP tools
@@ -112,6 +134,11 @@ The task integration tools are exposed through `gobby-tasks-ops`.
 | `import_github_issues` | `repo`, optional `labels`, `state="open"`, optional `parent_task_id` | Uses the `gh` CLI and deduplicates imported tasks. |
 | `link_task_to_github_issue` | `task_id`, `repo`, `issue_number` | Sets GitHub linkage fields on an existing task. |
 | `close_linked_github_issue` | `task_id`, optional `merge_sha` | Comments, labels, and closes the linked issue after a merge. |
+
+The MCP import path differs from CLI import: it refreshes title, description,
+labels and validation criteria on matching tasks, and applies `parent_task_id`
+when supplied. It does not project remote open/closed state. Review that overwrite
+scope before re-importing tasks with local edits.
 
 Example:
 
@@ -162,12 +189,10 @@ gobby linear setup --bootstrap [--team-id TEAM_ID] [--project-id PROJECT_ID] [--
 ```
 
 `--bootstrap` creates or reuses a Linear project by name. `--project-id` binds an
-existing Linear project. Setup can also import issues, create missing Linear
-issues for active Gobby tasks, and enable periodic sync:
-
-```bash
-gobby linear setup --bootstrap --import --create-missing --auto-sync --interval 300
-```
+existing Linear project. Setup saves the team/project binding and enables daemon
+synchronization; it does not synchronously import or create missing task issues.
+Use the explicit import or forward-sync commands below for those operations.
+`--project REF` selects the Gobby project; `--project-id` is the Linear project.
 
 Remove the Linear binding with:
 
@@ -178,11 +203,12 @@ gobby linear unlink
 ### Import issues
 
 ```bash
-gobby linear import [TEAM_ID] [--state STATE] [--labels LABELS] [--json]
+gobby linear import [TEAM_ID] [--state STATE] [--labels LABELS] [--allow-team-wide] [--json]
 ```
 
 If `TEAM_ID` is omitted, Gobby uses the linked team. When a project binding
-exists, imports are scoped to that Linear project. Imported issues are
+exists, imports are scoped to that Linear project. Without it, team-wide import
+requires explicit `--allow-team-wide`. Imported issues are
 deduplicated by `linear_issue_id`; titles that begin with `#123:` can also
 reconnect to the matching Gobby sequence number.
 
@@ -202,18 +228,21 @@ gobby linear sync-all [TEAM_ID] [--json]
 gobby linear sync-all [TEAM_ID] --forward [--json]
 ```
 
-Default `sync-all` pulls newer Linear updates into linked tasks, pushes dirty
-linked tasks back to Linear, then updates the project's Linear sync cursor.
+Default `sync-all` pulls newer Linear updates into linked tasks and pushes dirty
+linked tasks back to Linear. Pull errors or deferred work suppress the push;
+the sync cursor advances only when both phases finish without errors or deferred
+work. Newer local changes are preserved when timestamps establish their order.
 `--forward` is for initial setup from Gobby into Linear: it creates Linear
 issues for active unlinked tasks, pushes active linked tasks, and avoids pulling
 closed local history.
 
-Periodic sync is managed with:
-
-```bash
-gobby linear auto-sync [--interval 300]
-gobby linear auto-sync --disable
-```
+The daemon's external issue sync coordinator manages periodic work after setup.
+Inspect configuration, readiness, counts, errors, and retry timing with
+`gobby linear status --json` or `GET /api/projects/{project_id}/integrations/status`.
+The status CLI also accepts `--project REF` and `--all`. To disable periodic
+Linear sync while retaining the binding, an operator updates the project's
+`linear_sync_enabled` field to `false` through the project API. `unlink` removes
+the binding. There is no `linear auto-sync` subcommand.
 
 ### Create a Linear issue from a task
 
@@ -233,10 +262,12 @@ Created issue titles are prefixed with the Gobby reference, for example
 | `needs_review` | `In Review` |
 | `review_approved` | `Done` |
 | `closed` | `Done` |
-| `escalated` | `Canceled` |
 
 When pulling from Linear, `Backlog` and `Triage` map to `ready`, `In Review`
-maps to `in_progress`, and `Done` or `Canceled` map to closed task semantics.
+maps to `needs_review`, `Done` maps to closed task semantics, and `Canceled`
+maps to escalation. Outbound projection uses closed state or the current stage
+state; unknown mapping inputs fall back to `Todo`. These are synchronization
+projections, not instructions for bypassing Gobby task lifecycle gates.
 
 ## Troubleshooting
 
@@ -249,6 +280,7 @@ maps to `in_progress`, and `Done` or `Canceled` map to closed task semantics.
 | GitHub task MCP import fails | Confirm the `gh` CLI is installed and authenticated; `gobby-tasks-ops:import_github_issues` uses it directly. |
 | Linear import or sync cannot find a team | Run `gobby linear teams`, then `gobby linear setup --bootstrap --team-id TEAM_ID` or pass `TEAM_ID` to the command. |
 | Linear `sync-all` touches too much history on first setup | Use `gobby linear sync-all --forward` for active forward-only setup. |
+| Linear sync cursor does not advance | Inspect `pull`/`push` errors and deferred counts; restore connector/auth access or resolve missing linked issues before retrying. Do not advance the cursor manually. |
 
 ## See Also
 
@@ -257,4 +289,4 @@ maps to `in_progress`, and `Done` or `Canceled` map to closed task semantics.
 - [mcp-tools.md](./mcp-tools.md) - MCP tool reference
 - [github-issue-triage.md](./github-issue-triage.md) - GitHub triage automation
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-09-13_
