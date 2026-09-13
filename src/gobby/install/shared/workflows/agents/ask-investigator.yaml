@@ -8,6 +8,8 @@ provider: claude
 model: opus
 reasoning_effort: xhigh
 isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 blocked_tools:
   - Agent
   - Bash
@@ -40,7 +42,9 @@ step_workflow:
   steps:
     - name: investigate
       mcp_error_policy: stay
-      description: "Query immutable evidence, submit one answer, and terminate"
+      description: >-
+        Query immutable evidence, submit one answer, then call gobby-agents:end_agent_run
+        with current_state describing the accepted submission and next_steps for the reviewer.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__get_tool_schema
