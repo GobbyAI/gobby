@@ -291,6 +291,30 @@ def test_probe_artifact_rejects_policy_widening_between_fresh_and_resume(
         )
 
 
+def test_policy_digest_normalizes_only_the_bound_grant_lock(tmp_path: Path) -> None:
+    record = _observations(_provider(tmp_path / "claude", "2.1.265"))[0]["receipt"]["record"]
+    policy = record["policy"]
+
+    def digest() -> str:
+        return normalized_ask_srt_policy_digest(
+            policy,
+            source_root=record["source_root"],
+            scratch_root=record["scratch_root"],
+            policy_path=record["policy_path"],
+            managed_bootstrap_path=record["managed_bootstrap_path"],
+        )
+
+    expected = digest()
+    grant_lock = record["managed_bootstrap_path"] + ".lock"
+    policy["filesystem"]["allowRead"].append(grant_lock)
+    policy["filesystem"]["allowWrite"].append(grant_lock)
+    assert digest() == expected
+    policy["filesystem"]["allowWrite"].append("/foreign/grant.json.lock")
+    assert digest() != expected
+    policy["filesystem"]["allowWrite"][-1] = record["managed_bootstrap_path"]
+    assert digest() != expected
+
+
 def test_probe_artifact_normalizes_only_registered_macos_run_temp_roots(
     tmp_path: Path,
 ) -> None:

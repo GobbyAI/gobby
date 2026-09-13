@@ -162,6 +162,16 @@ def normalized_ask_srt_policy_digest(
         if filesystem["allowRead"].count(normalized_bootstrap) != 1:
             raise ValueError("Ask runtime managed grant is not uniquely readable")
         filesystem["allowRead"].remove(normalized_bootstrap)
+        # Managed launches add one private lock beside the grant for gcode refresh.
+        # Like the grant read, this run-bound capability is absent from bootstrap
+        # probes. Keep every other read/write path in the policy fingerprint.
+        grant_lock = normalize_path(str(bootstrap.with_name(f"{bootstrap.name}.lock")))
+        for key in ("allowRead", "allowWrite"):
+            count = filesystem[key].count(grant_lock)
+            if count > 1:
+                raise ValueError("Ask runtime managed grant lock is not unique")
+            if count == 1:
+                filesystem[key].remove(grant_lock)
     network = normalized["network"]
     network["allowUnixSockets"] = [normalize_path(value) for value in network["allowUnixSockets"]]
     return hashlib.sha256(canonical_json(normalized)).hexdigest()

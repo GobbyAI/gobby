@@ -18,6 +18,7 @@ from pathlib import Path
 
 from gobby.install.bin_set_coherence import (
     IDENTITY_STAMP_NAME,
+    REBUILD_REMEDY,
     SET_MEMBERS,
     BinarySetCoherenceError,
     probe_set_member_identity,
@@ -144,7 +145,7 @@ def binary_set_apply_refusal(bin_dir: Path | None = None) -> str | None:
     view = collect_installed_binary_set(bin_dir)
     if not view.mixed:
         return None
-    return f"{view.describe()}; rebuild and install all four together"
+    return f"{view.describe()}; {REBUILD_REMEDY}"
 
 
 def _render_identity(identity: dict[str, int | str] | None) -> str:

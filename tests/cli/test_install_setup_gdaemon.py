@@ -225,6 +225,6 @@ def test_workspace_set_refusal_is_reported_as_install_failure(
     message = str(exc_info.value)
     assert "workspace binary set promotion refused" in message
     assert "gdaemon embedded identity" in message
-    assert "rebuild and install all four together" in message
+    assert "rebuild and install all three together" in message
     assert isinstance(exc_info.value.__cause__, bin_set_coherence.BinarySetCoherenceError)
     assert installed.read_bytes() == b"installed-gdaemon"

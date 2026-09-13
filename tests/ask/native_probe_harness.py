@@ -1397,6 +1397,26 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
         )
         if not caller_session_id:
             raise RuntimeError("contained Ask caller session registration failed")
+        if arguments.phase == "fresh":
+            database_scope = _protected_database_url(
+                os.environ["DATABASE_URL"], require_unique_schema=True
+            )
+            assert database_scope is not None
+            await asyncio.to_thread(
+                _provision_private_parent_index,
+                project_root=arguments.project_root,
+                manager=runner.managed_credential_manager,
+                database=runner.database,
+                session_id=uuid.UUID(caller_session_id),
+                project_id=arguments.project_id,
+                machine_id=runner.machine_id,
+                runtime_root=arguments.control_dir.parent / "private-parent-index-runtime",
+                gcode_bin=Path(os.environ["GOBBY_NATIVE_BIN_DIR"]) / "gcode",
+                source_commit=arguments.source_commit,
+                deadline_monotonic=deadline_monotonic,
+                database_scope=database_scope,
+                evidence_path=arguments.control_dir / "private-parent-index.json",
+            )
         service = services.get_ask_service(arguments.project_id)
         if service is None:
             raise RuntimeError("native Ask service did not initialize in contained runner")
