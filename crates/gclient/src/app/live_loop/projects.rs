@@ -23,7 +23,7 @@ use super::actions::{
     activate_live_tab, open_live_rename, spawn_live_shell, spawn_live_terminal, sync_live_chrome,
     terminate_live_terminal,
 };
-use super::control::focus_live_pane;
+use super::control::observe_live_pane;
 use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
@@ -67,7 +67,7 @@ pub async fn focus_agent(
     let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? else {
         return Ok(());
     };
-    focus_live_pane(workspace, pane).await
+    observe_live_pane(workspace, pane).await
 }
 
 /// Open a fresh tab in the agent's project holding its pane, or focus the
@@ -83,7 +83,7 @@ pub async fn open_agent_in_new_tab(
     if !chrome.focus_pane(pane) {
         chrome.open_tab(pane, workspace.pane(pane).display_name());
     }
-    focus_live_pane(workspace, pane).await
+    observe_live_pane(workspace, pane).await
 }
 
 /// Reveal the agent's pane on the chrome the way its row's click does and
@@ -98,6 +98,18 @@ pub(super) async fn reveal_agent(
     };
     chrome.reveal_pane(pane, workspace.pane(pane).display_name());
     Ok(Some(pane))
+}
+
+/// Reveal and focus a terminal picked from the navigator. The pane is
+/// attached on demand when the daemon row arrived outside reconciliation.
+pub(super) async fn focus_terminal(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    terminal_id: &str,
+) -> Result<(), FrameError> {
+    let pane = terminal_pane(workspace, terminal_id).await?;
+    chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+    observe_live_pane(workspace, pane).await
 }
 
 /// Tell the daemon the entry's prompt was seen, with the attention id the
@@ -123,17 +135,32 @@ async fn agent_pane(
     chrome: &mut Chrome,
     entry_id: &str,
 ) -> Result<Option<PaneId>, FrameError> {
-    let project = workspace
+    let Some((project, terminal_id)) = workspace
         .sidebar()
         .agents
         .iter()
         .find(|agent| agent.entry_id == entry_id)
-        .map(|agent| agent.project_id.clone())
-        .filter(|project| workspace.project_id() != Some(project.as_str()));
-    if let Some(project) = project {
+        .map(|agent| (agent.project_id.clone(), agent.terminal_id.clone()))
+    else {
+        return Ok(None);
+    };
+    if workspace.project_id() != Some(project.as_str()) {
         focus_project(workspace, chrome, &project).await?;
     }
-    Ok(attention_pane(workspace, entry_id))
+    if let Some(pane) = attention_pane(workspace, entry_id) {
+        return Ok(Some(pane));
+    }
+    Ok(Some(terminal_pane(workspace, &terminal_id).await?))
+}
+
+async fn terminal_pane(
+    workspace: &mut Workspace<LiveDaemon>,
+    terminal_id: &str,
+) -> Result<PaneId, FrameError> {
+    match workspace.pane_for_terminal(terminal_id) {
+        Some(pane) => Ok(pane),
+        None => workspace.open_live_terminal(terminal_id).await,
+    }
 }
 
 /// Open `worktree_id`: focus its project, then activate the tab that

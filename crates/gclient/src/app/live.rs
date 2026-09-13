@@ -98,6 +98,44 @@ impl Workspace<LiveDaemon> {
         id
     }
 
+    fn install_live_row(&mut self, row: &TerminalRow) -> PaneId {
+        let terminal_id = row.id();
+        let backend = row
+            .fields
+            .get("backend")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let pane_id = self.ensure_live_pane(terminal_id, backend);
+        let pane = self.panes.get_mut(&pane_id).expect("live pane exists");
+        pane.direct_available = row_has_direct_locator(row);
+        pane.external = row_is_external(row);
+        pane.title = row_title(row);
+        pane.address = row_address(row);
+        pane.session_id = row
+            .fields
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        pane_id
+    }
+
+    pub(super) async fn open_live_terminal(
+        &mut self,
+        terminal_id: &str,
+    ) -> Result<PaneId, FrameError> {
+        if let Some(pane) = self.pane_for_terminal(terminal_id) {
+            return Ok(pane);
+        }
+        let row = self.daemon.terminal(terminal_id).await?;
+        let pane = self.install_live_row(&row);
+        if !self.roster_ids.iter().any(|id| id == terminal_id) {
+            self.roster_ids.push(terminal_id.to_string());
+        }
+        self.rebuild_sidebar();
+        self.attach_ready_panes().await?;
+        Ok(pane)
+    }
+
     fn install_live_rows(&mut self, mut rows: Vec<TerminalRow>) {
         // The saved tab order leads; rows outside it keep daemon order after it.
         let saved = &self.saved_tab_order;
@@ -110,22 +148,7 @@ impl Workspace<LiveDaemon> {
         let mut ids = Vec::with_capacity(rows.len());
         for row in rows {
             let terminal_id = row.id().to_string();
-            let backend = row
-                .fields
-                .get("backend")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let pane_id = self.ensure_live_pane(&terminal_id, backend);
-            let pane = self.panes.get_mut(&pane_id).expect("live pane exists");
-            pane.direct_available = row_has_direct_locator(&row);
-            pane.external = row_is_external(&row);
-            pane.title = row_title(&row);
-            pane.address = row_address(&row);
-            pane.session_id = row
-                .fields
-                .get("session_id")
-                .and_then(Value::as_str)
-                .map(str::to_string);
+            self.install_live_row(&row);
             ids.push(terminal_id);
         }
         let wanted: HashSet<_> = ids.iter().cloned().collect();

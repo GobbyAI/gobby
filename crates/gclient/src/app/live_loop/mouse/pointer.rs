@@ -5,7 +5,7 @@ use gobby_terminal::layout::{self, ScrollMetrics};
 use ratatui::layout::{Direction, Rect};
 
 use crate::app::{ControlState, PaneId};
-use crate::ui::chrome::{attention_pane, Tab};
+use crate::ui::chrome::Tab;
 use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::pane_layout::metrics_for;
 use crate::ui::scrollbar::{
@@ -231,37 +231,9 @@ pub(super) fn down<W: WorkspaceView>(
             MouseOutcome::Handled
         }
         Hit::Agent(entry_id) => {
-            // Another project's row focuses that project first: its panes
-            // attach when the project's tab set is restored.
-            let project = ws
-                .sidebar()
-                .agents
-                .iter()
-                .find(|agent| agent.entry_id == entry_id)
-                .map(|agent| agent.project_id.clone())
-                .filter(|project| {
-                    ws.focused_project()
-                        .is_some_and(|focused| focused != project)
-                });
-            if let Some(project) = project {
-                chrome.project_tabs.focus(&project);
-                return MouseOutcome::FocusProject(project);
-            }
-            let pane = attention_pane(ws, &entry_id);
-            if let Some(pane) = pane {
-                if !chrome.focus_pane(pane) {
-                    chrome.open_tab(pane, ws.pane(pane).display_name());
-                }
-            }
             // A blocked row only reveals its terminal, which already shows the
             // question; `respond` stays on prefix+a and the row menu.
-            match pane {
-                Some(pane) => MouseOutcome::Focus {
-                    pane,
-                    observe_only: false,
-                },
-                None => MouseOutcome::Handled,
-            }
+            MouseOutcome::FocusAgent(entry_id)
         }
         Hit::SidebarToggle => {
             chrome.sidebar.collapsed = !chrome.sidebar.collapsed;

@@ -64,19 +64,6 @@ fn websocket_requests(mock: &MockDaemon, kind: &str) -> usize {
         .count()
 }
 
-async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, count: usize) {
-    timeout(Duration::from_secs(1), async {
-        loop {
-            if websocket_requests(mock, kind) >= count {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {count} {kind} requests"));
-}
-
 async fn wait_for_http_requests(mock: &MockDaemon, method: &str, target: &str, count: usize) {
     timeout(Duration::from_secs(1), async {
         loop {
@@ -367,12 +354,16 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             blocked_row,
         )
         .await;
-        // Each click takes control of the terminal it focuses; the blocked
-        // row's click fetches no prompt.
-        wait_for_websocket_requests(&mock, "terminal_take_control", taken + 2).await;
+        // Explicit row activation observes the terminal without taking
+        // control; the blocked row's click fetches no prompt.
         for _ in 0..16 {
             tokio::task::yield_now().await;
         }
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control"),
+            taken,
+            "agent-row activation must not take control"
+        );
         drop(input_tx);
     };
 

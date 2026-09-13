@@ -1273,11 +1273,9 @@ fn pane(ws: &Workspace, index: usize) -> PaneId {
 }
 
 #[test]
-fn agent_row_click_focuses_the_terminal() {
-    // herdr `FocusWorkspace` from an agent-panel click. gclient shows the
-    // pane where it already is: its own tab, or a new tab when none shows
-    // it; a blocked row opens no dialog, since the terminal already shows
-    // its question.
+fn agent_row_click_routes_explicit_activation() {
+    // The pointer layer identifies the roster row; the async action layer
+    // opens or reveals its terminal without taking control.
     let mut ws = sidebar_workspace(3);
     set_attention(&mut ws, 3);
     let mut chrome = chrome();
@@ -1290,35 +1288,29 @@ fn agent_row_click_focuses_the_terminal() {
     let (col, row) = row_cell(&chrome.view.agent_hit_areas, "run:term-1");
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, col, row),
-        MouseOutcome::Focus {
-            pane: pane(&ws, 1),
-            observe_only: false,
-        }
+        MouseOutcome::FocusAgent("run:term-1".to_string())
     );
     assert_eq!(
         chrome.tabs().active_tab,
-        1,
-        "the tab showing the terminal is activated"
+        0,
+        "activation is deferred to the async action layer"
     );
-    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 1)));
+    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
     assert_eq!(chrome.gesture, None, "an agent row starts no drag");
     route(&ws, &mut chrome, LEFT_UP, col, row);
 
     let (col, row) = row_cell(&chrome.view.agent_hit_areas, "run:term-2");
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, col, row),
-        MouseOutcome::Focus {
-            pane: pane(&ws, 2),
-            observe_only: false,
-        }
+        MouseOutcome::FocusAgent("run:term-2".to_string())
     );
     assert_eq!(
         chrome.tabs().tabs.len(),
-        3,
-        "a terminal no tab shows opens its own tab"
+        2,
+        "the pointer layer does not open tabs"
     );
-    assert_eq!(chrome.tabs().active_tab, 2);
-    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 2)));
+    assert_eq!(chrome.tabs().active_tab, 0);
+    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
 }
 
 /// 3.2 sessions section: the rows follow the focused project (or every

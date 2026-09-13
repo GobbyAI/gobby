@@ -100,6 +100,8 @@ pub enum MouseOutcome {
     Scroll { pane: PaneId, rows: u32 },
     /// A project card was clicked: make it the focused project.
     FocusProject(String),
+    /// A session row was clicked: open its daemon-hosted terminal on demand.
+    FocusAgent(String),
     /// A worktree row was clicked: focus its project and open a shell there,
     /// or reveal the tab that already shows it.
     OpenWorktree(String),

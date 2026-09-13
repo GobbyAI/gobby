@@ -1214,6 +1214,20 @@ async def _screen(client: GclientDriver, text: str, *, timeout: float = 15.0) ->
     await asyncio.to_thread(client.expect, text, timeout=timeout)
 
 
+async def _activate_terminal(client: GclientDriver, selector: str) -> None:
+    await _screen(client, selector)
+    await asyncio.to_thread(client.chord, "g")
+    await _screen(client, "search terminals")
+    client.send(selector)
+    await _screen(client, f"/ {selector}")
+    client.send("\r")
+    await asyncio.to_thread(
+        client.wait_for,
+        lambda screen: "navigator" not in screen.lines[-1],
+        description="terminal activation completed",
+    )
+
+
 async def _shell(daemon: DaemonInstance, *, marker: str = "GCLIENT-SHELL-READY") -> str:
     result = await _ws_create(
         daemon,
@@ -1243,8 +1257,7 @@ async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInst
         row_name = _row_name(http, terminal_id)
     async with ClientWire(daemon_instance).running() as wire:
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-            await _screen(client, row_name)
-            await asyncio.to_thread(client.chord, "\t")
+            await _activate_terminal(client, row_name)
             await _screen(client, "GCLIENT-ROW-OK")
             await _screen(client, "direct")
             assert client.poll() is None
@@ -1257,7 +1270,7 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
     terminal_id = await _shell(daemon_instance)
     async with ClientWire(daemon_instance).running() as wire:
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-            await _screen(client, _short(terminal_id))
+            await _activate_terminal(client, _short(terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
             await _screen(client, "direct")
             await _take_and_echo(client, "GCLIENT-NATIVE-OK")
@@ -1283,7 +1296,7 @@ async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance
     wire.frame_socket = str(daemon_instance.gobby_home / "remote-host.sock")
     async with wire.running():
         async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
-            await _screen(client, _short(terminal_id))
+            await _activate_terminal(client, _short(terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
             await _screen(client, "proxy")
             await _take_and_echo(client, "GCLIENT-PROXY-OK")
@@ -1338,6 +1351,7 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
     try:
         async with server, wire.running():
             async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+                await _activate_terminal(client, _short(terminal_id))
                 await _screen(client, "GCLIENT-SHELL-READY")
                 await _screen(client, "direct")
                 old = next(
@@ -1347,9 +1361,10 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
                     and item.get("terminal_id") == terminal_id
                     and item.get("frame_delivery") == "direct"
                 )
-                assert len(writers) == 1
-                writers[0].close()  # Only this client's direct stream; the host keeps running.
-                await writers[0].wait_closed()
+                assert len(writers) == 2  # Explicit target, then the delayed startup shell.
+                target_writer = writers[0]
+                target_writer.close()  # Only this direct stream; the host keeps running.
+                await target_writer.wait_closed()
                 await _screen(client, "proxy")
                 await _take_and_echo(client, "GCLIENT-FALLBACK-OK")
                 assert "Sessions" in client.screen.text
@@ -1431,12 +1446,36 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
         survivor_id = await _shell(daemon_instance, marker="GCLIENT-SURVIVOR-READY")
+        client_dir = daemon_instance.gobby_home / "client"
+        client_dir.mkdir(parents=True, exist_ok=True)
+        (client_dir / "keymap.toml").write_text(
+            '[bindings]\nnew_terminal = "prefix+i"\n', encoding="utf-8"
+        )
         async with _running_gclient(daemon_instance) as client:
+            await _activate_terminal(client, _short(survivor_id))
             await _screen(client, "GCLIENT-SURVIVOR-READY")
-            await asyncio.to_thread(client.chord, "N")
+            startup_ids = {row["id"] for row in _list_items(http)} - {survivor_id}
+            assert len(startup_ids) == 1
+            killer = WsSession(daemon_instance)
+            await killer.connect()
+            try:
+                for startup_id in startup_ids:
+                    await killer.send({"type": "terminal_kill", "terminal_id": startup_id})
+                await asyncio.to_thread(
+                    wait_for_condition,
+                    lambda: all(row["id"] not in startup_ids for row in _list_items(http)),
+                    timeout=15.0,
+                    description="incidental startup shell removed",
+                )
+            finally:
+                await killer.close()
+            existing_ids = {row["id"] for row in _list_items(http)}
+            await asyncio.to_thread(client.chord, "i")
 
             def spawned() -> dict[str, Any] | None:
-                return next((row for row in _list_items(http) if row["id"] != survivor_id), None)
+                return next(
+                    (row for row in _list_items(http) if row["id"] not in existing_ids), None
+                )
 
             row = await asyncio.to_thread(
                 wait_for_condition,
@@ -1446,12 +1485,13 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             )
             assert isinstance(row, dict)
             spawned_id = row["id"]
-            await _screen(client, spawned_id)
-            if spawned_id not in client.screen.lines[-1]:
+            spawned_short = _short(spawned_id)
+            await _screen(client, spawned_short)
+            if spawned_short not in client.screen.lines[-1]:
                 await asyncio.to_thread(client.chord, "\t")
             await asyncio.to_thread(
                 client.wait_for,
-                lambda screen: spawned_id in screen.lines[-1],
+                lambda screen: spawned_short in screen.lines[-1],
                 description="spawned terminal selected",
             )
             await _take_and_echo(client, "GCLIENT-SPAWNED-OK")
@@ -1464,7 +1504,8 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             )
             await asyncio.to_thread(
                 client.wait_for,
-                lambda screen: spawned_id not in screen.text and survivor_id in screen.text,
+                lambda screen: spawned_short not in screen.text
+                and _short(survivor_id) in screen.text,
                 description="terminated pane removed and survivor retained",
             )
             await _take_and_echo(client, "GCLIENT-SURVIVOR-STILL-LIVE")
@@ -1476,6 +1517,7 @@ async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
     terminal_id = await _shell(daemon_instance, marker="GCLIENT-BEFORE-RESIZE")
     async with _running_gclient(daemon_instance) as client:
+        await _activate_terminal(client, _short(terminal_id))
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         assert client.screen.cols == 120
         assert client.screen.rows == 40
