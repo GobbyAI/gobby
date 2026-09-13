@@ -72,9 +72,9 @@ class _AskService:
         self.calls.append(("cancel", {"run_id": run_id, **kwargs}))
         return _Result()
 
-    def publication_root(self, run_id: str, **kwargs: Any) -> Path:
-        self.calls.append(("publication_root", {"run_id": run_id, **kwargs}))
-        return Path("/verified/ask-run-1/publication")
+    def publication_files(self, run_id: str, **kwargs: Any) -> dict[str, bytes]:
+        self.calls.append(("publication_files", {"run_id": run_id, **kwargs}))
+        return {"manifest.json": b"{}"}
 
     async def prepare(self, **kwargs: Any) -> dict[str, Any]:
         return self._call("prepare", kwargs)
@@ -153,6 +153,9 @@ async def test_ask_authorization_and_discovery(
     )
     names = {entry["name"] for entry in registry.list_tools()}
     assert names == {
+        "evidence",
+        "read_answer",
+        "read_citation",
         "start_ask_run",
         "get_ask_run",
         "wait_for_ask_run",
@@ -187,7 +190,11 @@ async def test_ask_authorization_and_discovery(
     with _project_context(project_id), session_context_for_test(SESSION_ID):
         started = await registry.call(
             "start_ask_run",
-            {"question": "Where is the source of truth?", "retrieval_mode": "hybrid"},
+            {
+                "question": "Where is the source of truth?",
+                "retrieval_mode": "hybrid",
+                "idempotency_key": "direct-answer",
+            },
         )
     run_id = started["run_id"]
     # The public operation binds the run to the caller's project and session rather
@@ -203,6 +210,27 @@ async def test_ask_authorization_and_discovery(
     assert executed_session_id == SESSION_ID
     completed = await ask.service.wait(run_id, project_id=project_id, timeout=10)
     assert completed.status == "completed"
+    with _project_context(project_id), session_context_for_test(SESSION_ID):
+        repeated = await registry.call(
+            "start_ask_run",
+            {
+                "question": "Where is the source of truth?",
+                "retrieval_mode": "hybrid",
+                "idempotency_key": "direct-answer",
+            },
+        )
+        answer = await registry.call("read_answer", {"run_id": run_id})
+        evidence_id = answer["answer"]["claims"][0]["citations"][0]["evidence_id"]
+        citation = await registry.call(
+            "read_citation", {"run_id": run_id, "evidence_id": evidence_id}
+        )
+        exported = await registry.call("export_ask_run", {"run_id": run_id})
+    assert repeated["run_id"] == run_id
+    assert repeated["markdown"] == answer["markdown"] == completed.markdown
+    assert len(ask.executor.calls) == 1
+    assert citation["evidence_id"] == evidence_id
+    assert len(exported["publication_manifest_sha256"]) == 64
+    assert exported["download_url"].startswith(f"/api/ask/runs/{run_id}/export")
 
     # An internal stage call carries no executor authority when an ordinary caller
     # makes it, so the real service refuses it before any stage work begins.
@@ -216,6 +244,117 @@ async def test_ask_authorization_and_discovery(
                 "prepare",
                 {"run_id": run_id, "project_id": "foreign-project"},
             )
+
+
+@pytest.mark.asyncio
+async def test_interactive_evidence_uses_caller_checkout_without_ask_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from gobby.mcp_proxy.tools.ask import create_ask_registry
+
+    executable = tmp_path / "gcode"
+    service = SimpleNamespace(snapshot_manager=SimpleNamespace(snapshot_executable=executable))
+    retrieve = AsyncMock(return_value={"items": [{"evidence_id": "ev-1"}], "continuation": "next"})
+    monkeypatch.setattr("gobby.ask.interactive_evidence.retrieve_evidence", retrieve)
+    roots: list[tuple[str, str | None]] = []
+
+    def root(project_id: str, project_path: str | None) -> Path:
+        roots.append((project_id, project_path))
+        return tmp_path
+
+    registry = create_ask_registry(lambda _project_id: service, project_root_resolver=root)
+    schema = registry.get_schema("evidence")
+    assert schema is not None
+    assert set(schema["inputSchema"]["properties"]) == {"operation", "selector", "continuation"}
+    with _project_context(PROJECT_ID), session_context_for_test(SESSION_ID):
+        result = await registry.call(
+            "evidence",
+            {
+                "operation": "read",
+                "selector": {"kind": "range", "path": "src/main.py"},
+                "continuation": "previous",
+            },
+        )
+    assert result == {"items": [{"evidence_id": "ev-1"}], "continuation": "next"}
+    assert roots == [(PROJECT_ID, None)]
+    retrieve.assert_awaited_once_with(
+        executable=executable,
+        project_root=tmp_path,
+        operation="read",
+        selector={"kind": "range", "path": "src/main.py"},
+        continuation="previous",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+async def test_fast_completion_returns_answer_on_start_and_resume(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resume: bool,
+) -> None:
+    import threading
+
+    from gobby.ask.contracts import AskRequest, AskRunRecord, AskRunResult
+
+    project_id = str(sample_project["id"])
+    harness = build_ask_service(temp_db, project_id=project_id, state_root=tmp_path / "state")
+    request = AskRequest(
+        question="Where is authority checked?",
+        project_id=project_id,
+        investigator_profile="ask-investigator",
+        reviewer_profile="ask-reviewer",
+    )
+    run_id: str | None = None
+    if resume:
+        harness.executor.fail_next = True
+        started = await harness.service.start(
+            request, project_root=tmp_path, caller_session_id=SESSION_ID
+        )
+        run_id = started.run_id
+        failed = await harness.service.wait(run_id, project_id=project_id, timeout=10)
+        assert failed.status == "failed"
+
+    completed = threading.Event()
+    original_execute = harness.executor.execute
+    original_result = harness.service._result
+    original_ensure = harness.service._ensure_task
+    scheduled = False
+
+    async def execute(*args: Any, **kwargs: Any) -> Any:
+        result = await original_execute(*args, **kwargs)
+        completed.set()
+        return result
+
+    def ensure(*args: Any, **kwargs: Any) -> None:
+        nonlocal scheduled
+        scheduled = True
+        original_ensure(*args, **kwargs)
+
+    def result_after_completion(record: AskRunRecord) -> AskRunResult:
+        if scheduled:
+            assert completed.wait(10), "executor did not complete before response read"
+        return original_result(record)
+
+    monkeypatch.setattr(harness.executor, "execute", execute)
+    monkeypatch.setattr(harness.service, "_ensure_task", ensure)
+    monkeypatch.setattr(harness.service, "_result", result_after_completion)
+    if run_id is None:
+        result = await harness.service.start(
+            request, project_root=tmp_path, caller_session_id=SESSION_ID
+        )
+    else:
+        result = await harness.service.resume(
+            run_id, project_id=project_id, caller_session_id=SESSION_ID
+        )
+    assert result.status == "completed"
+    assert result.markdown and result.answer and result.provenance
+    await harness.service.stop()
 
 
 @pytest.mark.asyncio

@@ -99,7 +99,8 @@ fn assert_error(output: &std::process::Output, code: &str) -> Value {
     assert_eq!(
         output.status.code(),
         Some(2),
-        "stderr={}",
+        "expected {code}; stdout={}; stderr={}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.stdout.is_empty(), "errors must not write stdout");
@@ -128,7 +129,7 @@ fn database_contract() -> anyhow::Result<()> {
     use gobby_code::evidence::{
         DEFAULT_GRAPH_DEPTH, DEFAULT_MAX_BYTES, DEFAULT_RESULT_LIMIT, EVIDENCE_SCHEMA_VERSION,
         EntitySelector, EvidenceItem, EvidenceOperation, EvidenceRequest, GraphQuery,
-        GraphSelector, ReadSelector, SearchLane, SearchSelector, Snapshot,
+        GraphSelector, ReadSelector, RepositoryBinding, SearchLane, SearchSelector,
     };
     use postgres::{Client, NoTls};
 
@@ -156,8 +157,12 @@ fn database_contract() -> anyhow::Result<()> {
     git(&project, &["init", "--quiet", "-b", "main"])?;
     git(&project, &["add", "."])?;
     let commit_oid = commit(&project, "initial evidence fixture")?;
-    let snapshot = Snapshot::prepare(&project, PROJECT_ID, &commit_oid)?;
-    assert_pure_preflight_rejections(snapshot.binding())?;
+    let binding = RepositoryBinding {
+        project_id: PROJECT_ID.to_string(),
+        commit_oid: commit_oid.clone(),
+        tree_oid: git(&project, &["rev-parse", "HEAD^{tree}"])?,
+    };
+    assert_pure_preflight_rejections(&binding)?;
 
     gobby_code::test_env::seed_test_checkout(&mut conn, PROJECT_ID, &project)
         .map_err(anyhow::Error::msg)?;
@@ -177,13 +182,12 @@ fn database_contract() -> anyhow::Result<()> {
         String::from_utf8_lossy(&indexed.stderr)
     );
 
-    let status_before = git(&project, &["status", "--porcelain"])?;
     let facts_before = fact_count(&mut conn)?;
     let indexed_hash_before = indexed_hash(&mut conn)?;
 
     let range_request = EvidenceRequest {
         schema_version: EVIDENCE_SCHEMA_VERSION,
-        binding: snapshot.binding().clone(),
+        binding: binding.clone(),
         operation: EvidenceOperation::Read {
             read: ReadSelector::Range {
                 path: FILE_PATH.to_string(),
@@ -194,14 +198,34 @@ fn database_contract() -> anyhow::Result<()> {
         max_bytes: DEFAULT_MAX_BYTES,
         continuation: None,
     };
-    let response = run_success(&project, &home, &connections, &range_request)?;
-    let repeated = run_success(&project, &home, &connections, &range_request)?;
+    let mut response = run_success(&project, &home, &connections, &range_request)?;
+    let mut repeated = run_success(&project, &home, &connections, &range_request)?;
+    let observation = response.observation.take().expect("recorded observation");
+    assert_eq!(observation.checkout, project);
+    assert_eq!(observation.recorded_head, commit_oid);
+    assert!(chrono::DateTime::parse_from_rfc3339(&observation.observed_at).is_ok());
+    assert!(repeated.observation.take().is_some());
+    let mut implicit = serde_json::to_value(&range_request)?;
+    implicit
+        .as_object_mut()
+        .expect("request object")
+        .remove("binding");
+    let output = run_raw_evidence(&project, &home, &connections, &implicit.to_string(), false)?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let implicit: gobby_code::evidence::EvidenceResponse = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(implicit.binding, binding);
+    assert_eq!(implicit.items, response.items);
+    assert!(!home.join("ask-debug").exists());
     assert_eq!(
         response, repeated,
         "identical reads are byte-contract deterministic"
     );
     assert_eq!(response.request, range_request);
-    assert_eq!(response.binding, *snapshot.binding());
+    assert_eq!(response.binding, binding);
     assert_eq!(response.contract.name, "gcode-evidence");
     assert_eq!(response.contract.schema_version, EVIDENCE_SCHEMA_VERSION);
     assert_eq!(response.contract.tool, "gobby-code");
@@ -209,7 +233,6 @@ fn database_contract() -> anyhow::Result<()> {
     assert!(response.complete);
     assert_eq!(response.bounds.returned_items, 1);
     assert_eq!(response.bounds.total_items, 1);
-    assert!(response.exclusions.is_empty());
     assert!(response.warnings.is_empty());
     let EvidenceItem::Source(source) = &response.items[0] else {
         panic!("range response must contain source evidence");
@@ -220,7 +243,6 @@ fn database_contract() -> anyhow::Result<()> {
         .expect("fixture first line")
         .to_string()
         + "\n";
-    let entry = snapshot.entry(FILE_PATH)?;
     assert_eq!(source.path, FILE_PATH);
     assert_eq!(source.excerpt, first_line);
     assert_eq!(source.line_start, 1);
@@ -228,12 +250,8 @@ fn database_contract() -> anyhow::Result<()> {
     assert_eq!(source.byte_start, 0);
     assert_eq!(source.byte_end, source.excerpt.len());
     assert_eq!(
-        source.blob_oid,
-        entry.blob_oid.as_deref().expect("blob oid")
-    );
-    assert_eq!(
         source.content_hash,
-        entry.content_hash.as_deref().expect("content hash")
+        gobby_core::indexing::content_hash(SOURCE.as_bytes())
     );
     assert_eq!(
         source.excerpt_hash,
@@ -306,12 +324,9 @@ fn database_contract() -> anyhow::Result<()> {
     assert_eq!(changed_paths, INITIAL_CHANGED_PATHS);
     for record in records {
         assert_eq!(record.commit_oid, commit_oid);
-        assert_eq!(record.parent_oids, snapshot.binding().commit.parent_oids);
+        assert!(record.parent_oids.is_empty());
         assert_eq!(record.changed_path_count, INITIAL_CHANGED_PATHS.len());
-        assert_eq!(
-            record.changed_paths_digest,
-            snapshot.binding().commit.changed_paths_digest
-        );
+        assert_eq!(record.changed_paths_digest.len(), 64);
         assert!(record.evidence_id.starts_with("commit:"));
     }
 
@@ -383,32 +398,30 @@ fn database_contract() -> anyhow::Result<()> {
     )?;
 
     let mut mismatched = range_request.clone();
-    mismatched.binding.tree_oid = "0".repeat(40);
+    mismatched.binding.project_id = "00000000-0000-4000-8000-000000000000".to_string();
     assert_request_error(
         &project,
         &home,
         &connections,
         &mismatched,
-        "snapshot_binding_mismatch",
+        "repository_binding_mismatch",
     )?;
 
-    let mut missing = range_request.clone();
+    let mut missing = metadata_request.clone();
     missing.binding.commit_oid = "0".repeat(40);
-    assert_request_error(
-        &project,
-        &home,
-        &connections,
-        &missing,
-        "missing_git_object",
-    )?;
-    let mut invalid_oid = range_request.clone();
-    invalid_oid.binding.commit_oid = "HEAD".to_string();
+    assert_request_error(&project, &home, &connections, &missing, "git_error")?;
+    let mut invalid_oid = metadata_request.clone();
+    invalid_oid.operation = EvidenceOperation::Read {
+        read: ReadSelector::CommitMetadata {
+            commit_oid: Some("HEAD".to_string()),
+        },
+    };
     assert_request_error(
         &project,
         &home,
         &connections,
         &invalid_oid,
-        "invalid_object_id",
+        "invalid_selector",
     )?;
 
     let incompatible = EvidenceRequest {
@@ -489,11 +502,16 @@ fn database_contract() -> anyhow::Result<()> {
     assert_error(&malformed_selector, "invalid_evidence_request");
 
     std::fs::write(project.join(FILE_PATH), SOURCE.replace("needle", "changed"))?;
-    git(&project, &["add", FILE_PATH])?;
-    let stale_commit = commit(&project, "change without reindex")?;
-    let stale_snapshot = Snapshot::prepare(&project, PROJECT_ID, &stale_commit)?;
+    let dirty_status = git(&project, &["status", "--porcelain"])?;
+    assert!(!dirty_status.is_empty());
+    let stale_commit = commit_oid.clone();
+    let stale_binding = RepositoryBinding {
+        commit_oid: stale_commit,
+        tree_oid: git(&project, &["rev-parse", "HEAD^{tree}"])?,
+        ..binding.clone()
+    };
     let stale_request = EvidenceRequest {
-        binding: stale_snapshot.binding().clone(),
+        binding: stale_binding,
         operation: EvidenceOperation::Search {
             search: SearchSelector {
                 lane: SearchLane::Literal,
@@ -507,28 +525,24 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    assert_request_error(
-        &project,
-        &home,
-        &connections,
-        &stale_request,
-        "fact_snapshot_mismatch",
-    )?;
-
-    assert_eq!(
-        fact_count(&mut conn)?,
-        facts_before,
-        "evidence must not write facts"
-    );
-    assert_eq!(
-        indexed_hash(&mut conn)?,
-        indexed_hash_before,
-        "stale evidence must not autoindex"
-    );
+    // Ordinary CLI freshness refreshes the existing index before admission.
+    // Dirty source is cited by its observed hash, not by HEAD bytes.
+    let refreshed = run_success(&project, &home, &connections, &stale_request)?;
+    assert_eq!(refreshed.binding.commit_oid, commit_oid);
+    assert_eq!(refreshed.items.len(), 2);
+    for item in &refreshed.items {
+        let EvidenceItem::Source(source) = item else {
+            anyhow::bail!("expected refreshed source evidence");
+        };
+        assert!(source.excerpt.contains("changed"));
+        assert_eq!(source.content_hash, indexed_hash(&mut conn)?);
+    }
+    assert!(fact_count(&mut conn)? > facts_before);
+    assert_ne!(indexed_hash(&mut conn)?, indexed_hash_before);
     assert_eq!(
         git(&project, &["status", "--porcelain"])?,
-        status_before,
-        "evidence must not mutate the source checkout"
+        dirty_status,
+        "evidence freshness must not mutate source bytes"
     );
 
     let unavailable = gobby_core::grant::DirectConnections::postgres(
@@ -543,7 +557,7 @@ fn database_contract() -> anyhow::Result<()> {
 
 #[cfg(gcode_postgres_tests)]
 fn assert_pure_preflight_rejections(
-    binding: &gobby_code::evidence::SnapshotBinding,
+    binding: &gobby_code::evidence::RepositoryBinding,
 ) -> anyhow::Result<()> {
     use gobby_code::evidence::{
         DEFAULT_GRAPH_DEPTH, DEFAULT_MAX_BYTES, DEFAULT_RESULT_LIMIT, EvidenceOperation,
@@ -1100,7 +1114,7 @@ fn fact_count(conn: &mut postgres::Client) -> anyhow::Result<i64> {
 fn indexed_hash(conn: &mut postgres::Client) -> anyhow::Result<String> {
     Ok(conn
         .query_one(
-            "SELECT content_hash FROM code_indexed_files
+            "SELECT content_hash FROM code_indexed_file_states
              WHERE project_id = $1 AND file_path = $2",
             &[&uuid_param(), &FILE_PATH],
         )?

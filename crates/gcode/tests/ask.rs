@@ -281,9 +281,18 @@ impl AskCliFixture {
     }
 
     fn command(&self, daemon_url: &str, args: &[&str]) -> anyhow::Result<std::process::Output> {
+        self.command_format(daemon_url, args, "json")
+    }
+
+    fn command_format(
+        &self,
+        daemon_url: &str,
+        args: &[&str],
+        format: &str,
+    ) -> anyhow::Result<std::process::Output> {
         Ok(Command::new(Self::binary())
             .current_dir(self.project.path())
-            .args(["--quiet", "--format", "json", "--project"])
+            .args(["--quiet", "--format", format, "--project"])
             .arg(self.project.path())
             .args(args)
             .env("GOBBY_HOME", self.home.path())
@@ -293,4 +302,61 @@ impl AskCliFixture {
             .env_remove("GOBBY_AGENT_RUN_ID")
             .output()?)
     }
+}
+
+#[test]
+fn direct_markdown_and_explicit_local_debug_output() -> anyhow::Result<()> {
+    let fixture = AskCliFixture::new()?;
+    let markdown = "# Answer\n\n[source.rs:1-2](/api/ask/runs/run/citations/evidence)\n";
+    let mut completed = run_payload("completed", Some("complete"), None);
+    completed["markdown"] = json!(markdown);
+    completed["answer"] = json!({"claims": [{"id": "claim-1"}]});
+    for debug in [false, true] {
+        let (url, server) = spawn_http_responses(vec![
+            (202, run_payload("running", None, None)),
+            (200, completed.clone()),
+        ]);
+        let mut args = vec!["ask", "Explain the source"];
+        if debug {
+            args.push("--output-debug-files");
+        }
+        let output = fixture.command_format(&url, &args, "text")?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout)?.trim(), markdown.trim());
+        let requests = server.join().expect("join debug fixture")?;
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.contains("output_debug_files"))
+        );
+        let root = fixture.home.path().join("ask-debug");
+        assert_eq!(root.exists(), debug);
+        if debug {
+            let bundle = fs::read_dir(root)?
+                .next()
+                .expect("one debug bundle")?
+                .path();
+            let saved: Value = serde_json::from_slice(&fs::read(bundle.join("ask.json"))?)?;
+            assert_eq!(saved, completed);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn debug_write_failure_preserves_successful_answer() -> anyhow::Result<()> {
+    let fixture = AskCliFixture::new()?;
+    fs::write(fixture.home.path().join("ask-debug"), b"occupied")?;
+    let completed = run_payload("completed", Some("partial"), None);
+    let (url, server) = spawn_http_responses(vec![(202, completed.clone())]);
+    let output = fixture.command(&url, &["ask", "question", "--output-debug-files"])?;
+    assert!(output.status.success());
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout)?, completed);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Diagnostic write failed"));
+    server.join().expect("join failed debug fixture")?;
+    Ok(())
 }

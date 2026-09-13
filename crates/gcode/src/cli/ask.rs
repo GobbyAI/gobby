@@ -25,6 +25,9 @@ impl AskRetrieval {
         .args(["question", "status", "resume", "cancel", "export"])
 ))]
 pub(crate) struct AskArgs {
+    /// Write a diagnostic bundle beneath this machine's Gobby home
+    #[arg(long)]
+    pub(crate) output_debug_files: bool,
     /// Question to answer from the current repository index
     #[arg(value_name = "QUESTION")]
     question: Option<String>,

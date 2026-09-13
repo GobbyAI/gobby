@@ -53,7 +53,11 @@ manifest hash and authenticated download URL. CLI export requires a destination:
 gcode ask --export RUN_ID --output ./ask-exports
 ```
 
-Only explicit export creates a local archive. Replay verification checks the
+Default calls create no output bundles. Foreground CLI completion prints cited
+Markdown; `--format json` returns structured answer and run metadata. MCP
+`wait_for_ask_run` and `read_answer` return answer content and provenance;
+`read_citation` retrieves evidence by ID without local files. Large results use
+existing tool-result paging. Explicit export creates a local archive. Replay verification checks the
 publication bytes; a copied archive or an old answer is not proof about today's
 checkout. A publication/hash failure needs artifact diagnosis, not manual
 editing of recorded evidence or a replacement success flag.
@@ -79,6 +83,24 @@ or call them as a recovery shortcut. The normative Ask contract's statement that
 stage names are discoverable is bounded by current pipeline authority, as
 implemented by `stage_tool_is_discoverable`.
 
+## Direct interactive evidence
+
+Ordinary authenticated agents may call `evidence(operation, selector,
+continuation=null)` without an Ask run. Search, read, graph, and commit-patch
+selectors reuse native retrieval and return JSON. Project and checkout derive
+from caller context. Managed Ask workers cannot use this public tool to bypass
+evidence admission; reviewers remain limited to admitted records.
+
+Retained Ask bodies live in PostgreSQL, with seven-day retention after terminal
+completion by default (`GOBBY_ASK_RETENTION_DAYS`, 1–3650 days). Active and
+recoverable runs are protected. Provenance includes observation time, checkout,
+recorded HEAD, and source hashes. Replay verifies integrity, not present freshness.
+
+CLI-only `--output-debug-files` on Ask or evidence writes diagnostics beneath the
+calling machine’s Gobby home, reports the location, and cleans old bundles under
+the same retention policy. Default file output is off. Debug-write failure does
+not invalidate the result. MCP never writes output files or exposes this option.
+
 ## Native evidence adapter
 
 `gcode evidence` is a model-free JSON adapter for exact source evidence. Supply
@@ -86,7 +108,8 @@ one complete versioned request through `--request-json`. Evidence schema v1
 supports search, read, and graph operations against the resolved project index,
 with recorded commit/tree provenance.
 Use the generated request contract in `crates/gcode/src/evidence/contracts.rs`
-and the binding returned by Ask preparation; do not invent hashes or IDs.
+for supported selectors; interactive requests may omit binding and resolve it
+from the caller’s project. Do not invent hashes or IDs.
 
 JSON output is required. `--allow-stale` is rejected.
 Honor response `complete`, `completeness`, `bounds`, warnings, and

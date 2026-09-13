@@ -350,10 +350,11 @@ fn run() -> anyhow::Result<()> {
     let format = cli::effective_format(cli.format, &cli.command);
     let effective_token_budget = cli::effective_token_budget(format, &cli.command);
     let evidence_request = match &cli.command {
-        Command::Evidence { request_json } => Some(commands::evidence::preflight(
+        Command::Evidence { request_json, .. } => Some(commands::evidence::preflight(
             request_json,
             format,
             cli.allow_stale,
+            cli.project.as_deref(),
         )?),
         _ => None,
     };
@@ -398,9 +399,12 @@ fn run() -> anyhow::Result<()> {
         | Command::Projects
         | Command::Ask(_)
         | Command::Prune { .. } => Ok(()),
-        Command::Evidence { .. } => commands::evidence::run(
+        Command::Evidence {
+            output_debug_files, ..
+        } => commands::evidence::run(
             &ctx,
             evidence_request.expect("evidence request preflighted before dispatch"),
+            output_debug_files,
         ),
         Command::RetireFiles {
             manifest,

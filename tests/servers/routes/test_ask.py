@@ -54,7 +54,7 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 _AskCli = Callable[..., Awaitable[tuple[int, dict[str, Any], str]]]
 
-_AskOperation = Literal["start", "get", "wait", "resume", "cancel", "export"]
+_AskOperation = Literal["start", "get", "wait", "resume", "cancel", "export", "citation"]
 _ManagedOwner = Literal["agent_run", "managed_execution"]
 
 
@@ -80,13 +80,13 @@ class _Result:
 
 
 class _AskService:
-    def __init__(self, publication_root: Path | None = None) -> None:
+    def __init__(self, publication: dict[str, bytes] | None = None) -> None:
         self.operations: list[str] = []
         self.start_call: tuple[Any, Path, str] | None = None
         self.wait_call: tuple[str, str, float | None] | None = None
         self.cancel_calls: list[str] = []
         self.errors: dict[str, Exception] = {}
-        self._publication_root = publication_root
+        self._publication = publication
 
     def _raise_for(self, operation: str) -> None:
         error = self.errors.get(operation)
@@ -121,12 +121,17 @@ class _AskService:
         self.cancel_calls.append(run_id)
         return _Result("cancelled")
 
-    def publication_root(self, run_id: str, *, project_id: str) -> Path:
+    def publication_files(self, run_id: str, *, project_id: str) -> dict[str, bytes]:
         self.operations.append("export")
         self._raise_for("export")
-        if self._publication_root is None:
+        if self._publication is None:
             raise AssertionError("publication root was not configured")
-        return self._publication_root
+        return self._publication
+
+    def citation(self, run_id: str, evidence_id: str, *, project_id: str) -> dict[str, str]:
+        self.operations.append("citation")
+        self._raise_for("citation")
+        return {"evidence_id": evidence_id, "path": "src/example.py"}
 
 
 @dataclass
@@ -172,10 +177,7 @@ def authenticated_ask_harness(
         return original_fetchone(query, params)
 
     monkeypatch.setattr(temp_db, "fetchone", fetchone)
-    publication_root = tmp_path / "publication"
-    publication_root.mkdir()
-    (publication_root / "answer.md").write_text("verified answer\n")
-    ask_service = _AskService(publication_root)
+    ask_service = _AskService({"answer.md": b"verified answer\n"})
     resolved_projects: list[str] = []
     resolved_project_roots: list[str] = []
 
@@ -383,6 +385,8 @@ def _request_ask(
             json={"question": "Where is authority enforced?", "project_id": project_id},
         )
     suffix = "" if operation == "get" else f"/{operation}"
+    if operation == "citation":
+        suffix = "/citations/src:recorded-hash"
     return client.request(
         "POST" if operation in {"resume", "cancel"} else "GET",
         f"/api/ask/runs/ask-run-1{suffix}",
@@ -544,9 +548,9 @@ async def test_installed_cli_lifecycle_against_authenticated_service(
     assert completed["run_id"] == run_id
     assert completed["binding"] == interrupted["binding"]
     assert completed["status"] == "completed"
-    # The controlled executor completes without publishing an answer; the
-    # lifecycle adapter must preserve the service's null outcome verbatim.
-    assert completed["answer_outcome"] is None
+    assert completed["answer_outcome"] == "complete"
+    assert completed["markdown"]
+    assert completed["answer"]["claims"]
     run_id = completed["run_id"]
     code, fetched, stderr = await cli("--status", run_id)
     assert code == 0, stderr
@@ -560,7 +564,12 @@ async def test_installed_cli_lifecycle_against_authenticated_service(
     deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
     reviewed = validate_review(draft, evidence, deterministic, review)
     published = publish_answer(
-        AskArtifactStore(tmp_path / "publication-state", harness.project_id, run_id),
+        AskArtifactStore(
+            tmp_path / "publication-state",
+            harness.project_id,
+            run_id,
+            db=harness.service.storage.manager.db,
+        ),
         draft,
         evidence,
         deterministic,
@@ -575,7 +584,7 @@ async def test_installed_cli_lifecycle_against_authenticated_service(
         run_id,
         stage=AskStage.PUBLISH,
         boundary_id=f"publish:{published.manifest_sha256}",
-        publication={"root": str(published.root), "manifest_sha256": published.manifest_sha256},
+        publication={"artifact": published.artifact, "manifest_sha256": published.manifest_sha256},
         answer_outcome=published.outcome,
     )
     destination = tmp_path / "requested-export"
@@ -590,9 +599,10 @@ async def test_installed_cli_lifecycle_against_authenticated_service(
     replay = replay_publication(unpacked)
     assert replay.manifest_sha256 == published.manifest_sha256
     source_files = {
-        p.relative_to(published.root): p.read_bytes()
-        for p in published.root.rglob("*")
-        if p.is_file()
+        Path(name): payload
+        for name, payload in harness.service.publication_files(
+            run_id, project_id=harness.project_id
+        ).items()
     }
     assert {
         p.relative_to(unpacked): p.read_bytes() for p in unpacked.rglob("*") if p.is_file()
@@ -720,7 +730,15 @@ async def test_shared_run_contract_and_event_driven_wait(
     assert waited.json()["status"] == terminal_status
     assert waited.json()["run_id"] == run_id
     assert waited.json()["deadline_at"] == started["deadline_at"]
-    await assert_adapters(waited.json())
+    status_record = real_ask_harness.service.get(
+        run_id, project_id=real_ask_harness.project_id
+    ).model_dump(mode="json")
+    await assert_adapters(status_record)
+    if terminal_status == "completed":
+        assert status_record["answer"] is None
+        assert waited.json()["answer"] and waited.json()["markdown"]
+    else:
+        assert waited.json() == status_record
     if terminal_status == "cancelled":
         assert waited.json()["typed_error"] is None
 
@@ -756,7 +774,9 @@ async def test_waiter_disconnect_does_not_cancel_the_run(
 
 
 @pytest.mark.parametrize("owner", ["agent_run", "managed_execution"])
-@pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
+@pytest.mark.parametrize(
+    "operation", ["start", "get", "wait", "resume", "cancel", "export", "citation"]
+)
 def test_signed_managed_token_can_access_same_project_ask_routes(
     operation: _AskOperation,
     owner: _ManagedOwner,
@@ -780,7 +800,9 @@ def test_signed_managed_token_can_access_same_project_ask_routes(
 
 @pytest.mark.parametrize("owner", ["agent_run", "managed_execution"])
 @pytest.mark.parametrize("target", ["same", "foreign"])
-@pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
+@pytest.mark.parametrize(
+    "operation", ["start", "get", "wait", "resume", "cancel", "export", "citation"]
+)
 def test_managed_token_revoked_between_middleware_and_route_fails_closed(
     operation: _AskOperation,
     target: Literal["same", "foreign"],
@@ -806,7 +828,9 @@ def test_managed_token_revoked_between_middleware_and_route_fails_closed(
     assert harness.service.operations == []
 
 
-@pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
+@pytest.mark.parametrize(
+    "operation", ["start", "get", "wait", "resume", "cancel", "export", "citation"]
+)
 def test_signed_managed_token_cannot_substitute_body_or_query_project(
     operation: _AskOperation,
     authenticated_ask_harness: _AuthHarness,
@@ -823,7 +847,9 @@ def test_signed_managed_token_cannot_substitute_body_or_query_project(
     assert authenticated_ask_harness.resolved_projects == []
 
 
-@pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
+@pytest.mark.parametrize(
+    "operation", ["start", "get", "wait", "resume", "cancel", "export", "citation"]
+)
 def test_operator_token_retains_cross_project_ask_access(
     operation: _AskOperation,
     authenticated_ask_harness: _AuthHarness,
@@ -882,7 +908,9 @@ async def test_operator_ask_without_session_reuses_project_launcher(
     assert caller.project_id == harness.project_id
 
 
-@pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
+@pytest.mark.parametrize(
+    "operation", ["start", "get", "wait", "resume", "cancel", "export", "citation"]
+)
 def test_managed_ask_principal_cannot_recursively_call_public_lifecycle(
     operation: _AskOperation,
     authenticated_ask_harness: _AuthHarness,
@@ -1024,14 +1052,12 @@ def test_export_propagates_archive_failure(tmp_path: Path, monkeypatch: pytest.M
 
     from gobby.servers.routes.ask import _tar_stream
 
-    (tmp_path / "answer.md").write_text("verified answer")
-
     def fail_add(*args: object, **kwargs: object) -> None:
         raise OSError("publication read failed")
 
-    monkeypatch.setattr(tarfile.TarFile, "add", fail_add)
+    monkeypatch.setattr(tarfile.TarFile, "addfile", fail_add)
     with pytest.raises(OSError, match="publication read failed"):
-        list(_tar_stream(tmp_path))
+        list(_tar_stream({"answer.md": b"verified answer"}))
 
 
 def test_export_stream_roundtrip(tmp_path: Path) -> None:
@@ -1041,8 +1067,7 @@ def test_export_stream_roundtrip(tmp_path: Path) -> None:
     from gobby.servers.routes.ask import _tar_stream
 
     content = b"verified answer\n"
-    (tmp_path / "answer.md").write_bytes(content)
-    with tarfile.open(fileobj=io.BytesIO(b"".join(_tar_stream(tmp_path)))) as archive:
+    with tarfile.open(fileobj=io.BytesIO(b"".join(_tar_stream({"answer.md": content})))) as archive:
         assert archive.getnames() == ["answer.md"]
         member = archive.extractfile("answer.md")
         assert member is not None
@@ -1056,8 +1081,7 @@ def test_export_disconnect_releases_writer(tmp_path: Path) -> None:
     from gobby.servers.routes.ask import _tar_stream
 
     existing = set(threading.enumerate())
-    (tmp_path / "answer.md").write_bytes(b"x" * (1024 * 1024))
-    stream = _tar_stream(tmp_path)
+    stream = _tar_stream({"answer.md": b"x" * (1024 * 1024)})
     assert next(stream)
     stream.close()
     assert not [thread for thread in threading.enumerate() if thread not in existing]

@@ -29,7 +29,7 @@ from gobby.ask.evidence_runtime import (
 )
 from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime, UnsupportedAskRuntime
 from gobby.ask.pipeline import AskPipelineExecutor, parse_ask_pipeline
-from gobby.ask.publication import PublicationError, replay_publication
+from gobby.ask.publication import PublicationError
 from gobby.ask.recovery import AskRecoveryController
 from gobby.ask.snapshots import SnapshotDriftError
 from gobby.ask.stage_authority import require_ask_stage_authority
@@ -128,6 +128,11 @@ class AskService:
     ) -> AskRunResult:
         record = await asyncio.to_thread(self.storage.start, request, project_root)
         await asyncio.to_thread(self.stages.initialize, record)
+        result = await asyncio.to_thread(self._result, record)
+        if result.status in {"completed", "failed", "cancelled"}:
+            return await asyncio.to_thread(
+                self.answer, record.run_id, project_id=record.binding.project_id
+            )
         inputs = await asyncio.to_thread(
             self.storage.bind_execution_context,
             record.run_id,
@@ -135,7 +140,9 @@ class AskService:
             caller_session_id=caller_session_id,
         )
         self._ensure_task(record, self._pipeline(record.run_id), inputs, caller_session_id)
-        return await asyncio.to_thread(self._result, record)
+        return await asyncio.to_thread(
+            self.answer, record.run_id, project_id=record.binding.project_id
+        )
 
     def get(self, run_id: str, *, project_id: str) -> AskRunResult:
         record = self._record(run_id, project_id)
@@ -166,7 +173,7 @@ class AskService:
                             completion_id,
                             {"status": result.status},
                         )
-                        return result
+                        return await asyncio.to_thread(self.answer, run_id, project_id=project_id)
                     if self.completion_registry.get_result(completion_id) is not None:
                         # A resume claim can precede replacement of the old notification.
                         self.completion_registry.cleanup(completion_id)
@@ -223,7 +230,7 @@ class AskService:
         self._ensure_task(record, pipeline, inputs, original_caller)
         if caller_cancelled:
             raise asyncio.CancelledError
-        return await asyncio.to_thread(self._result, record)
+        return await asyncio.to_thread(self.answer, run_id, project_id=project_id)
 
     async def recover_daemon_execution(self, run_id: str, *, project_id: str) -> bool:
         """Adopt one native Ask run left pending or running by a prior daemon."""
@@ -585,21 +592,50 @@ class AskService:
             attempt=attempt,
         )
 
-    def publication_root(self, run_id: str, *, project_id: str) -> Path:
-        """Return a verified canonical publication directory for a completed run."""
-        self._record(run_id, project_id)
+    def publication_files(self, run_id: str, *, project_id: str) -> dict[str, bytes]:
+        """Read verified retained content for direct output, citation retrieval, and export."""
+        from gobby.ask.publication import publication_files
+
+        record = self._record(run_id, project_id)
         state = self._required_state(run_id)
         if state.status != ExecutionStatus.COMPLETED.value or state.publication is None:
             raise AskLifecycleConflict("Ask run has no completed publication")
-        root_value = state.publication.get("root")
-        expected_hash = state.publication.get("manifest_sha256")
-        if not isinstance(root_value, str) or not isinstance(expected_hash, str):
+        pointer = state.publication.get("artifact")
+        if not isinstance(pointer, dict):
             raise PublicationError("Ask publication checkpoint is invalid")
-        root = Path(root_value)
-        replay = replay_publication(root)
-        if replay.manifest_sha256 != expected_hash:
-            raise PublicationError("Ask publication checkpoint hash does not match stored bytes")
-        return root
+        files = publication_files(self._artifacts(record), pointer)
+        import hashlib
+
+        if hashlib.sha256(files["manifest.json"]).hexdigest() != state.publication.get(
+            "manifest_sha256"
+        ):
+            raise PublicationError("Ask publication checkpoint hash mismatch")
+        return files
+
+    def answer(self, run_id: str, *, project_id: str) -> AskRunResult:
+        result = self.get(run_id, project_id=project_id)
+        if result.status != "completed":
+            return result
+        files = self.publication_files(run_id, project_id=project_id)
+        return result.model_copy(
+            update={
+                "answer": json.loads(files["answer.json"]),
+                "markdown": files["answer.md"].decode(),
+                "provenance": json.loads(files["manifest.json"])["provenance"],
+            }
+        )
+
+    def citation(self, run_id: str, evidence_id: str, *, project_id: str) -> dict[str, Any]:
+        from gobby.ask.publication import _record_artifact_path
+
+        files = self.publication_files(run_id, project_id=project_id)
+        payload = files.get(_record_artifact_path(evidence_id))
+        if payload is None:
+            raise ValueError("Ask citation not found")
+        value = json.loads(payload)
+        if not isinstance(value, dict):
+            raise PublicationError("invalid citation record")
+        return value
 
     async def _fail(
         self,
@@ -665,7 +701,9 @@ class AskService:
         return state
 
     def _artifacts(self, record: AskRunRecord) -> AskArtifactStore:
-        return AskArtifactStore(self.state_root, record.binding.project_id, record.run_id)
+        return AskArtifactStore(
+            self.state_root, record.binding.project_id, record.run_id, db=self.storage.manager.db
+        )
 
     def _remaining(self, deadline_at: datetime) -> float:
         current = self.now()

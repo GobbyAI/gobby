@@ -111,7 +111,7 @@ async def test_bind_uses_caller_index_and_fences_recovery(
     repo = _repository(tmp_path)
     project_id = str(sample_project["id"])
     storage, run_id = _run_storage(temp_db, project_id, repo)
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
     calls: list[Path] = []
 
     async def probe(root: Path, deadline: datetime) -> SnapshotIndexRuntime:
@@ -155,7 +155,7 @@ async def test_bind_grant_and_bounded_probes_use_real_repository(
     repo = _repository(tmp_path)
     project_id = str(sample_project["id"])
     storage, run_id = _run_storage(temp_db, project_id, repo)
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
     issued_paths: list[str] = []
     probes: list[tuple[list[str], Path, float]] = []
     runtime_workspaces: list[Path] = []
@@ -216,7 +216,7 @@ async def test_bind_timeout_never_publishes_generation(
     repo = _repository(tmp_path)
     project_id = str(sample_project["id"])
     storage, run_id = _run_storage(temp_db, project_id, repo)
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
     monkeypatch.setattr(snapshot_module, "_CONFIG_PROBE_TIMEOUT", 0.01)
     monkeypatch.setattr(snapshot_module, "_SEARCH_SMOKE_TIMEOUT", 0.01)
 
@@ -247,7 +247,7 @@ async def test_cancel_during_grant_waits_and_revokes_before_returning(
     repo = _repository(tmp_path)
     project_id = str(sample_project["id"])
     storage, run_id = _run_storage(temp_db, project_id, repo)
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
     entered = asyncio.Event()
     release = threading.Event()
     loop = asyncio.get_running_loop()
@@ -308,7 +308,7 @@ async def test_cancel_during_publication_preserves_committed_authority(
     repo = _repository(tmp_path)
     project_id = str(sample_project["id"])
     storage, run_id = _run_storage(temp_db, project_id, repo)
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
     runtimes: list[SnapshotIndexRuntime] = []
     released: list[SnapshotIndexRuntime] = []
     revoked: list[tuple[UUID, int, str]] = []

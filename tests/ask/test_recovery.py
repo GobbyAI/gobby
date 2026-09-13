@@ -22,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
+from tests.ask.service_support import complete_publication
 
 pytestmark = pytest.mark.unit
 
@@ -52,7 +53,7 @@ class _DelayedPipelineExecutor:
         execution_id: str | None = None,
         session_id: str | None = None,
     ) -> PipelineExecution:
-        del pipeline, inputs, project_id, execution_id, session_id
+        del pipeline, inputs, execution_id, session_id
         try:
             await asyncio.sleep(0.2)
         except asyncio.CancelledError:
@@ -75,7 +76,7 @@ class _CancellingPipelineExecutor:
         execution_id: str | None = None,
         session_id: str | None = None,
     ) -> PipelineExecution:
-        del pipeline, inputs, project_id, execution_id, session_id
+        del pipeline, inputs, execution_id, session_id
         self.started.set()
         try:
             await asyncio.Event().wait()
@@ -99,13 +100,10 @@ class _RecordingPipelineExecutor:
         execution_id: str | None = None,
         session_id: str | None = None,
     ) -> PipelineExecution:
-        del pipeline, project_id
+        del pipeline
         self.calls.append((execution_id, session_id, inputs))
         assert execution_id is not None
-        execution = self.manager.update_execution_status(
-            execution_id,
-            ExecutionStatus.COMPLETED,
-        )
+        execution = complete_publication(self.manager, execution_id, project_id)
         assert execution is not None
         return execution
 
@@ -126,7 +124,7 @@ class _FailThenCompletePipelineExecutor:
         execution_id: str | None = None,
         session_id: str | None = None,
     ) -> PipelineExecution:
-        del pipeline, inputs, project_id
+        del pipeline, inputs
         self.calls += 1
         self.session_ids.append(session_id)
         assert execution_id is not None
@@ -134,10 +132,7 @@ class _FailThenCompletePipelineExecutor:
             raise RuntimeError("first execution failed before cleanup")
         self.retry_started.set()
         await self.complete_retry.wait()
-        execution = self.manager.update_execution_status(
-            execution_id,
-            ExecutionStatus.COMPLETED,
-        )
+        execution = complete_publication(self.manager, execution_id, project_id)
         assert execution is not None
         return execution
 
@@ -370,7 +365,7 @@ async def test_wait_rechecks_durable_completion_after_registration(
     service, record, registry = waiting_run
 
     def complete_before_notification_can_be_received() -> None:
-        service.storage.manager.update_execution_status(record.run_id, ExecutionStatus.COMPLETED)
+        complete_publication(service.storage.manager, record.run_id, record.binding.project_id)
 
     registry.on_register = complete_before_notification_can_be_received
     result = await service.wait(record.run_id, project_id=record.binding.project_id, timeout=1)

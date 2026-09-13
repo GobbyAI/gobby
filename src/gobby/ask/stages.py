@@ -501,7 +501,7 @@ class AskStageStore:
                 """
                 SELECT project_id, status, inputs_json FROM pipeline_executions
                 WHERE id = %s AND pipeline_name = 'native-ask'
-                FOR UPDATE
+                FOR NO KEY UPDATE
                 """,
                 (run_id,),
             ).fetchone()

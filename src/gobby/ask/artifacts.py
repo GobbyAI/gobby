@@ -1,155 +1,107 @@
-"""Owner-only immutable artifact storage for Ask runs."""
+"""Run-owned, content-addressed Ask bodies retained in PostgreSQL."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
-import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 from gobby.paths import get_gobby_home
-from gobby.utils.durable_file import durable_replace, exclusive_file_lock
+from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def _canonical_json(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
 class AskArtifactStore:
-    """Content-addressed Ask artifacts with one atomically published manifest."""
+    """Immutable bodies; filesystem paths are reserved for ephemeral runtime credentials."""
 
-    def __init__(self, state_root: Path | None, project_id: str, run_id: str) -> None:
-        root = state_root or get_gobby_home()
+    def __init__(
+        self, state_root: Path | None, project_id: str, run_id: str, *, db: HubDatabase
+    ) -> None:
+        self.db = db
         self.project_id = project_id
         self.run_id = run_id
-        self.run_root = root / "ask" / project_id / run_id
-        self.bodies_root = self.run_root / "bodies"
-        self.manifest_path = self.run_root / "manifest.json"
-        self._ensure_private_directory(self.run_root)
-        self._ensure_private_directory(self.bodies_root)
-
-    @staticmethod
-    def _ensure_private_directory(path: Path) -> None:
-        path.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(path, 0o700)
+        self.run_root = (state_root or get_gobby_home()) / "ask-runtime" / project_id / run_id
 
     def write_body(
-        self,
-        kind: str,
-        body: dict[str, Any],
-        *,
-        timeout_seconds: float | None = None,
+        self, kind: str, body: dict[str, Any], *, timeout_seconds: float | None = None
     ) -> dict[str, Any]:
-        """Durably publish an immutable body and append its pointer to the manifest."""
-        cutoff = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
-
-        def deadline_remaining() -> float | None:
-            if cutoff is None:
-                return None
-            value = cutoff - time.monotonic()
-            if value <= 0:
-                raise TimeoutError("Ask artifact deadline exceeded")
-            return value
-
-        deadline_remaining()
-        safe = "abcdefghijklmnopqrstuvwxyz0123456789-_"
-        if not kind or any(character not in safe for character in kind):
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise TimeoutError("Ask artifact deadline exceeded")
+        if not kind or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for c in kind):
             raise ValueError("artifact kind must be a non-empty safe identifier")
         payload = _canonical_json(body)
         digest = hashlib.sha256(payload).hexdigest()
-        relative_path = Path("bodies") / f"{kind}-{digest}.json"
-        body_path = self.run_root / relative_path
-
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{kind}-{digest}-",
-            suffix=".tmp",
-            dir=self.bodies_root,
+        deadline = (
+            database_operation_deadline(
+                timeout_seconds=timeout_seconds, operation_timeout_seconds=timeout_seconds
+            )
+            if timeout_seconds is not None
+            else nullcontext()
         )
-        temporary_path = Path(temporary_name)
-        published = False
         try:
-            os.fchmod(descriptor, 0o600)
-            payload_remaining = memoryview(payload)
-            while payload_remaining:
-                written = os.write(descriptor, payload_remaining)
-                if written <= 0:
-                    raise OSError(f"failed to write Ask artifact {body_path}")
-                payload_remaining = payload_remaining[written:]
-            os.fsync(descriptor)
-            os.close(descriptor)
-            descriptor = -1
-            try:
-                os.link(temporary_path, body_path, follow_symlinks=False)
-                published = True
-            except FileExistsError:
-                if body_path.read_bytes() != payload:
-                    raise RuntimeError(f"immutable artifact collision at {body_path}") from None
-            os.chmod(body_path, 0o600)
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-            temporary_path.unlink(missing_ok=True)
-        if published:
-            directory = os.open(self.bodies_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-
-        pointer: dict[str, Any] = {
-            "kind": kind,
-            "project_id": self.project_id,
-            "run_id": self.run_id,
-            "sha256": digest,
-            "relative_path": relative_path.as_posix(),
-            "size_bytes": len(payload),
-        }
-        with exclusive_file_lock(self.manifest_path, timeout_seconds=deadline_remaining()):
-            manifest = self._read_manifest_unlocked()
-            known = {item["relative_path"] for item in manifest["artifacts"]}
-            if pointer["relative_path"] not in known:
-                manifest["artifacts"].append(pointer)
-                durable_replace(self.manifest_path, _canonical_json(manifest), mode=0o600)
-        deadline_remaining()
-        return pointer
+            with deadline:
+                with self.db.transaction() as conn:
+                    owner = conn.execute(
+                        "SELECT id FROM pipeline_executions WHERE id = %s AND project_id = %s "
+                        "AND pipeline_name = 'native-ask' FOR KEY SHARE",
+                        (self.run_id, self.project_id),
+                    ).fetchone()
+                    if owner is None:
+                        raise ValueError("Ask artifact owner does not exist in this project")
+                    conn.execute(
+                        "INSERT INTO ask_artifacts (execution_id, kind, sha256, body) "
+                        "VALUES (%s, %s, %s, %s) ON CONFLICT (execution_id, kind, sha256) DO NOTHING",
+                        (self.run_id, kind, digest, payload.decode()),
+                    )
+                pointer = {
+                    "kind": kind,
+                    "project_id": self.project_id,
+                    "run_id": self.run_id,
+                    "sha256": digest,
+                    "size_bytes": len(payload),
+                }
+                if self.read_body(pointer) != body:
+                    raise RuntimeError("immutable Ask artifact collision")
+                return pointer
+        except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable) as error:
+            if timeout_seconds is None:
+                raise
+            raise TimeoutError("Ask artifact deadline exceeded") from error
 
     def read_body(self, pointer: dict[str, Any]) -> dict[str, Any]:
         if pointer.get("project_id") != self.project_id or pointer.get("run_id") != self.run_id:
             raise ValueError("Ask artifact pointer does not belong to this project and run")
-        relative = pointer.get("relative_path")
-        expected_hash = pointer.get("sha256")
-        if not isinstance(relative, str) or not isinstance(expected_hash, str):
-            raise ValueError("invalid Ask artifact pointer")
-        relative_path = Path(relative)
-        if relative_path.is_absolute() or ".." in relative_path.parts:
-            raise ValueError("Ask artifact pointer escapes the run root")
-        body_path = (self.run_root / relative_path).resolve()
-        if not body_path.is_relative_to(self.run_root.resolve()):
-            raise ValueError("Ask artifact pointer escapes the run root")
-        payload = body_path.read_bytes()
-        actual_hash = hashlib.sha256(payload).hexdigest()
-        if actual_hash != expected_hash:
-            raise RuntimeError(f"Ask artifact hash mismatch for {relative}")
-        if pointer.get("size_bytes") != len(payload):
-            raise RuntimeError(f"Ask artifact size mismatch for {relative}")
-        value = json.loads(payload)
-        if not isinstance(value, dict):
-            raise RuntimeError(f"Ask artifact body must be an object: {relative}")
-        return value
+        row = self.db.fetchone(
+            "SELECT a.body FROM ask_artifacts a JOIN pipeline_executions e "
+            "ON e.id = a.execution_id WHERE a.execution_id = %s AND e.project_id = %s "
+            "AND a.kind = %s AND a.sha256 = %s",
+            (self.run_id, self.project_id, pointer.get("kind"), pointer.get("sha256")),
+        )
+        if row is None:
+            raise ValueError("Ask artifact not found")
+        payload = str(row["body"]).encode()
+        if hashlib.sha256(payload).hexdigest() != pointer.get("sha256"):
+            raise RuntimeError("Ask artifact hash mismatch")
+        if len(payload) != pointer.get("size_bytes"):
+            raise RuntimeError("Ask artifact size mismatch")
+        body = json.loads(payload)
+        if not isinstance(body, dict):
+            raise RuntimeError("Ask artifact body must be an object")
+        return body
 
     def verify_manifest(self) -> None:
-        """Verify every immutable body currently referenced by the manifest."""
-        for pointer in self._read_manifest_unlocked()["artifacts"]:
-            self.read_body(pointer)
-
-    def _read_manifest_unlocked(self) -> dict[str, Any]:
-        try:
-            value = json.loads(self.manifest_path.read_bytes())
-        except FileNotFoundError:
-            return {"schema_version": 1, "artifacts": []}
-        if not isinstance(value, dict) or not isinstance(value.get("artifacts"), list):
-            raise RuntimeError(f"invalid Ask artifact manifest at {self.manifest_path}")
-        return value
+        for row in self.db.fetchall(
+            "SELECT a.kind, a.sha256, octet_length(a.body) AS size_bytes FROM ask_artifacts a "
+            "JOIN pipeline_executions e ON e.id = a.execution_id "
+            "WHERE a.execution_id = %s AND e.project_id = %s",
+            (self.run_id, self.project_id),
+        ):
+            self.read_body({**dict(row), "run_id": self.run_id, "project_id": self.project_id})

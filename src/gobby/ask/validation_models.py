@@ -121,6 +121,7 @@ class EvidenceWarning(_FrozenModel):
 
 
 class GcodeEvidenceResponse(_FrozenModel):
+    observation: dict[str, str] | None = Field(default=None, exclude_if=lambda value: value is None)
     request: dict[str, Any]
     request_fingerprint: str
     binding: RepositoryBinding

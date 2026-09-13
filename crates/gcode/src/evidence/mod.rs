@@ -398,6 +398,7 @@ impl EvidenceLibrary {
         };
         let max_bytes = request.max_bytes;
         Ok(EvidenceResponse {
+            observation: None,
             request,
             request_fingerprint,
             binding: self.binding.clone(),

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,10 +12,10 @@ pytestmark = pytest.mark.unit
 
 
 def test_only_reviewed_claims_are_published(tmp_path: Path) -> None:
-    from gobby.ask.artifacts import AskArtifactStore
     from gobby.ask.claims import QuestionPart, ReviewClaimVerdict
     from gobby.ask.publication import PublicationError, publish_answer
     from gobby.ask.validation import validate_claims, validate_review
+    from tests.ask.artifact_support import MemoryArtifacts as AskArtifactStore
 
     draft, evidence, blobs, review = _valid_case()
     draft = draft.model_copy(
@@ -102,28 +102,28 @@ def test_expiry_during_publication_never_exposes_an_answer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.ask import publication as publication_module
-    from gobby.ask.artifacts import AskArtifactStore
     from gobby.ask.publication import publish_answer
     from gobby.ask.validation import validate_claims, validate_review
+    from tests.ask.artifact_support import MemoryArtifacts as AskArtifactStore
 
     draft, evidence, blobs, review = _valid_case()
     deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
     reviewed = validate_review(draft, evidence, deterministic, review)
     store = AskArtifactStore(tmp_path, "project", draft.run_id)
     crossed_deadline = False
-    original_write = publication_module._write_file
+    original_write = store.write_body
 
-    def stalled_write(path: Path, payload: bytes) -> None:
+    def stalled_write(kind: str, body: dict[str, Any]) -> dict[str, Any]:
         nonlocal crossed_deadline
-        original_write(path, payload)
+        pointer = original_write(kind, body)
         crossed_deadline = True
+        return pointer
 
     def check_deadline() -> None:
         if crossed_deadline:
             raise TimeoutError("Ask deadline exceeded while publishing")
 
-    monkeypatch.setattr(publication_module, "_write_file", stalled_write)
+    monkeypatch.setattr(store, "write_body", stalled_write)
 
     with pytest.raises(TimeoutError, match="deadline exceeded"):
         publish_answer(
@@ -147,7 +147,6 @@ def test_expiry_during_publication_never_exposes_an_answer(
 def test_accepted_unknowns_do_not_count_as_supported_question_coverage(
     tmp_path: Path,
 ) -> None:
-    from gobby.ask.artifacts import AskArtifactStore
     from gobby.ask.claims import (
         AnswerSection,
         Claim,
@@ -157,6 +156,7 @@ def test_accepted_unknowns_do_not_count_as_supported_question_coverage(
     )
     from gobby.ask.publication import publish_answer
     from gobby.ask.validation import validate_claims, validate_review
+    from tests.ask.artifact_support import MemoryArtifacts as AskArtifactStore
 
     draft, evidence, blobs, review = _valid_case()
     unknown = Claim(
@@ -250,9 +250,9 @@ def test_accepted_unknowns_do_not_count_as_supported_question_coverage(
 def test_atomic_publication_is_idempotent_after_crash_and_concurrency(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gobby.ask.artifacts import AskArtifactStore
     from gobby.ask.publication import PublicationError, publish_answer
     from gobby.ask.validation import validate_claims, validate_review
+    from tests.ask.artifact_support import MemoryArtifacts as AskArtifactStore
 
     draft, evidence, blobs, review = _valid_case()
     deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
@@ -265,14 +265,12 @@ def test_atomic_publication_is_idempotent_after_crash_and_concurrency(
         "tool_identities": ("gobby-code@0.5.0",),
         "attempt_history": ({"attempt": 1, "status": "reviewed"},),
     }
-    real_rename = os.rename
+    original_write = store.write_body
 
-    def crash_before_publish(
-        source: str | os.PathLike[str], target: str | os.PathLike[str]
-    ) -> None:
+    def crash_before_publish(kind: str, body: dict[str, Any]) -> dict[str, Any]:
         raise OSError("injected publication crash")
 
-    monkeypatch.setattr("gobby.ask.publication.os.rename", crash_before_publish)
+    monkeypatch.setattr(store, "write_body", crash_before_publish)
     with pytest.raises(OSError, match="injected publication crash"):
         publish_answer(
             store,
@@ -284,7 +282,7 @@ def test_atomic_publication_is_idempotent_after_crash_and_concurrency(
         )
     assert not (store.run_root / "publication").exists()
 
-    monkeypatch.setattr("gobby.ask.publication.os.rename", real_rename)
+    monkeypatch.setattr(store, "write_body", original_write)
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(
             pool.map(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -505,8 +504,9 @@ async def test_native_investigation_review_and_single_repair(
     )
     assert publication_interrupted.status == "failed"
     assert publication_interrupted.artifact_manifest is not None
-    publication_root = Path(publication_interrupted.artifact_manifest["root"])
-    manifest_before_resume = (publication_root / "manifest.json").read_bytes()
+    publication_pointer = publication_interrupted.artifact_manifest["artifact"]
+    retained = AskArtifactStore(tmp_path / "state", project_id, started.run_id, db=temp_db)
+    manifest_before_resume = retained.read_body(publication_pointer)
 
     await service.resume(
         started.run_id,
@@ -521,7 +521,10 @@ async def test_native_investigation_review_and_single_repair(
     assert result.answer_outcome == "complete"
     assert result.typed_error is None
     assert result.artifact_manifest is not None
-    assert Path(result.artifact_manifest["root"]).is_dir()
+    assert result.artifact_manifest["artifact"]["kind"] == "publication"
+    assert result.markdown
+    assert result.answer is not None
+    assert result.provenance is not None
     assert len(set(agents.launches)) == 4
     assert [agents.specs[run_id].stage for run_id in agents.launches] == [
         AskAgentStage.INVESTIGATOR,
@@ -571,9 +574,10 @@ async def test_native_investigation_review_and_single_repair(
         step.step_id: step.output_json for step in steps if step.step_id in preserved_outputs
     } == preserved_outputs
 
-    publication_root = Path(result.artifact_manifest["root"])
-    assert (publication_root / "manifest.json").read_bytes() == manifest_before_resume
-    published_evidence = json.loads((publication_root / "evidence-manifest.json").read_text())
+    assert retained.read_body(result.artifact_manifest["artifact"]) == manifest_before_resume
+    published_evidence = json.loads(
+        service.publication_files(result.run_id, project_id=project_id)["evidence-manifest.json"]
+    )
     assert len(published_evidence["records"]) == len(admission.queries)
     assert published_evidence["records"][-1]["invocation_id"] == (
         f"invocation-{len(admission.queries)}"
@@ -584,7 +588,7 @@ async def test_native_investigation_review_and_single_repair(
     ("termination", "stall_point"),
     [
         pytest.param("cancel", "write", id="cancel-during-write"),
-        pytest.param("cancel", "rename", id="cancel-after-final-guard"),
+        pytest.param("cancel", "persisted", id="cancel-after-artifact-insert"),
         pytest.param("deadline", "write", id="deadline-during-write"),
     ],
 )
@@ -597,7 +601,6 @@ async def test_publication_termination_cannot_expose_completed_answer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.ask import publication as publication_module
     from gobby.ask import service as service_module
     from gobby.ask import stage_runtime as stage_runtime_module
     from gobby.ask.service import AskService
@@ -658,21 +661,20 @@ async def test_publication_termination_cannot_expose_completed_answer(
     write_started = threading.Event()
     release_write = threading.Event()
     producer_finished = threading.Event()
-    original_write = publication_module._write_file
-    original_rename = os.rename
+    original_write = AskArtifactStore.write_body
     original_publish = publish_answer
 
-    def stalled_write(path: Path, payload: bytes) -> None:
-        if stall_point == "write" and not write_started.is_set():
+    def stalled_write(
+        store: AskArtifactStore, kind: str, body: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        if kind == "publication" and stall_point == "write":
             write_started.set()
             assert release_write.wait(timeout=10)
-        original_write(path, payload)
-
-    def stalled_rename(source: Path, target: Path) -> None:
-        if stall_point == "rename" and not write_started.is_set():
+        result = original_write(store, kind, body, **kwargs)
+        if kind == "publication" and stall_point == "persisted":
             write_started.set()
             assert release_write.wait(timeout=10)
-        original_rename(source, target)
+        return result
 
     def tracked_publish(*args: Any, **kwargs: Any) -> Any:
         try:
@@ -680,8 +682,7 @@ async def test_publication_termination_cannot_expose_completed_answer(
         finally:
             producer_finished.set()
 
-    monkeypatch.setattr(publication_module, "_write_file", stalled_write)
-    monkeypatch.setattr("gobby.ask.publication.os.rename", stalled_rename)
+    monkeypatch.setattr(AskArtifactStore, "write_body", stalled_write)
     monkeypatch.setattr("gobby.ask.stage_runtime.publish_answer", tracked_publish)
     if termination == "deadline":
         monkeypatch.setattr(service_module, "_REVIEW_RESERVE_SECONDS", 0)
@@ -735,10 +736,17 @@ async def test_publication_termination_cannot_expose_completed_answer(
     assert producer.done()
     assert service.stage_runtime.resources == {}
     with pytest.raises(AskLifecycleConflict, match="no completed publication"):
-        service.publication_root(started.run_id, project_id=project_id)
+        service.publication_files(started.run_id, project_id=project_id)
     with pytest.raises(AskRunNotFound, match="Ask run not found"):
         service.get(started.run_id, project_id="foreign-project")
     publication_root = (
-        AskArtifactStore(tmp_path / "state", project_id, started.run_id).run_root / "publication"
+        AskArtifactStore(tmp_path / "state", project_id, started.run_id, db=temp_db).run_root
+        / "publication"
     )
     assert not publication_root.exists()
+    publication_count = temp_db.fetchone(
+        "SELECT count(*) AS count FROM ask_artifacts WHERE execution_id = %s AND kind = %s",
+        (started.run_id, "publication"),
+    )
+    assert publication_count is not None
+    assert publication_count["count"] == 0

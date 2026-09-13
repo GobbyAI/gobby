@@ -41,7 +41,9 @@ Use `--background` when another process will inspect the run:
 gcode ask "Summarize the cancellation path" --background --format json
 ```
 
-Save the returned `run_id`. The same ID is used by the CLI, MCP, and HTTP APIs.
+Foreground calls print the final cited Markdown. Add `--format json` for the
+structured answer, run metadata, and provenance. Default calls create no output
+bundles. Save the returned `run_id` for background calls. The same ID is used by the CLI, MCP, and HTTP APIs.
 
 ## Inspect And Recover
 
@@ -125,6 +127,9 @@ The public MCP surface is:
 - `resume_ask_run(run_id)`
 - `cancel_ask_run(run_id)`
 - `export_ask_run(run_id)`
+- `read_answer(run_id)`
+- `read_citation(run_id, evidence_id)`
+- `evidence(operation, selector, continuation=null)`
 
 Project identity comes from the active MCP registry and caller identity comes
 from the verified session context. Do not add `project_id` to public calls.
@@ -145,6 +150,32 @@ Status, wait, resume, cancel, and export use the routes documented in
 [`../contracts/ask.md`](../contracts/ask.md). All calls use the existing local
 daemon authentication transport.
 
+## Interactive Evidence And Diagnostics
+
+Use the public `evidence` MCP tool for a direct native JSON search, read, graph,
+or commit-patch retrieval without starting Ask. Project and checkout are derived
+from your authenticated context. CLI requests may omit the binding:
+
+```bash
+gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"range","path":"src/example.py","start_line":1,"end_line":20}}'
+```
+
+Consult `gcode evidence --help` and its request schema for supported selectors.
+Carry opaque continuation tokens through every page. Managed Ask workers retain
+their assigned evidence tools; reviewers cannot use public retrieval to bypass
+admission.
+
+Ask results live in PostgreSQL and survive daemon restart without publication
+files. Retention defaults to seven days after terminal completion; set
+`GOBBY_ASK_RETENTION_DAYS` to 1–3650 days to change it. Active and recoverable runs
+are protected. Historical exported bundles are preserved.
+
+For local diagnostics, add `--output-debug-files` to Ask or evidence. The CLI
+writes a private bundle under your local Gobby home’s `ask-debug` directory and
+prints its location on stderr. Old debug bundles are cleaned under the same
+retention setting when diagnostics are written. Debug failures are separate from
+successful results. MCP has no file-output or debug-files option.
+
 ## Evidence Expectations
 
 Direct claims cite exact source evidence. Inferred claims cite premises and
@@ -155,7 +186,8 @@ something.
 
 Citations use working-tree bytes verified against their indexed content hashes.
 Dirty files and untracked nonignored files can be cited after ordinary indexing.
-The recorded HEAD commit and tree identify admission-time provenance, not an
+Observation time, checkout identity, and the recorded HEAD commit and tree identify
+admission-time provenance, not an
 immutable source snapshot. If a cited file changes before validation, refresh the
 index and start a new run; do not treat an older answer as current evidence.
 
@@ -173,4 +205,4 @@ Files under `src/gobby/install/shared/` are templates. Their presence does not
 prove those definitions are installed or active; the database registry is the
 runtime source of truth.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-13_

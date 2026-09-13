@@ -192,6 +192,7 @@ class AskRunStorage:
                 binding = AskBinding(
                     project_id=request.project_id,
                     repository_root=str(project_root.resolve()),
+                    observed_at=started_at,
                     commit_oid=commit_oid,
                     tree_oid=tree_oid,
                     deadline_at=deadline_at,

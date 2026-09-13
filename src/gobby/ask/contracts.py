@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -57,6 +57,7 @@ class AskBinding(BaseModel):
     deadline_at: datetime
     retrieval_mode: RetrievalMode
     repository_root: str
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class EvidenceReference(BaseModel):
@@ -111,3 +112,6 @@ class AskRunResult(BaseModel):
     evidence: tuple[EvidenceReference, ...] = ()
     result_artifact: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
+    answer: dict[str, Any] | None = None
+    markdown: str | None = None
+    provenance: dict[str, Any] | None = None

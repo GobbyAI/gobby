@@ -60,6 +60,9 @@ pub(crate) enum Command {
         /// Evidence request using the versioned JSON request contract
         #[arg(long, value_name = "JSON")]
         request_json: String,
+        /// Write a diagnostic bundle beneath this machine's Gobby home
+        #[arg(long)]
+        output_debug_files: bool,
     },
     /// Ask a source-bound question through the durable Gobby pipeline
     Ask(AskArgs),

@@ -16,12 +16,48 @@ pub(crate) fn preflight(
     request_json: &str,
     format: Format,
     allow_stale: bool,
+    project_override: Option<&str>,
 ) -> anyhow::Result<EvidenceRequest> {
-    let request = serde_json::from_str(request_json).map_err(|error| CliError {
+    let mut document: serde_json::Value =
+        serde_json::from_str(request_json).map_err(|error| CliError {
+            code: "invalid_evidence_request",
+            message: format!("invalid evidence request JSON: {error}"),
+            recovery: Some(
+                "provide one complete evidence schema v1 request with --request-json".to_string(),
+            ),
+            exit_status: 2,
+        })?;
+
+    if document.get("binding").is_none() {
+        let root = match project_override {
+            Some(value) => {
+                let path = std::path::PathBuf::from(value);
+                if path.is_dir() {
+                    path.canonicalize()?
+                } else {
+                    crate::daemon::lookup_project_by_name(value)?.root
+                }
+            }
+            None => crate::config::detect_project_root()?,
+        };
+        let identity = crate::config::resolve_project_identity(&root)?;
+        let object = document
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("evidence request must be a JSON object"))?;
+        object.insert(
+            "binding".to_string(),
+            serde_json::json!({
+                "project_id": identity.project_id,
+                "commit_oid": crate::git::git_output(&identity.root, &["rev-parse", "HEAD"] )?,
+                "tree_oid": crate::git::git_output(&identity.root, &["rev-parse", "HEAD^{tree}"] )?,
+            }),
+        );
+    }
+    let request = serde_json::from_value(document).map_err(|error| CliError {
         code: "invalid_evidence_request",
         message: format!("invalid evidence request JSON: {error}"),
         recovery: Some(
-            "provide one complete evidence schema v1 request with --request-json".to_string(),
+            "provide a valid evidence schema v1 request with --request-json".to_string(),
         ),
         exit_status: 2,
     })?;
@@ -84,7 +120,11 @@ pub(crate) fn classify_context_error(error: anyhow::Error) -> anyhow::Error {
     .into()
 }
 
-pub(crate) fn run(ctx: &Context, request: EvidenceRequest) -> anyhow::Result<()> {
+pub(crate) fn run(
+    ctx: &Context,
+    request: EvidenceRequest,
+    output_debug_files: bool,
+) -> anyhow::Result<()> {
     crate::freshness::ensure_fresh(ctx, crate::freshness::FreshnessScope::Project)?;
     let facts = Arc::new(CodewikiFacts::from_context(ctx.clone()));
     let mut library = EvidenceLibrary::new(&ctx.project_root, request.binding.clone(), facts)
@@ -100,7 +140,15 @@ pub(crate) fn run(ctx: &Context, request: EvidenceRequest) -> anyhow::Result<()>
     ) {
         library = library.with_hybrid(Arc::new(NativeHybridSearch::new(ctx.clone())));
     }
-    let response = library.query(request).map_err(cli_error)?;
+    let mut response = library.query(request).map_err(cli_error)?;
+    response.observation = Some(crate::evidence::EvidenceObservation {
+        observed_at: chrono::Utc::now().to_rfc3339(),
+        checkout: ctx.project_root.clone(),
+        recorded_head: response.binding.commit_oid.clone(),
+    });
+    if output_debug_files {
+        crate::debug_output::write_debug("evidence", &serde_json::to_value(&response)?);
+    }
     output::print_json(&response)
 }
 

@@ -99,7 +99,7 @@ class CompletingPipelineExecutor:
         execution_id: str | None = None,
         session_id: str | None = None,
     ) -> PipelineExecution:
-        del pipeline, project_id
+        del pipeline
         self.calls.append((execution_id, session_id, inputs))
         assert execution_id is not None
         # PipelineExecutor._execute marks the execution RUNNING before it does any
@@ -112,9 +112,47 @@ class CompletingPipelineExecutor:
             raise RuntimeError("controlled executor interruption")
         if self._release is not None:
             await self._release.wait()
-        execution = self.manager.update_execution_status(execution_id, ExecutionStatus.COMPLETED)
-        assert execution is not None
-        return execution
+        return complete_publication(self.manager, execution_id, project_id)
+
+
+def complete_publication(
+    manager: LocalPipelineExecutionManager, execution_id: str, project_id: str
+) -> PipelineExecution:
+    from gobby.ask.artifacts import AskArtifactStore
+    from gobby.ask.publication import publish_answer
+    from gobby.ask.stages import AskStage
+    from gobby.ask.validation import validate_claims, validate_review
+    from tests.ask.test_validation import _valid_case
+
+    draft, evidence, blobs, review = _valid_case(run_id=execution_id, project_id=project_id)
+    deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
+    reviewed = validate_review(draft, evidence, deterministic, review)
+    publication = publish_answer(
+        AskArtifactStore(None, project_id, execution_id, db=manager.db),
+        draft,
+        evidence,
+        deterministic,
+        reviewed,
+        request={"question": draft.question},
+        binding=evidence.repository_binding.model_dump(mode="json"),
+        profiles={"investigator": "test-investigator", "reviewer": "test-reviewer"},
+        tool_identities=("gcode@test",),
+        attempt_history=({"attempt": 0, "status": "reviewed"},),
+    )
+    AskStageStore(manager).checkpoint(
+        execution_id,
+        stage=AskStage.PUBLISH,
+        boundary_id=f"publish:{publication.manifest_sha256}",
+        status=ExecutionStatus.COMPLETED.value,
+        answer_outcome=publication.outcome,
+        publication={
+            "artifact": publication.artifact,
+            "manifest_sha256": publication.manifest_sha256,
+        },
+    )
+    execution = manager.update_execution_status(execution_id, ExecutionStatus.COMPLETED)
+    assert execution is not None
+    return execution
 
 
 class RecordingCompletionRegistry(CompletionEventRegistry):

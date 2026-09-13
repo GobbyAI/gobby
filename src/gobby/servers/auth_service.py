@@ -102,6 +102,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/ask/runs/*/resume", True, False),
     _AgentRoute("POST", "/api/ask/runs/*/cancel", True, False),
     _AgentRoute("GET", "/api/ask/runs/*/export", True, False),
+    _AgentRoute("GET", "/api/ask/runs/*/citations/*", True, False),
     # Session-scoped variables (stdio proxy get/set_variable).
     _AgentRoute("POST", "/api/sessions/*/variables/get", True),
     _AgentRoute("POST", "/api/sessions/*/variables/set", True),

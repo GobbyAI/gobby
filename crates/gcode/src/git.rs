@@ -50,7 +50,7 @@ pub fn worktree_info(path: &Path) -> anyhow::Result<WorktreeInfo> {
     })
 }
 
-fn git_output(path: &Path, args: &[&str]) -> anyhow::Result<String> {
+pub(crate) fn git_output(path: &Path, args: &[&str]) -> anyhow::Result<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)

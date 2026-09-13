@@ -112,6 +112,7 @@ async def tool_result_cleanup_loop(
     sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
     """Clean expired offloaded tool results once per day."""
+    from gobby.ask.retention import cleanup_expired as cleanup_ask_results
     from gobby.storage.tool_results import ToolResultStore
 
     sleep_fn = sleep or asyncio.sleep
@@ -134,6 +135,14 @@ async def tool_result_cleanup_loop(
             break
         except Exception as exc:
             logger.error("Error in tool-result cleanup loop: %s", exc)
+        try:
+            deleted_ask = await _run_sync_maintenance(run_db, cleanup_ask_results, db)
+            if deleted_ask:
+                logger.info("Periodic Ask cleanup: removed %s expired runs", deleted_ask)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("Error in Ask cleanup: %s", exc)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:

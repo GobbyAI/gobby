@@ -36,8 +36,10 @@ is serving.
 
 ## Durable Run Result
 
-All public surfaces return the same canonical run record. It exposes, directly
-or in nested canonical objects:
+Status and background admission return lightweight run metadata. Foreground CLI
+completion prints the final Markdown with citations; `--format json` and MCP
+completion return the structured answer, Markdown, provenance, and run metadata.
+The run metadata exposes:
 
 - `run_id`, pipeline `status`, and `current_stage`
 - `answer_outcome`: `complete`, `partial`, `unknown`, or null before an answer
@@ -54,6 +56,21 @@ pipeline statuses, not transport errors. Adapters preserve these distinctions
 and do not infer an outcome from prose.
 
 ## Evidence And Provenance
+
+Ordinary authenticated agents use `evidence(operation, selector, continuation)`
+without starting Ask. It returns native JSON for search, read (including commit
+patches), and graph operations. Project and checkout come from authenticated
+caller context; no run or worker identity is required. CLI evidence may omit its
+binding, which is resolved from the selected project. Existing selectors, bounds,
+hashes, freshness checks, and continuation tokens apply. Managed Ask workers
+cannot use public retrieval: investigators admit evidence through `query_evidence`,
+and reviewers may only read admitted evidence.
+
+Responses record observation time, checkout identity, recorded HEAD, and source
+hashes. Citations carry repository-relative paths and ranges, evidence IDs and
+hashes, with authenticated retrieval URLs requiring no local output file. Retained
+results describe recorded observations. Replay proves retained integrity, not
+freshness against the current checkout; it does not regenerate an answer.
 
 An `EvidenceManifest` is versioned and bound to one run and repository binding.
 It records the authorized project separately from the caller’s index identity
@@ -165,7 +182,8 @@ gcode ask --export RUN_ID --output DIR
 Global `--project` selects a registered project by root or name. Start defaults
 to foreground event-driven waiting. Explicit `--background` returns after the
 durable run is created. Text is the default; `--format json` returns the stable
-run object. Only explicit export creates a local file.
+run object. File output defaults off. CLI-only `--output-debug-files` writes diagnostics beneath
+the calling machine’s Gobby home; explicit export uses its requested destination.
 
 ### MCP
 
@@ -173,6 +191,7 @@ The `gobby-ask` registry exposes public tools:
 
 - `start_ask_run`, `get_ask_run`, `wait_for_ask_run`
 - `resume_ask_run`, `cancel_ask_run`, `export_ask_run`
+- `evidence`, `read_answer`, `read_citation`
 
 Public MCP tools bind `project_id` from the active registry and caller identity
 from the verified session context. Callers cannot supply a foreign project to
@@ -204,12 +223,13 @@ Authenticated local-daemon routes are:
 - `POST /api/ask/runs/{run_id}/resume?project_id=...`
 - `POST /api/ask/runs/{run_id}/cancel?project_id=...`
 - `GET /api/ask/runs/{run_id}/export?project_id=...`
+- `GET /api/ask/runs/{run_id}/citations/{evidence_id}?project_id=...`
 
 Start accepts the public request fields and resolves the registered checkout
 for its project. An explicit `project_path` must be that primary checkout or a
 registered worktree/clone owned by the same project and machine. Mutating calls pass the verified caller session to the service.
 Export streams `application/x-tar` from the service-verified immutable
-publication root and does not create a server-local export copy.
+PostgreSQL publication records and does not create a server-local export copy.
 
 ## Authorization And Security
 
@@ -234,3 +254,29 @@ End-to-end acceptance requires the shared runtime service, installed native
 binary, and installed database-backed workflow/profile definitions. Unit tests
 with adapter fakes establish surface fidelity only; they do not establish those
 runtime, authorization, installation, or security prerequisites.
+
+## Persistence, Diagnostics, And Retention
+
+PostgreSQL owns retained evidence, submissions, validation, review, and publication
+bodies in `ask_artifacts`, linked to their owning pipeline execution. Canonical
+serialization and hashes remain stable. Publication and its checkpoint commit
+transactionally after validation and review. Restart, resume, citation retrieval,
+replay, and export read database records; historical local bundles are preserved.
+There is no configurable filesystem persistence backend.
+
+MCP never writes output files and has no debug-files parameter. Large MCP results
+use the existing tool-result pagination/offload and retention. Export returns an
+authenticated download reference rendered from database records.
+
+`--output-debug-files` is CLI-only on Ask and evidence and defaults off. It writes
+private bundles beneath `$GOBBY_HOME/ask-debug` (normally `~/.gobby/ask-debug`) on
+the calling machine and reports the location on stderr. A diagnostic-write failure
+is reported separately and does not invalidate a persisted answer or evidence result.
+
+Daily maintenance deletes bounded batches of terminal Ask executions and their
+owned records seven days after terminal completion. `GOBBY_ASK_RETENTION_DAYS`
+configures 1–3650 days. Active runs, active attempts, and interrupted runs still
+eligible for recovery are protected. Repeated cleanup is safe. Local debug cleanup
+uses the same retention setting when diagnostics are written. Standalone evidence
+and pageable tool responses retain their existing tool-result lifecycle; indexes
+and shared session/agent history keep their own lifecycle.

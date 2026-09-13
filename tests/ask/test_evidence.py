@@ -181,7 +181,7 @@ def _persist_authority(
         ),
         source_root,
     )
-    artifacts = AskArtifactStore(state_root, project_id, record.run_id)
+    artifacts = AskArtifactStore(state_root, project_id, record.run_id, db=manager.db)
     binding = {
         "project_id": project_id,
         "commit_oid": record.binding.commit_oid,
@@ -514,26 +514,24 @@ async def test_durable_scoped_evidence_admission(
         ).hexdigest()
     )
 
-    manifest = json.loads(artifacts.manifest_path.read_text(encoding="utf-8"))
-    assert len(manifest["artifacts"]) == 91
-    assert oct(artifacts.run_root.stat().st_mode & 0o777) == "0o700"
-    assert all(
-        oct((artifacts.run_root / item["relative_path"]).stat().st_mode & 0o777) == "0o600"
-        for item in manifest["artifacts"]
+    rows = temp_db.fetchall(
+        "SELECT kind, sha256, body, created_at FROM ask_artifacts WHERE execution_id = %s",
+        (record.run_id,),
     )
+    assert len(rows) == 91
+    assert not artifacts.run_root.exists()
+    artifacts.verify_manifest()
     bodies = [artifacts.read_body(item["result_artifact"]) for item in checkpoint]
-    positions = {item["relative_path"]: index for index, item in enumerate(manifest["artifacts"])}
+    positions = {(row["kind"], row["sha256"]): row["created_at"] for row in rows}
     assert all(
-        positions[item["invocation_artifact"]["relative_path"]]
-        < positions[item["result_artifact"]["relative_path"]]
+        positions[(item["invocation_artifact"]["kind"], item["invocation_artifact"]["sha256"])]
+        <= positions[(item["result_artifact"]["kind"], item["result_artifact"]["sha256"])]
         for item in checkpoint
     )
     assert "super-secret" not in json.dumps(bodies)
     assert not any("shell" in json.dumps(body["argv"]) for body in bodies if "argv" in body)
     assert os.environ.get("DATABASE_URL") != "postgresql://worker:super-secret@127.0.0.1/db"
-    persisted_bytes = b"".join(
-        path.read_bytes() for path in artifacts.run_root.rglob("*") if path.is_file()
-    )
+    persisted_bytes = "".join(str(row["body"]) for row in rows).encode()
     assert b"request-secret" not in persisted_bytes
     assert b"successful-secret" not in persisted_bytes
 
@@ -654,7 +652,7 @@ async def test_evidence_publication_timeout_records_only_terminal_timeout(
             holder.rollback()
 
         release_task = asyncio.create_task(release_after_main_deadline())
-        with pytest.raises(EvidenceAdmissionError, match="during publication"):
+        with pytest.raises(EvidenceAdmissionError, match="during (invocation )?publication"):
             await admission.query(
                 "search",
                 {"lane": "literal", "query": "publication-lock", "paths": [], "limit": 1000},

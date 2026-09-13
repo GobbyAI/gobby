@@ -4,6 +4,7 @@ mod commands;
 mod config;
 pub mod contract;
 mod db;
+mod debug_output;
 pub mod evidence;
 mod freshness;
 mod git;

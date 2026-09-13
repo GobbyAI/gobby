@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from pathlib import Path
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 
 from gobby.ask.publication import replay_publication
 from gobby.utils.durable_file import exclusive_file_lock
@@ -36,13 +37,13 @@ def _fsync_tree(root: Path) -> None:
         os.close(descriptor)
 
 
-def export_publication(publication_root: Path, destination: Path) -> Path:
+def export_publication(files: Mapping[str, bytes], destination: Path) -> Path:
     """Verify and atomically copy a bundle without replacing any destination."""
-    publication_root = publication_root.resolve()
     destination = destination.absolute()
-    if destination == publication_root or destination.is_relative_to(publication_root):
-        raise ValueError("export destination must be outside the publication")
-    replay_publication(publication_root)
+    for name in files:
+        relative = PurePosixPath(name)
+        if relative.is_absolute() or ".." in relative.parts or str(relative) != name:
+            raise ValueError("export path escapes bundle")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(
         tempfile.mkdtemp(
@@ -52,7 +53,11 @@ def export_publication(publication_root: Path, destination: Path) -> Path:
         )
     )
     try:
-        shutil.copytree(publication_root, temporary, dirs_exist_ok=True, symlinks=False)
+        for name, payload in files.items():
+            target = temporary / name
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target.write_bytes(payload)
+        replay_publication(temporary)
         for path in temporary.rglob("*"):
             os.chmod(path, 0o700 if path.is_dir() else 0o600)
         _fsync_tree(temporary)

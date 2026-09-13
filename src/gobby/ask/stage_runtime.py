@@ -281,28 +281,46 @@ class AskStageRuntime:
             tool_identities=state.tool_identities,
             attempt_history=[item.model_dump(mode="json") for item in state.attempts],
             deadline_check=check_publication_authority,
-        )
-        publication = await self._run_publication(record.run_id, publish)
-        publication_body = {
-            "root": str(publication.root),
-            "manifest_sha256": publication.manifest_sha256,
-            "outcome": publication.outcome,
-            "claim_ids": list(publication.claim_ids),
-            "manifest": {
-                "root": str(publication.root),
-                "sha256": publication.manifest_sha256,
+            observation={
+                "observed_at": record.binding.observed_at.isoformat(),
+                "checkout": record.binding.repository_root,
+                "recorded_head": record.binding.commit_oid,
             },
-        }
-        boundary_id = f"publish:{publication.manifest_sha256}"
-        await asyncio.to_thread(
-            self.stages.checkpoint,
-            record.run_id,
-            stage=AskStage.PUBLISH,
-            boundary_id=boundary_id,
-            status=ExecutionStatus.COMPLETED.value,
-            answer_outcome=publication.outcome,
-            publication=publication_body,
         )
+
+        def commit_publication() -> PublishedAnswer:
+            with self.storage.manager.db.transaction() as conn:
+                check_publication_authority()
+                publication = publish()
+                conn.execute(
+                    "SELECT id FROM pipeline_executions WHERE id = %s FOR UPDATE",
+                    (record.run_id,),
+                ).fetchone()
+                check_publication_authority()
+                publication_body = {
+                    "artifact": publication.artifact,
+                    "manifest_sha256": publication.manifest_sha256,
+                    "outcome": publication.outcome,
+                    "claim_ids": list(publication.claim_ids),
+                    "manifest": {
+                        "artifact": publication.artifact,
+                        "sha256": publication.manifest_sha256,
+                    },
+                }
+                boundary_id = f"publish:{publication.manifest_sha256}"
+                self.stages.checkpoint(
+                    record.run_id,
+                    stage=AskStage.PUBLISH,
+                    boundary_id=boundary_id,
+                    status=ExecutionStatus.COMPLETED.value,
+                    answer_outcome=publication.outcome,
+                    publication=publication_body,
+                )
+                check_publication_authority()
+                return publication
+
+        publication = await self._run_publication(record.run_id, commit_publication)
+        boundary_id = f"publish:{publication.manifest_sha256}"
         self.fault(boundary_id)
         return await asyncio.to_thread(self.stages.step_output, record.run_id, "publish")
 
@@ -314,7 +332,9 @@ class AskStageRuntime:
         existing = self.resources.get(record.run_id)
         if existing is not None:
             return existing
-        artifacts = AskArtifactStore(self.state_root, record.binding.project_id, record.run_id)
+        artifacts = AskArtifactStore(
+            self.state_root, record.binding.project_id, record.run_id, db=self.storage.manager.db
+        )
         current = await asyncio.to_thread(self.storage.get, record.run_id)
         if current is None:
             raise RuntimeError("Ask run disappeared during resource preparation")

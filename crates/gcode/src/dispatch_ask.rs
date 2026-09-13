@@ -32,29 +32,29 @@ pub(crate) fn run(
             };
             let started = client.start(&request)?;
             if background || is_terminal(&started) {
-                return print_and_classify(&started, format);
+                return finish_result(&started, format, args.output_debug_files);
             }
             let run_id = run_id(&started)?;
             eprintln!("Ask run {run_id}");
             let completed = wait_for_run(&client, run_id, Some(timeout_seconds))?;
-            print_and_classify(&completed, format)
+            finish_result(&completed, format, args.output_debug_files)
         }
         AskAction::Status { run_id } => {
             let result = client.get(run_id)?;
-            print_and_classify(&result, format)
+            finish_result(&result, format, args.output_debug_files)
         }
         AskAction::Resume { run_id } => {
             let resumed = client.resume(run_id)?;
             if is_terminal(&resumed) {
-                return print_and_classify(&resumed, format);
+                return finish_result(&resumed, format, args.output_debug_files);
             }
             eprintln!("Ask run {run_id}");
             let completed = wait_for_run(&client, run_id, remaining_seconds(&resumed))?;
-            print_and_classify(&completed, format)
+            finish_result(&completed, format, args.output_debug_files)
         }
         AskAction::Cancel { run_id } => {
             let cancelled = client.cancel(run_id)?;
-            print_and_classify(&cancelled, format)
+            finish_result(&cancelled, format, args.output_debug_files)
         }
         AskAction::Export { run_id, output } => {
             let output_path = client.export(run_id, output)?;
@@ -156,6 +156,9 @@ fn print_result(result: &Value, format: output::Format) -> anyhow::Result<()> {
     match format {
         output::Format::Json => output::print_json(result),
         output::Format::Text => {
+            if let Some(markdown) = result.get("markdown").and_then(Value::as_str) {
+                return output::print_text(markdown);
+            }
             let mut fields = vec![
                 format!("run_id: {}", display_field(result, "run_id")),
                 format!("status: {}", display_field(result, "status")),
@@ -194,4 +197,11 @@ fn run_failure(result: &Value, code: &'static str, exit_status: u8) -> CliError 
         recovery: None,
         exit_status,
     }
+}
+
+fn finish_result(result: &Value, format: output::Format, debug: bool) -> anyhow::Result<()> {
+    if debug {
+        crate::debug_output::write_debug("ask", result);
+    }
+    print_and_classify(result, format)
 }

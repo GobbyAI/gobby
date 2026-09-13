@@ -3,7 +3,7 @@
 Load when locating implementation, retrieving source, assessing change impact,
 or diagnosing index freshness. Use the native `gcode` CLI through the shell.
 Ordinary index navigation uses native commands. The `gobby-ask` MCP service
-handles durable source-bound questions and assigned Ask worker evidence;
+handles direct interactive evidence, durable source-bound questions, and assigned worker evidence;
 the daemon's HTTP routes also serve UI and integration clients.
 
 Start with the query shape, then retrieve the smallest useful source body.

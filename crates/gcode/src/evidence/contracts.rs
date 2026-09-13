@@ -334,7 +334,17 @@ pub struct CommitMetadataEvidence {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct EvidenceObservation {
+    pub observed_at: String,
+    pub checkout: std::path::PathBuf,
+    pub recorded_head: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvidenceResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<EvidenceObservation>,
     pub request: EvidenceRequest,
     pub request_fingerprint: String,
     pub binding: RepositoryBinding,

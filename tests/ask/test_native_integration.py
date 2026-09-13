@@ -171,7 +171,7 @@ async def test_real_managed_live_index_queries_branch_native_gcode(
         caller_session_id=session.id,
     )
     assert record.request.timeout_seconds == 600
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, record.run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, record.run_id, db=temp_db)
     runtime_root = tmp_path / "managed-runtimes"
     credential_manager = ManagedCredentialManager(
         database=temp_db,

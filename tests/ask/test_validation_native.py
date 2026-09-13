@@ -85,7 +85,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         project_root=repo,
         caller_session_id=session.id,
     )
-    artifacts = AskArtifactStore(tmp_path / "state", project_id, record.run_id)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, record.run_id, db=temp_db)
     runtime_root = tmp_path / "managed-runtimes"
     credentials = ManagedCredentialManager(
         database=temp_db,

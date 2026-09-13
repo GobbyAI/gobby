@@ -747,6 +747,9 @@ async def test_ask_agent_permission_boundary(
     )
 
     denied_calls = (
+        ("gobby-ask", "evidence", {"operation": "search", "selector": {"query": "source"}}),
+        ("gobby-ask", "read_answer", {"run_id": ask_run.run_id}),
+        ("gobby-ask", "read_citation", {"run_id": ask_run.run_id, "evidence_id": "ev-1"}),
         ("gobby-tasks", "close_task", {"task_id": "#1"}),
         ("gobby-agents", "spawn_agent", {"prompt": "descendant"}),
         ("gobby-worktrees", "delete_worktree", {"worktree_id": "other"}),

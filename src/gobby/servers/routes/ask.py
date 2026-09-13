@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
+import asyncio
 import tarfile
-import threading
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -100,35 +99,20 @@ _TRANSLATED_ASK_ERRORS = (
 )
 
 
-def _tar_stream(root: Path) -> Generator[bytes]:
-    read_fd, write_fd = os.pipe()
-    failures: list[Exception] = []
+def _tar_stream(files: dict[str, bytes]) -> Generator[bytes]:
+    """Render database records as a downloadable tar without server-side output files."""
+    import io
 
-    def produce() -> None:
-        try:
-            with (
-                os.fdopen(write_fd, "wb") as output,
-                tarfile.open(fileobj=output, mode="w|") as tar,
-            ):
-                for path in sorted(
-                    candidate for candidate in root.rglob("*") if candidate.is_file()
-                ):
-                    tar.add(path, arcname=path.relative_to(root), recursive=False)
-        except BrokenPipeError:
-            pass
-        except Exception as error:
-            failures.append(error)
-
-    worker = threading.Thread(target=produce, name="ask-export", daemon=True)
-    worker.start()
-    try:
-        with os.fdopen(read_fd, "rb") as source:
-            while chunk := source.read(64 * 1024):
-                yield chunk
-    finally:
-        worker.join()
-    if failures:
-        raise failures[0]
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        for name, payload in sorted(files.items()):
+            entry = tarfile.TarInfo(name)
+            entry.size = len(payload)
+            entry.mode = 0o600
+            archive.addfile(entry, io.BytesIO(payload))
+    buffer.seek(0)
+    while chunk := buffer.read(65536):
+        yield chunk
 
 
 def create_ask_router(
@@ -198,6 +182,18 @@ def create_ask_router(
             raise _ask_http_exception(error) from error
         return _payload(result)
 
+    @router.get("/{run_id}/citations/{evidence_id:path}")
+    async def read_citation(
+        run_id: str, evidence_id: str, project_id: str, request: Request
+    ) -> dict[str, Any]:
+        await _authorize_project(server, request, project_id)
+        try:
+            return await asyncio.to_thread(
+                service(project_id).citation, run_id, evidence_id, project_id=project_id
+            )
+        except _TRANSLATED_ASK_ERRORS as error:
+            raise _ask_http_exception(error) from error
+
     @router.get("/{run_id}")
     async def get_ask_run(run_id: str, project_id: str, request: Request) -> dict[str, Any]:
         await _authorize_project(server, request, project_id)
@@ -255,11 +251,13 @@ def create_ask_router(
     async def export_ask_run(run_id: str, project_id: str, request: Request) -> StreamingResponse:
         await _authorize_project(server, request, project_id)
         try:
-            root = service(project_id).publication_root(run_id, project_id=project_id)
+            files = await asyncio.to_thread(
+                service(project_id).publication_files, run_id, project_id=project_id
+            )
         except _TRANSLATED_ASK_ERRORS as error:
             raise _ask_http_exception(error) from error
         return StreamingResponse(
-            _tar_stream(root),
+            _tar_stream(files),
             media_type="application/x-tar",
             headers={
                 "Content-Disposition": f'attachment; filename="ask-{run_id}.tar"',

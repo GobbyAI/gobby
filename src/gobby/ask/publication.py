@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
-import os
-import shutil
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -41,7 +37,7 @@ class PublicationError(RuntimeError):
 
 @dataclass(frozen=True)
 class PublishedAnswer:
-    root: Path
+    artifact: dict[str, Any]
     manifest_sha256: str
     outcome: str
     claim_ids: tuple[str, ...]
@@ -87,6 +83,14 @@ def _citation_body(
     item: EvidenceItem,
 ) -> dict[str, Any]:
     body = citation.model_dump(mode="json")
+    source = (
+        item
+        if isinstance(item, SourceEvidenceItem)
+        else (item.source if isinstance(item, GraphEvidenceItem) else None)
+    )
+    if source is not None:
+        body["content_hash"] = source.content_hash
+        body["excerpt_hash"] = source.excerpt_hash
     body["record_path"] = _record_artifact_path(citation.evidence_id)
     if isinstance(citation, SourceCitation) and isinstance(item, SourceEvidenceItem):
         body["artifact_path"] = _source_artifact_path(item)
@@ -133,6 +137,13 @@ def _published_answer_body(
                 _citation_body(citation, items[citation.evidence_id])
                 for citation in claim.citations
             ]
+            from urllib.parse import quote
+
+            for citation_body in claim_body["citations"]:
+                citation_body["citation_url"] = (
+                    f"/api/ask/runs/{quote(draft.run_id, safe='')}/citations/"
+                    f"{quote(citation_body['evidence_id'], safe='')}?project_id={quote(evidence.project_id, safe='')}"
+                )
             published_claims.append(claim_body)
             ordered_claim_ids.append(claim.id)
             section_ids.append(claim.id)
@@ -213,18 +224,21 @@ def _citation_markdown(citation: Mapping[str, Any]) -> str:
     citation_type = citation["citation_type"]
     if citation_type == "source":
         label = f"{citation['path']}:{citation['line_start']}-{citation['line_end']}"
-        return f"[{label}]({citation['artifact_path']})"
+        return f"[{label}]({citation.get('citation_url', citation['artifact_path'])})"
     if citation_type == "graph":
         label = (
             f"{citation['source_path']}:{citation['line_start']}-{citation['line_end']} "
             f"{citation['relation']}"
         )
-        return f"[{label}]({citation['artifact_path']})"
+        return f"[{label}]({citation.get('citation_url', citation['artifact_path'])})"
     path = citation.get("changed_path") or {}
     changed_path = path.get("new_path") or path.get("old_path") or "no changed path"
     commit = str(citation["commit_oid"])
     parent = str(citation["comparison_parent_oid"])
-    return f"commit `{commit}` vs `{parent}` ({changed_path})"
+    label = f"commit `{commit}` vs `{parent}` ({changed_path})"
+    if citation.get("citation_url"):
+        return f"[{label}]({citation['citation_url']})"
+    return label
 
 
 def render_markdown(answer: Mapping[str, Any]) -> str:
@@ -242,28 +256,6 @@ def render_markdown(answer: Mapping[str, Any]) -> str:
             lines.append(line)
         lines.append("")
     return "\n".join(lines)
-
-
-def _write_file(path: Path, payload: bytes) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        remaining = memoryview(payload)
-        while remaining:
-            written = os.write(descriptor, remaining)
-            if written <= 0:
-                raise OSError(f"failed to write Ask publication file {path}")
-            remaining = remaining[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _verify_files(root: Path, manifest: Mapping[str, Any]) -> None:
@@ -338,22 +330,6 @@ def replay_publication(root: Path) -> ReplayResult:
     )
 
 
-def _existing_publication(root: Path, expected_manifest: bytes) -> PublishedAnswer:
-    manifest, manifest_bytes = _read_manifest(root)
-    if manifest_bytes != expected_manifest:
-        raise PublicationError("immutable publication collision")
-    replay = replay_publication(root)
-    answer = json.loads(replay.answer_json)
-    return PublishedAnswer(
-        root=root,
-        manifest_sha256=replay.manifest_sha256,
-        outcome=answer["outcome"],
-        claim_ids=tuple(answer["accepted_claim_ids"]),
-        answer=answer,
-        markdown=replay.answer_markdown.decode(),
-    )
-
-
 def publish_answer(
     store: AskArtifactStore,
     draft: AnswerDraft,
@@ -367,6 +343,7 @@ def publish_answer(
     tool_identities: Sequence[str],
     attempt_history: Sequence[Mapping[str, Any]],
     deadline_check: Callable[[], None] | None = None,
+    observation: Mapping[str, Any] | None = None,
 ) -> PublishedAnswer:
     """Atomically publish the reviewed subset of one immutable draft version."""
 
@@ -435,6 +412,7 @@ def publish_answer(
         "publication_id": canonical_hash(answer),
         "files": file_manifest,
         "provenance": {
+            "observation": dict(observation or {}),
             "request": dict(request),
             "binding": dict(binding),
             "profiles": dict(profiles),
@@ -447,44 +425,56 @@ def publish_answer(
         },
     }
     manifest_bytes = canonical_json(manifest)
-    target = store.run_root / "publication"
-    if target.exists():
-        check_deadline()
-        return _existing_publication(target, manifest_bytes)
-
-    temporary = Path(tempfile.mkdtemp(prefix=".publication-", suffix=".tmp", dir=store.run_root))
-    try:
-        os.chmod(temporary, 0o700)
-        (temporary / "evidence").mkdir(mode=0o700)
-        for relative, payload in files.items():
-            _write_file(temporary / relative, payload)
-            check_deadline()
-        _write_file(temporary / "manifest.json", manifest_bytes)
-        check_deadline()
-        _fsync_directory(temporary / "evidence")
-        _fsync_directory(temporary)
-        check_deadline()
-        try:
-            os.rename(temporary, target)
-        except OSError as error:
-            if error.errno not in {errno.EEXIST, errno.ENOTEMPTY} and not target.exists():
-                raise
-            return _existing_publication(target, manifest_bytes)
-        try:
-            check_deadline()
-        except BaseException:
-            shutil.rmtree(target, ignore_errors=True)
-            _fsync_directory(store.run_root)
-            raise
-        _fsync_directory(store.run_root)
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
-    replay = replay_publication(target)
+    check_deadline()
+    artifact = store.write_body(
+        "publication",
+        {
+            "manifest": manifest,
+            "files": {name: payload.decode("utf-8") for name, payload in files.items()},
+        },
+    )
+    check_deadline()
     return PublishedAnswer(
-        root=target,
-        manifest_sha256=replay.manifest_sha256,
+        artifact=artifact,
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         outcome=answer["outcome"],
         claim_ids=claim_ids,
         answer=answer,
-        markdown=replay.answer_markdown.decode(),
+        markdown=files["answer.md"].decode(),
     )
+
+
+def publication_files(store: AskArtifactStore, pointer: dict[str, Any]) -> dict[str, bytes]:
+    """Verify retained observations, without consulting the current checkout."""
+    body = store.read_body(pointer)
+    manifest = body.get("manifest")
+    raw_files = body.get("files")
+    if not isinstance(manifest, dict) or not isinstance(raw_files, dict):
+        raise PublicationError("invalid stored publication")
+    files: dict[str, bytes] = {}
+    descriptors = manifest.get("files")
+    if not isinstance(descriptors, list):
+        raise PublicationError("invalid publication manifest")
+    for item in descriptors:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise PublicationError("invalid publication entry")
+        name = item["path"]
+        path = PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts or str(path) != name or name in files:
+            raise PublicationError("invalid publication path")
+        value = raw_files.get(name)
+        if not isinstance(value, str):
+            raise PublicationError("missing publication content")
+        payload = value.encode()
+        if len(payload) != item.get("size_bytes") or hashlib.sha256(
+            payload
+        ).hexdigest() != item.get("sha256"):
+            raise PublicationError("publication hash mismatch")
+        files[name] = payload
+    if set(raw_files) != set(files):
+        raise PublicationError("unmanifested publication content")
+    answer = json.loads(files["answer.json"])
+    if not isinstance(answer, dict) or render_markdown(answer).encode() != files["answer.md"]:
+        raise PublicationError("published Markdown is not a byte-stable render")
+    files["manifest.json"] = canonical_json(manifest)
+    return files
