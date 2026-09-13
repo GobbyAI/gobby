@@ -132,10 +132,25 @@ pub async fn run() -> io::Result<()> {
 
     let ticker = {
         let state = Arc::clone(&state);
+        let socket_dir = args.socket_dir.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(30));
             loop {
                 interval.tick().await;
+                match tokio::fs::metadata(&socket_dir).await {
+                    Ok(metadata) if metadata.is_dir() => {}
+                    Ok(_) => {
+                        state.socket_dir_removed.store(true, Ordering::SeqCst);
+                        let _ = state.shutdown.send(true);
+                        break;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        state.socket_dir_removed.store(true, Ordering::SeqCst);
+                        let _ = state.shutdown.send(true);
+                        break;
+                    }
+                    Err(_) => continue,
+                }
                 state.expire_prepared().await;
                 state.broadcast_frames().await;
             }
@@ -151,12 +166,19 @@ pub async fn run() -> io::Result<()> {
     }
     ticker.abort();
 
+    let socket_dir_removed = state.socket_dir_removed.load(Ordering::SeqCst);
+    if socket_dir_removed {
+        info!(reason = "socket_dir_removed", "gterm host shutting down");
+    }
+
     control_accept.abort();
     frames_task.abort();
     let _ = fs::remove_file(&control_path);
     let _ = fs::remove_file(&frames_path);
     let _ = fs::remove_file(&args.pid_file);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    if !socket_dir_removed {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
     Ok(())
 }
 

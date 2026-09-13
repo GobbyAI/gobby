@@ -56,6 +56,14 @@ class FakeControlClient:
     claimed: bool = False
     authed: bool = False
 
+    async def dispatch(self, verb: str, **fields: Any) -> Any:
+        """Route a raw control verb through the fake host surface."""
+        self._require_open()
+        handler = getattr(self, verb, None)
+        if handler is None or verb.startswith("_"):
+            return {"ok": False, "error": "unknown_verb"}
+        return await handler(**fields)
+
     async def hello(self, protocol_version: int, control_token: str) -> FakeHello:
         if self.hello_error is not None:
             raise PermissionError(self.hello_error)

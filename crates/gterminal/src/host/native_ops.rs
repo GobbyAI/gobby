@@ -1,6 +1,8 @@
 //! Native-terminal resource lifecycle and frame production.
 
+use std::collections::BTreeSet;
 use std::io;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -89,7 +91,80 @@ fn remove_terminal_slot(
     }
 }
 
+#[cfg(feature = "vt-engine")]
+fn native_slot_alive(slot: &TerminalSlot) -> bool {
+    slot.locator.is_none()
+        && slot.pgid > 0
+        && slot
+            .child
+            .as_ref()
+            .is_some_and(|child| child.runtime.child_exit().is_none())
+}
+
+#[cfg(not(feature = "vt-engine"))]
+fn native_slot_alive(_slot: &TerminalSlot) -> bool {
+    false
+}
+
 impl HostState {
+    pub fn begin_shutdown(self: &Arc<Self>, grace_ms: u64) {
+        if self.draining.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            state
+                .drain_native_children(Duration::from_millis(grace_ms))
+                .await;
+            let _ = state.shutdown.send(true);
+        });
+    }
+
+    async fn drain_native_children(&self, grace: Duration) {
+        let targets: BTreeSet<i32> = {
+            let inner = self.inner.lock().await;
+            inner
+                .terminals
+                .values()
+                .filter(|slot| native_slot_alive(slot))
+                .map(|slot| slot.pgid)
+                .collect()
+        };
+        for pgid in &targets {
+            let _ = kill_group(*pgid, libc::SIGHUP);
+        }
+
+        let deadline = Instant::now() + grace;
+        loop {
+            let survivors = self.live_native_pgids(&targets).await;
+            if survivors.is_empty() {
+                return;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                for pgid in survivors {
+                    let _ = kill_group(pgid, libc::SIGKILL);
+                }
+                return;
+            }
+            tokio::time::sleep((deadline - now).min(Duration::from_millis(20))).await;
+        }
+    }
+
+    async fn live_native_pgids(&self, targets: &BTreeSet<i32>) -> Vec<i32> {
+        let inner = self.inner.lock().await;
+        targets
+            .iter()
+            .copied()
+            .filter(|pgid| {
+                inner
+                    .terminals
+                    .values()
+                    .any(|slot| slot.pgid == *pgid && native_slot_alive(slot))
+            })
+            .collect()
+    }
+
     pub async fn reserve_observer(&self, conn_id: u64, extra: &Map<String, Value>) -> Value {
         let terminal_id = extra
             .get("terminal_id")

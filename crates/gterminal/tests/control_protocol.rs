@@ -253,7 +253,7 @@ fn native_verbs_refuse_tmux_terminals() {
 fn authed(
     dir: &std::path::Path,
     token: &str,
-) -> (std::process::Child, std::os::unix::net::UnixStream) {
+) -> (host_support::HostProc, std::os::unix::net::UnixStream) {
     let child = spawn_host(dir);
     let control = dir.join(CONTROL_SOCKET);
     wait_socket(&control);

@@ -633,7 +633,7 @@ class TerminalHostManager:
         return hello, await client.ping()
 
     async def _host_shutdown(self) -> None:
-        """Ask the host to drain and exit, then say whether it actually did.
+        """Drain the host, escalating through TERM and KILL when needed.
 
         ``self._client`` is already authenticated when this daemon adopted or
         spawned the host. When it is not — the host is alive but was not
@@ -649,43 +649,63 @@ class TerminalHostManager:
                 client = await self._connect()
             except (OSError, ConnectionError) as exc:
                 logger.info("no gterm host answered the control socket: %s", exc)
-                return
-            try:
-                _, ping = await self._handshake(client)
-            except (
-                OSError,
-                ConnectionError,
-                HostControlError,
-                HostCommandError,
-                PermissionError,
-            ) as exc:
-                self.last_error = str(exc)
-                logger.warning("cannot authenticate to the gterm host to drain it: %s", exc)
-                await self._close_client(client)
-                return
-            self._client = client
-            pid = ping.host_pid
+                client = None
+            if client is not None:
+                try:
+                    _, ping = await self._handshake(client)
+                except (
+                    OSError,
+                    ConnectionError,
+                    HostControlError,
+                    HostCommandError,
+                    PermissionError,
+                ) as exc:
+                    self.last_error = str(exc)
+                    logger.warning("cannot authenticate to the gterm host to drain it: %s", exc)
+                    await self._close_client(client)
+                    client = None
+                else:
+                    self._client = client
+                    pid = ping.host_pid
         grace_ms = int(self.config.shutdown_grace_seconds * 1000)
-        try:
-            await client.host_shutdown(grace_ms)
-        except (ConnectionError, HostControlError, HostCommandError, OSError) as exc:
-            logger.info("host_shutdown response lost; verifying death: %s", exc)
+        if client is not None:
+            try:
+                await client.host_shutdown(grace_ms)
+            except (ConnectionError, HostControlError, HostCommandError, OSError) as exc:
+                logger.info("host_shutdown response lost; verifying death: %s", exc)
         if pid is None:
             pid = read_pidfile(self.socket_dir)
-        if pid and not await self._await_host_exit(pid):
-            self.last_error = f"gterm host {pid} is still running after host_shutdown"
-            logger.warning(
-                "gterm host %s did not exit within %.1fs of host_shutdown; it and its "
-                "native terminals are still running",
-                pid,
-                self._host_exit_deadline_seconds(),
-            )
+        if pid is None:
+            return
+        if await self._await_host_exit(pid):
+            self.last_error = f"gterm host {pid} exited after host_shutdown"
+            return
+
+        previous_rung = "host_shutdown"
+        for rung, host_signal in (("SIGTERM", signal.SIGTERM), ("SIGKILL", signal.SIGKILL)):
+            if not self._pid_identity(pid):
+                self.last_error = f"gterm host {pid} exited after {previous_rung}"
+                return
+            try:
+                os.kill(pid, host_signal)
+            except ProcessLookupError:
+                self.last_error = f"gterm host {pid} exited after {previous_rung}"
+                return
+            except OSError as exc:
+                logger.warning("could not send %s to gterm host %s: %s", rung, pid, exc)
+            if await self._await_host_exit(pid):
+                self.last_error = f"gterm host {pid} exited after {rung}"
+                return
+            previous_rung = rung
+
+        self.last_error = f"gterm host {pid} is still running after SIGKILL"
+        logger.warning(
+            "gterm host %s did not exit after host_shutdown, SIGTERM, and SIGKILL",
+            pid,
+        )
 
     def _host_exit_deadline_seconds(self) -> float:
-        # The host spends up to the same grace reaping its own children before
-        # it exits, so waiting exactly the grace would call a healthy drain a
-        # survivor. One second past it is the margin the reaping tests use.
-        return self.config.shutdown_grace_seconds + 1.0
+        return self.config.shutdown_grace_seconds
 
     async def _await_host_exit(self, pid: int) -> bool:
         """Poll for ``pid`` to leave before the drain gives up on it."""
@@ -710,16 +730,7 @@ class TerminalHostManager:
             return
         poll = getattr(process, "poll", None)
         if callable(poll) and poll() is not None:
-            return
-        terminate = getattr(process, "terminate", None)
-        if callable(terminate):
-            terminate()
-        pid = getattr(process, "pid", None)
-        if isinstance(pid, int) and pid > 0:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
+            self._process = None
 
     async def _close_client(self, client: Any) -> None:
         close = getattr(client, "close", None)
