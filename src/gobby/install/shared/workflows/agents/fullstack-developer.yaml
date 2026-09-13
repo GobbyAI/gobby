@@ -215,6 +215,7 @@ step_workflow:
         task manifest. If development review is disabled, call close_task with
         preview=true and commit_sha, then repair every blocker until it closes;
         otherwise submit_for_review(stage_name="development") for QA.
+        Message the parent with target=parent.
         Sending the parent a task_blocker message ends this run after delivery;
         the parent respawns you with the answer, reusing the worktree. For a question
         that needs a reply while this run stays alive, use message_type=message; the
@@ -255,10 +256,7 @@ step_workflow:
           tool: send_message
           when: >-
             tool_input.get('message_type') == 'task_blocker'
-            and tool_input.get('target') == 'session'
-            and tool_input.get('target_id') is not None
-            and (tool_output.get('result') or tool_output).get('target_id', tool_input.get('target_id'))
-            in (vars.get('parent_session_id'), vars.get('parent_session_ref'))
+            and tool_input.get('target') == 'parent'
             and (tool_input.get('metadata') or {}).get('task_id') is not None
             and (tool_input.get('metadata') or {}).get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
           action: set_variable

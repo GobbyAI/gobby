@@ -62,7 +62,7 @@ prompts:
     honestly rather than inventing work.
 
     You are advisory only — the human is the scope gate and decides what
-    ships. Send your structured result to the parent session with `send_message`
+    ships. Send your structured result to the parent session with `send_message(target="parent")`
     using `message_type: "plan_enhancement"` — that exact type is what marks the
     round delivered, so use it on the result send and on no other message. Then
     call `end_agent_run` with `current_state` summarizing the enhancement result and
@@ -167,7 +167,7 @@ step_workflow:
         paste the plan to you. Then read the parent context. Walk both lenses (Better,
         Bigger), run the proportionality test on each suggestion, and emit the
         structured `gobby:references/plan/enhancement.md` result (converged + ranked suggestions) to the
-        parent via send_message, then call end_agent_run with `current_state`
+        parent via send_message(target="parent"), then call end_agent_run with `current_state`
         summarizing the result and `next_steps` naming the parent's evaluation
         action. Never edit the plan; never approve or reject.
       allowed_tools: "all"

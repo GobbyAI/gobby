@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
@@ -73,9 +72,6 @@ async def build_spawn_context(
         effective_initial_variables["assigned_task_uuid"] = spawn_config.task_id
     if "assigned_task_id" in effective_initial_variables:
         effective_initial_variables["parent_session_id"] = spawn_config.parent_session_id
-        effective_initial_variables["parent_session_ref"] = await asyncio.to_thread(
-            _parent_session_ref, session_manager, spawn_config.parent_session_id
-        )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
@@ -149,18 +145,6 @@ class SpawnRunStorage(Protocol):
 class SpawnRuntimeRunner(Protocol):
     @property
     def run_storage(self) -> SpawnRunStorage: ...
-
-
-def _parent_session_ref(session_manager: Any | None, parent_session_id: str) -> str:
-    """Return the coordinator's canonical reference."""
-    if session_manager is None:
-        return parent_session_id
-    try:
-        parent_session = session_manager.get(parent_session_id)
-    except Exception:
-        logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
-        return parent_session_id
-    return parent_session.ref if parent_session is not None else parent_session_id
 
 
 def _normalize_string_list(value: Any) -> list[str]:

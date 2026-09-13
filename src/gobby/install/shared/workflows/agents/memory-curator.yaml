@@ -79,8 +79,7 @@ prompts:
       get_tool_schema before its first call.
 
     Output: when every cluster is done, send exactly one message to the parent
-    session named in the spawn prompt with send_message(target="session",
-    target_id=<parent>, content=<compact JSON ledger>,
+    session with send_message(target="parent", content=<compact JSON ledger>,
     metadata={"campaign": <campaign>, "batch": <n>}). The ledger is
     {"batch": n, "clusters": [{"cluster_id", "action", "created_ids",
     "superseded_ids", "kept_ids", "auto_superseded", "outside_duplicates",

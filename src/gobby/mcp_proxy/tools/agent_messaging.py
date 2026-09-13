@@ -105,7 +105,7 @@ def add_messaging_tools(
     @registry.tool(
         name="send_message",
         description=(
-            "Send a durable message to global, project, session, agent, or build. "
+            "Send a durable message to global, project, parent, session, agent, or build. "
             "global reaches every live non-system session owned by this machine; "
             "project reaches that population in the sender's project. Both exclude "
             "the sender and forbid target_id. Session targets accept a full UUID, "
@@ -119,7 +119,9 @@ def add_messaging_tools(
             "A non-system project send derives its project from from_session and rejects "
             "project_id; a system-originated project send requires project_id. "
             "from_session defaults to the calling session's id from SessionContext "
-            "when omitted. "
+            "when omitted. target='parent' reaches the sender's parent session and forbids "
+            "target_id. Spawned agent sessions may use only target='parent' and cannot "
+            "override from_session. "
             "Message content never causes wake behavior. wake=true requests immediate "
             "processing and may steer active work; interrupted, awaiting-input, "
             "awaiting-approval, and awaiting-handoff sessions retain queued content "
@@ -132,7 +134,7 @@ def add_messaging_tools(
         ),
     )
     async def send_message(
-        target: Literal["global", "project", "session", "agent", "build"],
+        target: Literal["global", "project", "parent", "session", "agent", "build"],
         content: str,
         target_id: str | None = None,
         from_session: str | None = None,
@@ -145,10 +147,10 @@ def add_messaging_tools(
         brief: bool = True,
     ) -> dict[str, Any]:
         try:
-            if from_session is None:
-                from gobby.utils.session_context import get_current_session_id
+            from gobby.utils.session_context import get_current_session_id
 
-                ctx_session_id = get_current_session_id()
+            ctx_session_id = get_current_session_id()
+            if from_session is None:
                 if not ctx_session_id:
                     return {
                         "success": False,
@@ -162,7 +164,7 @@ def add_messaging_tools(
             if not content:
                 return {"success": False, "error": "content is required."}
             normalized_target = target.strip().lower()
-            if normalized_target in {"global", "project"} and target_id is not None:
+            if normalized_target in {"global", "project", "parent"} and target_id is not None:
                 return {
                     "success": False,
                     "error": f"target_id is not allowed when target='{normalized_target}'.",
@@ -208,6 +210,27 @@ def add_messaging_tools(
                     "error_code": "project_scope_required",
                 }
 
+            # Spawned agents report only to their parent, and only as themselves.
+            caller_id = (
+                _resolve(ctx_session_id)
+                if ctx_session_id and ctx_session_id != from_session
+                else from_id
+            )
+            caller = from_sess if caller_id == from_id else session_manager.get(caller_id)
+            if caller is not None and (caller.agent_run_id or caller.agent_depth > 0):
+                if caller_id != from_id:
+                    return {
+                        "success": False,
+                        "error": "Spawned agents can send messages only as their own session.",
+                        "error_code": "send_message_sender_mismatch",
+                    }
+                if normalized_target != "parent":
+                    return {
+                        "success": False,
+                        "error": "Spawned agents can message only their parent: use target='parent'.",
+                        "error_code": "send_message_parent_only",
+                    }
+
             resolved_target_id = target_id
             if normalized_target == "session":
                 assert target_id is not None
@@ -230,7 +253,10 @@ def add_messaging_tools(
             if (
                 from_sess
                 and len(send_result.recipient_session_ids) == 1
-                and from_sess.parent_session_id == send_result.recipient_session_ids[0]
+                and (
+                    normalized_target == "parent"
+                    or from_sess.parent_session_id == send_result.recipient_session_ids[0]
+                )
             ):
                 try:
                     row = db.fetchone(

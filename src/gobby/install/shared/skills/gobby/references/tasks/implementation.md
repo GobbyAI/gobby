@@ -24,6 +24,7 @@ Every encountered defect, warning, or failed check becomes work in this session:
 1. Fix and verify it inside the current task, tracking it with the other substeps.
 2. If its files or work belong to another active session, send that owner the
    command, diagnostics, paths, and impact through `gobby-agents:send_message`.
+   Spawned agents route owner handoffs through `send_message(target="parent")`.
    Preserve their files and prove the failure is confined with a passing scoped run.
 3. Only a genuine decision, necessary planning pass, or broad clean window permits
    filing `needs-decision`, `needs-planning`, or `clean-window`, with the reason

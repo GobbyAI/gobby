@@ -948,7 +948,7 @@ class TestSpawnAgentStepVariables:
 
         parent_session = SessionManager(db).get(spawn_request.parent_session_id)
         assert parent_session is not None
-        assert initial_variables["parent_session_ref"] == parent_session.ref
+        assert "parent_session_ref" not in initial_variables
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
@@ -980,9 +980,9 @@ class TestSpawnAgentStepVariables:
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [
-            "development-discipline",
+            "gobby:references/development/obligations.md",
             "restraint",
-            "tasks",
+            "gobby:references/tasks/overview.md",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
@@ -1023,9 +1023,9 @@ class TestSpawnAgentStepVariables:
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [
-            "development-discipline",
+            "gobby:references/development/obligations.md",
             "restraint",
-            "tasks",
+            "gobby:references/tasks/overview.md",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]
