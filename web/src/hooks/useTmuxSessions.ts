@@ -1,92 +1,41 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-export {
-  createTerminalWsReducer,
-  TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
-  TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
-  TERMINAL_WS_SAFE_INTEGER_MAX,
-} from "./terminalWsFragments";
 import { createTerminalWsReducer } from "./terminalWsFragments";
 import {
+  applyRosterPage,
+  mergeRosterRows,
+  rosterPageRequestId,
+  type CreatedTmuxSession,
+  type RosterWalk,
+  type TmuxSession,
+  type TmuxTarget,
+} from "./terminalRosterSnapshot";
+import type { WriteSettlementState } from "./terminalWriteSettlement";
+import {
+  EMPTY_CONTROL_LEASE,
+  createControlLease,
+  type ControlLease,
+  type ControlLeaseSnapshot,
+  type PendingWrite,
+} from "./terminalControlLease";
+import {
+  createTerminalOutputSink,
+  type TerminalAttachHistory,
+} from "./terminalOutputSink";
+import {
   terminalAttachMessage,
+  terminalCreateMessage,
+  terminalDetachMessage,
+  terminalKillMessage,
+  terminalListMessage,
   terminalResizeMessage,
+  terminalSetViewportMessage,
 } from "./tmuxSessionMessages";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
 export const TMUX_RECONNECT_BASE_MS = 2_000;
 export const TMUX_RECONNECT_MAX_MS = 30_000;
 export const TMUX_STABLE_OPEN_MS = 1_000;
-
-function asSession(
-  row: Partial<TmuxSession> & { terminal_id?: string },
-): TmuxSession {
-  const terminalId = row.terminal_id ?? "";
-  return {
-    terminal_id: terminalId,
-    backend: row.backend ?? "tmux",
-    ownership: row.ownership ?? "gobby",
-    state: row.state ?? "live",
-    title: row.title ?? row.name ?? null,
-    session_id: row.session_id ?? row.gobby_session_id ?? null,
-    agent_run_id: row.agent_run_id ?? null,
-    dims: row.dims ?? null,
-    name: row.name ?? row.title ?? terminalId,
-    socket: row.socket ?? row.backend ?? "tmux",
-    pane_pid: row.pane_pid ?? null,
-    pane_dead: row.pane_dead ?? false,
-    pane_title: row.pane_title ?? row.title ?? null,
-    pane_command: row.pane_command ?? null,
-    pane_path: row.pane_path ?? null,
-    window_name: row.window_name ?? null,
-    session_title: row.session_title ?? row.title ?? null,
-    gobby_session_id: row.gobby_session_id ?? row.session_id ?? null,
-    agent_managed: row.agent_managed ?? row.ownership === "gobby",
-    attached_bridge: row.attached_bridge ?? null,
-  };
-}
-
-export interface TmuxSession {
-  terminal_id: string;
-  backend: string;
-  ownership: string;
-  state: string;
-  title: string | null;
-  session_id: string | null;
-  agent_run_id: string | null;
-  dims: { rows: number; cols: number } | null;
-  name: string;
-  socket: string;
-  pane_pid: number | null;
-  pane_dead: boolean;
-  pane_title: string | null;
-  pane_command: string | null;
-  pane_path: string | null;
-  window_name: string | null;
-  session_title: string | null;
-  gobby_session_id: string | null;
-  agent_managed: boolean;
-  attached_bridge: string | null;
-}
-
-export interface TmuxTarget {
-  terminal_id: string;
-}
-
-export interface CreatedTmuxSession {
-  terminal_id: string;
-}
-
-/** A bounded scrollback window delivered once, just before streaming starts. */
-export interface TerminalAttachHistory {
-  streamingId: string;
-  text: string;
-  /** Older history existed and was cut, by the line bound or the byte bound. */
-  truncated: boolean;
-  /** Capture failed while the stream itself stayed healthy. */
-  unavailable: boolean;
-  droppedBytes: number;
-  totalBytes: number;
-}
 
 type PendingRequest =
   | {
@@ -126,7 +75,23 @@ interface TmuxSessionsResult {
   killSession: (terminalId: string) => void;
   refreshSessions: () => void;
   dismissEndedSession: () => void;
+  /** True only while this attachment holds the daemon's writer lease. */
+  hasControl: boolean;
+  controlPending: boolean;
+  /** Another session displaced this attachment, so the pane says so. */
+  leaseLost: boolean;
+  /** The one keystroke or paste held behind an in-flight take-control. */
+  pendingWrite: PendingWrite | null;
+  /** Why the last write was refused, shown as a non-colour cue. */
+  writeRefusal: string | null;
+  writeSettlement: WriteSettlementState;
+  takeControl: (options?: { takeover?: boolean }) => void;
+  releaseControl: () => void;
   sendInput: (data: string) => void;
+  sendPaste: (text: string) => void;
+  retryWrite: (attachmentId: string, seq: number) => void;
+  discardWrite: (attachmentId: string, seq: number) => void;
+  dismissWriteRefusal: () => void;
   resizeTerminal: (rows: number, cols: number) => void;
   onOutput: (callback: (runId: string, data: string) => void) => void;
   onAttachHistory: (callback: (history: TerminalAttachHistory) => void) => void;
@@ -146,6 +111,7 @@ export function useTmuxSessions(
   const [attachError, setAttachError] = useState<string | null>(null);
   const [createdSession, setCreatedSession] =
     useState<CreatedTmuxSession | null>(null);
+  const [lease, setLease] = useState<ControlLeaseSnapshot>(EMPTY_CONTROL_LEASE);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -153,15 +119,7 @@ export function useTmuxSessions(
   // Cursor state is keyed to one walk (a fresh init/refresh listing plus its
   // continuation pages); a superseded walk's pages must not merge rows or
   // steer the cursor, or a refresh started mid-pagination under-fetches.
-  const listWalkRef = useRef<{ id: string; cursor: string | null } | null>(
-    null,
-  );
-  const outputCallbackRef = useRef<
-    ((runId: string, data: string) => void) | null
-  >(null);
-  const attachHistoryCallbackRef = useRef<
-    ((history: TerminalAttachHistory) => void) | null
-  >(null);
+  const listWalkRef = useRef<RosterWalk | null>(null);
   const attachedTargetRef = useRef<TmuxTarget | null>(null);
   const streamingIdRef = useRef<string | null>(null);
   const connectionGenerationRef = useRef(0);
@@ -170,26 +128,27 @@ export function useTmuxSessions(
   const pendingRequestTimeoutRef = useRef<number | null>(null);
   const connectRef = useRef<() => void>(() => {});
   const fragmentReducerRef = useRef(createTerminalWsReducer());
-  const leaseGenerationRef = useRef(new Map<string, number>());
   const projectIdRef = useRef<string | null>(projectId);
 
-  // The daemon lists the whole machine unless a project is named; naming
-  // the picker's project keeps other projects' terminals out of the list
-  // while still including terminals that belong to no project.
-  const listRequest = useCallback(
-    (requestId: string, cursor?: string): string => {
-      const request: Record<string, unknown> = {
-        type: "terminal_list",
-        request_id: requestId,
-      };
-      if (projectIdRef.current !== null) {
-        request.project_id = projectIdRef.current;
-      }
-      if (cursor !== undefined) request.cursor = cursor;
-      return JSON.stringify(request);
-    },
-    [],
+  // The lease owns the whole control and write plane; the hook keeps one
+  // mirrored snapshot so the view re-renders when the lease moves. Both live
+  // in lazy state rather than a ref: they are read during render.
+  /* eslint-disable react-hooks/refs -- the lease stores these getters and
+     calls them from socket callbacks and timers; the lazy initializer only
+     hands them over, so no ref is read during render. */
+  const [control] = useState<ControlLease>(() =>
+    createControlLease({
+      socket: () => wsRef.current,
+      attachmentId: () => streamingIdRef.current,
+      terminalId: () => attachedTargetRef.current?.terminal_id,
+      connectionGeneration: () => connectionGenerationRef.current,
+      requestTimeoutMs: TMUX_REQUEST_TIMEOUT_MS,
+      onChange: setLease,
+    }),
   );
+  /* eslint-enable react-hooks/refs */
+
+  const [sink] = useState(createTerminalOutputSink);
 
   const updateAttachment = useCallback(
     (target: TmuxTarget | null, streamId: string | null) => {
@@ -210,6 +169,22 @@ export function useTmuxSessions(
     setRequestPending(false);
     setIsLoading(false);
   }, []);
+
+  /** The outstanding request a result answers, or null when it answers none. */
+  const matchPending = useCallback(
+    (requestId: unknown): PendingRequest | null => {
+      const pending = pendingRequestRef.current;
+      if (
+        !pending ||
+        pending.requestId !== requestId ||
+        pending.generation !== connectionGenerationRef.current
+      ) {
+        return null;
+      }
+      return pending;
+    },
+    [],
+  );
 
   const schedulePendingRequestTimeout = useCallback(
     (request: PendingRequest) => {
@@ -245,9 +220,15 @@ export function useTmuxSessions(
   }, [updateAttachment]);
 
   const refreshSessions = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(listRequest(`refresh-${++requestCounterRef.current}`));
-  }, [listRequest]);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(
+      terminalListMessage(
+        `refresh-${++requestCounterRef.current}`,
+        projectIdRef.current,
+      ),
+    );
+  }, []);
 
   const beginAttachRequest = useCallback(
     (target: TmuxTarget): boolean => {
@@ -300,12 +281,11 @@ export function useTmuxSessions(
       setIsLoading(true);
       setAttachError(null);
       ws.send(
-        JSON.stringify({
-          type: "terminal_detach",
-          request_id: requestId,
-          terminal_id: attachedTargetRef.current?.terminal_id,
-          attachment_id: currentStreamingId,
-        }),
+        terminalDetachMessage(
+          requestId,
+          attachedTargetRef.current?.terminal_id,
+          currentStreamingId,
+        ),
       );
       schedulePendingRequestTimeout(request);
       return true;
@@ -315,80 +295,44 @@ export function useTmuxSessions(
 
   const handleMessage = useCallback(
     (data: Record<string, unknown>) => {
-      const reducer = fragmentReducerRef.current;
+      if (control.handle(data) || sink.handle(data)) return;
       if (data.type === "terminal_attachment_finalized") {
         const finalizedId = data.attachment_id;
-        if (typeof finalizedId === "string") reducer.finalize(finalizedId);
-      }
-      if (
-        data.type === "terminal_control_result" ||
-        data.type === "terminal_lease_lost"
-      ) {
-        const attachmentId = data.attachment_id;
-        const generation = data.lease_generation;
-        if (
-          typeof attachmentId === "string" &&
-          typeof generation === "number"
-        ) {
-          const previous = leaseGenerationRef.current.get(attachmentId) ?? -1;
-          if (generation < previous) return;
-          leaseGenerationRef.current.set(attachmentId, generation);
+        if (typeof finalizedId === "string") {
+          fragmentReducerRef.current.finalize(finalizedId);
+          control.forget(finalizedId);
         }
       }
       switch (data.type) {
         case "terminal_list": {
-          const requestId =
-            typeof data.request_id === "string" ? data.request_id : "";
-          const isFreshWalk =
-            requestId === "init" || requestId.startsWith("refresh");
-          const walk = isFreshWalk
-            ? { id: requestId, cursor: null as string | null }
-            : listWalkRef.current;
-          // A superseded walk's page: merging would resurrect rows the
-          // fresh listing dropped, and its cursor would truncate the
-          // fresh walk.
-          if (
-            walk === null ||
-            (!isFreshWalk && requestId !== `page:${walk.id}`)
-          )
-            break;
-          if (isFreshWalk) listWalkRef.current = walk;
-          const pageItems = (
-            (data.items as TmuxSession[] | undefined) ?? []
-          ).map(asSession);
+          const page = applyRosterPage(listWalkRef.current, data);
+          if (page === null) break;
+          listWalkRef.current = page.walk;
           // A fresh listing replaces the table so terminals that vanished
           // drop out; only continuation pages merge.
-          if (isFreshWalk) {
-            setSessions(pageItems);
+          if (page.replace) {
+            setSessions(page.rows);
           } else {
-            setSessions((current) => {
-              const seen = new Set(current.map((row) => row.terminal_id));
-              const merged = [...current];
-              for (const row of pageItems) {
-                if (!seen.has(row.terminal_id)) merged.push(row);
-              }
-              return merged;
-            });
+            setSessions((current) => mergeRosterRows(current, page.rows));
           }
           setSessionsLoaded(true);
           const attached = attachedTargetRef.current;
           if (
             attached &&
-            !pageItems.some(
+            !page.rows.some(
               (session) => session.terminal_id === attached.terminal_id,
             ) &&
-            data.next_cursor == null
+            page.lastPage
           ) {
             setSessionEnded(true);
           }
-          if (
-            typeof data.next_cursor === "string" &&
-            data.next_cursor &&
-            data.next_cursor !== walk.cursor
-          ) {
-            walk.cursor = data.next_cursor;
+          if (page.nextCursor !== null) {
             wsRef.current?.send(
-              listRequest(`page:${walk.id}`, data.next_cursor),
+              terminalListMessage(
+                rosterPageRequestId(page.walk.id),
+                projectIdRef.current,
+                page.nextCursor,
+              ),
             );
           }
           if (pendingRequestRef.current === null) setIsLoading(false);
@@ -396,20 +340,16 @@ export function useTmuxSessions(
         }
 
         case "terminal_attach_result": {
-          const pending = pendingRequestRef.current;
-          if (
-            !pending ||
-            pending.kind !== "attach" ||
-            pending.requestId !== data.request_id ||
-            pending.generation !== connectionGenerationRef.current
-          )
-            break;
+          const pending = matchPending(data.request_id);
+          if (pending?.kind !== "attach") break;
 
           // Failure frames also carry attachment_id (the finalized lease), so
           // only an explicit success verdict may mark the attach live.
           if (data.success === true && typeof data.attachment_id === "string") {
             const attachedId = data.attachment_id;
             fragmentReducerRef.current.markLive(attachedId);
+            // Every attach is observe-only; take-control is the sole grant.
+            control.observe(attachedId);
             updateAttachment(pending.target, attachedId);
           } else {
             const reason =
@@ -427,16 +367,10 @@ export function useTmuxSessions(
         }
 
         case "terminal_detach_result": {
-          const pending = pendingRequestRef.current;
-          if (
-            !pending ||
-            pending.kind !== "detach" ||
-            pending.requestId !== data.request_id ||
-            pending.generation !== connectionGenerationRef.current
-          )
-            break;
+          const pending = matchPending(data.request_id);
+          if (pending?.kind !== "detach") break;
 
-          const nextTarget = pending.nextTarget;
+          const { nextTarget } = pending;
           if (data.success) {
             updateAttachment(null, null);
             clearPendingRequest();
@@ -451,13 +385,7 @@ export function useTmuxSessions(
         }
 
         case "error": {
-          const pending = pendingRequestRef.current;
-          if (
-            !pending ||
-            pending.requestId !== data.request_id ||
-            pending.generation !== connectionGenerationRef.current
-          )
-            break;
+          if (matchPending(data.request_id) === null) break;
 
           setAttachError(
             typeof data.message === "string"
@@ -469,14 +397,7 @@ export function useTmuxSessions(
         }
 
         case "terminal_create_result": {
-          const pending = pendingRequestRef.current;
-          if (
-            !pending ||
-            pending.kind !== "create" ||
-            pending.requestId !== data.request_id ||
-            pending.generation !== connectionGenerationRef.current
-          )
-            break;
+          if (matchPending(data.request_id)?.kind !== "create") break;
 
           if (data.success && typeof data.terminal_id === "string") {
             setCreatedSession({
@@ -507,65 +428,25 @@ export function useTmuxSessions(
           }
           break;
 
-        case "terminal_attach_history": {
-          // The host proxy keys history on the attachment; that id doubles as
-          // the streaming id the scrollback consumer registered against.
-          const attachmentId = data.attachment_id;
-          if (typeof attachmentId !== "string") {
-            console.warn(
-              "Ignoring terminal attach history without attachment_id",
-              {
-                terminal_id: data.terminal_id,
-                type: data.type,
-              },
-            );
-            break;
-          }
-          const text = typeof data.text === "string" ? data.text : "";
-          const callback = attachHistoryCallbackRef.current;
-          if (callback) {
-            callback({
-              streamingId: attachmentId,
-              text,
-              truncated: data.truncated === true,
-              unavailable: data.unavailable === true,
-              droppedBytes:
-                typeof data.dropped_bytes === "number" ? data.dropped_bytes : 0,
-              totalBytes:
-                typeof data.total_bytes === "number" ? data.total_bytes : 0,
-            });
-          } else if (outputCallbackRef.current && text) {
-            outputCallbackRef.current(attachmentId, text);
-          }
-          break;
-        }
-
-        case "terminal_output": {
-          const attachmentId = data.attachment_id;
-          if (outputCallbackRef.current && typeof attachmentId === "string") {
-            outputCallbackRef.current(attachmentId, data.data as string);
-          }
-          break;
-        }
       }
     },
     [
       beginAttachRequest,
       clearPendingRequest,
-      listRequest,
+      control,
+      matchPending,
       refreshSessions,
+      sink,
       updateAttachment,
     ],
   );
 
   const handleMessageRef = useRef(handleMessage);
-  const listRequestRef = useRef(listRequest);
   const updateAttachmentRef = useRef(updateAttachment);
   useEffect(() => {
     handleMessageRef.current = handleMessage;
-    listRequestRef.current = listRequest;
     updateAttachmentRef.current = updateAttachment;
-  }, [handleMessage, listRequest, updateAttachment]);
+  }, [handleMessage, updateAttachment]);
 
   const connect = useCallback(() => {
     if (
@@ -606,7 +487,7 @@ export function useTmuxSessions(
         }),
       );
       // Fetch session list on connect
-      ws.send(listRequestRef.current("init"));
+      ws.send(terminalListMessage("init", projectIdRef.current));
     };
 
     ws.onclose = () => {
@@ -630,6 +511,9 @@ export function useTmuxSessions(
       setIsLoading(false);
       setAttachError(null);
       setCreatedSession(null);
+      // The old attachment ids are dead, so the lease, the pending slot and
+      // every unsettled write go with them; the pane comes back observe-only.
+      control.reset("Reconnected before the keystroke was sent.");
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -670,7 +554,7 @@ export function useTmuxSessions(
         console.error("Failed to parse tmux message:", e);
       }
     };
-  }, []);
+  }, [control]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -698,13 +582,13 @@ export function useTmuxSessions(
   const clearAttachError = useCallback(() => setAttachError(null), []);
 
   const refreshTerminal = useCallback((sessionName: string, socket: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "terminal_set_viewport",
-        request_id: `refresh-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
-        terminal_id: sessionName || socket,
-      }),
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(
+      terminalSetViewportMessage(
+        `refresh-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
+        sessionName || socket,
+      ),
     );
   }, []);
 
@@ -723,17 +607,7 @@ export function useTmuxSessions(
       setAttachError(null);
       setCreatedSession(null);
       ws.send(
-        JSON.stringify({
-          type: "terminal_create",
-          request_id: requestId,
-          ...(projectIdRef.current !== null
-            ? { project_id: projectIdRef.current }
-            : {}),
-          rows: 24,
-          cols: 80,
-          cwd: name,
-          command: socket ? [socket] : ["zsh"],
-        }),
+        terminalCreateMessage(requestId, projectIdRef.current, name, socket),
       );
       schedulePendingRequestTimeout(request);
     },
@@ -742,41 +616,51 @@ export function useTmuxSessions(
 
   const killSession = useCallback(
     (terminalId: string) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       setIsLoading(true);
       const currentTarget = attachedTargetRef.current;
       if (currentTarget?.terminal_id === terminalId) {
         updateAttachment(null, null);
       }
-      wsRef.current.send(
-        JSON.stringify({
-          type: "terminal_kill",
-          request_id: `kill-${Date.now()}`,
-          terminal_id: terminalId,
-        }),
-      );
+      ws.send(terminalKillMessage(`kill-${Date.now()}`, terminalId));
     },
     [updateAttachment],
   );
 
-  const sendInput = useCallback((data: string) => {
-    const currentStreamingId = streamingIdRef.current;
-    if (
-      !wsRef.current ||
-      wsRef.current.readyState !== WebSocket.OPEN ||
-      !currentStreamingId
-    )
-      return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "terminal_input",
-        terminal_id: attachedTargetRef.current?.terminal_id,
-        attachment_id: currentStreamingId,
-        client_write_seq: ++requestCounterRef.current,
-        data,
-      }),
-    );
-  }, []);
+  const takeControl = useCallback(
+    (options?: { takeover?: boolean }) => control.take(options?.takeover === true),
+    [control],
+  );
+
+  const releaseControl = useCallback(() => control.release(), [control]);
+
+  const sendInput = useCallback(
+    (data: string) => control.write("input", data),
+    [control],
+  );
+
+  const sendPaste = useCallback(
+    (text: string) => control.write("paste", text),
+    [control],
+  );
+
+  const retryWrite = useCallback(
+    (attachmentId: string, seq: number) => control.retry(attachmentId, seq),
+    [control],
+  );
+
+  const discardWrite = useCallback(
+    (attachmentId: string, seq: number) => control.discard(attachmentId, seq),
+    [control],
+  );
+
+  const dismissWriteRefusal = useCallback(
+    () => control.dismissRefusal(),
+    [control],
+  );
+
+  const hasControl = lease.holder !== null && lease.holder === streamingId;
 
   const resizeTerminal = useCallback((rows: number, cols: number) => {
     const currentStreamingId = streamingIdRef.current;
@@ -795,21 +679,6 @@ export function useTmuxSessions(
       ),
     );
   }, []);
-
-  // Single consumer by design: TerminalTab owns the terminal output stream.
-  const onOutput = useCallback(
-    (callback: (runId: string, data: string) => void) => {
-      outputCallbackRef.current = callback;
-    },
-    [],
-  );
-
-  const onAttachHistory = useCallback(
-    (callback: (history: TerminalAttachHistory) => void) => {
-      attachHistoryCallbackRef.current = callback;
-    },
-    [],
-  );
 
   useEffect(() => {
     connectRef.current();
@@ -872,9 +741,21 @@ export function useTmuxSessions(
     killSession,
     refreshSessions,
     dismissEndedSession,
+    hasControl,
+    controlPending: lease.pending,
+    leaseLost: lease.lost,
+    pendingWrite: lease.pendingWrite,
+    writeRefusal: lease.refusal,
+    writeSettlement: lease.settlement,
+    takeControl,
+    releaseControl,
     sendInput,
+    sendPaste,
+    retryWrite,
+    discardWrite,
+    dismissWriteRefusal,
     resizeTerminal,
-    onOutput,
-    onAttachHistory,
+    onOutput: sink.onOutput,
+    onAttachHistory: sink.onAttachHistory,
   };
 }

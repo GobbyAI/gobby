@@ -3,11 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  TerminalAttachHistory,
-  TmuxSession,
-  useTmuxSessions,
-} from "../../../../hooks/useTmuxSessions";
+import type { TerminalAttachHistory } from "../../../../hooks/terminalOutputSink";
+import { EMPTY_WRITE_SETTLEMENT } from "../../../../hooks/terminalWriteSettlement";
+import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
+import type { useTmuxSessions } from "../../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../../types/sessions";
 import type { JoinedTerminalSession } from "../terminalSessions";
 import type { TerminalViewHandle, TerminalViewProps } from "../TerminalView";
@@ -189,7 +188,19 @@ function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
     killSession: vi.fn(),
     refreshSessions: vi.fn(),
     dismissEndedSession: vi.fn(),
+    hasControl: false,
+    controlPending: false,
+    leaseLost: false,
+    pendingWrite: null,
+    writeRefusal: null,
+    writeSettlement: EMPTY_WRITE_SETTLEMENT,
+    takeControl: vi.fn(),
+    releaseControl: vi.fn(),
     sendInput: vi.fn(),
+    sendPaste: vi.fn(),
+    retryWrite: vi.fn(),
+    discardWrite: vi.fn(),
+    dismissWriteRefusal: vi.fn(),
     resizeTerminal: vi.fn(),
     onOutput: vi.fn(),
     onAttachHistory: vi.fn(),

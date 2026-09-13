@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { TmuxSession } from "../../../../hooks/useTmuxSessions";
+import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
 import type { GobbySession } from "../../../../types/sessions";
 import {
   findByGobbySessionId,

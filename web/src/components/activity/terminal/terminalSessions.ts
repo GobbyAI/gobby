@@ -1,4 +1,4 @@
-import type { TmuxSession } from "../../../hooks/useTmuxSessions";
+import type { TmuxSession } from "../../../hooks/terminalRosterSnapshot";
 import { getActivitySessionTitleParts } from "../../../lib/sessionTitle";
 import type { GobbySession } from "../../../types/sessions";
 

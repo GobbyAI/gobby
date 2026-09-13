@@ -9,6 +9,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent,
   type MutableRefObject,
 } from "react";
 
@@ -61,6 +62,18 @@ export interface TerminalViewProps {
    * container does not touch-scroll on iOS.
    */
   minCols?: number;
+  /**
+   * Another session holds the daemon's writer lease. The pane says so and
+   * offers it back; it never silently swallows what the user types.
+   */
+  readOnly?: boolean;
+  /** Focus entered the pane: the moment to ask for the writer lease. */
+  onFocus?: () => void;
+  /** Focus left the pane entirely: release the lease. */
+  onBlur?: () => void;
+  /** Clipboard text, sent as one bracketed write rather than as keystrokes. */
+  onPaste?: (text: string) => void;
+  onTakeControl?: () => void;
 }
 
 interface TerminalInstanceProps {
@@ -151,6 +164,30 @@ function composeMarker(label: string, cols: number): string {
   const remaining = width - text.length;
   const left = Math.floor(remaining / 2);
   return `${"─".repeat(left)}${text}${"─".repeat(remaining - left)}`;
+}
+
+function LockIcon() {
+  return (
+    <svg
+      className="size-3.5 shrink-0"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3.25" y="7" width="9.5" height="6.25" rx="1.25" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}
+
+/** Focus that only moved between the pane's own elements never left it. */
+function stayedInside(event: FocusEvent<HTMLDivElement>): boolean {
+  const next = event.relatedTarget;
+  return next instanceof Node && event.currentTarget.contains(next);
 }
 
 function ChevronDownIcon() {
@@ -339,7 +376,17 @@ function TerminalInstance({
 
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
   function TerminalView(
-    { onSizeChange, onReady, onProtocolResponse, minCols = MIN_TERMINAL_COLS },
+    {
+      onSizeChange,
+      onReady,
+      onProtocolResponse,
+      minCols = MIN_TERMINAL_COLS,
+      readOnly = false,
+      onFocus,
+      onBlur,
+      onPaste,
+      onTakeControl,
+    },
     forwardedRef,
   ) {
     const terminalRef = useRef<WTerm | null>(null);
@@ -395,7 +442,20 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       };
       sync();
       element.addEventListener("scroll", sync, { passive: true });
-      return () => element.removeEventListener("scroll", sync);
+      // A re-fit rebuilds every row, and while the grid is empty the scroll
+      // extent collapses to the viewport — which reads as "at the live edge"
+      // even though the viewport never moved. No scroll event follows the
+      // rebuild, so without this the pane stays parked in history with the
+      // jump control gone. What grows and shrinks is the grid inside the
+      // scroller, not the scroller's own box, so that is the box to watch.
+      const observer = new ResizeObserver(sync);
+      observer.observe(element);
+      const grid = element.firstElementChild;
+      if (grid) observer.observe(grid);
+      return () => {
+        element.removeEventListener("scroll", sync);
+        observer.disconnect();
+      };
     }, [scrollGeneration]);
 
     const jumpToBottom = useCallback(() => {
@@ -491,8 +551,40 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
     return (
       // Non-semantic wrapper so the jump control is a sibling of the live
-      // region rather than a child of it.
-      <div className="relative h-full min-h-0 w-full">
+      // region rather than a child of it. Focus, keys and paste are bound here
+      // so they cover the renderer's own textarea and the pane's controls
+      // alike; the two capture handlers have to run before the renderer's own
+      // listeners, which sit on that textarea.
+      <div
+        className="relative h-full min-h-0 w-full"
+        onFocus={(event) => {
+          if (stayedInside(event)) return;
+          onFocus?.();
+        }}
+        onBlur={(event) => {
+          if (stayedInside(event)) return;
+          onBlur?.();
+        }}
+        onKeyDownCapture={(event) => {
+          // Tab belongs to focus navigation. The renderer would send it to the
+          // PTY and never let go, trapping the keyboard in a pane whose own
+          // read-only, retry, discard and jump controls all sit after it —
+          // and the keys bar already owns Tab and Shift+Tab as quick keys, so
+          // nothing is lost by leaving this one to the browser.
+          if (event.key === "Tab") event.stopPropagation();
+        }}
+        onPasteCapture={(event) => {
+          // Ahead of the renderer, not behind it: its textarea handles paste
+          // too and would push the clipboard down `onData` as keystrokes,
+          // whose newlines each submit. One lease-gated `terminal_paste`
+          // instead, which the daemon brackets.
+          const text = event.clipboardData.getData("text");
+          if (!text) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onPaste?.(text);
+        }}
+      >
         <div
           ref={captureContainer}
           className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]"
@@ -572,6 +664,33 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           ) : null}
         </div>
 
+        {readOnly ? (
+          // State is carried by the lock glyph and the words, never by hue.
+          <div
+            className="absolute start-2 top-2 z-30 inline-flex max-w-[calc(100%-1rem)] items-center gap-2 rounded-md border border-border bg-[var(--bg-secondary)] px-2 py-1 text-xs text-[var(--text-primary)] shadow-sm"
+            data-testid="terminal-read-only"
+          >
+            <LockIcon />
+            {/* The live region is the sentence alone. A `role="status"` is
+                atomic, so wrapping the button too would re-announce the whole
+                notice on every change while the user's focus sits inside it. */}
+            <span className="truncate" role="status">
+              Read-only — another session has control
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              dense
+              className={cn("shrink-0 px-1.5 py-0.5", coarseHitAreaCls)}
+              data-testid="terminal-take-control"
+              onClick={onTakeControl}
+            >
+              Take back control
+            </Button>
+          </div>
+        ) : null}
+
         {!followingLiveEdge ? (
           <Button
             type="button"
@@ -579,6 +698,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             size="icon"
             // Opaque, tokenized surface: a transparent control sitting over
             // arbitrary ANSI cell colors has no provable contrast.
+            //
+            // No `coarseHitAreaCls` here, deliberately: it opens with a bare
+            // `relative`, which tailwind-merge resolves against this `absolute`
+            // by keeping the later one — the control would lose its corner and
+            // fall back into the flow. It is also the wrong tool, being for
+            // `dense` controls; this button is not `dense`, so the variant
+            // already floors it at 44×44 under a coarse pointer.
             className="absolute end-3 bottom-3 z-30 rounded-full border-border bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-md hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
             aria-label="Jump to newest terminal output"
             data-testid="terminal-jump-to-bottom"

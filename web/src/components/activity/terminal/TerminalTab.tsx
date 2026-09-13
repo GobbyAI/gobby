@@ -8,16 +8,18 @@ import {
   useState,
 } from "react";
 
-import {
-  type TmuxTarget,
-  useTmuxSessions,
-} from "../../../hooks/useTmuxSessions";
+import type { TmuxTarget } from "../../../hooks/terminalRosterSnapshot";
+import type { SettledWrite } from "../../../hooks/terminalWriteSettlement";
+import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import type { GobbySession } from "../../../types/sessions";
+import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { ResizeHandle } from "../../shared/ResizeHandle";
 import { useRegisterActivityActions } from "../activityActions";
 import { TerminalKeysBar } from "./TerminalKeysBar";
+import { keepTerminalFocus } from "./terminalFocus";
 import { applyCtrlModifier } from "./terminalKeys";
 import { TerminalSessionList } from "./TerminalSessionList";
 import {
@@ -68,6 +70,21 @@ function StatePanel({ title, body, action, busy = false }: StatePanelProps) {
       </div>
     </div>
   );
+}
+
+/**
+ * What the write-status bar says. A write that settled badly speaks for
+ * itself; otherwise the bar is carrying the lease's own refusal cue.
+ */
+function describeWriteStatus(
+  settled: SettledWrite | null,
+  refusal: string | null,
+): string | null {
+  if (settled === null) return refusal;
+  if (settled.outcome === "indeterminate") {
+    return "Couldn’t confirm the last keystroke reached the terminal.";
+  }
+  return "The terminal refused the last keystroke.";
 }
 
 function targetKey(target: TmuxTarget | null): string | null {
@@ -175,6 +192,15 @@ export function TerminalTab({
     createSession,
     dismissEndedSession,
     sendInput,
+    sendPaste,
+    leaseLost,
+    takeControl,
+    releaseControl,
+    writeRefusal,
+    dismissWriteRefusal,
+    writeSettlement,
+    retryWrite,
+    discardWrite,
     resizeTerminal,
     killSession,
     onOutput,
@@ -442,6 +468,21 @@ export function TerminalTab({
     [attachedKey, resizeTerminal, selected, selectedKey, terminalContext],
   );
 
+  // Taking back after another session displaced this one needs the takeover
+  // flag: a plain take is refused while someone else still holds the lease.
+  const takeBackControl = useCallback(() => {
+    takeControl({ takeover: true });
+  }, [takeControl]);
+
+  // Focus asks for the lease, but not while displaced: a plain take can only
+  // come back refused there, and control requests are single-flight per
+  // attachment, so that doomed request would swallow the takeover the user is
+  // reaching for when they focus the take-back button itself.
+  const takeControlOnFocus = useCallback(() => {
+    if (leaseLost) return;
+    takeControl();
+  }, [leaseLost, takeControl]);
+
   const dismissVanishedSession = useCallback(() => {
     allowInitialSelectionRef.current = false;
     lastAttachedKeyRef.current = null;
@@ -486,6 +527,13 @@ export function TerminalTab({
     },
     [ctrlArmed, sendInput],
   );
+
+  // One bar at a time: the newest write that settled badly outranks the
+  // refusal cue, which is itself only shown when no write awaits a decision.
+  const settledWrite =
+    writeSettlement.settled[writeSettlement.settled.length - 1] ?? null;
+
+  const writeStatusText = describeWriteStatus(settledWrite, writeRefusal);
 
   const isAttaching =
     selected !== null &&
@@ -605,6 +653,11 @@ export function TerminalTab({
           onSizeChange={resizeTerminal}
           onProtocolResponse={sendTypedInput}
           minCols={isMobile ? 1 : undefined}
+          readOnly={leaseLost}
+          onFocus={takeControlOnFocus}
+          onBlur={releaseControl}
+          onPaste={sendPaste}
+          onTakeControl={takeBackControl}
         />
 
         {isAttaching ? (
@@ -649,6 +702,55 @@ export function TerminalTab({
           </div>
         ) : null}
       </div>
+
+      {settledWrite !== null || writeRefusal !== null ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-[var(--bg-secondary)] px-2.5 py-1.5 text-xs text-[var(--text-primary)]"
+          data-testid="terminal-write-status"
+        >
+          {/* The sentence and its reason are the live region; Retry and
+              Discard stay outside it, because an atomic `role="status"`
+              re-announces everything it wraps whenever any of it changes. */}
+          <span className="font-medium" role="status">
+            {writeStatusText}
+          </span>
+          {settledWrite?.reason ? (
+            <code className="rounded bg-[var(--bg-tertiary)] px-1 py-0.5 font-mono text-[var(--text-secondary)]">
+              {settledWrite.reason}
+            </code>
+          ) : null}
+          {settledWrite?.retryable ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              dense
+              className={cn("px-1.5 py-0.5", coarseHitAreaCls)}
+              onMouseDown={keepTerminalFocus}
+              onClick={() =>
+                retryWrite(settledWrite.attachmentId, settledWrite.seq)
+              }
+            >
+              Retry
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            dense
+            className={cn("px-1.5 py-0.5", coarseHitAreaCls)}
+            onMouseDown={keepTerminalFocus}
+            onClick={() => {
+              if (settledWrite === null) {
+                dismissWriteRefusal();
+                return;
+              }
+              discardWrite(settledWrite.attachmentId, settledWrite.seq);
+            }}
+          >
+            Discard
+          </Button>
+        </div>
+      ) : null}
 
       {selected && !selected.dead ? (
         <div className="shrink-0 border-t border-border px-2.5 py-1.5">

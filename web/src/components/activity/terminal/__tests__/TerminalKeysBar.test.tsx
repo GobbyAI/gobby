@@ -99,6 +99,31 @@ describe("TerminalKeysBar", () => {
     await user.click(screen.getByRole("button", { name: "Up" }));
     expect(sendInput).toHaveBeenLastCalledWith("\x1b[1;6A");
   });
+
+  it("leaves the terminal focused when a key is pressed", async () => {
+    const user = userEvent.setup();
+    const sendInput = vi.fn();
+    render(
+      <>
+        <textarea data-testid="terminal" />
+        <Harness sendInput={sendInput} />
+      </>,
+    );
+
+    // Focus is what holds the writer lease. A bar button that took focus on
+    // mousedown would release the lease and then race its own keystroke
+    // against that release, so the key it sent comes back refused.
+    const terminal = screen.getByTestId("terminal");
+    terminal.focus();
+    await user.click(screen.getByRole("button", { name: "Up" }));
+
+    expect(sendInput).toHaveBeenLastCalledWith("\x1b[A");
+    expect(document.activeElement).toBe(terminal);
+
+    // The sticky modifiers are pressed mid-sequence, so they must hold focus too.
+    await user.click(screen.getByRole("button", { name: "Ctrl" }));
+    expect(document.activeElement).toBe(terminal);
+  });
 });
 
 describe("applyCtrlModifier", () => {
