@@ -25,7 +25,7 @@ from gobby.terminals.host_client import (
     HostUnavailableError,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow, frames_socket_path
+from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.runtime import (
@@ -206,7 +206,7 @@ class NativeTerminalRuntime:
         run_manager: Any | None = None,
     ) -> None:
         self._client = client
-        self._frame_host_epoch = frame_host_epoch
+        del frame_host_epoch
         self._terminal_manager = terminal_manager
         self._machine_id = machine_id
         self._spawn_in_doubt_seconds = spawn_in_doubt_seconds
@@ -276,9 +276,7 @@ class NativeTerminalRuntime:
         except (OSError, ConnectionError) as exc:
             raise HostCommandError("attach_failed") from exc
         client = FrameClient(reader, writer)
-        epoch = locator.frame_host_epoch or self._frame_host_epoch
-        if not epoch:
-            epoch = str(getattr(self._client, "host_epoch", "") or "")
+        epoch = locator.frame_host_epoch or str(getattr(self._client, "host_epoch", "") or "")
         await client.handshake(
             AttachLocator(
                 backend="native",
@@ -288,7 +286,6 @@ class NativeTerminalRuntime:
             local_token=self._frame_token(),
         )
         self._frame_client = client
-        self._frame_host_epoch = epoch
         return client
 
     async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
@@ -321,7 +318,7 @@ class NativeTerminalRuntime:
     async def bind_observer(self, prepared: PreparedSpawn, reservation_id: str) -> None:
         locator = prepared.locator or AttachLocator(
             backend="native",
-            frame_host_epoch=self._frame_host_epoch,
+            frame_host_epoch=str(getattr(self._client, "host_epoch", "") or ""),
             host_terminal_id=prepared.host_terminal_id,
         )
         client = await self._ensure_frame_client(locator)
@@ -359,7 +356,7 @@ class NativeTerminalRuntime:
         process = None
         if isinstance(pgid, int):
             process = ProcessIdentity(pgid=pgid, start_time=int(float(start_time or 0)))
-        epoch = self._frame_host_epoch or str(getattr(self._client, "host_epoch", "") or "")
+        epoch = str(getattr(self._client, "host_epoch", "") or "")
         locator = AttachLocator(
             backend="native",
             frame_host_epoch=epoch,
@@ -380,10 +377,10 @@ class NativeTerminalRuntime:
             raise CommitSpawnRefusedError("persist and observer bind have not been acknowledged")
         locator = prepared.locator or AttachLocator(
             backend="native",
-            frame_host_epoch=self._frame_host_epoch,
+            frame_host_epoch=str(getattr(self._client, "host_epoch", "") or ""),
             host_terminal_id=prepared.host_terminal_id,
         )
-        expected_epoch = locator.frame_host_epoch or self._frame_host_epoch
+        expected_epoch = locator.frame_host_epoch
         current_epoch = str(getattr(self._client, "host_epoch", "") or "")
         if expected_epoch and current_epoch and current_epoch != expected_epoch:
             raise HostEpochChangedError("host epoch changed")
@@ -402,19 +399,21 @@ class NativeTerminalRuntime:
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:
+        if not terminal.host_epoch:
+            return False
         try:
             await self._ensure()
             rows = await self._client.list_terminals()
         except (HostUnavailableError, ConnectionError, OSError):
             return False
-        epoch = terminal.host_epoch or self._frame_host_epoch
+        epoch = terminal.host_epoch
+        if str(getattr(self._client, "host_epoch", "") or "") != epoch:
+            return False
         host_id = (terminal.locator or {}).get("host_terminal_id")
         for row in rows:
             if str(row.terminal_id) == terminal.id and str(row.spawn_key) == str(
                 terminal.spawn_key
             ):
-                if epoch and getattr(self._client, "host_epoch", epoch) not in {None, epoch}:
-                    return False
                 return True
             if host_id and str(row.host_terminal_id) == str(host_id):
                 return True
@@ -631,18 +630,24 @@ class NativeTerminalRuntime:
 
     async def resize(self, terminal: Terminal, rows: int, cols: int) -> None:
         validate_dimensions(rows, cols)
+        expected_epoch = self._require_current_epoch(terminal.host_epoch)
         try:
             await self._ensure()
             await self._client.resize(self._host_id(terminal), rows, cols)
-        except ConnectionError:
-            reconnect = getattr(self._client, "reconnect", None)
-            if callable(reconnect):
-                await reconnect()
-                await self._client.resize(self._host_id(terminal), rows, cols)
+        except (HostUnavailableError, ConnectionError, OSError):
+            await self._reconnect_epoch(expected_epoch)
+            await self._client.resize(self._host_id(terminal), rows, cols)
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        expected_epoch = self._require_current_epoch(terminal.host_epoch)
         host_terminal_id = self._host_id(terminal)
-        await self.terminate_host_id(host_terminal_id, terminal.host_epoch, grace_seconds)
+        grace_ms = max(0, int(grace_seconds * 1000)) or 50
+        try:
+            await self._ensure()
+            await self._client.kill(host_terminal_id, grace_ms=grace_ms)
+        except (HostUnavailableError, ConnectionError, OSError):
+            await self._reconnect_epoch(expected_epoch)
+            await self._client.kill(host_terminal_id, grace_ms=grace_ms)
 
     async def kill(self, host_terminal_id: str, grace_seconds: float = 0.05) -> None:
         """Kill one resource on the currently connected host."""
@@ -650,11 +655,9 @@ class NativeTerminalRuntime:
         try:
             await self._ensure()
             await self._client.kill(host_terminal_id, grace_ms=grace_ms or 50)
-        except ConnectionError:
-            reconnect = getattr(self._client, "reconnect", None)
-            if callable(reconnect):
-                await reconnect()
-                await self._client.kill(host_terminal_id, grace_ms=grace_ms or 50)
+        except (HostUnavailableError, ConnectionError, OSError, TimeoutError):
+            await self.reconnect()
+            await self._client.kill(host_terminal_id, grace_ms=grace_ms or 50)
 
     async def terminate_host_id(
         self,
@@ -678,7 +681,7 @@ class NativeTerminalRuntime:
         directory = self._socket_dir()
         return AttachLocator(
             backend="native",
-            frame_host_epoch=str(terminal.host_epoch or self._frame_host_epoch),
+            frame_host_epoch=str(terminal.host_epoch or getattr(self._client, "host_epoch", "")),
             host_socket=None if directory is None else str(frames_socket_path(directory)),
             host_terminal_id=None if host_id is None else str(host_id),
         )
@@ -686,22 +689,26 @@ class NativeTerminalRuntime:
     async def reconnect(self) -> str:
         reconnect = getattr(self._client, "reconnect", None)
         if callable(reconnect):
-            epoch = await reconnect()
+            current_epoch = str(getattr(self._client, "host_epoch", "") or "")
+            directory = self._socket_dir()
+            if directory is None:
+                raise HostUnavailableError("gterm host socket unavailable")
+            epoch = await reconnect(control_socket_path(directory), current_epoch or None)
         else:
-            epoch = getattr(self._client, "host_epoch", self._frame_host_epoch)
-        self._frame_host_epoch = str(epoch)
+            epoch = getattr(self._client, "host_epoch", "")
+        normalized_epoch = str(epoch)
         if self._terminal_manager is not None:
             rows = await self._client.list_terminals()
             await reconcile_host_inventory(
                 terminal_manager=self._terminal_manager,
                 machine_id=self._machine_id,
-                host_epoch=self._frame_host_epoch,
+                host_epoch=normalized_epoch,
                 host_rows=rows,
                 spawn_in_doubt_seconds=self._spawn_in_doubt_seconds,
                 run_manager=self._run_manager,
                 kill=self.kill,
             )
-        return self._frame_host_epoch
+        return normalized_epoch
 
     async def rebind_prepared(
         self,
@@ -729,7 +736,22 @@ class NativeTerminalRuntime:
         if self._frame_client is not None and rid is not None:
             locator = AttachLocator(
                 backend="native",
-                frame_host_epoch=self._frame_host_epoch,
+                frame_host_epoch=str(getattr(self._client, "host_epoch", "") or ""),
                 host_terminal_id=match.host_terminal_id,
             )
             await self._frame_client.attach_terminal(locator, reservation_id=rid)
+
+    def _require_current_epoch(self, expected_epoch: str | None) -> str:
+        if not expected_epoch:
+            raise HostEpochChangedError("host_epoch_changed")
+        current_epoch = str(getattr(self._client, "host_epoch", "") or "")
+        if current_epoch != expected_epoch:
+            raise HostEpochChangedError("host_epoch_changed")
+        return expected_epoch
+
+    async def _reconnect_epoch(self, expected_epoch: str) -> None:
+        directory = self._socket_dir()
+        reconnect = getattr(self._client, "reconnect", None)
+        if directory is None or not callable(reconnect):
+            raise HostUnavailableError("gterm host socket unavailable")
+        await reconnect(control_socket_path(directory), expected_epoch)

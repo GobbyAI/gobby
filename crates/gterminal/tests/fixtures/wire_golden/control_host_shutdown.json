@@ -1,1 +1,1 @@
-{"grace_ms":1000,"method":"host_shutdown"}
+{"grace_ms":1000,"id":"shutdown-1","method":"host_shutdown"}

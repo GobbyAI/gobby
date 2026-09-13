@@ -6,10 +6,11 @@ mod embed_support;
 mod host_support;
 
 use host_support::{
-    connect, recv_json, send_json, spawn_host, wait_exit, wait_socket, wait_until, write_token,
-    CONTROL_SOCKET,
+    connect, recv_json, send_json, send_json_without_id, spawn_host, wait_exit, wait_socket,
+    wait_until, write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
 
@@ -99,7 +100,7 @@ fn hello_required_before_any_verb() {
     assert!(hello["host_epoch"].as_str().unwrap().len() > 8);
     assert!(hello["version"].as_str().is_some());
 
-    send_json(&mut stream, &json!({"method": "ping"}));
+    send_json_without_id(&mut stream, &json!({"method": "ping"}));
     let ping = recv_json(&mut stream);
     assert_eq!(ping["ok"], true);
     assert_eq!(ping["host_epoch"], hello["host_epoch"]);
@@ -285,6 +286,375 @@ fn seq_spawn(
     }
     send_json(stream, &req);
     recv_json(stream)
+}
+
+#[test]
+fn requests_require_unique_ids() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token = "control-token-request-ids";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+
+    send_json_without_id(&mut stream, &json!({"method": "ping"}));
+    let missing = recv_json(&mut stream);
+    assert_eq!(missing["ok"], false, "{missing}");
+    assert_eq!(missing["error"], "missing_id", "{missing}");
+
+    send_json(&mut stream, &json!({"method": "ping", "id": "ping-1"}));
+    let ping = recv_json(&mut stream);
+    assert_eq!(ping["ok"], true, "{ping}");
+    assert_eq!(ping["id"], "ping-1", "{ping}");
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "reserve_observer",
+            "id": "reserve-duplicate",
+            "terminal_id": "duplicate-terminal",
+            "reserve_key": "duplicate-terminal",
+        }),
+    );
+    let reserved = recv_json(&mut stream);
+    let reservation_id = reserved["reservation_id"].as_str().unwrap();
+    let prepared = seq_spawn(
+        &mut stream,
+        1,
+        json!({
+            "terminal_id": "duplicate-terminal",
+            "spawn_key": "duplicate-spawn",
+            "reservation_id": reservation_id,
+            "reserve_key": "duplicate-terminal",
+            "argv": ["/bin/sh", "-c", "exec sleep 30"],
+            "env": {"GTERM_GATE_FAULT": "delay", "PATH": "/bin:/usr/bin"},
+            "cwd": dir.path().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    for _ in 0..2 {
+        send_json(
+            &mut stream,
+            &json!({
+                "method": "spawn_commit",
+                "id": "duplicate-commit",
+                "terminal_id": "duplicate-terminal",
+                "spawn_key": "duplicate-spawn",
+            }),
+        );
+    }
+    let duplicate = recv_json(&mut stream);
+    assert_eq!(duplicate["id"], "duplicate-commit", "{duplicate}");
+    assert_eq!(duplicate["error"], "duplicate_id", "{duplicate}");
+    let committed = recv_json(&mut stream);
+    assert_eq!(committed["id"], "duplicate-commit", "{committed}");
+
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "id": "shutdown", "grace_ms": 50}),
+    );
+    let shutdown = recv_json(&mut stream);
+    assert_eq!(shutdown["id"], "shutdown", "{shutdown}");
+    assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
+}
+
+#[test]
+fn child_exit_emits_terminal_exited_on_event_stream() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token = "control-token-native-exit-event";
+    write_token(dir.path(), token);
+    let (mut child, mut requests) = authed(dir.path(), token);
+    let control = dir.path().join(CONTROL_SOCKET);
+    let mut events = connect(&control);
+    send_json(
+        &mut events,
+        &json!({
+            "method": "hello",
+            "id": "event-hello",
+            "protocol_version": 1,
+            "control_token": token,
+        }),
+    );
+    assert_eq!(recv_json(&mut events)["ok"], true);
+    send_json(
+        &mut events,
+        &json!({"method": "subscribe_events", "id": "event-subscribe"}),
+    );
+    let subscribed = recv_json(&mut events);
+    assert_eq!(subscribed["id"], "event-subscribe", "{subscribed}");
+    assert_eq!(subscribed["gap"], false, "{subscribed}");
+
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "reserve_observer",
+            "id": "exit-reserve",
+            "terminal_id": "exit-terminal",
+            "reserve_key": "exit-terminal",
+        }),
+    );
+    let reserved = recv_json(&mut requests);
+    let reservation_id = reserved["reservation_id"].as_str().unwrap();
+    let prepared = seq_spawn(
+        &mut requests,
+        1,
+        json!({
+            "terminal_id": "exit-terminal",
+            "spawn_key": "exit-spawn",
+            "reservation_id": reservation_id,
+            "reserve_key": "exit-terminal",
+            "argv": ["/bin/sh", "-c", "exit 7"],
+            "env": {"GTERM_TEST_WAIT_FOR_CHILD_EXIT_BEFORE_STATUS": "1"},
+            "cwd": dir.path().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap();
+    send_json(
+        &mut requests,
+        &json!({
+            "method": "spawn_commit",
+            "id": "exit-commit",
+            "terminal_id": "exit-terminal",
+            "spawn_key": "exit-spawn",
+        }),
+    );
+    let committed = recv_json(&mut requests);
+    assert_eq!(committed["id"], "exit-commit", "{committed}");
+    assert_eq!(committed["ok"], true, "{committed}");
+
+    let event = recv_json(&mut events);
+    assert_eq!(event["event"], "terminal_exited", "{event}");
+    assert_eq!(event["terminal_id"], "exit-terminal", "{event}");
+    assert_eq!(event["host_terminal_id"], host_terminal_id, "{event}");
+    assert_eq!(event["exit_code"], 7, "{event}");
+    assert!(event.get("id").is_none(), "{event}");
+
+    for stream in [&mut requests, &mut events] {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut byte = [0_u8; 1];
+        let no_more = stream.read(&mut byte).unwrap_err();
+        assert!(
+            matches!(
+                no_more.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "unexpected extra control message: {no_more}"
+        );
+        stream.set_read_timeout(None).unwrap();
+    }
+
+    send_json(
+        &mut requests,
+        &json!({"method": "host_shutdown", "id": "exit-shutdown", "grace_ms": 50}),
+    );
+    assert_eq!(recv_json(&mut requests)["id"], "exit-shutdown");
+    assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
+}
+
+#[test]
+fn commit_wait_does_not_block_other_requests() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token = "control-token-concurrent-commit";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "reserve_observer",
+            "id": "wait-reserve",
+            "terminal_id": "wait-terminal",
+            "reserve_key": "wait-terminal",
+        }),
+    );
+    let reserved = recv_json(&mut stream);
+    let prepared = seq_spawn(
+        &mut stream,
+        1,
+        json!({
+            "terminal_id": "wait-terminal",
+            "spawn_key": "wait-spawn",
+            "reservation_id": reserved["reservation_id"],
+            "reserve_key": "wait-terminal",
+            "argv": ["/bin/sh", "-c", "exec sleep 30"],
+            "env": {"GTERM_GATE_FAULT": "delay", "PATH": "/bin:/usr/bin"},
+            "cwd": dir.path().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap();
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "spawn_commit",
+            "id": "waiting-commit",
+            "terminal_id": "wait-terminal",
+            "spawn_key": "wait-spawn",
+        }),
+    );
+    send_json(
+        &mut stream,
+        &json!({"method": "ping", "id": "parallel-ping"}),
+    );
+    send_json(
+        &mut stream,
+        &json!({"method": "list", "id": "parallel-list"}),
+    );
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "resize",
+            "id": "parallel-resize",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "rows": 25,
+            "cols": 81,
+        }),
+    );
+
+    let mut parallel = HashMap::new();
+    for _ in 0..3 {
+        let response = recv_json(&mut stream);
+        parallel.insert(response["id"].as_str().unwrap().to_string(), response);
+    }
+    for id in ["parallel-ping", "parallel-list", "parallel-resize"] {
+        assert_eq!(parallel[id]["ok"], true, "{}", parallel[id]);
+    }
+    assert!(!parallel.contains_key("waiting-commit"));
+
+    let delayed_operations: Vec<_> = (0..5)
+        .map(|_| {
+            json!({
+                "kind": "text",
+                "encoding": "utf8-b64",
+                "data": "eA==",
+                "delay_ms": 1000,
+            })
+        })
+        .collect();
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "write_batch",
+            "id": "ordered-batch",
+            "operation_seq": 3,
+            "targets": [{
+                "recipient_id": "wait-terminal",
+                "host_terminal_id": host_terminal_id,
+                "operations": delayed_operations,
+            }],
+        }),
+    );
+    for operation_seq in 4..=65 {
+        send_json(
+            &mut stream,
+            &json!({
+                "method": "resize",
+                "id": format!("queued-{operation_seq}"),
+                "operation_seq": operation_seq,
+                "host_terminal_id": host_terminal_id,
+                "rows": 25,
+                "cols": 81,
+            }),
+        );
+    }
+    send_json(
+        &mut stream,
+        &json!({"method": "ping", "id": "inflight-limit"}),
+    );
+    let mut completed = Vec::new();
+    let limited = loop {
+        let response = recv_json(&mut stream);
+        if response["id"] == "inflight-limit" {
+            break response;
+        }
+        completed.push(response);
+    };
+    assert_eq!(limited["error"], "too_many_inflight");
+
+    let mut ordered_ids = Vec::new();
+    let mut commit_seen = false;
+    while completed.len() < 64 {
+        completed.push(recv_json(&mut stream));
+    }
+    for response in completed {
+        assert_eq!(response["ok"], true, "{response}");
+        if response["id"] == "waiting-commit" {
+            commit_seen = true;
+        } else {
+            ordered_ids.push(response["id"].as_str().unwrap().to_string());
+        }
+    }
+    let mut expected_ids = vec!["ordered-batch".to_string()];
+    expected_ids.extend((4..=65).map(|seq| format!("queued-{seq}")));
+    assert_eq!(ordered_ids, expected_ids);
+    assert!(commit_seen);
+
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "id": "parallel-kill",
+            "operation_seq": 66,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": 0,
+        }),
+    );
+    let killed = recv_json(&mut stream);
+    assert_eq!(killed["id"], "parallel-kill");
+    assert_eq!(killed["ok"], true);
+
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "id": "wait-shutdown", "grace_ms": 50}),
+    );
+    assert_eq!(recv_json(&mut stream)["id"], "wait-shutdown");
+    assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
+}
+
+#[test]
+fn tmux_pane_death_emits_no_control_event() {
+    use gobby_terminal::protocol::ServerMessage;
+
+    let pane = embed_support::start_tmux();
+    let host = embed_support::spawn_host(&[]);
+    let mut control = embed_support::control(&host);
+    embed_support::send_json(
+        &mut control,
+        &json!({"method": "subscribe_events", "id": "tmux-events"}),
+    );
+    assert_eq!(embed_support::recv_json(&mut control)["ok"], true);
+    let mut frames = embed_support::connect_frames(&host, None);
+    let _ = embed_support::attach(&mut frames, pane.locator());
+
+    pane.tmux(&["kill-server"]);
+    let frame_exit = (0..20).any(|_| {
+        matches!(
+            embed_support::read_msg_timeout(&mut frames, Duration::from_millis(150)),
+            Some(ServerMessage::TerminalExited { .. })
+        )
+    });
+    assert!(frame_exit, "tmux death did not reach the frame stream");
+
+    control
+        .set_read_timeout(Some(Duration::from_millis(150)))
+        .unwrap();
+    let mut byte = [0_u8; 1];
+    let error = control.read(&mut byte).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
 }
 
 #[test]

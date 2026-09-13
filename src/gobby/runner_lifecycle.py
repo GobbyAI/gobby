@@ -26,6 +26,7 @@ from gobby.runner_lifecycle_startup import StartupTracker, _log_subsystem_init_r
 from gobby.runner_lifecycle_subsystems import init_subsystems
 from gobby.runner_pid_file import FailOpenPidOwnership, PidOwnershipResolution
 from gobby.shutdown_intent import clear_active_shutdown_intent
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.telemetry import shutdown_telemetry
 
 if TYPE_CHECKING:
@@ -193,15 +194,14 @@ async def run_daemon(
 
         from gobby.events.coordination_waits import CoordinationWaitService
         from gobby.storage.coordination_waits import CoordinationWaitManager
-        from gobby.storage.hub.postgres import PostgresHubDatabase
         from gobby.utils.machine_id import require_machine_id
 
-        if isinstance(runner.database, PostgresHubDatabase):
+        if isinstance(database, PostgresHubDatabase):
             runner.coordination_wait_service = CoordinationWaitService(
-                CoordinationWaitManager(runner.database),
+                CoordinationWaitManager(database),
                 runner.completion_registry,
                 require_machine_id(),
-                runner.database.open_runtime_async_connection,
+                database.open_runtime_async_connection,
             )
             await runner.coordination_wait_service.start()
 

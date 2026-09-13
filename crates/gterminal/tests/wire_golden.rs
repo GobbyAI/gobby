@@ -166,24 +166,24 @@ fn golden_corpus_bytes_and_fragmented_reads() {
 
     write_json(
         "control_hello.json",
-        serde_json::json!({"method":"hello","protocol_version":1,"control_token":"token"}),
+        serde_json::json!({"id":"hello-1","method":"hello","protocol_version":1,"control_token":"token"}),
     );
     write_json(
         "control_ping.json",
-        serde_json::json!({"ok":true,"host_epoch":"epoch-1","version":"0.1.0","host_pid":1234}),
+        serde_json::json!({"id":"ping-1","ok":true,"host_epoch":"epoch-1","version":"0.1.0","host_pid":1234}),
     );
     write_json(
         "control_list.json",
-        serde_json::json!({"ok":true,"terminals":[]}),
+        serde_json::json!({"id":"list-1","ok":true,"terminals":[],"epoch":"epoch-1","seq":41}),
     );
     write_json(
         "control_host_shutdown.json",
-        serde_json::json!({"method":"host_shutdown","grace_ms":1000}),
+        serde_json::json!({"id":"shutdown-1","method":"host_shutdown","grace_ms":1000}),
     );
     write_json(
         "control_spawn.json",
         serde_json::json!({
-            "method":"spawn","operation_seq":1,"terminal_id":"t","spawn_key":"s",
+            "id":"spawn-1","method":"spawn","operation_seq":1,"terminal_id":"t","spawn_key":"s",
             "reservation_id":"rsv","reserve_key":"rk","argv":["/bin/sh"],"env":{},
             "cwd":"/tmp","rows":24,"cols":80,"commit_deadline_ms":30000
         }),
@@ -191,38 +191,38 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     write_json(
         "control_spawn_prepared.json",
         serde_json::json!({
-            "ok":true,"method":"spawn_prepared","terminal_id":"t","spawn_key":"s",
+            "id":"spawn-1","ok":true,"method":"spawn_prepared","terminal_id":"t","spawn_key":"s",
             "host_terminal_id":"ht-1","pgid":99,"start_time":1.0,
             "reservation_id":"rsv","reserve_key":"rk","reserve_generation":1
         }),
     );
     write_json(
         "control_spawn_commit.json",
-        serde_json::json!({"method":"spawn_commit","terminal_id":"t","spawn_key":"s"}),
+        serde_json::json!({"id":"commit-1","method":"spawn_commit","terminal_id":"t","spawn_key":"s"}),
     );
     write_json(
         "control_kill.json",
-        serde_json::json!({"method":"kill","operation_seq":2,"host_terminal_id":"ht-1","grace_ms":50}),
+        serde_json::json!({"id":"kill-1","method":"kill","operation_seq":2,"host_terminal_id":"ht-1","grace_ms":50}),
     );
     write_json(
         "control_resize.json",
-        serde_json::json!({"method":"resize","operation_seq":3,"host_terminal_id":"ht-1","rows":30,"cols":100}),
+        serde_json::json!({"id":"resize-1","method":"resize","operation_seq":3,"host_terminal_id":"ht-1","rows":30,"cols":100}),
     );
     write_json(
         "control_snapshot.json",
-        serde_json::json!({"method":"snapshot","host_terminal_id":"ht-1","mode":"ansi","max_bytes":262144,"max_lines":500}),
+        serde_json::json!({"id":"snapshot-1","method":"snapshot","host_terminal_id":"ht-1","mode":"ansi","max_bytes":262144,"max_lines":500}),
     );
     write_json(
         "control_write.json",
         serde_json::json!({
-            "method":"write","operation_seq":4,"host_terminal_id":"ht-1",
+            "id":"write-1","method":"write","operation_seq":4,"host_terminal_id":"ht-1",
             "kind":"text","encoding":"utf8-b64","data":"eA==","submit":false
         }),
     );
     write_json(
         "control_write_batch.json",
         serde_json::json!({
-            "method":"write_batch","operation_seq":7,"targets":[
+            "id":"batch-1","method":"write_batch","operation_seq":7,"targets":[
                 {"recipient_id":"r1","host_terminal_id":"ht-1","operations":[
                     {"kind":"text","encoding":"utf8-b64","data":"eA==","delay_ms":0}
                 ]},
@@ -238,28 +238,35 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     write_json(
         "control_write_paste_on.json",
         serde_json::json!({
-            "method":"write","operation_seq":5,"host_terminal_id":"ht-1",
+            "id":"paste-on-1","method":"write","operation_seq":5,"host_terminal_id":"ht-1",
             "kind":"paste","encoding":"utf8-b64","data":"eA=="
         }),
     );
     write_json(
         "control_write_paste_off.json",
         serde_json::json!({
-            "method":"write","operation_seq":6,"host_terminal_id":"ht-1",
+            "id":"paste-off-1","method":"write","operation_seq":6,"host_terminal_id":"ht-1",
             "kind":"paste","encoding":"utf8-b64","data":"eA=="
         }),
     );
     write_json(
         "control_subscribe_events.json",
-        serde_json::json!({"method":"subscribe_events"}),
+        serde_json::json!({"id":"subscribe-1","method":"subscribe_events","since":41}),
     );
     write_json(
         "control_reserve_observer.json",
-        serde_json::json!({"method":"reserve_observer","terminal_id":"t","reserve_key":"rk"}),
+        serde_json::json!({"id":"reserve-1","method":"reserve_observer","terminal_id":"t","reserve_key":"rk"}),
     );
     write_json(
         "control_release_observer.json",
-        serde_json::json!({"method":"release_observer","reservation_id":"rsv","reserve_key":"rk"}),
+        serde_json::json!({"id":"release-1","method":"release_observer","reservation_id":"rsv","reserve_key":"rk"}),
+    );
+    write_json(
+        "control_terminal_exited.json",
+        serde_json::json!({
+            "event":"terminal_exited","terminal_id":"t","host_terminal_id":"ht-1",
+            "exit_code":7,"epoch":"epoch-1","seq":42
+        }),
     );
 
     let hello_bytes = fs::read(dir().join("hello.bin")).unwrap();

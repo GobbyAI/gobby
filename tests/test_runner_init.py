@@ -369,7 +369,7 @@ class TestWakeTmuxSenders:
             return None
 
         monkeypatch.setattr(
-            "gobby.runner_init.orchestration._wake_write_services",
+            "gobby.runner_init.orchestration.wake_write_services",
             lambda: (store, coordinator),
         )
         monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)
@@ -413,7 +413,7 @@ class TestWakeTmuxSenders:
             return None
 
         monkeypatch.setattr(
-            "gobby.runner_init.orchestration._wake_write_services",
+            "gobby.runner_init.orchestration.wake_write_services",
             lambda: (store, coordinator),
         )
         monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)

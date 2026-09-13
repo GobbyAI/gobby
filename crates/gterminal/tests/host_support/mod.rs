@@ -8,12 +8,14 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
 pub const PID_FILE: &str = "gterm.pid";
 pub const TOKEN_FILE: &str = "gterm-control.token";
+static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct HostProc {
     child: Child,
@@ -159,6 +161,19 @@ pub fn connect(path: &Path) -> UnixStream {
 }
 
 pub fn send_json(stream: &mut UnixStream, value: &Value) {
+    let mut value = value.clone();
+    if let Some(object) = value.as_object_mut() {
+        object.entry("id").or_insert_with(|| {
+            Value::String(format!(
+                "test-{}",
+                REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+        });
+    }
+    send_json_without_id(stream, &value);
+}
+
+pub fn send_json_without_id(stream: &mut UnixStream, value: &Value) {
     let mut line = serde_json::to_string(value).expect("serialize");
     line.push('\n');
     stream.write_all(line.as_bytes()).expect("write request");

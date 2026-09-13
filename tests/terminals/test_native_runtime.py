@@ -93,6 +93,8 @@ class FakeHostClient:
     commit_deadline_ms: int = 30_000
     commit_deadlines: list[int] = field(default_factory=list)
     commit_error: HostCommandError | None = None
+    socket_dir: Path = Path("/tmp/gobby-test-host")
+    reconnects: list[tuple[Path, str | None]] = field(default_factory=list)
 
     async def ensure_connected(self) -> None:
         if not self.available:
@@ -278,9 +280,10 @@ class FakeHostClient:
         await self.ensure_connected()
         return list(self.list_rows)
 
-    async def reconnect(self) -> str:
+    async def reconnect(self, socket_path: Path, expected_epoch: str | None = None) -> str:
         if not self.available:
             raise HostUnavailableError("gterm host unavailable")
+        self.reconnects.append((socket_path, expected_epoch))
         self.connection_id += 1
         self.next_seq = 1
         self.ledger.clear()

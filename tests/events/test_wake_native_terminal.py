@@ -99,7 +99,7 @@ def managed_chain(monkeypatch: pytest.MonkeyPatch) -> ManagedChain:
         return None
 
     monkeypatch.setattr(
-        "gobby.runner_init.orchestration._wake_write_services",
+        "gobby.runner_init.orchestration.wake_write_services",
         lambda: (store, coordinator),
     )
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", no_sleep)
@@ -284,7 +284,7 @@ async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
         return None
 
     monkeypatch.setattr(
-        "gobby.runner_init.orchestration._wake_write_services",
+        "gobby.runner_init.orchestration.wake_write_services",
         lambda: (store, coordinator),
     )
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", no_sleep)
@@ -493,7 +493,7 @@ async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
         runtime_registry(runtime),
     )
     monkeypatch.setattr(
-        "gobby.runner_init.orchestration._wake_write_services",
+        "gobby.runner_init.orchestration.wake_write_services",
         lambda: (store, coordinator),
     )
     pane_sender = AsyncMock()

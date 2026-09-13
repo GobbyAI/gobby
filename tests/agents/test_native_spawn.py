@@ -29,7 +29,7 @@ from gobby.terminals.host_client import (
     HostUnavailableError,
 )
 from gobby.terminals.host_manager import TerminalHostManager
-from gobby.terminals.host_protocol import HostListRow
+from gobby.terminals.host_protocol import HostListRow, control_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.native_runtime import NativeTerminalRuntime
 from gobby.terminals.runtime import (
@@ -44,11 +44,94 @@ from tests.agents.test_capture import FakeCaptureStorage
 from tests.agents.test_capture import _run as capture_run
 from tests.terminals.fakes import (
     MemoryTerminalStore,
+    make_memory_terminal,
     runtime_registry,
 )
 from tests.terminals.test_native_runtime import FakeHostClient
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_is_live_requires_epoch_and_reconnect_has_arguments(tmp_path: Any) -> None:
+    class ReconnectingHost:
+        def __init__(self) -> None:
+            self.host_epoch = "epoch-1"
+            self.socket_dir = tmp_path
+            self.rows: list[HostListRow] = []
+            self.reconnects: list[tuple[Any, str | None]] = []
+            self.resizes: list[tuple[str, int, int]] = []
+            self.kills: list[str] = []
+            self.fail_resize = False
+            self.fail_kill = False
+
+        async def ensure_connected(self) -> None:
+            return None
+
+        async def list_terminals(self) -> list[HostListRow]:
+            return list(self.rows)
+
+        async def reconnect(self, socket_path: Any, expected_epoch: str | None = None) -> str:
+            self.reconnects.append((socket_path, expected_epoch))
+            if expected_epoch != self.host_epoch:
+                raise HostEpochChangedError("host_epoch_changed")
+            return self.host_epoch
+
+        async def resize(self, host_id: str, rows: int, cols: int) -> None:
+            if self.fail_resize:
+                self.fail_resize = False
+                raise HostUnavailableError("connection_lost")
+            self.resizes.append((host_id, rows, cols))
+
+        async def kill(self, host_id: str, *, grace_ms: int) -> None:
+            del grace_ms
+            if self.fail_kill:
+                self.fail_kill = False
+                raise HostUnavailableError("connection_lost")
+            self.kills.append(host_id)
+
+    client = ReconnectingHost()
+    runtime = NativeTerminalRuntime(client, frame_host_epoch="stale-constructor-epoch")
+    terminal = make_memory_terminal(terminal_id=str(uuid4()), backend="native")
+    terminal.locator = {"host_terminal_id": "ht-1"}
+    client.rows = [
+        _list_row(
+            terminal_id=terminal.id,
+            spawn_key=str(terminal.spawn_key),
+            observer_bind="bound",
+        )
+    ]
+
+    assert not hasattr(runtime, "_frame_host_epoch")
+    assert terminal.host_epoch is None
+    assert await runtime.is_live(terminal) is False
+
+    terminal.host_epoch = client.host_epoch
+    assert await runtime.is_live(terminal) is True
+
+    expected_socket = control_socket_path(tmp_path)
+    client.fail_resize = True
+    await runtime.resize(terminal, 31, 101)
+    assert client.reconnects[-1] == (expected_socket, terminal.host_epoch)
+    assert client.resizes == [("ht-1", 31, 101)]
+
+    client.fail_kill = True
+    await runtime.terminate(terminal, 0.05)
+    assert client.reconnects[-1] == (expected_socket, terminal.host_epoch)
+    assert client.kills == ["ht-1"]
+
+    client.fail_kill = True
+    await runtime.kill("ht-1", 0.05)
+    assert client.reconnects[-1] == (expected_socket, terminal.host_epoch)
+    assert client.kills == ["ht-1", "ht-1"]
+
+    terminal.host_epoch = "earlier-epoch"
+    sent = (list(client.resizes), list(client.kills))
+    with pytest.raises(HostEpochChangedError, match="host_epoch_changed"):
+        await runtime.resize(terminal, 32, 102)
+    with pytest.raises(HostEpochChangedError, match="host_epoch_changed"):
+        await runtime.terminate(terminal, 0.05)
+    assert (client.resizes, client.kills) == sent
 
 
 @dataclass
@@ -194,7 +277,7 @@ class _PausedCommitHost(HostClient):
     async def ensure_connected(self) -> None:
         return None
 
-    async def subscribe_events(self) -> dict[str, Any]:
+    async def subscribe_events(self, since: int | None = None) -> dict[str, Any]:
         return {"ok": True, "subscribed": True}
 
     async def reserve_observer(self, terminal_id: str, reserve_key: str) -> dict[str, Any]:
@@ -788,7 +871,7 @@ async def _cancel_commit(
         frame=frame,
     )
     if not after_write:
-        await host._lock.acquire()
+        await host._write_lock.acquire()
     with patch(
         "gobby.agents.spawn_executor.prepare_claude_spawn",
         new=AsyncMock(return_value=_plan()),
@@ -799,7 +882,7 @@ async def _cancel_commit(
             await writer.drain_started.wait()
         task.cancel()
         if not after_write:
-            host._lock.release()
+            host._write_lock.release()
         with pytest.raises(asyncio.CancelledError):
             await task
     row = manager.get(next(iter(manager.rows)))

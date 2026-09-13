@@ -13,7 +13,7 @@ use serde::Deserialize;
 use tokio::io::unix::AsyncFd;
 
 use super::gate::{errno_name, GATE_FD, PTY_FD, STATUS_FD};
-use crate::pane::PaneRuntime;
+use crate::pane::{ChildExitWatch, PaneRuntime};
 use crate::terminal_theme::TerminalTheme;
 
 const MIN_INHERITED_FD: RawFd = 10;
@@ -56,27 +56,47 @@ pub struct PreparedChild {
     wait_for_child_exit_before_status: bool,
 }
 
+pub struct PreparedCommit {
+    status_reader: Option<AsyncFd<OwnedFd>>,
+    #[cfg(debug_assertions)]
+    wait_for_child_exit_before_status: bool,
+    #[cfg(debug_assertions)]
+    exit_watch: Option<ChildExitWatch>,
+}
+
 impl PreparedChild {
-    pub async fn commit(&mut self, deadline: Duration) -> CommitResult {
+    pub fn begin_commit(&mut self) -> Result<PreparedCommit, CommitResult> {
         if let Some(gate) = self.gate_writer.take() {
             let write_result = write_gate(gate.as_raw_fd());
             drop(gate);
             if let Err(error) = write_result {
-                return CommitResult::ExecFailed(ExecFailure::from_io("gate", error));
+                return Err(CommitResult::ExecFailed(ExecFailure::from_io(
+                    "gate", error,
+                )));
             }
         }
-        let Some(status) = self.status_reader.take() else {
-            return CommitResult::Committed;
-        };
+        Ok(PreparedCommit {
+            status_reader: self.status_reader.take(),
+            #[cfg(debug_assertions)]
+            wait_for_child_exit_before_status: self.wait_for_child_exit_before_status,
+            #[cfg(debug_assertions)]
+            exit_watch: self.runtime.child_exit_watch(),
+        })
+    }
+}
+
+impl PreparedCommit {
+    pub async fn finish(self, deadline: Duration) -> CommitResult {
         let status_deadline = tokio::time::Instant::now() + deadline;
         #[cfg(debug_assertions)]
         if self.wait_for_child_exit_before_status {
-            while self.runtime.child_exit().is_none()
-                && tokio::time::Instant::now() < status_deadline
-            {
-                tokio::time::sleep(Duration::from_millis(1)).await;
+            if let Some(exit_watch) = self.exit_watch {
+                let _ = tokio::time::timeout_at(status_deadline, exit_watch.wait()).await;
             }
         }
+        let Some(status) = self.status_reader else {
+            return CommitResult::Committed;
+        };
         let bytes = match tokio::time::timeout_at(status_deadline, read_status(&status)).await {
             Ok(Ok(bytes)) => bytes,
             Ok(Err(_)) => return CommitResult::MalformedStatus,

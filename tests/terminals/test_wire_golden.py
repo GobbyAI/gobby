@@ -8,12 +8,14 @@ from pathlib import Path
 import pytest
 
 from gobby.terminals.host_client import (
+    MAX_CONTROL_LINE,
     MAX_WRITE_BATCH_OPERATIONS_PER_TARGET,
     MAX_WRITE_BATCH_TARGETS,
     HostBatchOperation,
     HostBatchTarget,
     HostClient,
     HostCommandError,
+    HostConnectionLost,
     HostDecodeError,
     decode_control_line,
     encode_control_line,
@@ -35,15 +37,56 @@ def _golden(name: str) -> bytes:
     return (GOLDEN / name).read_bytes()
 
 
+def test_control_goldens_match_rust_emitter() -> None:
+    request_ids = {
+        "control_hello.json": "hello-1",
+        "control_host_shutdown.json": "shutdown-1",
+        "control_spawn.json": "spawn-1",
+        "control_spawn_commit.json": "commit-1",
+        "control_kill.json": "kill-1",
+        "control_resize.json": "resize-1",
+        "control_snapshot.json": "snapshot-1",
+        "control_write.json": "write-1",
+        "control_write_batch.json": "batch-1",
+        "control_write_paste_on.json": "paste-on-1",
+        "control_write_paste_off.json": "paste-off-1",
+        "control_subscribe_events.json": "subscribe-1",
+        "control_reserve_observer.json": "reserve-1",
+        "control_release_observer.json": "release-1",
+    }
+    for name, request_id in request_ids.items():
+        assert decode_control_line(_golden(name))["id"] == request_id
+
+    assert decode_control_line(_golden("control_subscribe_events.json"))["since"] == 41
+    assert decode_control_line(_golden("control_ping.json"))["id"] == "ping-1"
+    assert decode_control_line(_golden("control_list.json"))["id"] == "list-1"
+    assert decode_control_line(_golden("control_spawn_prepared.json"))["id"] == "spawn-1"
+    terminal_exited = decode_control_line(_golden("control_terminal_exited.json"))
+    assert terminal_exited == {
+        "event": "terminal_exited",
+        "terminal_id": "t",
+        "host_terminal_id": "ht-1",
+        "exit_code": 7,
+        "epoch": "epoch-1",
+        "seq": 42,
+    }
+
+
 def test_control_client_matches_golden_corpus() -> None:
     assert encode_control_line(
-        {"method": "hello", "protocol_version": 1, "control_token": "token"}
+        {
+            "id": "hello-1",
+            "method": "hello",
+            "protocol_version": 1,
+            "control_token": "token",
+        }
     ) == _golden("control_hello.json")
-    assert encode_control_line({"method": "host_shutdown", "grace_ms": 1000}) == _golden(
-        "control_host_shutdown.json"
-    )
+    assert encode_control_line(
+        {"id": "shutdown-1", "method": "host_shutdown", "grace_ms": 1000}
+    ) == _golden("control_host_shutdown.json")
     assert encode_control_line(
         {
+            "id": "spawn-1",
             "method": "spawn",
             "operation_seq": 1,
             "terminal_id": "t",
@@ -60,6 +103,7 @@ def test_control_client_matches_golden_corpus() -> None:
     ) == _golden("control_spawn.json")
     assert encode_control_line(
         {
+            "id": "write-1",
             "method": "write",
             "operation_seq": 4,
             "host_terminal_id": "ht-1",
@@ -71,6 +115,7 @@ def test_control_client_matches_golden_corpus() -> None:
     ) == _golden("control_write.json")
     assert encode_control_line(
         {
+            "id": "batch-1",
             "method": "write_batch",
             "operation_seq": 7,
             "targets": [
@@ -115,6 +160,7 @@ def test_control_client_matches_golden_corpus() -> None:
     ) == _golden("control_write_batch.json")
     assert encode_control_line(
         {
+            "id": "kill-1",
             "method": "kill",
             "operation_seq": 2,
             "host_terminal_id": "ht-1",
@@ -123,6 +169,7 @@ def test_control_client_matches_golden_corpus() -> None:
     ) == _golden("control_kill.json")
     assert encode_control_line(
         {
+            "id": "resize-1",
             "method": "resize",
             "operation_seq": 3,
             "host_terminal_id": "ht-1",
@@ -132,6 +179,7 @@ def test_control_client_matches_golden_corpus() -> None:
     ) == _golden("control_resize.json")
     assert encode_control_line(
         {
+            "id": "snapshot-1",
             "method": "snapshot",
             "host_terminal_id": "ht-1",
             "mode": "ansi",
@@ -167,14 +215,15 @@ def test_control_ping_requires_host_pid() -> None:
 
 
 def test_control_host_shutdown_round_trip() -> None:
-    assert encode_control_line({"method": "host_shutdown", "grace_ms": 1000}) == _golden(
-        "control_host_shutdown.json"
-    )
+    assert encode_control_line(
+        {"id": "shutdown-1", "method": "host_shutdown", "grace_ms": 1000}
+    ) == _golden("control_host_shutdown.json")
 
 
 def test_control_spawn_carries_reservation_identity() -> None:
     encoded = encode_control_line(
         {
+            "id": "spawn-1",
             "method": "spawn",
             "operation_seq": 1,
             "terminal_id": "t",
@@ -201,12 +250,14 @@ def test_control_spawn_carries_reservation_identity() -> None:
 
 @pytest.mark.asyncio
 async def test_control_client_fragmented_and_oversized_reads() -> None:
-    reader = asyncio.StreamReader()
+    reader = asyncio.StreamReader(limit=MAX_CONTROL_LINE + 1)
     writer_reads: list[bytes] = []
+    writes: asyncio.Queue[bytes] = asyncio.Queue()
 
     class _Writer:
         def write(self, data: bytes) -> None:
             writer_reads.append(data)
+            writes.put_nowait(data)
 
         async def drain(self) -> None:
             return None
@@ -226,30 +277,33 @@ async def test_control_client_fragmented_and_oversized_reads() -> None:
 
     client = HostClient(reader, _Writer())
     line = _golden("control_ping.json")
+    ping_task = asyncio.create_task(client._roundtrip({"method": "ping", "id": "ping-1"}))
+    await writes.get()
     reader.feed_data(line[:8])
     reader.feed_data(line[8:])
-    payload = await client.read_payload()
+    payload = await ping_task
     assert payload["host_pid"] == 1234
 
+    oversized_task = asyncio.create_task(client._roundtrip({"method": "oversized"}))
+    await writes.get()
     huge = b"x" * (2 * 1024 * 1024) + b"\n"
     reader.feed_data(huge)
-    with pytest.raises(HostCommandError) as exc:
-        await client.read_payload()
-    assert exc.value.code == "request_too_large"
-    assert client.closed is False or client.closed is True
-    # Oversized rejection must not require closing; a later line can still decode
-    # if the socket stays open. Either closed-false or a typed error is the pin.
-    assert exc.value.code == "request_too_large"
+    with pytest.raises(HostConnectionLost) as exc:
+        await oversized_task
+    assert exc.value.code == "host_unavailable"
+    await client.close()
 
 
 @pytest.mark.asyncio
 async def test_write_batch_uses_one_locked_round_trip_for_three_recipients() -> None:
     reader = asyncio.StreamReader()
     written: list[bytes] = []
+    writes: asyncio.Queue[bytes] = asyncio.Queue()
 
     class _Writer:
         def write(self, data: bytes) -> None:
             written.append(data)
+            writes.put_nowait(data)
 
         async def drain(self) -> None:
             return None
@@ -274,22 +328,10 @@ async def test_write_batch_uses_one_locked_round_trip_for_three_recipients() -> 
     )
 
     ping_task = asyncio.create_task(client.ping())
-    for _ in range(10):
-        if written:
-            break
-        await asyncio.sleep(0)
+    ping_request = decode_control_line(await writes.get())
     batch_task = asyncio.create_task(client.write_batch(targets))
-    await asyncio.sleep(0)
-    assert len(written) == 1
-
-    reader.feed_data(b'{"host_epoch":"epoch-1","host_pid":1234,"ok":true,"version":"0.1.0"}\n')
-    await ping_task
-    for _ in range(10):
-        if len(written) == 2:
-            break
-        await asyncio.sleep(0)
+    request = decode_control_line(await writes.get())
     assert len(written) == 2
-    request = decode_control_line(written[1])
     assert request["method"] == "write_batch"
     assert [item["recipient_id"] for item in request["targets"]] == ["r1", "r2", "r3"]
     assert all(len(item["operations"]) == 2 for item in request["targets"])
@@ -297,6 +339,7 @@ async def test_write_batch_uses_one_locked_round_trip_for_three_recipients() -> 
     reader.feed_data(
         encode_control_line(
             {
+                "id": request["id"],
                 "ok": True,
                 "results": [
                     {
@@ -312,6 +355,20 @@ async def test_write_batch_uses_one_locked_round_trip_for_three_recipients() -> 
     )
     results = await batch_task
     assert [item["recipient_id"] for item in results] == ["r1", "r2", "r3"]
+    assert not ping_task.done()
+    reader.feed_data(
+        encode_control_line(
+            {
+                "id": ping_request["id"],
+                "host_epoch": "epoch-1",
+                "host_pid": 1234,
+                "ok": True,
+                "version": "0.1.0",
+            }
+        )
+    )
+    await ping_task
+    await client.close()
 
 
 @pytest.mark.asyncio
