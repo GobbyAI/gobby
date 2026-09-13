@@ -5,7 +5,10 @@ export const manifest = {
   description:
     "Select page elements or regions, keep local notes, and export portable captures.",
   permissions: ["activeTab", "scripting", "storage", "downloads"],
-  action: { default_title: "Annotate this page" },
-  icons: { "128": "logo.png", "512": "logo.png" },
+  action: {
+    default_title: "Annotate this page",
+    default_icon: { "128": "logo.png", "512": "logo-light.png" },
+  },
+  icons: { "128": "logo.png", "512": "logo-light.png" },
   background: { service_worker: "background.js", type: "module" },
 };

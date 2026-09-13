@@ -4,8 +4,15 @@ import { copyFile, mkdir, writeFile, readFile } from "node:fs/promises";
 import { writeNotices } from "../../notices.mjs";
 import { manifest } from "./manifest.ts";
 await mkdir("dist/public", { recursive: true });
-for (const file of ["logo.png", "logo-light.png"])
-  await copyFile("../../../web/public/" + file, "dist/public/" + file);
+// Share the opaque, white-backed app artwork with browser extension chrome.
+for (const [file, size] of [
+  ["logo.png", 128],
+  ["logo-light.png", 512],
+])
+  await copyFile(
+    `../../safari/Assets.xcassets/AppIcon.appiconset/icon-${size}.png`,
+    "dist/public/" + file,
+  );
 await viteBuild();
 await build({
   entryPoints: ["src/background.ts"],

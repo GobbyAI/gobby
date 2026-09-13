@@ -1,15 +1,8 @@
 import { Button } from "../../../../web/src/components/ui/Button";
-import {
-  MousePointer2,
-  Scan,
-  List,
-  Menu,
-  Minimize2,
-  MessageSquare,
-  Move,
-} from "lucide-react";
+import { MousePointer2, Scan, List, Menu, Minimize2, Move } from "lucide-react";
 import type { PointerEvent } from "react";
 import type { Mode } from "./selection";
+import icon from "../../../safari/Assets.xcassets/AppIcon.appiconset/icon-128.png";
 export function Toolbar({
   count,
   collapsed,
@@ -39,7 +32,7 @@ export function Toolbar({
         onClick={onCollapse}
         onPointerDown={onDrag}
       >
-        <MessageSquare size={18} />
+        <img src={icon} alt="" width={28} height={28} draggable={false} />
       </Button>
     );
   return (
