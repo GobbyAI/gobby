@@ -4180,6 +4180,17 @@
     },
     {
       "activation": "live",
+      "default": 30000,
+      "description": "Maximum wait for a prepared child to cross the exec-status barrier.",
+      "key": "terminal_host.commit_deadline_ms",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": true,
       "description": "Enable gterm host supervision for native terminals.",
       "key": "terminal_host.enabled",

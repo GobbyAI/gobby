@@ -274,13 +274,18 @@ class HostClient:
         self.next_seq = seq + 1
         return payload
 
-    async def spawn_commit(self, terminal_id: str, spawn_key: str) -> None:
+    async def spawn_commit(self, terminal_id: str, spawn_key: str, commit_deadline_ms: int) -> None:
         task = asyncio.current_task()
         if task is not None:
             self._commit_write_states[task] = False
         try:
             await self._roundtrip(
-                {"method": "spawn_commit", "terminal_id": terminal_id, "spawn_key": spawn_key}
+                {
+                    "method": "spawn_commit",
+                    "terminal_id": terminal_id,
+                    "spawn_key": spawn_key,
+                    "commit_deadline_ms": commit_deadline_ms,
+                }
             )
         except asyncio.CancelledError as exc:
             if task is not None:

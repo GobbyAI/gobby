@@ -848,7 +848,7 @@ async def test_terminal_client_stack_end_to_end(
     await reserved_viewer.attach_terminal(keep_locator, reservation_id=reservation_id)
     await reserved_viewer.detach()
     await reserved_viewer.close()
-    await control.spawn_commit(keep_id, keep_id)
+    await control.spawn_commit(keep_id, keep_id, 15000)
     listed = await control.list_terminals()
     keep_row = next(row for row in listed if row.terminal_id == keep_id)
     assert keep_row.commit_state == "committed"
@@ -901,7 +901,7 @@ async def test_terminal_client_stack_end_to_end(
         ),
         pytest.raises(CommitTransportError) as commit_error,
     ):
-        await control.spawn_commit(inflight_id, inflight_id)
+        await control.spawn_commit(inflight_id, inflight_id, 8000)
     assert commit_error.value.request_written is True
     await control.close()
     control = await _open_control(socket_dir)

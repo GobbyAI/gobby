@@ -147,8 +147,8 @@ class ObservingHost(FakeHostClient):
             self.pty.append(self.first_bytes)
         return payload
 
-    async def spawn_commit(self, terminal_id: str, spawn_key: str) -> None:
-        await super().spawn_commit(terminal_id, spawn_key)
+    async def spawn_commit(self, terminal_id: str, spawn_key: str, commit_deadline_ms: int) -> None:
+        await super().spawn_commit(terminal_id, spawn_key, commit_deadline_ms)
         if self.exit_on_commit:
             self.children_alive = False
             self.events.append(
@@ -731,6 +731,42 @@ async def test_spawn_carries_reservation_identity() -> None:
     host.reservation_error = "stale_reservation"
     with pytest.raises(HostCommandError):
         await runtime.prepare_spawn(stale)
+
+
+@pytest.mark.asyncio
+async def test_commit_forwards_deadline_and_maps_exec_failed() -> None:
+    cases = [
+        (
+            HostCommandError("exec_failed", code="ENOENT", detail="No such file", stage="execve"),
+            "exec_failed:ENOENT",
+            "execve: No such file",
+        ),
+        (
+            HostCommandError("exec_timeout", detail="deadline expired", stage="execve"),
+            "exec_timeout",
+            "execve: deadline expired",
+        ),
+        (
+            HostCommandError("malformed_status", detail="truncated", stage="execve"),
+            "malformed_status",
+            "execve: truncated",
+        ),
+    ]
+    for exc, expected_error, expected_detail in cases:
+        host = ObservingHost(commit_error=exc)
+        frame = RecordingFrameClient()
+        request, _runtime, manager = _native_request(host=host, frame=frame)
+        host.commit_deadline_ms = 1_234
+
+        result = await _execute_native_failure(request)
+
+        assert result.success is False
+        assert result.error == expected_error
+        assert result.error_detail == expected_detail
+        assert host.commit_deadlines == [1_234]
+        row = manager.get(result.terminal_id or "")
+        assert row is not None
+        assert row.state == "exited"
 
 
 async def _execute_native_failure(request: SpawnRequest) -> Any:

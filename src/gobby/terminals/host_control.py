@@ -100,12 +100,15 @@ class HostControlClient:
             "draining": bool(payload.get("draining", True)),
         }
 
-    async def spawn_commit(self, terminal_id: str, spawn_key: str) -> None:
+    async def spawn_commit(
+        self, terminal_id: str, spawn_key: str, commit_deadline_ms: int = 30_000
+    ) -> None:
         await self._roundtrip(
             {
                 "method": "spawn_commit",
                 "terminal_id": terminal_id,
                 "spawn_key": spawn_key,
+                "commit_deadline_ms": commit_deadline_ms,
             }
         )
 

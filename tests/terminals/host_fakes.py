@@ -89,8 +89,11 @@ class FakeControlClient:
         self.draining = True
         return {"accepted": True, "draining": True}
 
-    async def spawn_commit(self, terminal_id: str, spawn_key: str) -> None:
+    async def spawn_commit(
+        self, terminal_id: str, spawn_key: str, commit_deadline_ms: int
+    ) -> None:
         self._require_open()
+        assert commit_deadline_ms >= 1_000
         if self.drop_on_commit:
             self.closed = True
             raise ConnectionError("control dropped")

@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 
 use super::helpers::{err, native_entitlements, push_terminal_ansi, s, truncate_title};
+#[cfg(feature = "vt-engine")]
+use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
 use crate::protocol::{
     validate_dimensions, RenderEncoding, ServerMessage, DELTA_LAG_TIMEOUT_MS,
@@ -69,6 +71,21 @@ fn remove_slot_attachments(inner: &mut super::state::Inner, slot: &TerminalSlot)
     }
     if let ObserverBind::Bound { attachment_id, .. } = &slot.observer_bind {
         inner.attachments.remove(attachment_id);
+    }
+}
+
+fn remove_terminal_slot(
+    inner: &mut super::state::Inner,
+    identity: &Identity,
+    kill_signal: Option<i32>,
+) {
+    if let Some(slot) = inner.terminals.remove(identity) {
+        inner.by_host_id.remove(&slot.host_terminal_id);
+        inner.reservations.remove(&slot.reservation_id);
+        remove_slot_attachments(inner, &slot);
+        if let Some(signal) = kill_signal {
+            let _ = kill_group(slot.pgid, signal);
+        }
     }
 }
 
@@ -152,6 +169,13 @@ impl HostState {
             terminal_id: s(extra, "terminal_id"),
             spawn_key: s(extra, "spawn_key"),
         };
+        let deadline_ms = match extra.get("commit_deadline_ms") {
+            None => 30_000,
+            Some(value) => match value.as_u64() {
+                Some(value) if value >= 1_000 => value,
+                _ => return err("invalid_request"),
+            },
+        };
         let mut inner = self.inner.lock().await;
         let Some(slot) = inner.terminals.get_mut(&identity) else {
             return err("not_found");
@@ -164,18 +188,79 @@ impl HostState {
             });
         }
         #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_mut() {
-            if child.commit().is_err() {
-                return err("commit_failed");
+        let outcome = if let Some(child) = slot.child.as_mut() {
+            child.commit(Duration::from_millis(deadline_ms)).await
+        } else {
+            CommitResult::Committed
+        };
+        #[cfg(not(feature = "vt-engine"))]
+        let _ = deadline_ms;
+        #[cfg(feature = "vt-engine")]
+        match outcome {
+            CommitResult::Committed => {}
+            CommitResult::ExecFailed(failure) => {
+                remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+                return json!({
+                    "ok": false,
+                    "error": "exec_failed",
+                    "code": failure.code,
+                    "detail": failure.detail,
+                    "stage": failure.stage,
+                });
+            }
+            CommitResult::ExecTimeout => {
+                remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+                return json!({
+                    "ok": false,
+                    "error": "exec_timeout",
+                    "detail": "commit deadline expired",
+                    "stage": "execve",
+                });
+            }
+            CommitResult::MalformedStatus => {
+                remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+                return json!({
+                    "ok": false,
+                    "error": "malformed_status",
+                    "detail": "invalid exec-status JSON",
+                    "stage": "status",
+                });
             }
         }
+        let Some(slot) = inner.terminals.get_mut(&identity) else {
+            return err("not_found");
+        };
         slot.commit_state = CommitState::Committed;
         slot.commit_deadline = None;
-        json!({
-            "ok": true,
-            "host_terminal_id": slot.host_terminal_id,
-            "commit_state": "committed",
-        })
+        let host_terminal_id = slot.host_terminal_id.clone();
+        #[cfg(feature = "vt-engine")]
+        let exit_status = slot
+            .child
+            .as_ref()
+            .and_then(|child| child.runtime.child_exit())
+            .map(|exit| (exit.exit_code, exit.signal));
+        #[cfg(not(feature = "vt-engine"))]
+        let exit_status: Option<(Option<u32>, Option<String>)> = None;
+        let already_exited = exit_status.is_some();
+        let response = match exit_status {
+            Some((exit_code, signal)) => json!({
+                "ok": true,
+                "host_terminal_id": host_terminal_id,
+                "commit_state": "committed",
+                "terminal_state": "exited",
+                "exit_code": exit_code,
+                "signal": signal,
+            }),
+            None => json!({
+                "ok": true,
+                "host_terminal_id": host_terminal_id,
+                "commit_state": "committed",
+            }),
+        };
+        if already_exited {
+            remove_terminal_slot(&mut inner, &identity, None);
+        }
+        response
     }
 
     pub async fn kill(&self, extra: &Map<String, Value>) -> Value {
@@ -308,12 +393,24 @@ impl HostState {
             .map(|(identity, _)| identity.clone())
             .collect();
         for identity in expired {
-            if let Some(slot) = inner.terminals.remove(&identity) {
-                inner.by_host_id.remove(&slot.host_terminal_id);
-                inner.reservations.remove(&slot.reservation_id);
-                remove_slot_attachments(&mut inner, &slot);
-                let _ = kill_group(slot.pgid, libc::SIGKILL);
-            }
+            remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+        }
+        #[cfg(feature = "vt-engine")]
+        let exited: Vec<Identity> = inner
+            .terminals
+            .iter()
+            .filter(|(_, slot)| {
+                slot.commit_state == CommitState::Committed
+                    && slot
+                        .child
+                        .as_ref()
+                        .is_some_and(|child| child.runtime.child_exit().is_some())
+            })
+            .map(|(identity, _)| identity.clone())
+            .collect();
+        #[cfg(feature = "vt-engine")]
+        for identity in exited {
+            remove_terminal_slot(&mut inner, &identity, None);
         }
     }
 

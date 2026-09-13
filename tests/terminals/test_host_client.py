@@ -44,15 +44,17 @@ async def test_commit_transport_error_reports_written_state() -> None:
         _Writer(write_error=BrokenPipeError("write failed")),
     )
     with pytest.raises(CommitTransportError) as before_write:
-        await write_client.spawn_commit("terminal-1", "spawn-1")
+        await write_client.spawn_commit("terminal-1", "spawn-1", 30_000)
     assert before_write.value.request_written is False
 
     reader = asyncio.StreamReader()
     reader.feed_eof()
-    read_client = HostClient(reader, _Writer())
+    read_writer = _Writer()
+    read_client = HostClient(reader, read_writer)
     with pytest.raises(CommitTransportError) as after_write:
-        await read_client.spawn_commit("terminal-2", "spawn-2")
+        await read_client.spawn_commit("terminal-2", "spawn-2", 30_000)
     assert after_write.value.request_written is True
+    assert b'"commit_deadline_ms":30000' in read_writer.writes[0]
 
     other_reader = asyncio.StreamReader()
     other_reader.feed_eof()

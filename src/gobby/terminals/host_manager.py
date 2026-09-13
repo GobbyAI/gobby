@@ -412,7 +412,7 @@ class TerminalHostManager:
             client = await self._connect()
             await self._handshake(client)
             self._client = client
-        await client.spawn_commit(terminal_id, spawn_key)
+        await client.spawn_commit(terminal_id, spawn_key, self.config.commit_deadline_ms)
 
     async def reconcile(self) -> None:
         manager = self.terminal_manager

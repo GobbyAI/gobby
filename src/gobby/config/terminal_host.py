@@ -42,6 +42,11 @@ class TerminalHostConfig(BaseModel):
         ge=0,
         description="Grace period for host_shutdown and process-group reaping.",
     )
+    commit_deadline_ms: int = Field(
+        default=30_000,
+        ge=1_000,
+        description="Maximum wait for a prepared child to cross the exec-status barrier.",
+    )
     max_attachments_per_terminal: int = Field(
         default=8,
         ge=1,

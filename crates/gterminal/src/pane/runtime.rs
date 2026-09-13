@@ -21,6 +21,13 @@ use super::shell::{
 use super::shutdown::shutdown_pane_processes;
 use super::terminal::{GhosttyPaneTerminal, PaneTerminal};
 
+/// Result retained by the runtime's sole child waiter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChildExit {
+    pub exit_code: Option<u32>,
+    pub signal: Option<String>,
+}
+
 /// PTY runtime for a pane. Owns the terminal, I/O channels, and background tasks.
 /// Dropping this shuts down background tasks and closes the PTY.
 pub struct PaneRuntime {
@@ -31,6 +38,7 @@ pub struct PaneRuntime {
     child_pid: Arc<AtomicU32>,
     reported_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
     child_wait_completed: Option<Arc<AtomicBool>>,
+    child_exit: Option<Arc<Mutex<Option<ChildExit>>>>,
     kitty_keyboard_flags: Arc<AtomicU16>,
     preserve_processes_on_drop: bool,
     render_notify: Arc<Notify>,
@@ -214,6 +222,15 @@ impl Drop for PaneRuntime {
 }
 
 impl PaneRuntime {
+    /// Return the wait result retained by the runtime's existing child waiter.
+    ///
+    /// Callers must observe this value instead of calling `wait` or `waitpid`.
+    pub fn child_exit(&self) -> Option<ChildExit> {
+        self.child_exit
+            .as_ref()
+            .and_then(|result| result.lock().ok()?.clone())
+    }
+
     pub fn shutdown(mut self) {
         self.io.shutdown();
         shutdown_pane_processes(
@@ -358,9 +375,11 @@ impl PaneRuntime {
         let child_pid = Arc::new(AtomicU32::new(0));
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
+        let child_exit = Arc::new(Mutex::new(None));
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
+            let child_exit = child_exit.clone();
             let mut child = spawned.child;
             if let Some(pid) = child.process_id() {
                 child_pid.store(pid, Ordering::Release);
@@ -368,7 +387,16 @@ impl PaneRuntime {
             }
             tokio::task::spawn_blocking(move || {
                 match child.wait() {
-                    Ok(status) => debug!(pane = pane_id.raw(), ?status, "pane child exited"),
+                    Ok(status) => {
+                        debug!(pane = pane_id.raw(), ?status, "pane child exited");
+                        let result = ChildExit {
+                            exit_code: status.signal().is_none().then(|| status.exit_code()),
+                            signal: status.signal().map(str::to_string),
+                        };
+                        if let Ok(mut retained) = child_exit.lock() {
+                            *retained = Some(result);
+                        }
+                    }
                     Err(err) => error!(pane = pane_id.raw(), err = %err, "pane child wait failed"),
                 }
                 child_wait_completed.store(true, Ordering::Release);
@@ -428,6 +456,7 @@ impl PaneRuntime {
             child_pid,
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
+            child_exit: Some(child_exit),
             kitty_keyboard_flags,
             preserve_processes_on_drop: false,
             render_notify,
@@ -463,13 +492,49 @@ impl PaneRuntime {
         let child_pid = Arc::new(AtomicU32::new(child_pid_value));
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
+        let child_exit = Arc::new(Mutex::new(None));
         {
             let child_wait_completed = child_wait_completed.clone();
+            let child_exit = child_exit.clone();
             let pid = child_pid_value as i32;
             tokio::task::spawn_blocking(move || {
                 let mut status = 0;
-                unsafe {
-                    libc::waitpid(pid, &mut status, 0);
+                loop {
+                    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+                    if waited == pid {
+                        let result = if libc::WIFEXITED(status) {
+                            Some(ChildExit {
+                                exit_code: Some(libc::WEXITSTATUS(status) as u32),
+                                signal: None,
+                            })
+                        } else if libc::WIFSIGNALED(status) {
+                            let signal = libc::WTERMSIG(status);
+                            let name = unsafe { libc::strsignal(signal) };
+                            let signal = if name.is_null() {
+                                format!("Signal {signal}")
+                            } else {
+                                unsafe { std::ffi::CStr::from_ptr(name) }
+                                    .to_string_lossy()
+                                    .into_owned()
+                            };
+                            Some(ChildExit {
+                                exit_code: None,
+                                signal: Some(signal),
+                            })
+                        } else {
+                            None
+                        };
+                        if let (Some(result), Ok(mut retained)) = (result, child_exit.lock()) {
+                            *retained = Some(result);
+                        }
+                        break;
+                    }
+                    let err = std::io::Error::last_os_error();
+                    if err.kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    error!(pane = pane_id.raw(), err = %err, "pane child wait failed");
+                    break;
                 }
                 child_wait_completed.store(true, Ordering::Release);
             });
@@ -523,6 +588,7 @@ impl PaneRuntime {
             child_pid,
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
+            child_exit: Some(child_exit),
             kitty_keyboard_flags,
             preserve_processes_on_drop: false,
             render_notify,
@@ -565,6 +631,7 @@ impl PaneRuntime {
                 child_pid: Arc::new(AtomicU32::new(0)),
                 reported_cwd: Arc::new(Mutex::new(None)),
                 child_wait_completed: None,
+                child_exit: None,
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 preserve_processes_on_drop: true,
                 render_notify: Arc::new(Notify::new()),

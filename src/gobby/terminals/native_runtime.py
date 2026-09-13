@@ -158,6 +158,11 @@ class HostManagerControl:
         return getattr(self._manager, "host_epoch", None)
 
     @property
+    def commit_deadline_ms(self) -> int:
+        config = getattr(self._manager, "config", None)
+        return int(getattr(config, "commit_deadline_ms", 30_000))
+
+    @property
     def closed(self) -> bool:
         client = getattr(self._manager, "_client", None)
         return client is None or bool(getattr(client, "closed", False))
@@ -383,7 +388,10 @@ class NativeTerminalRuntime:
         if expected_epoch and current_epoch and current_epoch != expected_epoch:
             raise HostEpochChangedError("host epoch changed")
         try:
-            await self._client.spawn_commit(str(prepared.terminal_id), prepared.spawn_key)
+            commit_deadline_ms = int(getattr(self._client, "commit_deadline_ms", 30_000))
+            await self._client.spawn_commit(
+                str(prepared.terminal_id), prepared.spawn_key, commit_deadline_ms
+            )
         except CommitTransportError:
             raise
         except HostCommandError as exc:

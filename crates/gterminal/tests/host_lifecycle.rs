@@ -9,9 +9,11 @@ use host_support::{
     write_token, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::os::unix::net::UnixListener;
 use std::path::Path;
-use std::time::Duration;
+use std::process::Child;
+use std::time::{Duration, Instant};
 
 fn hello(stream: &mut std::os::unix::net::UnixStream, token: &str) -> serde_json::Value {
     send_json(
@@ -23,6 +25,377 @@ fn hello(stream: &mut std::os::unix::net::UnixStream, token: &str) -> serde_json
         }),
     );
     recv_json(stream)
+}
+
+struct TestHost {
+    child: Child,
+    pgids: Vec<i32>,
+}
+
+impl TestHost {
+    fn track(&mut self, pgid: i32) {
+        self.pgids.push(pgid);
+    }
+}
+
+impl Drop for TestHost {
+    fn drop(&mut self) {
+        for pgid in self.pgids.drain(..) {
+            if pgid > 0 {
+                unsafe {
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn test_host(token: &str) -> (tempfile::TempDir, TestHost, std::os::unix::net::UnixStream) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_token(dir.path(), token);
+    let child = spawn_host(dir.path());
+    let host = TestHost {
+        child,
+        pgids: Vec::new(),
+    };
+    let control = dir.path().join(CONTROL_SOCKET);
+    wait_socket(&control);
+    let mut stream = connect(&control);
+    let response = hello(&mut stream, token);
+    assert_eq!(response["ok"], true, "{response}");
+    (dir, host, stream)
+}
+
+fn prepare_terminal(
+    stream: &mut std::os::unix::net::UnixStream,
+    host: &mut TestHost,
+    operation_seq: u64,
+    suffix: &str,
+    argv: &[&str],
+    env: BTreeMap<&str, &str>,
+) -> (String, String, String, u32) {
+    let terminal_id = format!("term-{suffix}");
+    let spawn_key = format!("spawn-{suffix}");
+    let reserve_key = format!("reserve-{suffix}");
+    send_json(
+        stream,
+        &json!({
+            "method": "reserve_observer",
+            "terminal_id": terminal_id,
+            "reserve_key": reserve_key,
+        }),
+    );
+    let reservation = recv_json(stream);
+    assert_eq!(reservation["ok"], true, "{reservation}");
+    send_json(
+        stream,
+        &json!({
+            "method": "spawn",
+            "operation_seq": operation_seq,
+            "terminal_id": terminal_id,
+            "spawn_key": spawn_key,
+            "reservation_id": reservation["reservation_id"],
+            "reserve_key": reserve_key,
+            "argv": argv,
+            "env": env,
+            "cwd": "/",
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 30_000,
+        }),
+    );
+    let prepared = recv_json(stream);
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    let pgid = prepared["pgid"].as_i64().expect("prepared pgid") as i32;
+    host.track(pgid);
+    (
+        terminal_id,
+        spawn_key,
+        prepared["host_terminal_id"]
+            .as_str()
+            .expect("host terminal id")
+            .to_string(),
+        pgid as u32,
+    )
+}
+
+fn commit_terminal(
+    stream: &mut std::os::unix::net::UnixStream,
+    terminal_id: &str,
+    spawn_key: &str,
+    commit_deadline_ms: u64,
+) -> serde_json::Value {
+    send_json(
+        stream,
+        &json!({
+            "method": "spawn_commit",
+            "terminal_id": terminal_id,
+            "spawn_key": spawn_key,
+            "commit_deadline_ms": commit_deadline_ms,
+        }),
+    );
+    recv_json(stream)
+}
+
+fn assert_no_terminals(stream: &mut std::os::unix::net::UnixStream) {
+    send_json(stream, &json!({"method": "list"}));
+    let listed = recv_json(stream);
+    assert_eq!(listed["ok"], true, "{listed}");
+    assert_eq!(listed["terminals"], json!([]), "{listed}");
+}
+
+fn wait_for_no_terminals(stream: &mut std::os::unix::net::UnixStream) {
+    wait_until("terminal slot removal", || {
+        send_json(stream, &json!({"method": "list"}));
+        recv_json(stream)["terminals"] == json!([])
+    });
+}
+
+fn process_name(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        return std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .ok()
+            .map(|name| name.trim().to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut name = [0_i8; 256];
+        let len =
+            unsafe { libc::proc_name(pid as i32, name.as_mut_ptr().cast(), name.len() as u32) };
+        if len <= 0 {
+            return None;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(name.as_ptr().cast::<u8>(), len as usize) };
+        return Some(String::from_utf8_lossy(bytes).into_owned());
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+fn process_exits_within(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if (unsafe { libc::kill(pid as i32, 0) }) != 0 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    (unsafe { libc::kill(pid as i32, 0) }) != 0
+}
+
+#[test]
+fn commit_reports_exec_failure_with_errno() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, mut host, mut stream) = test_host("control-token-exec-errors");
+    let no_exec = dir.path().join("not-executable");
+    std::fs::write(&no_exec, b"not executable\n").expect("write non-executable");
+    std::fs::set_permissions(&no_exec, std::fs::Permissions::from_mode(0o600))
+        .expect("chmod non-executable");
+    let no_header = dir.path().join("no-header");
+    let shell_marker = dir.path().join("shell-ran");
+    std::fs::write(
+        &no_header,
+        format!("printf shell-ran > {}\n", shell_marker.display()),
+    )
+    .expect("write headerless executable");
+    std::fs::set_permissions(&no_header, std::fs::Permissions::from_mode(0o700))
+        .expect("chmod headerless executable");
+
+    let cases = [
+        ("missing", "/definitely/missing/gterm-command", "ENOENT"),
+        ("eacces", no_exec.to_str().expect("utf8 path"), "EACCES"),
+        ("enoexec", no_header.to_str().expect("utf8 path"), "ENOEXEC"),
+    ];
+    for (index, (suffix, command, code)) in cases.into_iter().enumerate() {
+        let (terminal_id, spawn_key, _, _) = prepare_terminal(
+            &mut stream,
+            &mut host,
+            index as u64 + 1,
+            suffix,
+            &[command],
+            BTreeMap::new(),
+        );
+        let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(response["error"], "exec_failed", "{response}");
+        assert_eq!(response["code"], code, "{response}");
+        assert_eq!(response["stage"], "execve", "{response}");
+        assert!(
+            response["detail"]
+                .as_str()
+                .is_some_and(|detail| !detail.is_empty()),
+            "{response}"
+        );
+        assert_no_terminals(&mut stream);
+    }
+    assert!(!shell_marker.exists(), "ENOEXEC must never start a shell");
+}
+
+#[test]
+fn commit_times_out_and_rejects_malformed_status() {
+    let (_dir, mut host, mut stream) = test_host("control-token-status-errors");
+    for (index, (fault, expected)) in [
+        ("timeout", "exec_timeout"),
+        ("malformed", "malformed_status"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (terminal_id, spawn_key, _, _) = prepare_terminal(
+            &mut stream,
+            &mut host,
+            index as u64 + 1,
+            fault,
+            &["/usr/bin/true"],
+            BTreeMap::from([("GTERM_GATE_FAULT", fault)]),
+        );
+        let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(response["error"], expected, "{response}");
+        assert_no_terminals(&mut stream);
+    }
+}
+
+#[test]
+fn commit_returns_after_exec() {
+    let (_dir, mut host, mut stream) = test_host("control-token-exec-barrier");
+    let (terminal_id, spawn_key, host_terminal_id, pid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "exec-barrier",
+        &["sleep", "30"],
+        BTreeMap::from([("PATH", "/bin:/usr/bin"), ("GTERM_GATE_FAULT", "delay")]),
+    );
+    let started = Instant::now();
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    assert!(
+        started.elapsed() >= Duration::from_millis(150),
+        "commit returned before the delayed exec barrier"
+    );
+    assert_eq!(process_name(pid).as_deref(), Some("sleep"));
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": 0,
+        }),
+    );
+    let killed = recv_json(&mut stream);
+    assert_eq!(killed["ok"], true, "{killed}");
+}
+
+#[test]
+fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
+    let (_dir, mut host, mut stream) = test_host("control-token-preexec-faults");
+    let (terminal_id, spawn_key, _, _) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "signal",
+        &["/usr/bin/true"],
+        BTreeMap::from([("GTERM_GATE_FAULT", "signal")]),
+    );
+    let signaled = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(signaled["ok"], true, "{signaled}");
+    assert_eq!(signaled["commit_state"], "committed", "{signaled}");
+    wait_for_no_terminals(&mut stream);
+
+    let (terminal_id, spawn_key, _, pid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        2,
+        "precommit-signal",
+        &["/usr/bin/true"],
+        BTreeMap::new(),
+    );
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    assert!(process_exits_within(pid, Duration::from_secs(1)));
+    let died_before_commit = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(died_before_commit["ok"], false, "{died_before_commit}");
+    assert_eq!(
+        died_before_commit["error"], "exec_failed",
+        "{died_before_commit}"
+    );
+    assert_eq!(died_before_commit["code"], "EPIPE", "{died_before_commit}");
+    assert_eq!(died_before_commit["stage"], "gate", "{died_before_commit}");
+    assert_no_terminals(&mut stream);
+
+    for (index, stage) in ["setsid", "dup2", "PATH"].into_iter().enumerate() {
+        let (terminal_id, spawn_key, _, _) = prepare_terminal(
+            &mut stream,
+            &mut host,
+            index as u64 + 3,
+            stage,
+            &["/usr/bin/true"],
+            BTreeMap::from([("GTERM_GATE_FAULT", stage)]),
+        );
+        let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(response["error"], "exec_failed", "{response}");
+        assert_eq!(response["stage"], stage, "{response}");
+        assert_no_terminals(&mut stream);
+    }
+}
+
+#[test]
+fn fast_exit_after_exec_is_committed_then_exited() {
+    let (_dir, mut host, mut stream) = test_host("control-token-fast-exit");
+    for (index, (command, exit_code)) in [("/usr/bin/true", 0_u64), ("/usr/bin/false", 1_u64)]
+        .into_iter()
+        .enumerate()
+    {
+        let suffix = format!("fast-{index}");
+        let (terminal_id, spawn_key, _, _) = prepare_terminal(
+            &mut stream,
+            &mut host,
+            index as u64 + 1,
+            &suffix,
+            &[command],
+            BTreeMap::from([("GTERM_TEST_WAIT_FOR_CHILD_EXIT_BEFORE_STATUS", "1")]),
+        );
+        let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["commit_state"], "committed", "{response}");
+        assert_eq!(response["terminal_state"], "exited", "{response}");
+        assert_eq!(response["exit_code"], exit_code, "{response}");
+        assert!(response["signal"].is_null(), "{response}");
+        assert_ne!(response["error"], "exec_failed", "{response}");
+        assert_no_terminals(&mut stream);
+    }
+}
+
+#[test]
+fn host_death_releases_prepared_child() {
+    let (_dir, mut host, mut stream) = test_host("control-token-host-death");
+    let (_, _, _, pid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "host-death",
+        &["/usr/bin/true"],
+        BTreeMap::new(),
+    );
+    unsafe {
+        libc::kill(host.child.id() as i32, libc::SIGKILL);
+    }
+    assert!(
+        wait_exit(&mut host.child, Duration::from_secs(1)).is_some(),
+        "host must die after SIGKILL"
+    );
+    assert!(
+        process_exits_within(pid, Duration::from_secs(1)),
+        "prepared gate child {pid} survived host death"
+    );
 }
 
 #[test]
