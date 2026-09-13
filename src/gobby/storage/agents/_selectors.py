@@ -56,6 +56,13 @@ class _AgentRunSelectorMixin:
                 ar.reasoning_status,
                 ar.reasoning_message,
                 ar.status,
+                child_s.status AS child_status,
+                child_s.last_activity AS child_last_activity,
+                child_attention.payload AS child_lifecycle_payload,
+                COALESCE(coordination.active, FALSE) AS coordination_wait,
+                (COALESCE(coordination.parent_wait, FALSE)
+                    OR COALESCE(agent_subscription.parent_wait, FALSE)) AS parent_wait,
+                COALESCE(agent_subscription.active, FALSE) AS agent_wait,
                 ar.prompt,
                 ar.result,
                 ar.error,
@@ -103,6 +110,27 @@ class _AgentRunSelectorMixin:
             FROM agent_runs ar
             LEFT JOIN sessions child_s ON child_s.id = ar.child_session_id
             LEFT JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
+            LEFT JOIN attention_states child_attention
+                ON child_attention.entry_id = 'session:' || child_s.id
+            LEFT JOIN LATERAL (
+                SELECT TRUE AS active,
+                    bool_or(w.owner_session_id = ar.parent_session_id) AS parent_wait
+                FROM coordination_waits w
+                JOIN sessions owner ON owner.id = w.owner_session_id
+                WHERE w.waiter_session_id = child_s.id AND w.outcome = 'waiting'
+                  AND w.expires_at > clock_timestamp()
+                  AND owner.status NOT IN ('completed', 'cancelled', 'closed', 'expired', 'deleted')
+                HAVING count(*) > 0
+            ) coordination ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT TRUE AS active,
+                    bool_or(awaited.child_session_id = ar.parent_session_id) AS parent_wait
+                FROM completion_subscribers subscribers
+                JOIN agent_runs awaited ON awaited.id = subscribers.completion_id
+                WHERE subscribers.session_id = child_s.id
+                  AND awaited.status IN ({ACTIVE_AGENT_RUN_STATUS_SQL})
+                HAVING count(*) > 0
+            ) agent_subscription ON TRUE
             {where_clause}
             {order_by}
             """

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -33,6 +34,8 @@ class AgentRunProtocol(Protocol):
     prompt: str
     capture_id: str | None
     resume_metadata_json: dict[str, Any] | None
+
+    def liveness_payload(self) -> Mapping[str, object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,7 @@ def _agent_result_payload(
         else None
     )
     payload: dict[str, Any] = {
+        **run.liveness_payload(),
         "run_id": run.id,
         "status": "blocked" if run.terminal_reason == "task_blocker" else run.status,
         "result": preferred_result if preferred_result is not None else run.result,

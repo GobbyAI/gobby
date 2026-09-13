@@ -75,6 +75,7 @@ def _list_run_payload(run: Any) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         metadata = {}
     return {
+        **run.liveness_payload(),
         "run_id": run.id,
         "task_ref": metadata.get("task_ref") or getattr(run, "task_id", None),
         "agent_name": getattr(run, "agent_name", None),
@@ -362,6 +363,7 @@ def register_agent_query_tools(
             "status": run.status,
             "recovery_pending": recovery_pending,
             "live_output": await read_live_output(run, terminal_services),
+            **run.liveness_payload(),
         }
 
     @registry.tool(

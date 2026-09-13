@@ -1,12 +1,17 @@
 """Regression tests for live agent-run activity counters."""
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer, WaitKind
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
@@ -277,3 +282,214 @@ def test_to_brief_includes_agent_identity(
     assert brief["agent_name"] == "merge-worker"
     assert brief["workflow_name"] == "merge-orchestrator"
     assert brief["model"] == "sonnet"
+
+
+@pytest.fixture
+def liveness_run(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    temp_db: HubDatabase,
+) -> AgentRun:
+    parent = _register_session(session_manager, sample_project, "liveness-parent")
+    child = _register_session(
+        session_manager, sample_project, "liveness-child", parent_session_id=parent
+    )
+    run = agent_manager.create(
+        parent_session_id=parent, child_session_id=child, provider="codex", prompt="liveness"
+    )
+    agent_manager.start(run.id)
+    baseline = datetime(2026, 1, 1, tzinfo=UTC)
+    temp_db.execute("UPDATE agent_runs SET started_at = %s WHERE id = %s", (baseline, run.id))
+    temp_db.execute("UPDATE sessions SET last_activity = %s WHERE id = %s", (baseline, child))
+    return run
+
+
+@pytest.mark.parametrize("seconds,stalled", [(599.999, False), (600, True), (600.001, True)])
+def test_liveness_exact_boundary_across_read_projections(
+    agent_manager: LocalAgentRunManager,
+    liveness_run: AgentRun,
+    seconds: float,
+    stalled: bool,
+) -> None:
+    baseline = datetime(2026, 1, 1, tzinfo=UTC)
+    with patch(
+        "gobby.storage.agents._liveness.utc_now", return_value=baseline + timedelta(seconds=seconds)
+    ):
+        reads = [
+            agent_manager.get(liveness_run.id),
+            *agent_manager.list_by_parent(liveness_run.parent_session_id),
+            *agent_manager.list_active_global(),
+            *agent_manager.list_by_status("running"),
+        ]
+    for run in reads:
+        assert run is not None
+        assert run.last_progress_at == baseline
+        assert run.progress_age_seconds == seconds
+        assert run.stall_suspected is stalled
+        assert run.wait_kind is None
+        assert run.blocked_on_parent is False
+        for payload in (run.to_dict(), run.to_brief()):
+            assert payload["last_progress_at"] == baseline.isoformat()
+            assert payload["progress_age_seconds"] == seconds
+            assert payload["stall_suspected"] is stalled
+            assert payload["child_status"] == run.child_status
+
+
+def test_only_durable_counter_growth_advances_progress(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    liveness_run: AgentRun,
+) -> None:
+    assert liveness_run.child_session_id is not None
+    child = liveness_run.child_session_id
+    progress = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    with patch("gobby.storage.sessions._bulk_update.utc_now", return_value=progress):
+        session_manager.update_stats(child, message_count=8, turn_count=3, tool_call_count=4)
+    with patch(
+        "gobby.storage.sessions._bulk_update.utc_now", return_value=progress + timedelta(minutes=20)
+    ):
+        session_manager.update_stats(child, message_count=8, turn_count=3, tool_call_count=4)
+        session_manager.update_stats(liveness_run.parent_session_id, tool_call_count=500)
+        InterSessionMessageManager(temp_db).create_message(
+            liveness_run.parent_session_id, child, "status?"
+        )
+        for _ in range(2):
+            observed = agent_manager.get(liveness_run.id)
+            assert observed is not None
+            assert observed.last_progress_at == progress
+    advanced = progress + timedelta(minutes=21)
+    with patch("gobby.storage.sessions._bulk_update.utc_now", return_value=advanced):
+        session_manager.update_stats(child, tool_call_count=5)
+    observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.last_progress_at == advanced
+    assert observed.tool_calls_count == 5
+
+
+@pytest.mark.parametrize("kind", ["input", "approval", "handoff"])
+def test_lifecycle_wait_prevents_stall(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    liveness_run: AgentRun,
+    kind: WaitKind,
+) -> None:
+    assert liveness_run.child_session_id is not None
+    session_manager.update_session_status(liveness_run.child_session_id, "active")
+    TurnLifecycleReducer(session_manager).enter_wait(
+        liveness_run.child_session_id,
+        kind=kind,
+        token="prompt",
+        evidence=TurnEvidence(source="test"),
+    )
+    with patch(
+        "gobby.storage.agents._liveness.utc_now", return_value=datetime(2099, 1, 1, tzinfo=UTC)
+    ):
+        observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.wait_kind == kind
+    assert observed.child_status == f"awaiting_{kind}"
+    assert observed.stall_suspected is False
+    assert observed.blocked_on_parent is False
+
+
+@pytest.mark.parametrize("owner_is_parent", [True, False])
+def test_coordination_wait_identifies_parent_and_expires(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    temp_db: HubDatabase,
+    liveness_run: AgentRun,
+    owner_is_parent: bool,
+) -> None:
+    assert liveness_run.child_session_id is not None
+    owner = (
+        liveness_run.parent_session_id
+        if owner_is_parent
+        else _register_session(session_manager, sample_project, "other-owner")
+    )
+    wait = CoordinationWaitManager(temp_db).register(
+        liveness_run.child_session_id, owner, coordination_key="release"
+    )
+    observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.wait_kind == "coordination"
+    assert observed.blocked_on_parent is owner_is_parent
+    assert observed.stall_suspected is False
+    temp_db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '1 second' WHERE id = %s",
+        (wait["id"],),
+    )
+    expired = agent_manager.get(liveness_run.id)
+    assert expired is not None
+    assert expired.wait_kind is None
+    assert expired.blocked_on_parent is False
+    assert expired.stall_suspected is True
+
+
+@pytest.mark.parametrize("awaiting_parent", [False, True])
+def test_agent_completion_wait_ends_with_awaited_run(
+    agent_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    liveness_run: AgentRun,
+    awaiting_parent: bool,
+) -> None:
+    awaited = agent_manager.create(
+        parent_session_id=liveness_run.parent_session_id,
+        provider="codex",
+        prompt="awaited",
+        child_session_id=liveness_run.parent_session_id if awaiting_parent else None,
+    )
+    agent_manager.start(awaited.id)
+    temp_db.execute(
+        "INSERT INTO completion_subscribers (completion_id, session_id) VALUES (%s, %s)",
+        (awaited.id, liveness_run.child_session_id),
+    )
+    observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.wait_kind == "agent"
+    assert observed.blocked_on_parent is awaiting_parent
+    assert observed.stall_suspected is False
+    agent_manager.complete(awaited.id, result="done")
+    observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.wait_kind is None
+    assert observed.stall_suspected is True
+
+
+def test_missing_child_keeps_run_start_baseline(
+    agent_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    liveness_run: AgentRun,
+) -> None:
+    temp_db.execute(
+        "UPDATE agent_runs SET child_session_id = NULL WHERE id = %s", (liveness_run.id,)
+    )
+    observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.child_status is None
+    assert observed.wait_kind is None
+    assert observed.blocked_on_parent is None
+    assert observed.last_progress_at == datetime(2026, 1, 1, tzinfo=UTC)
+    assert observed.stall_suspected is True
+
+
+def test_terminal_run_never_stalls_or_claims_later_child_activity(
+    agent_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    liveness_run: AgentRun,
+) -> None:
+    agent_manager.complete(liveness_run.id, result="done")
+    completed = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    temp_db.execute(
+        "UPDATE agent_runs SET completed_at = %s WHERE id = %s", (completed, liveness_run.id)
+    )
+    temp_db.execute(
+        "UPDATE sessions SET last_activity = %s WHERE id = %s",
+        (completed + timedelta(days=2), liveness_run.child_session_id),
+    )
+    observed = agent_manager.get(liveness_run.id)
+    assert observed is not None
+    assert observed.stall_suspected is False
+    assert observed.last_progress_at == completed

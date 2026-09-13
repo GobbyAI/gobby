@@ -8,10 +8,11 @@ from datetime import datetime
 from typing import Any
 
 from gobby.agents.resume_metadata import normalize_resume_metadata
-from gobby.utils.datetime import normalize_datetime_model
+from gobby.utils.datetime import datetime_to_iso, normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
 from ._constants import AgentRunStatus, AgentRunTerminalReason
+from ._liveness import liveness_from_row
 
 
 @normalize_datetime_model(
@@ -22,6 +23,7 @@ from ._constants import AgentRunStatus, AgentRunTerminalReason
     optional=(
         "started_at",
         "completed_at",
+        "last_progress_at",
     ),
 )
 @dataclass
@@ -69,6 +71,12 @@ class AgentRun:
     pending_terminal_action: str | None = None
     pending_terminal_reason: str | None = None
     termination_requested_at: datetime | None = None
+    child_status: str | None = None
+    wait_kind: str | None = None
+    blocked_on_parent: bool | None = None
+    last_progress_at: datetime | None = None
+    progress_age_seconds: float | None = None
+    stall_suspected: bool = False
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentRun:
@@ -80,6 +88,7 @@ class AgentRun:
             is_local = False
 
         return cls(
+            **liveness_from_row(row),
             id=row["id"],
             parent_session_id=row["parent_session_id"],
             machine_id=str(row["machine_id"]),
@@ -154,11 +163,23 @@ class AgentRun:
             else None,
         )
 
+    def liveness_payload(self) -> dict[str, Any]:
+        """Return the same six observations for every coordinator projection."""
+        return {
+            "child_status": self.child_status,
+            "wait_kind": self.wait_kind,
+            "blocked_on_parent": self.blocked_on_parent,
+            "last_progress_at": datetime_to_iso(self.last_progress_at),
+            "progress_age_seconds": self.progress_age_seconds,
+            "stall_suspected": self.stall_suspected,
+        }
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         from gobby.storage.agents._sandbox_records import sandbox_record
 
         return {
+            **self.liveness_payload(),
             "run_id": self.id,
             "id": self.id,
             "session_id": self.child_session_id,
@@ -208,6 +229,7 @@ class AgentRun:
         from gobby.storage.agents._sandbox_records import sandbox_record
 
         return {
+            **self.liveness_payload(),
             "run_id": self.id,
             "session_id": self.child_session_id,
             "parent_session_id": self.parent_session_id,

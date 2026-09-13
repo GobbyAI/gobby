@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.agents_payloads import (
     _AGENT_RESULT_CAPTURE_CHARS,
     _agent_result_payload,
 )
+from gobby.storage.agents import AgentRun, AgentRunStatus, AgentRunTerminalReason
 
 pytestmark = pytest.mark.unit
 
@@ -37,10 +38,14 @@ def _run(
     run_id: str = "run-123",
     terminal_reason: str | None = None,
     resume_metadata_json: dict[str, Any] | None = None,
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> AgentRun:
+    return AgentRun(
+        machine_id="21000000-0000-4000-8000-000000000001",
+        parent_session_id="parent-123",
+        created_at=datetime(2026, 7, 29, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 29, tzinfo=UTC),
         id=run_id,
-        status=status,
+        status=cast(AgentRunStatus, status),
         result=result,
         error=None,
         provider="claude",
@@ -50,12 +55,13 @@ def _run(
         started_at=datetime(2026, 7, 29, tzinfo=UTC),
         completed_at=datetime(2026, 7, 29, 0, 1, tzinfo=UTC),
         child_session_id="child-123",
-        terminal_reason=(
+        terminal_reason=cast(
+            AgentRunTerminalReason | None,
             terminal_reason
             if terminal_reason is not None
             else "user_cancelled"
             if status == "cancelled"
-            else None
+            else None,
         ),
         prompt="Do the work",
         capture_id=capture_id,
@@ -63,7 +69,7 @@ def _run(
     )
 
 
-def _registry(run: SimpleNamespace) -> Any:
+def _registry(run: AgentRun) -> Any:
     runner = MagicMock()
     runner.get_run.return_value = run
     return create_agents_registry(runner)

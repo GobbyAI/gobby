@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.agent_live_output import (
     LIVE_OUTPUT_MAX_LINES,
 )
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from gobby.storage.agents import AgentRun, AgentRunStatus
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals.runtime import SnapshotResult
 from gobby.utils.session_context import session_context_for_test
@@ -25,12 +26,15 @@ _RUN_ID = "796ce97e-38ee-508a-bdc0-f3ce2dded342"
 _CALLER_SESSION_ID = "e3c98b06-11a5-5e52-9b82-b47a220be090"
 
 
-def _run(*, status: str = "running", terminal_id: str | None = "terminal-1") -> Any:
-    return SimpleNamespace(
+def _run(*, status: str = "running", terminal_id: str | None = "terminal-1") -> AgentRun:
+    return AgentRun(
+        machine_id="21000000-0000-4000-8000-000000000001",
+        created_at=datetime(2026, 9, 7, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 7, tzinfo=UTC),
         id=_RUN_ID,
         parent_session_id=_CALLER_SESSION_ID,
         child_session_id="child-session",
-        status=status,
+        status=cast(AgentRunStatus, status),
         result=None,
         error=None,
         provider="claude",
