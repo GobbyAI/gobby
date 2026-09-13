@@ -1657,6 +1657,7 @@ class _Connection:
     "receipt_state",
     [
         "complete",
+        "reaped_fresh",
         "missing_transcript",
         "missing_policy",
         "absent_violations",
@@ -1686,6 +1687,7 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
                 "schema_version": 1,
                 "agent_run_id": "agent-run",
                 "ask_run_id": "ask-run",
+                "launch_complete": True,
                 "project_id": "project-id",
                 "provider": "claude",
                 "child_session_id": "session-id",
@@ -1712,7 +1714,7 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
                 "id": "agent-run",
                 "workflow_name": "native-ask",
                 "machine_id": "owned-machine",
-                "pid": 123,
+                "pid": None if receipt_state == "reaped_fresh" else 123,
                 "terminal_id": "terminal-id",
                 "child_session_id": "session-id",
                 "resume_metadata_json": {
@@ -1720,7 +1722,9 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
                     "provider": "claude",
                     "project_id": "project-id",
                     "workflow": "native-ask",
-                    "provider_native_session_id": "claude-native-id",
+                    "provider_native_session_id": None
+                    if receipt_state == "reaped_fresh"
+                    else "claude-native-id",
                     "initial_variables": {"ask_run_id": "ask-run"},
                     "sandbox": {
                         "policy_path": str(runtime_root / "reaped" / "settings.json"),
@@ -1735,12 +1739,25 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
                 else "owned-machine",
                 "source": "claude",
                 "project_id": "project-id",
-                "external_id": "claude-native-id",
-                "transcript_path": str(transcript),
+                "external_id": "session-id"
+                if receipt_state == "reaped_fresh"
+                else "claude-native-id",
+                "transcript_path": None if receipt_state == "reaped_fresh" else str(transcript),
             },
         }
     ]
     connection = _Connection({"ask-run": snapshot}, agent_rows)
+    if receipt_state == "reaped_fresh":
+
+        def find_transcript(source: str, external_id: str, **kwargs: object) -> str:
+            assert source == "claude"
+            assert external_id == "session-id"
+            assert kwargs["owner_machine_id"] == kwargs["local_machine_id"] == "owned-machine"
+            return str(transcript)
+
+        monkeypatch.setattr(
+            "gobby.sessions.transcript_paths.find_transcript_on_disk", find_transcript
+        )
     monkeypatch.setattr(
         "tests.ask.native_probe_harness.psycopg.connect",
         lambda *_args, **_kwargs: connection,
@@ -1767,10 +1784,14 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
     assert result["sha256"] == hashlib.sha256(encoded).hexdigest()
     assert (output_dir / "raw-probe.sha256").read_text(encoding="utf-8").strip() == result["sha256"]
     expected_count = (
-        3 if receipt_state == "complete" else (0 if receipt_state == "wrong_machine" else 2)
+        3
+        if receipt_state in {"complete", "reaped_fresh"}
+        else (0 if receipt_state == "wrong_machine" else 2)
     )
     assert len(exported["receipts"]) == expected_count
-    assert result["complete"] is (receipt_state in {"complete", "absent_violations"})
+    assert result["complete"] is (
+        receipt_state in {"complete", "reaped_fresh", "absent_violations"}
+    )
     assert all(Path(receipt["output_path"]).is_file() for receipt in exported["receipts"])
     assert "must-not-export" not in encoded.decode()
     assert exported["runtime_identity"] == {"source_head": "f" * 40}
@@ -2001,6 +2022,32 @@ def test_process_snapshot_uses_os_start_identity_independent_of_terminal_status(
     final_agents = cast(list[dict[str, Any]], after_cleanup["agents"])
     assert final_agents[0]["live"] is False
     assert final_agents[0]["start_identity"] == "os-start"
+
+    terminal_id = uuid.uuid4()
+    row["terminal_id"] = terminal_id
+    launch = {**row, "terminal_id": str(terminal_id), "launch_complete": True}
+    row["pid"] = None
+    row["terminal_process"] = None
+    reaped = harness._process_snapshot(
+        _SCOPED_TEST_DATABASE_URL,
+        {},
+        ["ask-run"],
+        start_identities=start_identities,
+        launch_receipts={"agent-run": launch},
+    )
+    reaped_agents = cast(list[dict[str, Any]], reaped["agents"])
+    assert reaped_agents[0]["live"] is False
+    assert reaped_agents[0]["pid"] == 4321
+    assert reaped_agents[0]["start_identity"] == "os-start"
+    launch["child_session_id"] = "foreign-session"
+    with pytest.raises(RuntimeError, match="differs from launch authority"):
+        harness._process_snapshot(
+            _SCOPED_TEST_DATABASE_URL,
+            {},
+            ["ask-run"],
+            start_identities=start_identities,
+            launch_receipts={"agent-run": launch},
+        )
 
 
 def test_agent_cleanup_signals_only_the_matching_owned_process_group(

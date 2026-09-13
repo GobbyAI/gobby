@@ -2172,6 +2172,7 @@ def _process_snapshot(
     ask_run_ids: list[str],
     *,
     start_identities: dict[str, str] | None = None,
+    launch_receipts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, object]:
     identities = start_identities if start_identities is not None else {}
     agent_run_ids: list[str] = []
@@ -2225,7 +2226,21 @@ def _process_snapshot(
         )
     agent_snapshots: list[dict[str, object]] = []
     for row in agent_rows:
+        row = {
+            key: str(value) if isinstance(value, uuid.UUID) else value for key, value in row.items()
+        }
         agent_run_id = str(row.get("id", ""))
+        launch = (launch_receipts or {}).get(agent_run_id)
+        if row.get("pid") is None and launch is not None:
+            if launch.get("launch_complete") is not True or any(
+                row.get(key) != launch.get(key) for key in ("terminal_id", "child_session_id")
+            ):
+                raise RuntimeError("native Ask reaped process differs from launch authority")
+            row = {
+                **row,
+                "pid": launch.get("pid"),
+                "terminal_process": launch.get("terminal_process"),
+            }
         agent_pid = row.get("pid")
         current_identity = _process_start_identity(agent_pid)
         start_identity, live = _remember_start_identity(
@@ -2517,7 +2532,11 @@ def _agent_evidence_identity_error(
     if not isinstance(initial, Mapping):
         return "agent-initial-variables-missing"
     project_id = ask_run_projects.get(ask_run_id)
-    native_session_id = metadata.get("provider_native_session_id")
+    native_session_id = (
+        metadata.get("provider_native_session_id")
+        or agent.get("sdk_session_id")
+        or agent.get("child_session_id")
+    )
     if (
         agent.get("workflow_name") != "native-ask"
         or not agent.get("machine_id")
@@ -2537,7 +2556,10 @@ def _agent_evidence_identity_error(
         or manifest.get("project_id") != project_id
         or manifest.get("provider") != "claude"
         or manifest.get("child_session_id") != session.get("id")
-        or manifest.get("pid") != agent.get("pid")
+        or (
+            manifest.get("pid") != agent.get("pid")
+            and not (agent.get("pid") is None and manifest.get("launch_complete") is True)
+        )
         or manifest.get("terminal_id") != agent.get("terminal_id")
         or not isinstance(manifest.get("start_identity"), str)
         or not manifest.get("start_identity")
@@ -2720,6 +2742,17 @@ def _export_raw(
             agent_to_ask_run=agent_to_ask_run,
             ask_run_projects=ask_run_projects,
         )
+        transcript_path = session.get("transcript_path")
+        if identity_error is None and not transcript_path:
+            from gobby.sessions.transcript_paths import find_transcript_on_disk
+
+            transcript_path = find_transcript_on_disk(
+                "claude",
+                session["external_id"],
+                owner_machine_id=session["machine_id"],
+                local_machine_id=agent["machine_id"],
+                cwd=session.get("workspace_path"),
+            )
         policy: Mapping[str, Any] = {}
         violation: Mapping[str, Any] = {}
         if manifest is not None:
@@ -2739,7 +2772,7 @@ def _export_raw(
         sources = (
             (
                 "provider-transcript-and-mcp-responses",
-                session.get("transcript_path"),
+                transcript_path,
                 None,
             ),
             ("srt-policy", policy.get("captured_path"), runtime_root),
@@ -3417,6 +3450,7 @@ def _finalize_contained_probe(
                 workers,
                 discovered_run_ids,
                 start_identities=identities,
+                launch_receipts=launch_receipts,
             )
             process_sets["before_cleanup"] = before_cleanup
             raw_agent_processes = before_cleanup.get("agents")
@@ -3489,6 +3523,7 @@ def _finalize_contained_probe(
                 workers,
                 discovered_run_ids,
                 start_identities=identities,
+                launch_receipts=launch_receipts,
             )
             process_sets["after_cleanup"] = after_cleanup
             final_workers = after_cleanup.get("workers")
