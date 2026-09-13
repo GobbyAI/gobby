@@ -244,6 +244,9 @@ def sync(
     total = sync_result["total_synced"]
     errors = sync_result["errors"]
 
+    for warning in sync_result.get("warnings", []):
+        click.echo(f"  Warning: {warning}", err=True)
+
     if total > 0:
         click.echo(f"Synced {total} bundled items to database")
     else:

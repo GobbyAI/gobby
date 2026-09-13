@@ -58,6 +58,33 @@ def user_content_sync() -> Iterator[MagicMock]:
 # Dev mode — basic sync
 # ---------------------------------------------------------------------------
 class TestSyncDevMode:
+    @pytest.mark.parametrize("errors,exit_code", [([], 0), (["skills: migration failed"], 1)])
+    def test_migration_diagnostics_are_visible_without_verbose(
+        self, runner: CliRunner, errors: list[str], exit_code: int
+    ) -> None:
+        warning = (
+            "skills: user-owned requirement preserved; "
+            "replace tasks -> gobby:references/tasks/overview.md"
+        )
+        with (
+            patch("gobby.utils.dev.is_dev_mode", return_value=True),
+            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+            patch(
+                "gobby.sync_registry.sync_bundled_content_to_db",
+                return_value={
+                    "total_synced": 0,
+                    "errors": errors,
+                    "warnings": [warning],
+                    "details": {},
+                },
+            ),
+        ):
+            result = runner.invoke(sync, [])
+        assert result.exit_code == exit_code
+        assert f"Warning: {warning}" in result.output
+        if errors:
+            assert errors[0] in result.output
+
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.runtime.require_cli_database")

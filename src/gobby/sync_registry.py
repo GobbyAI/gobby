@@ -63,11 +63,12 @@ def sync_bundled_content_to_db(
         skip_types: Content type names to skip (e.g. tampered types).
 
     Returns:
-        Dict with total_synced count, per-type details, and any errors.
+        Dict with total_synced count, per-type details, errors, and warnings.
     """
     result: dict[str, Any] = {
         "total_synced": 0,
         "errors": [],
+        "warnings": [],
         "details": {},
     }
     bundled_changes: dict[str, int] = {}
@@ -87,6 +88,17 @@ def sync_bundled_content_to_db(
             synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
             result["total_synced"] += synced
             result["details"][content_type] = sync_result
+            errors = sync_result.get("errors", [])
+            if sync_result.get("success") is False and not errors:
+                errors = ["sync reported failure without details"]
+            for error in errors:
+                message = f"{content_type}: {error}"
+                result["errors"].append(message)
+                logger.error(message)
+            for warning in sync_result.get("warnings", []):
+                message = f"{content_type}: {warning}"
+                result["warnings"].append(message)
+                logger.warning(message)
             changed = sum(
                 value
                 for key in ("synced", "updated", "orphaned", "purged_project_overrides")

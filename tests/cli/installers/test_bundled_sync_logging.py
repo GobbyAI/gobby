@@ -35,6 +35,35 @@ def _mock_sync_targets(*, changed_target: str | None = None) -> ExitStack:
     return stack
 
 
+def test_returned_diagnostics_reach_fanout_and_logs(caplog: pytest.LogCaptureFixture) -> None:
+    warning = (
+        "tasks[custom].additional_skills: user-owned requirement preserved; "
+        "replace tasks -> gobby:references/tasks/overview.md"
+    )
+    with (
+        _mock_sync_targets(),
+        patch(
+            "gobby.skills.sync.sync_bundled_skills",
+            return_value={"success": False, "errors": ["migration failed"], "warnings": [warning]},
+        ),
+    ):
+        result = sync_bundled_content_to_db(MagicMock())
+    assert result["errors"] == ["skills: migration failed"]
+    assert result["warnings"] == [f"skills: {warning}"]
+    assert warning in caplog.text
+    assert "skills: migration failed" in caplog.text
+    assert "prompts" in result["details"]
+
+
+def test_failed_sync_without_diagnostics_is_not_reported_as_success() -> None:
+    with (
+        _mock_sync_targets(),
+        patch("gobby.skills.sync.sync_bundled_skills", return_value={"success": False}),
+    ):
+        result = sync_bundled_content_to_db(MagicMock())
+    assert result["errors"] == ["skills: sync reported failure without details"]
+
+
 def test_noop_bundled_sync_emits_debug_without_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
