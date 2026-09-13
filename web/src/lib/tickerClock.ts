@@ -1,4 +1,4 @@
-import type { TickerSpeed } from "../hooks/useSettings";
+import type { TickerDirection, TickerSpeed } from "../hooks/useSettings";
 
 /**
  * Reading pace per preset. `normal` is the 24px/s the first ticker shipped
@@ -10,57 +10,151 @@ export const TICKER_SPEED_PX_PER_SEC: Record<TickerSpeed, number> = {
   fast: 42,
 };
 
-// `@keyframes ticker-clock` spends 40% of the cycle travelling out and 40%
-// travelling back; the other 20% is the hold at each end.
+// One loop holds at the head for 10%, travels out for 40%, holds at the tail
+// for 10% and travels back for 40% — for the longest title. A shorter title
+// covers its own distance at the same pace, so it reaches its tail sooner and
+// parks there until the longest comes back past it.
+const HOLD_FRACTION = 0.1;
 const TRAVEL_FRACTION = 0.4;
 // Floor so a one-word overflow doesn't twitch through its cycle.
 const MIN_CYCLE_SECONDS = 4;
 
-const overflows = new Map<Element, number>();
+interface Ticker {
+  overflow: number;
+  animation: Animation | null;
+}
+
+const tickers = new Map<HTMLElement, Ticker>();
 let speedPxPerSec = TICKER_SPEED_PX_PER_SEC.normal;
-let appliedSpan = -1;
+let direction: TickerDirection = "left";
+let reducedMotionQuery: MediaQueryList | null = null;
+// Shared start time on the document timeline. Every animation is pinned to
+// it, so a title that mounts mid-loop joins in phase instead of starting over.
+let epoch: number | null = null;
+let appliedSpan = 0;
+let appliedCycleMs = 0;
 
 /**
- * Publish the widest overflow on the page as `--ticker-span`, and the cycle
- * that covers it at the chosen pace as `--ticker-cycle`. Every ticker inherits
- * both and clamps at its own overflow, so the longest title alone decides when
- * the shared clock loops — the rest park at their end and wait. Without
- * `data-ticker-active` the panel runs no animation at all, which is the case
- * whenever every title fits.
+ * One title's slide within the shared loop. `overflow` is its own travel
+ * distance and `span` the longest title's, so it reaches its tail when the
+ * longest is `overflow / span` of the way out, and leaves when the longest
+ * passes that point on the way back.
  */
-function apply(force: boolean): void {
+export function tickerKeyframes(overflow: number, span: number): Keyframe[] {
+  const reach = TRAVEL_FRACTION * (overflow / span);
+  const home = "translateX(0px)";
+  const tail = `translateX(${-overflow}px)`;
+  return [
+    { offset: 0, transform: home },
+    { offset: HOLD_FRACTION, transform: home },
+    { offset: HOLD_FRACTION + reach, transform: tail },
+    { offset: 1 - reach, transform: tail },
+    { offset: 1, transform: home },
+  ];
+}
+
+function prefersReducedMotion(): boolean {
+  if (!reducedMotionQuery) {
+    reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotionQuery.addEventListener("change", () => apply());
+  }
+  return reducedMotionQuery.matches;
+}
+
+function stop(ticker: Ticker): void {
+  ticker.animation?.cancel();
+  ticker.animation = null;
+}
+
+/**
+ * Run every overflowing title on one loop sized for the widest overflow at
+ * the chosen pace. Each title gets a plain transform animation — compositor
+ * work — never a custom property the whole panel inherits: that restyled
+ * every row on every frame and crashed iOS Safari (#22281). `changed` limits
+ * the work to one title when nothing shared moved; omit it to retime all.
+ */
+function apply(changed?: HTMLElement): void {
   let span = 0;
-  for (const overflow of overflows.values()) {
+  for (const { overflow } of tickers.values()) {
     if (overflow > span) span = overflow;
   }
-  if (!force && span === appliedSpan) return;
-  appliedSpan = span;
 
   const root = document.documentElement;
-  if (span <= 0) {
+  if (
+    span <= 0 ||
+    direction === "off" ||
+    typeof Element.prototype.animate !== "function" ||
+    prefersReducedMotion()
+  ) {
+    tickers.forEach(stop);
+    epoch = null;
+    appliedSpan = 0;
+    appliedCycleMs = 0;
     root.removeAttribute("data-ticker-active");
     return;
   }
-  const cycle = Math.max(
-    MIN_CYCLE_SECONDS,
-    span / (TRAVEL_FRACTION * speedPxPerSec),
-  );
-  root.style.setProperty("--ticker-span", `${span}px`);
-  root.style.setProperty("--ticker-cycle", `${cycle}s`);
+
+  const cycleMs =
+    Math.max(MIN_CYCLE_SECONDS, span / (TRAVEL_FRACTION * speedPxPerSec)) *
+    1000;
+  const now = performance.now();
+  if (epoch === null) {
+    epoch = now;
+  } else if (cycleMs !== appliedCycleMs) {
+    // Keep the loop where it is: a new longest title stretches the cycle
+    // rather than sending every title home.
+    const fraction = ((now - epoch) % appliedCycleMs) / appliedCycleMs;
+    epoch = now - fraction * cycleMs;
+  }
+  const retimeAll =
+    changed === undefined || span !== appliedSpan || cycleMs !== appliedCycleMs;
+  appliedSpan = span;
+  appliedCycleMs = cycleMs;
+
+  const playback = direction === "right" ? "reverse" : "normal";
+  for (const [inner, ticker] of tickers) {
+    if (!retimeAll && inner !== changed) continue;
+    stop(ticker);
+    if (ticker.overflow <= 0) continue;
+    // Recreated rather than retimed: pinned to the epoch, a new animation
+    // lands in phase with the rest.
+    ticker.animation = inner.animate(tickerKeyframes(ticker.overflow, span), {
+      duration: cycleMs,
+      iterations: Infinity,
+      easing: "linear",
+      direction: playback,
+    });
+    ticker.animation.startTime = epoch;
+  }
   root.setAttribute("data-ticker-active", "");
 }
 
-/** Register one ticker's travel distance (0 when its text fits its slot). */
-export function reportTickerOverflow(element: Element, px: number): void {
-  overflows.set(element, px);
-  apply(false);
+/** Register one title's travel distance (0 when its text fits its slot). */
+export function reportTickerOverflow(inner: HTMLElement, px: number): void {
+  const ticker = tickers.get(inner);
+  if (ticker?.overflow === px) return;
+  if (ticker) {
+    ticker.overflow = px;
+  } else {
+    tickers.set(inner, { overflow: px, animation: null });
+  }
+  apply(inner);
 }
 
-export function releaseTickerOverflow(element: Element): void {
-  if (overflows.delete(element)) apply(false);
+export function releaseTickerOverflow(inner: HTMLElement): void {
+  const ticker = tickers.get(inner);
+  if (!ticker) return;
+  stop(ticker);
+  tickers.delete(inner);
+  apply(inner);
 }
 
 export function setTickerSpeed(speed: TickerSpeed): void {
   speedPxPerSec = TICKER_SPEED_PX_PER_SEC[speed];
-  apply(true);
+  apply();
+}
+
+export function setTickerDirection(next: TickerDirection): void {
+  direction = next;
+  apply();
 }

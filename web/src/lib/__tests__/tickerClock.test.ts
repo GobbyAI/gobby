@@ -2,128 +2,263 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import postcss, { type Rule } from "postcss";
-import { afterEach, describe, expect, it } from "vitest";
-
 import {
-  releaseTickerOverflow,
-  reportTickerOverflow,
-  setTickerSpeed,
-  TICKER_SPEED_PX_PER_SEC,
-} from "../tickerClock";
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest";
+
+const loadClock = () => import("../tickerClock");
+let clock: Awaited<ReturnType<typeof loadClock>>;
+
+interface FakeAnimation {
+  target: Element;
+  keyframes: Keyframe[];
+  options: KeyframeAnimationOptions;
+  startTime: number | null;
+  cancel: Mock;
+}
+
+let animations: FakeAnimation[] = [];
 
 function root() {
   return document.documentElement;
 }
 
-function makeTicker(): Element {
+function makeTicker(): HTMLElement {
   return document.createElement("span");
 }
 
-function cycleSeconds(): number {
-  return Number.parseFloat(root().style.getPropertyValue("--ticker-cycle"));
+/** Animations still running, i.e. created and never cancelled. */
+function running(): FakeAnimation[] {
+  return animations.filter((animation) => !animation.cancel.mock.calls.length);
 }
 
+function runningOn(target: Element): FakeAnimation {
+  const animation = running().find((candidate) => candidate.target === target);
+  if (!animation) throw new Error("no running animation on the target");
+  return animation;
+}
+
+const originalMatchMedia = window.matchMedia;
+
 describe("tickerClock", () => {
+  beforeEach(async () => {
+    // The clock is a module singleton; a fresh copy per test keeps the
+    // epoch, pace, direction and media query from leaking between cases.
+    vi.resetModules();
+    clock = await loadClock();
+    animations = [];
+    Object.defineProperty(Element.prototype, "animate", {
+      configurable: true,
+      writable: true,
+      value(
+        this: Element,
+        keyframes: Keyframe[],
+        options: KeyframeAnimationOptions,
+      ) {
+        const animation: FakeAnimation = {
+          target: this,
+          keyframes,
+          options,
+          startTime: null,
+          cancel: vi.fn(),
+        };
+        animations.push(animation);
+        return animation;
+      },
+    });
+  });
+
   afterEach(() => {
-    setTickerSpeed("normal");
+    vi.restoreAllMocks();
+    delete (Element.prototype as Partial<Element>).animate;
+    window.matchMedia = originalMatchMedia;
     root().removeAttribute("data-ticker-active");
-    root().style.removeProperty("--ticker-span");
-    root().style.removeProperty("--ticker-cycle");
   });
 
-  it("spans the widest registered overflow so the loop waits for the longest", () => {
-    const short = makeTicker();
+  it("parks each title at its own tail on the longest title's loop", () => {
+    const offsets = (overflow: number) =>
+      clock.tickerKeyframes(overflow, 480).map((frame) => frame.offset);
+
+    // The longest travels out over 10–50% and back over 60–100%.
+    expect(offsets(480)).toEqual([0, 0.1, 0.5, 0.6, 1]);
+    // A quarter of the distance at the same pace: tail at 20%, home from 90%.
+    const quarter = offsets(120);
+    [0, 0.1, 0.2, 0.9, 1].forEach((expected, index) => {
+      expect(quarter[index]).toBeCloseTo(expected, 10);
+    });
+    expect(
+      clock.tickerKeyframes(120, 480).map((frame) => frame.transform),
+    ).toEqual([
+      "translateX(0px)",
+      "translateX(0px)",
+      "translateX(-120px)",
+      "translateX(-120px)",
+      "translateX(0px)",
+    ]);
+  });
+
+  it("runs every overflowing title on one start time and one cycle", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
     const long = makeTicker();
+    const short = makeTicker();
+    const late = makeTicker();
 
-    reportTickerOverflow(short, 120);
-    reportTickerOverflow(long, 480);
-    expect(root().style.getPropertyValue("--ticker-span")).toBe("480px");
+    clock.reportTickerOverflow(long, 480);
+    clock.reportTickerOverflow(short, 120);
+    // Mounting mid-loop joins in phase rather than starting its own loop.
+    now.mockReturnValue(9000);
+    clock.reportTickerOverflow(late, 240);
 
-    // The short one finishing changes nothing; the clock still runs to 480.
-    reportTickerOverflow(short, 90);
-    expect(root().style.getPropertyValue("--ticker-span")).toBe("480px");
-
-    releaseTickerOverflow(long);
-    expect(root().style.getPropertyValue("--ticker-span")).toBe("90px");
-
-    releaseTickerOverflow(short);
+    expect(root()).toHaveAttribute("data-ticker-active");
+    expect(running()).toHaveLength(3);
+    for (const animation of running()) {
+      expect(animation.startTime).toBe(1000);
+      expect(animation.options.duration).toBeCloseTo(
+        (480 / (0.4 * 24)) * 1000,
+        5,
+      );
+      expect(animation.options.iterations).toBe(Infinity);
+    }
+    expect(runningOn(short).keyframes[2]?.offset).toBeCloseTo(0.2, 10);
   });
 
-  it("derives the cycle from the span at the selected reading pace", () => {
+  it("derives the cycle from the widest overflow at the selected pace", () => {
     const ticker = makeTicker();
-    // Travel is 40% of the cycle in each direction, so a 480px span at
-    // 24px/s spends 20s travelling and 50s on the full loop.
-    reportTickerOverflow(ticker, 480);
-    expect(cycleSeconds()).toBeCloseTo(480 / (0.4 * 24), 5);
+    clock.reportTickerOverflow(ticker, 480);
 
-    setTickerSpeed("fast");
-    expect(cycleSeconds()).toBeCloseTo(
-      480 / (0.4 * TICKER_SPEED_PX_PER_SEC.fast),
+    clock.setTickerSpeed("fast");
+    expect(runningOn(ticker).options.duration).toBeCloseTo(
+      (480 / (0.4 * clock.TICKER_SPEED_PX_PER_SEC.fast)) * 1000,
       5,
     );
 
-    setTickerSpeed("slow");
-    expect(cycleSeconds()).toBeCloseTo(
-      480 / (0.4 * TICKER_SPEED_PX_PER_SEC.slow),
+    clock.setTickerSpeed("slow");
+    expect(runningOn(ticker).options.duration).toBeCloseTo(
+      (480 / (0.4 * clock.TICKER_SPEED_PX_PER_SEC.slow)) * 1000,
       5,
     );
-
-    releaseTickerOverflow(ticker);
   });
 
   it("floors the cycle so a short overflow does not twitch", () => {
     const ticker = makeTicker();
-    reportTickerOverflow(ticker, 8);
-    expect(cycleSeconds()).toBe(4);
-    releaseTickerOverflow(ticker);
+    clock.reportTickerOverflow(ticker, 8);
+    expect(runningOn(ticker).options.duration).toBe(4000);
   });
 
-  it("stops the clock once the last overflowing ticker is gone", () => {
-    const ticker = makeTicker();
-    reportTickerOverflow(ticker, 200);
-    expect(root()).toHaveAttribute("data-ticker-active");
+  it("keeps the loop's position when a longer title stretches the cycle", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
+    const first = makeTicker();
+    clock.reportTickerOverflow(first, 240); // 25s loop
 
-    // Still registered, but its text now fits.
-    reportTickerOverflow(ticker, 0);
+    now.mockReturnValue(1000 + 12_500); // halfway through it
+    const longer = makeTicker();
+    clock.reportTickerOverflow(longer, 480); // 50s loop
+
+    // Still halfway: 13.5s now, minus half of the new 50s loop.
+    for (const animation of running()) {
+      expect(animation.startTime).toBeCloseTo(13_500 - 25_000, 6);
+    }
+    expect(running()).toHaveLength(2);
+  });
+
+  it("plays the same path in reverse for the Right setting", () => {
+    const ticker = makeTicker();
+    clock.setTickerDirection("right");
+    clock.reportTickerOverflow(ticker, 300);
+    expect(runningOn(ticker).options.direction).toBe("reverse");
+
+    clock.setTickerDirection("left");
+    expect(running()).toHaveLength(1);
+    expect(runningOn(ticker).options.direction).toBe("normal");
+  });
+
+  it("stops every title when scrolling is switched off", () => {
+    const ticker = makeTicker();
+    clock.reportTickerOverflow(ticker, 300);
+    expect(running()).toHaveLength(1);
+
+    clock.setTickerDirection("off");
+    expect(running()).toHaveLength(0);
     expect(root()).not.toHaveAttribute("data-ticker-active");
 
-    releaseTickerOverflow(ticker);
+    clock.setTickerDirection("left");
+    expect(running()).toHaveLength(1);
+  });
+
+  it("holds still under reduced motion and resumes when it is lifted", () => {
+    const listeners: (() => void)[] = [];
+    const query = {
+      matches: true,
+      addEventListener: (_type: string, listener: () => void) => {
+        listeners.push(listener);
+      },
+    };
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: () => query,
+    });
+
+    const ticker = makeTicker();
+    clock.reportTickerOverflow(ticker, 300);
+    expect(running()).toHaveLength(0);
+    expect(root()).not.toHaveAttribute("data-ticker-active");
+
+    query.matches = false;
+    listeners.forEach((listener) => listener());
+    expect(running()).toHaveLength(1);
+    expect(root()).toHaveAttribute("data-ticker-active");
+  });
+
+  it("cancels a title that now fits or is released, idling with the last", () => {
+    const ticker = makeTicker();
+    clock.reportTickerOverflow(ticker, 200);
+    expect(running()).toHaveLength(1);
+
+    // Still registered, but its text now fits.
+    clock.reportTickerOverflow(ticker, 0);
+    expect(running()).toHaveLength(0);
+    expect(root()).not.toHaveAttribute("data-ticker-active");
+
+    clock.reportTickerOverflow(ticker, 200);
+    clock.releaseTickerOverflow(ticker);
+    expect(running()).toHaveLength(0);
+    expect(root()).not.toHaveAttribute("data-ticker-active");
+  });
+
+  it("stays idle where Web Animations are unavailable", () => {
+    delete (Element.prototype as Partial<Element>).animate;
+    expect(() => clock.reportTickerOverflow(makeTicker(), 300)).not.toThrow();
+    expect(root()).not.toHaveAttribute("data-ticker-active");
   });
 });
 
-describe("ticker clock stylesheet", () => {
+describe("ticker stylesheet", () => {
   const sheet = postcss.parse(
     readFileSync(join(process.cwd(), "src/styles/base.css"), "utf8"),
   );
 
-  function selectorOf(decl: { parent: unknown }): string {
-    return (decl.parent as Rule).selector;
-  }
-
-  it("keeps animation-direction in the rule that starts the clock", () => {
-    // The `animation` shorthand also sets animation-direction, at the
-    // shorthand rule's own specificity. A longhand parked in a separate,
-    // less specific `[data-ticker=...]` rule therefore never applies — the
-    // Right setting would silently behave exactly like Left.
-    const orphans: string[] = [];
-    sheet.walkDecls("animation-direction", (decl) => {
-      if (decl.important) return;
-      const siblings = (decl.parent as Rule).nodes;
-      const shorthand = siblings.findIndex(
-        (node) => node.type === "decl" && node.prop === "animation",
-      );
-      if (shorthand === -1 || shorthand > siblings.indexOf(decl)) {
-        orphans.push(selectorOf(decl));
-      }
+  it("keeps the ticker clock out of CSS", () => {
+    // An inherited, animated custom property on the panel root restyled every
+    // row on every frame and crashed iOS Safari (#22281). The clock lives in
+    // lib/tickerClock.ts as per-title transform animations.
+    const tickerAtRules: string[] = [];
+    sheet.walkAtRules(/^(property|keyframes)$/, (rule) => {
+      if (rule.params.includes("ticker")) tickerAtRules.push(rule.params);
     });
-    expect(orphans).toEqual([]);
-  });
+    expect(tickerAtRules).toEqual([]);
 
-  it("drives the rightward reveal through an inherited direction token", () => {
-    const declarations: [string, string][] = [];
-    sheet.walkDecls("--ticker-direction", (decl) => {
-      declarations.push([selectorOf(decl), decl.value]);
+    const panelAnimations: string[] = [];
+    sheet.walkDecls(/^animation/, (decl) => {
+      const selector = (decl.parent as Rule).selector ?? "";
+      if (selector.includes(".activity-panel")) panelAnimations.push(selector);
     });
-    expect(declarations).toEqual([['html[data-ticker="right"]', "reverse"]]);
+    expect(panelAnimations).toEqual([]);
   });
 });

@@ -6,7 +6,7 @@ import {
 } from "../components/chat/planPendingSurface";
 import { normalizeChatMode, type ChatMode } from "../types/chat";
 import { configurationClient } from "../api/config";
-import { setTickerSpeed } from "../lib/tickerClock";
+import { setTickerDirection, setTickerSpeed } from "../lib/tickerClock";
 
 export type Theme = "dark" | "light" | "system";
 export type VoiceInputMode = "ptt" | "vad";
@@ -327,12 +327,14 @@ export function useSettings() {
   }, [settings.density]);
 
   // Row-title scrolling rides the same client-only path as density: CSS reads
-  // the direction off the root, and the clock needs the pace in px/s.
+  // the direction off the root for the edge fade, and the clock needs both the
+  // direction and the pace in px/s.
   useEffect(() => {
     document.documentElement.setAttribute(
       "data-ticker",
       settings.tickerDirection,
     );
+    setTickerDirection(settings.tickerDirection);
   }, [settings.tickerDirection]);
 
   useEffect(() => {

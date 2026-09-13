@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configurationClient } from "../../api/config";
-import { TICKER_SPEED_PX_PER_SEC } from "../../lib/tickerClock";
+import {
+  releaseTickerOverflow,
+  reportTickerOverflow,
+  TICKER_SPEED_PX_PER_SEC,
+} from "../../lib/tickerClock";
 import { cacheBustedIconHref, useSettings } from "../useSettings";
 
 function iconLink() {
@@ -26,7 +30,6 @@ describe("useSettings", () => {
     document.documentElement.removeAttribute("data-density");
     document.documentElement.removeAttribute("data-ticker");
     document.documentElement.removeAttribute("data-ticker-active");
-    document.documentElement.style.removeProperty("--ticker-cycle");
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: false })),
@@ -39,7 +42,7 @@ describe("useSettings", () => {
     document.documentElement.removeAttribute("data-density");
     document.documentElement.removeAttribute("data-ticker");
     document.documentElement.removeAttribute("data-ticker-active");
-    document.documentElement.style.removeProperty("--ticker-cycle");
+    delete (Element.prototype as Partial<Element>).animate;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -241,8 +244,6 @@ describe("useSettings", () => {
       expect(document.documentElement).toHaveAttribute("data-ticker", "left");
     });
 
-    // The clock only publishes a cycle once something actually overflows, so
-    // drive it from a registered ticker rather than the preference alone.
     act(() => {
       result.current.updateTickerSpeed("fast");
     });
@@ -261,6 +262,33 @@ describe("useSettings", () => {
     expect(TICKER_SPEED_PX_PER_SEC.fast).toBeGreaterThan(
       TICKER_SPEED_PX_PER_SEC.normal,
     );
+  });
+
+  it("hands the direction to the clock so Off stops a scrolling title", async () => {
+    const cancel = vi.fn();
+    Object.defineProperty(Element.prototype, "animate", {
+      configurable: true,
+      writable: true,
+      value: () => ({ cancel, startTime: null }),
+    });
+    const title = document.createElement("span");
+    const { result } = renderHook(() => useSettings());
+
+    act(() => {
+      reportTickerOverflow(title, 300);
+    });
+    expect(document.documentElement).toHaveAttribute("data-ticker-active");
+
+    act(() => {
+      result.current.updateTickerDirection("off");
+    });
+    await waitFor(() => {
+      expect(document.documentElement).not.toHaveAttribute(
+        "data-ticker-active",
+      );
+    });
+    expect(cancel).toHaveBeenCalled();
+    releaseTickerOverflow(title);
   });
 
   it.each([

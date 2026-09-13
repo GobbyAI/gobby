@@ -54,6 +54,7 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Exact total lines across the recorded infrastructure stylesheets. Any infra CSS change must
 // update this pin consciously in the same commit. #22205 added 56 lines (coarse-pointer
-// variant, terminal tokens) without moving the pin; #22231 folds that in and adds the
-// shared ticker clock, whose @property and @keyframes have no Tailwind-utility equivalent.
-export const CSS_TOTAL_LINE_PIN = 941;
+// variant, terminal tokens) without moving the pin; #22231 folded that in with a CSS ticker
+// clock, and #22281 moved that clock to Web Animations (it crashed iOS Safari), leaving only
+// the ticker's edge fade and inline-block promotion.
+export const CSS_TOTAL_LINE_PIN = 903;
