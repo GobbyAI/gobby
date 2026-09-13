@@ -90,6 +90,9 @@ class FakeHostClient:
     children_alive: bool = True
     observer_bind: Literal["reserved", "bound", "entitled", "none"] = "reserved"
     host_pid: int = 4242
+    commit_deadline_ms: int = 30_000
+    commit_deadlines: list[int] = field(default_factory=list)
+    commit_error: HostCommandError | None = None
 
     async def ensure_connected(self) -> None:
         if not self.available:
@@ -146,8 +149,13 @@ class FakeHostClient:
             "reserve_generation": 1,
         }
 
-    async def spawn_commit(self, terminal_id: str, spawn_key: str) -> None:
+    async def spawn_commit(
+        self, terminal_id: str, spawn_key: str, commit_deadline_ms: int
+    ) -> None:
         await self.ensure_connected()
+        self.commit_deadlines.append(commit_deadline_ms)
+        if self.commit_error is not None:
+            raise self.commit_error
         self.commits.append((terminal_id, spawn_key))
 
     async def write(

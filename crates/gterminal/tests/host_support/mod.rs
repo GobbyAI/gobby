@@ -47,6 +47,7 @@ pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> Child {
         .arg(socket_dir)
         .args(extra)
         .env("GTERM_LOG_FILE", &log_path)
+        .env("GTERM_TEST_HELPER", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());

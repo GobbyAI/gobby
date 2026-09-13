@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig
 from gobby.config.terminal_host import TerminalHostConfig
@@ -21,6 +22,7 @@ def test_terminal_host_config_defaults_and_shared_keys() -> None:
     assert host.binary_path is None
     assert host.health_interval_seconds > 0
     assert host.shutdown_grace_seconds > 0
+    assert host.commit_deadline_ms == 30_000
     fields = set(TerminalHostConfig.model_fields)
     assert "spawn_in_doubt_seconds" not in fields
     assert "default_backend" not in fields
@@ -34,3 +36,9 @@ def test_terminal_host_config_defaults_and_shared_keys() -> None:
     source = inspect.getsource(TerminalHostConfig)
     assert "spawn_in_doubt_seconds" not in source
     assert "default_backend" not in source
+
+
+def test_terminal_host_commit_deadline_bounds() -> None:
+    assert TerminalHostConfig(commit_deadline_ms=1_000).commit_deadline_ms == 1_000
+    with pytest.raises(ValidationError):
+        TerminalHostConfig(commit_deadline_ms=999)

@@ -16,6 +16,8 @@ mod config;
 mod control;
 mod embed;
 mod frames;
+#[cfg(all(unix, feature = "vt-engine"))]
+pub(crate) mod gate;
 mod helpers;
 mod ledger;
 mod native_ops;
