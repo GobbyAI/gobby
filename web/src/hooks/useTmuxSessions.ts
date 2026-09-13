@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { createAttachmentReadiness } from "./terminalAttachmentReadiness";
 import { createTerminalWsReducer } from "./terminalWsFragments";
 import {
   applyRosterPage,
@@ -36,6 +37,12 @@ export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
 export const TMUX_RECONNECT_BASE_MS = 2_000;
 export const TMUX_RECONNECT_MAX_MS = 30_000;
 export const TMUX_STABLE_OPEN_MS = 1_000;
+/**
+ * How often accumulated fragment buffers are swept. Well under the reassembly
+ * timeout so a stalled message is dropped near its deadline rather than a
+ * sweep-interval later.
+ */
+export const TERMINAL_FRAGMENT_TICK_MS = 1_000;
 
 type PendingRequest =
   | {
@@ -71,6 +78,11 @@ interface TmuxSessionsResult {
   detachSession: () => void;
   clearAttachError: () => void;
   refreshTerminal: (sessionName: string, socket: string) => void;
+  /**
+   * The renderer measured its grid. Half of the viewport rendezvous: the
+   * daemon is told the size only once an attachment exists to address it to.
+   */
+  reportViewport: (rows: number, cols: number) => void;
   createSession: (name?: string, socket?: string) => void;
   killSession: (terminalId: string) => void;
   refreshSessions: () => void;
@@ -128,6 +140,7 @@ export function useTmuxSessions(
   const pendingRequestTimeoutRef = useRef<number | null>(null);
   const connectRef = useRef<() => void>(() => {});
   const fragmentReducerRef = useRef(createTerminalWsReducer());
+  const readinessRef = useRef(createAttachmentReadiness());
   const projectIdRef = useRef<string | null>(projectId);
 
   // The lease owns the whole control and write plane; the hook keeps one
@@ -156,6 +169,10 @@ export function useTmuxSessions(
       streamingIdRef.current = streamId;
       setAttachedTarget(target);
       setStreamingId(streamId);
+      // Detach, disconnect and a vanished session all land here, and a
+      // rendezvous left armed would fire its viewport at whatever attaches
+      // next. Guarding the one choke point covers all three.
+      if (streamId === null) readinessRef.current.reset();
     },
     [],
   );
@@ -229,6 +246,56 @@ export function useTmuxSessions(
       ),
     );
   }, []);
+
+  /**
+   * Send the viewport once the attachment and the measured grid have both
+   * arrived. Called from each side of the rendezvous, because either can be
+   * the one that completes it.
+   */
+  const flushViewport = useCallback((kind: "viewport" | "refresh" = "viewport") => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const viewport = readinessRef.current.take();
+    if (viewport === null) return;
+    // The daemon opens an attachment's output bridge on its first
+    // `terminal_resize`; `terminal_set_viewport` only positions a bridge that
+    // already exists. The renderer sends a resize when its grid changes, which
+    // covers the first attachment and nothing after it: a replacement
+    // attachment arrives at unchanged geometry, so nothing remeasures and that
+    // attachment never streams. This rendezvous is the one place that knows a
+    // new attachment has both an id and a measured grid, so it opens the
+    // bridge here before positioning it. A "refresh" redraws an attachment
+    // that is already bridged and must not reopen one.
+    if (kind === "viewport") {
+      ws.send(
+        terminalResizeMessage(
+          viewport.terminalId,
+          viewport.attachmentId,
+          viewport.rows,
+          viewport.cols,
+        ),
+      );
+    }
+    ws.send(
+      terminalSetViewportMessage(
+        `${kind}-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
+        viewport.terminalId,
+        viewport.attachmentId,
+        viewport.rows,
+        viewport.cols,
+        kind,
+      ),
+    );
+  }, []);
+
+  /** The renderer measured its grid. */
+  const reportViewport = useCallback(
+    (rows: number, cols: number) => {
+      readinessRef.current.size(rows, cols);
+      flushViewport();
+    },
+    [flushViewport],
+  );
 
   const beginAttachRequest = useCallback(
     (target: TmuxTarget): boolean => {
@@ -351,6 +418,8 @@ export function useTmuxSessions(
             // Every attach is observe-only; take-control is the sole grant.
             control.observe(attachedId);
             updateAttachment(pending.target, attachedId);
+            readinessRef.current.attach(attachedId, pending.target.terminal_id);
+            flushViewport();
           } else {
             const reason =
               typeof data.reason === "string"
@@ -436,6 +505,7 @@ export function useTmuxSessions(
       control,
       matchPending,
       refreshSessions,
+      flushViewport,
       sink,
       updateAttachment,
     ],
@@ -560,6 +630,30 @@ export function useTmuxSessions(
     connectRef.current = connect;
   }, [connect]);
 
+  // The reassembly timeout only exists if something drives it. Without this
+  // sweep a message whose tail never arrives holds its bytes against the
+  // socket budget for the life of the connection, and an attachment that went
+  // over budget would sit pinned with no snapshot ever requested.
+  useEffect(() => {
+    if (!connected) return;
+    const timer = window.setInterval(() => {
+      const reducer = fragmentReducerRef.current;
+      reducer.tick(Date.now());
+      const target = attachedTargetRef.current;
+      // Draining is destructive, so read the target first: taking the requests
+      // with nowhere to send them would discard the only record that the
+      // attachment is pinned, leaving that pane silent for good.
+      if (target === null) return;
+      for (const attachmentId of reducer.takeRefreshRequests()) {
+        // Re-arm the rendezvous: an attachment whose stream was abandoned has
+        // to be told its viewport again, and that frame is the redraw.
+        readinessRef.current.attach(attachmentId, target.terminal_id);
+        flushViewport("refresh");
+      }
+    }, TERMINAL_FRAGMENT_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [connected, flushViewport]);
+
   const attachSession = useCallback(
     (sessionName: string, socket: string) => {
       if (pendingRequestRef.current) return;
@@ -581,16 +675,23 @@ export function useTmuxSessions(
 
   const clearAttachError = useCallback(() => setAttachError(null), []);
 
-  const refreshTerminal = useCallback((sessionName: string, socket: string) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(
-      terminalSetViewportMessage(
-        `refresh-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
-        sessionName || socket,
-      ),
-    );
-  }, []);
+  const refreshTerminal = useCallback(
+    (sessionName: string, socket: string) => {
+      const streaming = streamingIdRef.current;
+      const attached = attachedTargetRef.current;
+      // A redraw is addressed to an attachment, not to a terminal: the daemon
+      // drops a viewport frame that names no attachment, so refreshing a
+      // terminal this client is not attached to could only ever be a no-op.
+      // Refusing the mismatch matters as much as refusing the absence — the
+      // live attachment belongs to a different terminal, and pairing this
+      // terminal's id with it would redraw the wrong pane.
+      if (streaming === null || attached === null) return;
+      if (attached.terminal_id !== (sessionName || socket)) return;
+      readinessRef.current.attach(streaming, attached.terminal_id);
+      flushViewport("refresh");
+    },
+    [flushViewport],
+  );
 
   const createSession = useCallback(
     (name?: string, socket?: string) => {
@@ -737,6 +838,7 @@ export function useTmuxSessions(
     detachSession,
     clearAttachError,
     refreshTerminal,
+    reportViewport,
     createSession,
     killSession,
     refreshSessions,

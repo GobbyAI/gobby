@@ -202,6 +202,7 @@ export function TerminalTab({
     retryWrite,
     discardWrite,
     resizeTerminal,
+    reportViewport,
     killSession,
     onOutput,
     onAttachHistory,
@@ -249,10 +250,12 @@ export function TerminalTab({
     () => ({ connected, streamingId }),
     [connected, streamingId],
   );
+  const terminalContextRef = useRef(terminalContext);
 
   useLayoutEffect(() => {
     streamingIdRef.current = streamingId;
-  }, [streamingId]);
+    terminalContextRef.current = terminalContext;
+  }, [streamingId, terminalContext]);
 
   useEffect(() => {
     onOutput((runId, data) => {
@@ -271,6 +274,13 @@ export function TerminalTab({
         history.truncated,
         history.unavailable,
       );
+      // The pane is now showing this attachment, so the attaching scrim has
+      // done its job. `onReady` cannot say so: it fires when the renderer
+      // mounts, and a replacement attachment deliberately keeps the same
+      // instance mounted. Exactly one history frame arrives per attachment,
+      // which makes this the moment — and leaving the scrim up would be worse
+      // than cosmetic, because it covers the pane and swallows scroll.
+      setReadyContext(terminalContextRef.current);
     });
     return () => onAttachHistory(() => undefined);
   }, [onAttachHistory]);
@@ -447,6 +457,11 @@ export function TerminalTab({
   const handleViewReady = useCallback(
     (rows: number, cols: number) => {
       const activeStreamingId = streamingIdRef.current;
+      // Reported before the attachment guard below: the grid routinely
+      // measures itself before the attach resolves, and the rendezvous needs
+      // both halves whichever lands first. It sends nothing on its own until
+      // an attachment exists to address the frame to.
+      if (rows > 0 && cols > 0) reportViewport(rows, cols);
       if (
         activeStreamingId === null ||
         selected === null ||
@@ -465,7 +480,14 @@ export function TerminalTab({
       }
       setReadyContext(terminalContext);
     },
-    [attachedKey, resizeTerminal, selected, selectedKey, terminalContext],
+    [
+      attachedKey,
+      reportViewport,
+      resizeTerminal,
+      selected,
+      selectedKey,
+      terminalContext,
+    ],
   );
 
   // Taking back after another session displaced this one needs the takeover
@@ -646,8 +668,20 @@ export function TerminalTab({
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--bg-primary)]">
+        {/*
+          Deliberately unkeyed. This used to carry key={streamingId}, which
+          made every replacement attachment a full remount: renderer destroyed,
+          WASM core reloaded, geometry remeasured, scroll position gone. The
+          remount was standing in for a buffer reset — it was the only thing
+          stopping a reconnect's overlapping history from being appended under
+          the old. applyAttachHistory now resets the pane itself before it
+          writes — RIS and ED 3 to clear the core, then a resize to rebuild
+          wterm's count-driven scrollback mirror, which the clear alone leaves
+          pointing at rows that are gone. Every attach delivers exactly one
+          history frame, so that reset covers replacement and terminal
+          switching alike, and the pane survives a reconnect as one instance.
+        */}
         <TerminalView
-          key={streamingId ?? "pending"}
           ref={viewRef}
           onReady={handleViewReady}
           onSizeChange={resizeTerminal}

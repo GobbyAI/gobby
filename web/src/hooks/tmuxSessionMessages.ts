@@ -90,14 +90,29 @@ export function terminalKillMessage(
   });
 }
 
+/**
+ * The daemon keys this frame on `attachment_id` and returns early without one,
+ * so a viewport can only be set for a live attachment whose grid has been
+ * measured. `kind` separates the two reasons to send it: the first viewport an
+ * attachment is told, and a client-driven redraw after the stream was
+ * abandoned over budget.
+ */
 export function terminalSetViewportMessage(
   requestId: string,
   terminalId: string,
+  attachmentId: string,
+  rows: number,
+  cols: number,
+  kind: "viewport" | "refresh" = "viewport",
 ): string {
   return JSON.stringify({
     type: "terminal_set_viewport",
     request_id: requestId,
     terminal_id: terminalId,
+    attachment_id: attachmentId,
+    rows,
+    cols,
+    kind,
   });
 }
 
