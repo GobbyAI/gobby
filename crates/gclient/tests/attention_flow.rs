@@ -370,9 +370,6 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         // Each click takes control of the terminal it focuses; the blocked
         // row's click fetches no prompt.
         wait_for_websocket_requests(&mock, "terminal_take_control", taken + 2).await;
-        for _ in 0..16 {
-            tokio::task::yield_now().await;
-        }
         drop(input_tx);
     };
 

@@ -31,9 +31,10 @@ use super::mouse::{MouseOutcome, Placement};
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
 use super::projects::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog, open_new_worktree_dialog,
-    open_open_worktree_dialog, open_remove_worktree_dialog, open_worktree, remove_worktree,
-    rename_project, reveal_agent, save_client_session, submit_new_project,
+    focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
+    open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
+    open_worktree, remove_worktree, rename_project, reveal_agent, save_client_session,
+    submit_new_project,
 };
 
 /// Reap the slots whose pane left the workspace and the tabs that emptied.
@@ -126,6 +127,9 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::FocusProject(project_id) => {
             focus_project(workspace, chrome, &project_id).await?;
         }
+        MouseOutcome::FocusAgent(entry_id) => {
+            focus_agent(workspace, chrome, &entry_id).await?;
+        }
         MouseOutcome::OpenWorktree(worktree_id) => {
             open_worktree(workspace, chrome, &worktree_id).await?;
         }
@@ -154,6 +158,9 @@ pub(super) async fn apply_live_modal_outcome(
         }
         ModalOutcome::FocusProject(project_id) => {
             focus_project(workspace, chrome, &project_id).await?;
+        }
+        ModalOutcome::FocusTerminal(terminal_id) => {
+            focus_terminal(workspace, chrome, &terminal_id).await?;
         }
         ModalOutcome::OpenWorktree(worktree_id) => {
             open_worktree(workspace, chrome, &worktree_id).await?;
@@ -476,13 +483,8 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::OpenNotificationTarget => {
-            let pane_id = chrome
-                .toast
-                .take()
-                .and_then(|toast| toast.target)
-                .and_then(|terminal_id| workspace.pane_for_terminal(&terminal_id));
-            if let Some(pane_id) = pane_id {
-                focus_live_shown_pane(workspace, chrome, pane_id).await?;
+            if let Some(terminal_id) = chrome.toast.take().and_then(|toast| toast.target) {
+                focus_terminal(workspace, chrome, &terminal_id).await?;
             }
         }
         Action::ReloadConfig => reload_live_prefs(workspace, chrome),
@@ -708,10 +710,7 @@ async fn jump_live_attention(
     entry_id: &str,
 ) -> Result<(), FrameError> {
     // The terminal already shows the question, so a jump only reveals it.
-    if let Some(pane_id) = attention_pane(&*workspace, entry_id) {
-        focus_live_shown_pane(workspace, chrome, pane_id).await?;
-    }
-    Ok(())
+    focus_agent(workspace, chrome, entry_id).await
 }
 
 /// Re-read the prefs file (1.1) and the keymap override file it names

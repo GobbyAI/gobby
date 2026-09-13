@@ -27,6 +27,7 @@ use super::{route_modal_key, route_mouse, ModalOutcome, MouseOutcome};
 use super::{PaneId, Workspace};
 use crate::daemon::{DaemonEvent, ScriptedDaemon};
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
+use crate::ui::chrome::attention_pane;
 use crate::ui::{Action, Chrome, Mode};
 
 /// The steady render cadence used by both the real loop and paused-clock tests.
@@ -193,6 +194,12 @@ fn apply_scripted_mouse_outcome(
         MouseOutcome::FocusProject(project_id) => {
             scripted_focus_project(workspace, chrome, &project_id)
         }
+        MouseOutcome::FocusAgent(entry_id) => {
+            if let Some(pane) = attention_pane(&*workspace, &entry_id) {
+                chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+                scripted_focus(workspace, chrome, pane, true)?;
+            }
+        }
         // The scripted daemon spawns nothing, so a worktree has no shell to open.
         MouseOutcome::OpenWorktree(_) => {}
         // The scripted loop has no terminal to reach: keep the text, skip OSC 52.
@@ -299,6 +306,12 @@ fn apply_scripted_modal_outcome(
             workspace
                 .focus_pane(pane)
                 .map_err(|error| FrameError::Other(error.to_string()))?;
+        }
+        ModalOutcome::FocusTerminal(terminal_id) => {
+            if let Some(pane) = workspace.pane_for_terminal(&terminal_id) {
+                chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+                scripted_focus(workspace, chrome, pane, true)?;
+            }
         }
         ModalOutcome::FocusProject(project_id) => {
             scripted_focus_project(workspace, chrome, &project_id);

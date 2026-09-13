@@ -56,9 +56,10 @@ pub async fn focus_project(
     restore_focused(workspace, chrome).await
 }
 
-/// Show the agent behind `entry_id` (its row's `focus` item): its project
-/// is focused first when it is another one, then its pane is revealed where
-/// a tab shows it or split into the active tab, and takes focus.
+/// Show the agent behind `entry_id` (its row's `focus` item, and its row's
+/// click): its project is focused first when it is another one, then its
+/// pane is revealed on the tab already showing it, or in a new tab when
+/// none does, and takes control the way any explicit activation does.
 pub async fn focus_agent(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -96,8 +97,22 @@ pub(super) async fn reveal_agent(
     let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
         return Ok(None);
     };
-    chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+    if !chrome.focus_pane(pane) {
+        chrome.open_tab(pane, workspace.pane(pane).display_name());
+    }
     Ok(Some(pane))
+}
+
+/// Reveal and focus a terminal picked from the navigator. The pane is
+/// attached on demand when the daemon row arrived outside reconciliation.
+pub(super) async fn focus_terminal(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    terminal_id: &str,
+) -> Result<(), FrameError> {
+    let pane = terminal_pane(workspace, terminal_id).await?;
+    chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+    focus_live_pane(workspace, pane).await
 }
 
 /// Tell the daemon the entry's prompt was seen, with the attention id the
@@ -123,17 +138,32 @@ async fn agent_pane(
     chrome: &mut Chrome,
     entry_id: &str,
 ) -> Result<Option<PaneId>, FrameError> {
-    let project = workspace
+    let Some((project, terminal_id)) = workspace
         .sidebar()
         .agents
         .iter()
         .find(|agent| agent.entry_id == entry_id)
-        .map(|agent| agent.project_id.clone())
-        .filter(|project| workspace.project_id() != Some(project.as_str()));
-    if let Some(project) = project {
+        .map(|agent| (agent.project_id.clone(), agent.terminal_id.clone()))
+    else {
+        return Ok(None);
+    };
+    if workspace.project_id() != Some(project.as_str()) {
         focus_project(workspace, chrome, &project).await?;
     }
-    Ok(attention_pane(workspace, entry_id))
+    if let Some(pane) = attention_pane(workspace, entry_id) {
+        return Ok(Some(pane));
+    }
+    Ok(Some(terminal_pane(workspace, &terminal_id).await?))
+}
+
+async fn terminal_pane(
+    workspace: &mut Workspace<LiveDaemon>,
+    terminal_id: &str,
+) -> Result<PaneId, FrameError> {
+    match workspace.pane_for_terminal(terminal_id) {
+        Some(pane) => Ok(pane),
+        None => workspace.open_live_terminal(terminal_id).await,
+    }
 }
 
 /// Open `worktree_id`: focus its project, then activate the tab that

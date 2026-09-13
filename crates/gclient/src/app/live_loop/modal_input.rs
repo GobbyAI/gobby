@@ -53,6 +53,8 @@ pub enum ModalOutcome {
     Close,
     /// Focus this pane.
     Focus(PaneId),
+    /// The navigator picked a terminal: reveal it, attaching on demand.
+    FocusTerminal(String),
     /// Navigate picked a project card: make it the focused project.
     FocusProject(String),
     /// Navigate picked a worktree row: open a shell there.
@@ -312,7 +314,7 @@ fn pick_navigator_row<W: WorkspaceView>(
         return ModalOutcome::Consumed;
     };
     let outcome = match row.target {
-        NavigatorTarget::Terminal(_) => row.pane.map(ModalOutcome::Focus),
+        NavigatorTarget::Terminal(terminal_id) => Some(ModalOutcome::FocusTerminal(terminal_id)),
         NavigatorTarget::Attention(entry) => attention_order(ws, chrome)
             .iter()
             .position(|candidate| *candidate == entry)

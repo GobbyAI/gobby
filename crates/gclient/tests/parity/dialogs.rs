@@ -423,7 +423,7 @@ fn modal_keys_drive_every_mode() {
     assert_eq!(chrome.navigator.query, "bet");
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Enter),
-        ModalOutcome::Focus(beta)
+        ModalOutcome::FocusTerminal("term-beta".to_string())
     );
     assert_eq!(chrome.mode, Mode::Terminal);
 
