@@ -198,6 +198,25 @@ def test_delete_memory_scoped_rejects_other_project(memory_manager, db) -> None:
     assert memory_manager.get_memory(created.id).project_id == project_b
 
 
+def test_delete_memory_scoped_rejects_other_projects_global_memory(
+    memory_manager: LocalMemoryManager,
+    db: HubDatabase,
+) -> None:
+    project_a = "11111111-1111-4111-8111-111111111111"
+    project_b = "22222222-2222-4222-8222-222222222222"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+    created = memory_manager.create_memory(
+        content="Project B global memory",
+        project_id=project_b,
+        is_global=True,
+    )
+
+    assert memory_manager.delete_memory_scoped(created.id, project_a) is False
+    assert memory_manager.get_memory(created.id).project_id == project_b
+    assert memory_manager.delete_memory_scoped(created.id, project_b) is True
+
+
 def test_update_memory_scoped_rejects_other_project(memory_manager, db) -> None:
     project_a = "11111111-1111-4111-8111-111111111111"
     project_b = "22222222-2222-4222-8222-222222222222"

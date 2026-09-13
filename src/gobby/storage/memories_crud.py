@@ -915,10 +915,10 @@ class MemoryCrudMixin(MemoryStoreBase):
         return True
 
     def delete_memory_scoped(self, memory_id: str, project_id: str) -> bool:
-        """Delete a memory only when it is visible in the requested project scope."""
+        """Delete a memory only when it is owned by the requested project."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM memories WHERE id = %s AND (project_id = %s OR is_global IS TRUE)",
+                "DELETE FROM memories WHERE id = %s AND project_id = %s",
                 (memory_id, project_id),
             )
             if cursor.rowcount == 0:

@@ -26,7 +26,8 @@ different durable subjects. Explicit `supersedes` accepts at most 20 IDs.
 Use `update_memory` when the same durable subject changes; a content change
 requires a fresh rationale. Use `create_memory` with `supersedes` when replacement
 provenance matters. Delete obsolete or misleading knowledge with `delete_memory`
-only after checking the ID and owner: this is a hard delete. `restore_memory`
+only after checking the ID and owner: only the owning project may hard-delete a
+memory, including a globally visible one. `restore_memory`
 recovers soft-hidden rows, not hard deletion; backup recovery is separate.
 On a cap, scope, or type error, correct the input rather than retrying unchanged.
 
