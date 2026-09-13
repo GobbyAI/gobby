@@ -108,10 +108,15 @@ CLIs, and unclassified Responses endpoints keep their complete feature sets.
 - Preserve unrelated dirty plan files and any foreign-session work. Run no live
   download, provider-family switch, embedding migration, temporary embedding
   server, or vector mutation during implementation validation.
-- Before build handoff, preserve the criteria from #19653 (1.2, including
-  1.2.5's remote-provider OpenRouter branch), close it as `superseded` with
-  the replacement plan reference and that disposition note, and let expansion
-  create the canonical implementation leaves.
+- Context discovery is supplied by existing epic #19653 and its canonical plan
+  `.gobby/plans/local-model-context-discovery.md`. Preserve that epic and every
+  original criterion; never supersede it or create duplicate context collectors.
+  Before this runtime plan expands, require #19653 complete and wire its root as
+  an external prerequisite. If it remains open, defer the dependent runtime work
+  under this plan's real epic using the plan-coverage external-prerequisite
+  contract. The context observation contract supplies machine/endpoint identity,
+  canonical/runtime/effective limits, instance/digest evidence, provenance,
+  invalidation, refresh, resolution and model-scoped coverage exclusions.
 - #20672 is a completed prerequisite rather than plan work. It closed at commit
   5032d6b3cd, which landed the unconditional
   `-c check_for_update_on_startup=false` override in `command_builder.py`, the
@@ -419,16 +424,16 @@ removed pre-0.5 local endpoint shapes such as `local:lm-studio/<model>`.
   rows resolves to an empty endpoint map. test: `tests/config/test_app_config.py`
   and `tests/config/test_ai.py`.
 
-### 1.2 Normalize model records and complete context discovery [category: code] (depends: 1.1)
+### 1.2 Normalize model identity and consume verified context observations [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/ai/local_runtime/__init__.py`
 - `src/gobby/ai/local_runtime/contracts.py`
 - `src/gobby/ai/local_runtime/catalog.py`
-- `src/gobby/agents/local_model.py::*` — scope-reason: replace id-only vLLM parsing with shared typed records while keeping id projection consumers
-- `src/gobby/servers/local_provider_models.py::*` — scope-reason: emit normalized records and complete provider-specific context/modalities extraction
-- `src/gobby/runner_init/servers.py::*` — scope-reason: derive `_local_model_metadata_exclusions` and `_local_provider_metadata_exclusions` from normalized loopback/active-family records; no other function in the file changes in this deliverable
+- `src/gobby/agents/local_model.py::*` — scope-reason: consume the shared vLLM serving records delivered by #19653 while preserving ID projections
+- `src/gobby/servers/local_provider_models.py::*` — scope-reason: attach normalized model identity and modalities while consuming #19653 context observations
+- `src/gobby/runner_init/servers.py::*` — scope-reason: connect active-family identity to #19653 model-scoped exclusion service; do not reintroduce provider-wide exclusions
 - `tests/providers/capabilities/test_providers_capabilities_refresh.py::*` — scope-reason: cover the coverage auditor excluding only loopback/active-family models while remote provider models keep OpenRouter coverage auditing
 - `tests/agents/test_local_model.py::*` — scope-reason: cover shared vLLM record parsing, selection, and id projections
 - `tests/servers/test_local_provider_models.py::*` — scope-reason: cover normalized LM Studio, Ollama, vLLM, and mixed-catalog records
@@ -440,36 +445,26 @@ digest/revision, quantization, size, canonical context, runtime context,
 effective context, embedding dimension, input/output modalities, capability
 facts, and per-field provenance. Invalid or unavailable facts stay `None`.
 
-`effective_context` is the one value every consumer uses for eligibility,
-profile context, and display. It is the minimum of every verified hard limit:
-the canonical (architecture) context, the loaded-instance/runtime context
-(LM Studio loaded context length, Ollama `/api/ps` context, vLLM
-`max_model_len`), and any Gobby launch cap from the 2.2 supervisor profile.
-When the model is loaded and its runtime context is unknown, or when the family
-requires a runtime value that is absent, `effective_context` is `None` with a
-`context_runtime_unknown` provenance diagnostic; a canonical value never stands
-in for a missing runtime value. Raw canonical and runtime values remain on the
-record for diagnostics.
+Consume `LocalContextObservation` from completed epic #19653. Its refreshed,
+endpoint-scoped canonical/runtime/effective limits and provenance are the sole
+context-discovery input to `NormalizedLocalModel`. Do not duplicate collectors,
+store context by model name alone, or restore whole-provider OpenRouter exclusions.
+Keep canonical/runtime fields and unknown diagnostics on the normalized record.
+`effective_context` is the observation's verified effective limit reduced by any
+Gobby launch cap from the 2.2 supervisor profile; a cap cannot replace unknown
+runtime evidence or increase the verified value. Record launch-cap provenance.
 
-The startup coverage auditor keeps #19653's split: `_local_model_metadata_exclusions`
-and `_local_provider_metadata_exclusions` derive their exclusion set from the
-normalized records of loopback/active-family models (by family-qualified
-identity, never by name prefix), so those models use authoritative local
-metadata and never raise OpenRouter coverage warnings, while every remote
-provider model continues through `ModelMetadataCoverageAuditor` OpenRouter
-coverage auditing unchanged.
-
-Extend #20670's shared vLLM parser to retain every catalog record, including
-`max_model_len`. Keep `vllm_served_model_ids` as a projection over those shared
-records. Resolve `model: auto` before every wire path and return the selected
-record.
-
-For LM Studio, map native `max_context_length` and loaded-instance context.
-For Ollama, read nested `model_info` keys ending in `.context_length` and
-`.embedding_length`, plus `/api/ps` runtime context. Require one unambiguous
-positive architecture value; contradictory values remain unknown with a
-diagnostic. Preserve completion/vision capability filtering and cloud-tag
-classification.
+Use #19653's shared vLLM serving records and unchanged `vllm_served_model_ids`
+projection. Resolve `model: auto` before each runtime wire path and retain the
+selected record. LM Studio, Ollama and vLLM context parsing, multiple instances,
+invalid values, and model-scoped local/remote coverage auditing belong to #19653.
+This leaf owns the remaining family-qualified identity, modalities, quantization,
+artifact/digest, dimensions, execution-location and compatibility projections.
+For Ollama embedding dimensions, preserve nested model_info `.embedding_length`
+extraction and require one unambiguous positive value. Preserve completion/vision
+capability filtering and cloud-tag classification.
+Its context/coverage acceptance cases below are integration regressions against
+that completed contract, not authorization to replace it.
 
 A record carries two identity projections. `display_identity` is
 `(family, provider model id)`: it is stable for a daemon lifetime and keys
@@ -1052,6 +1047,11 @@ embedding changes with recoverable family activation.
 `kind: deliverable`
 
 Targets:
+- `src/gobby/mcp_proxy/services/fallback.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/mcp_proxy/test_semantic_search.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/servers/routes/mcp_endpoints/test_registry_routes.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/search/backends/__init__.py::*` — scope-reason: preserve public exports and their integration coverage
+- `src/gobby/search/__init__.py::*` — scope-reason: preserve public exports and their integration coverage
 - `src/gobby/ai/local_runtime/role_router.py`
 - `src/gobby/ai/embedding_binding.py`
 - `src/gobby/ai/registry_builder.py::*` — scope-reason: replace local endpoint bindings with role-derived capability bindings while preserving cloud bindings
@@ -1536,7 +1536,6 @@ Targets:
 - `src/gobby/agents/codex_oss.py::*` — scope-reason: apply the same local profile to LM Studio/Ollama app-server launches
 - `src/gobby/mcp_proxy/tools/spawn_agent/_generation_endpoint.py::*` — scope-reason: resolve local role model, context, modalities, and invocation profile together
 - `src/gobby/agents/spawners/command_builder.py::*` — scope-reason: compose provider command ordering and invocation-scoped local profile controls
-- `tests/agents/test_command_builder.py::*` — scope-reason: cover local endpoint resolution and generated profile overrides
 - `tests/agents/test_codex_oss.py::*` — scope-reason: cover OSS profile args and hosted/local separation
 - `tests/ai/test_codex_endpoint.py::*` — scope-reason: cover custom Responses preservation and local context overrides
 - `tests/agents/spawners/test_command_builder.py::*` — scope-reason: cover provider command ordering and profile flags
@@ -1571,7 +1570,7 @@ Codex daemon tool-chat isolation remains separate and unchanged.
 
 - 4.2.1 - Local vLLM, LM Studio, and Ollama Codex commands/app servers receive
   selected context and the complete lean profile. test:
-  `tests/agents/test_command_builder.py`.
+  `tests/agents/spawners/test_command_builder.py`.
 - 4.2.2 - Local Claude receives normalized Messages routing, context, Gobby-only
   MCP/hooks, core tools, and documented feature suppression. test:
   `tests/agents/spawners/test_command_builder.py`.
@@ -1580,7 +1579,7 @@ Codex daemon tool-chat isolation remains separate and unchanged.
   `tests/ai/test_codex_endpoint.py`.
 - 4.2.4 - Text-only models disable image inspection and image-capable models
   retain it without enabling image generation. test:
-  `tests/agents/test_command_builder.py`.
+  `tests/agents/spawners/test_command_builder.py`.
 - 4.2.5 - Local Codex and Claude launches retain the same harness instruction
   sources and Gobby/persona/task prompt ordering as hosted launches. test:
   `tests/agents/spawners/test_command_builder.py`.
@@ -1589,6 +1588,29 @@ Codex daemon tool-chat isolation remains separate and unchanged.
 `kind: deliverable`
 
 Targets:
+- `tests/agents/test_lifecycle_reconciliation.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/agent_health.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/idle_check_handler.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/memory_watchdog.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/watchdog/recovery.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_srt_process_cleanup.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_terminal_cleanup.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_terminal_delivery.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_tmux_integration.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/spawn_executor_providers.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/mcp_proxy/tools/spawn_agent/_request.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/conftest.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_backend_ingress.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_native_spawn.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_spawn_executor_providers.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_srt_spawn.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/agents/test_verified_review_regressions.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/terminals/fakes.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/terminals/test_tmux_runtime.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
 - `src/gobby/agents/local_profiles/qwen.py`
 - `src/gobby/agents/local_profiles/grok.py`
 - `src/gobby/agents/local_profiles/droid.py`
@@ -1779,6 +1801,17 @@ otherwise land in the monitor into `run_lease.py`.
 `kind: deliverable`
 
 Targets:
+- `src/gobby/agents/watchdog/recovery_terminalization.py`
+- `tests/mcp_proxy/tools/test_agents_termination.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/watchdog/recovery.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/agent_health.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/agents/memory_watchdog.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/build/controls.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/servers/websocket/handlers/session_observe.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::*` — scope-reason: include all existing consumers in integration regression coverage after source movement
+- `src/gobby/mcp_proxy/tools/agent_wait_tools.py`
+- `src/gobby/hooks/session_completion.py`
 - `src/gobby/agents/spawn_executor_support.py::*` — scope-reason: replace the complete Codex prompt-delivery scheduler and polling state machine with a per-run delivery registry fenced by the run lifecycle mutex
 - `src/gobby/agents/run_completion.py::complete_and_notify_agent_run`
 - `src/gobby/agents/run_lifecycle_fence.py`
@@ -2067,6 +2100,12 @@ composer, the update menu, the login modal, and a config error, alongside the
 existing `pane_approval.txt`. The classifier tests load them from disk; the
 6.1 matrices reuse them without creating new fixture files.
 
+Before adding runtime behavior, split `src/gobby/hooks/session_coordinator.py` into `src/gobby/hooks/session_completion.py` by moving complete_agent_run, _closed_task_result, _agent_run_notification_status, and _notify_agent_completion. Preserve the existing public import/API boundary and rerun this section's existing focused tests; both modules must remain below 1,000 lines. This required size repair reflects the current checkout, where the original file has grown since the earlier review.
+
+Before adding runtime behavior, split `src/gobby/mcp_proxy/tools/agents_query_tools.py` into `src/gobby/mcp_proxy/tools/agent_wait_tools.py` by moving wait_for_agent and wait_for_output registration and their private validation helpers. Preserve the existing public import/API boundary and rerun this section's existing focused tests; both modules must remain below 1,000 lines. This required size repair reflects the current checkout, where the original file has grown since the earlier review.
+
+Split `src/gobby/agents/watchdog/recovery.py` by moving `_fail_idle_agent`, `fail_provider_quota_agent`, `fail_terminal_provider_agent`, `_terminalize_idle_agent` and `_complete_idle_agent` into `src/gobby/agents/watchdog/recovery_terminalization.py`. Keep coordinator forwarding methods and the existing terminalization contract; reuse this section's watchdog regression coverage and leave both production files below 1,000 lines.
+
 **Acceptance:**
 
 - 4.4.1 - Baseline regression over landed commit 5032d6b3cd, which this
@@ -2171,6 +2210,7 @@ existing `pane_approval.txt`. The classifier tests load them from disk; the
 `kind: deliverable`
 
 Targets:
+- `src/gobby/servers/websocket/chat/backends/droid_session.py`
 - `src/gobby/servers/websocket/chat/runtime_manager.py::*` — scope-reason: resolve local coding role/runtime and cache model-scoped backends
 - `src/gobby/servers/websocket/chat/backends/codex.py::*` — scope-reason: acquire local models and start model-profile-scoped app servers
 - `src/gobby/servers/websocket/chat/backends/claude.py::*` — scope-reason: create local Messages sessions from the shared runtime profile
@@ -2295,6 +2335,8 @@ profile contract, and each backend gains only the call that applies it.
 Expose typed local eligibility errors through the existing chat error channel.
 Tool-probe and context reasons remain visible together. A stale direct request
 cannot bypass provider-picker filtering.
+
+Before adding runtime behavior, split `src/gobby/servers/websocket/chat/backends/droid.py` into `src/gobby/servers/websocket/chat/backends/droid_session.py` by moving DroidManagedChatSession and its session-only event translation helpers. Preserve the existing public import/API boundary and rerun this section's existing focused tests; both modules must remain below 1,000 lines. This required size repair reflects the current checkout, where the original file has grown since the earlier review.
 
 **Acceptance:**
 
