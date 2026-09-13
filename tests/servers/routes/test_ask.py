@@ -33,7 +33,11 @@ from tests.ask.service_support import (
     RecordingCompletionRegistry,
     build_ask_service,
 )
-from tests.fixtures.isolated_checkout import insert_isolated_machine, insert_overlay
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    insert_overlay,
+    install_isolated_checkout_project,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -248,6 +252,7 @@ def authenticated_ask_harness(
             services=SimpleNamespace(
                 get_ask_service=resolve_service,
                 http_admission_closed=False,
+                session_manager=session_manager,
             ),
             run_db=run_db,
         )
@@ -331,6 +336,7 @@ async def real_ask_harness(
                 get_ask_service=lambda _project_id: ask.service,
                 http_admission_closed=False,
                 database=temp_db,
+                session_manager=session_manager,
             ),
             run_db=_run_db,
         )
@@ -707,16 +713,59 @@ def test_signed_managed_token_cannot_substitute_body_or_query_project(
 def test_operator_token_retains_cross_project_ask_access(
     operation: _AskOperation,
     authenticated_ask_harness: _AuthHarness,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    session_manager: SessionManager,
 ) -> None:
+    selected = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "operator-selected",
+        machine_id=LOCAL_MACHINE_ID,
+        name="operator-selected-project",
+    )
+    selected_id = str(selected.project.id)
     response = _request_ask(
         authenticated_ask_harness.client,
         operation,
-        project_id="operator-selected-project",
+        project_id=selected_id,
         headers=authenticated_ask_harness.operator_headers,
     )
 
     assert response.status_code == (202 if operation == "start" else 200)
-    assert authenticated_ask_harness.resolved_projects == ["operator-selected-project"]
+    assert authenticated_ask_harness.resolved_projects == [selected_id]
+    if operation == "start":
+        start_call = authenticated_ask_harness.service.start_call
+        assert start_call is not None
+        caller = session_manager.get(start_call[2])
+        assert caller is not None
+        assert caller.project_id == selected_id
+        assert caller.id != authenticated_ask_harness.operator_headers["X-Gobby-Session-Id"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_operator_ask_without_session_reuses_project_launcher(
+    real_ask_harness: _RealAskHarness,
+    session_manager: SessionManager,
+) -> None:
+    harness = real_ask_harness
+    callers = []
+    for question in ("What is the shared platform?", "Which systems remain standalone?"):
+        response = await harness.client.post(
+            "/api/ask/runs",
+            headers={"Authorization": "Bearer operator-token"},
+            json={"question": question, "project_id": harness.project_id},
+        )
+        assert response.status_code == 202, response.text
+        run_id = response.json()["run_id"]
+        inputs = harness.service.storage.execution_inputs(run_id)
+        callers.append(inputs["caller_session_id"])
+        result = await harness.service.wait(run_id, project_id=harness.project_id, timeout=5)
+        assert result.status == "completed"
+    assert callers[0] == callers[1]
+    caller = session_manager.get(callers[0])
+    assert caller is not None
+    assert caller.project_id == harness.project_id
 
 
 @pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])

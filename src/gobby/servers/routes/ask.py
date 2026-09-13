@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.ask.contracts import AskRequest, RetrievalMode
 from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.servers.http import HTTPServer
@@ -21,7 +22,6 @@ from gobby.utils.local_token import AgentApiTokenClaims
 
 _INVESTIGATOR_PROFILE = "ask-investigator"
 _REVIEWER_PROFILE = "ask-reviewer"
-_SESSION_HEADER = "X-Gobby-Session-Id"
 
 
 class StartAskRunRequest(BaseModel):
@@ -46,11 +46,17 @@ def _payload(result: Any) -> dict[str, Any]:
     return dict(result.model_dump(mode="json"))
 
 
-def _caller_session_id(request: Request, claims: AgentApiTokenClaims | None) -> str:
-    session_id = claims.session_id if claims is not None else request.headers.get(_SESSION_HEADER)
-    if not session_id:
-        raise HTTPException(status_code=400, detail="X-Gobby-Session-Id is required")
-    return session_id
+async def _caller_session_id(
+    server: HTTPServer, project_id: str, claims: AgentApiTokenClaims | None
+) -> str:
+    if claims is not None:
+        return claims.session_id
+    session_manager = server.services.session_manager
+    if session_manager is None:
+        raise HTTPException(status_code=503, detail="Session manager is unavailable")
+    # Operator credentials may select another project or run outside an agent session.
+    # Reuse the ordinary project launcher so grants bind to that selected project.
+    return await aget_or_create_launcher_session(session_manager, project_id, "ask_launcher")
 
 
 async def _authorize_project(
@@ -186,7 +192,7 @@ def create_ask_router(
             result = await service(body.project_id).start(
                 ask_request,
                 project_root=await project_root(body.project_id, body.project_path),
-                caller_session_id=_caller_session_id(request, claims),
+                caller_session_id=await _caller_session_id(server, body.project_id, claims),
             )
         except _TRANSLATED_ASK_ERRORS as error:
             raise _ask_http_exception(error) from error
@@ -226,7 +232,7 @@ def create_ask_router(
             result = await service(project_id).resume(
                 run_id,
                 project_id=project_id,
-                caller_session_id=_caller_session_id(request, claims),
+                caller_session_id=await _caller_session_id(server, project_id, claims),
             )
         except _TRANSLATED_ASK_ERRORS as error:
             raise _ask_http_exception(error) from error
@@ -239,7 +245,7 @@ def create_ask_router(
             result = await service(project_id).cancel(
                 run_id,
                 project_id=project_id,
-                caller_session_id=_caller_session_id(request, claims),
+                caller_session_id=await _caller_session_id(server, project_id, claims),
             )
         except _TRANSLATED_ASK_ERRORS as error:
             raise _ask_http_exception(error) from error
