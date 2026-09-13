@@ -16,7 +16,9 @@ from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
-from gobby.skills.formatting import format_skill_fetch_context
+from gobby.skills.capability_catalog import load_capability_catalog
+from gobby.skills.capability_routing import capability_menu, route_gobby_request, standalone_menu
+from gobby.skills.parser import ParsedSkill
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
@@ -80,9 +82,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 return HookResponse(decision="block", reason=wrapper_error)
 
         # Intercept Skill tool calls to resolve gobby skills
-        if tool_name == "Skill" and (self._skill_manager or self._call_tool):
+        if tool_name == "Skill":
             try:
-                skill_response = self._resolve_skill_tool_call(input_data, project_id)
+                skill_response = self._resolve_skill_tool_call(input_data, project_id, session_id)
                 if skill_response is not None:
                     return skill_response
             except SkillResolutionError:
@@ -108,11 +110,12 @@ class ToolEventHandlerMixin(EventHandlersBase):
         self,
         input_data: dict[str, Any],
         project_id: str | None = None,
+        session_id: str | None = None,
     ) -> HookResponse | None:
         """Resolve a Gobby-owned Skill tool call.
 
-        Tier 1: Local DB via HookSkillManager
-        Tier 2: gobby-skills MCP get_skill
+        Resolve installed metadata through HookSkillManager. Never fetch a body to
+        test existence: a completed MCP get_skill would record an invisible load.
 
         Returns None for non-Gobby namespaces, missing skills, and unresolved
         bare names so the native CLI Skill handler can process them.
@@ -131,6 +134,36 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if ":" in skill_name:
             return None
 
+        catalog = load_capability_catalog()
+        if skill_name == "gobby" or any(item.name == skill_name for item in catalog.capabilities):
+            args = str(tool_input.get("args", "") or "")
+            request = args if skill_name == "gobby" else f"{skill_name} {args}"
+            manager = self._skill_manager
+            route = route_gobby_request(
+                request,
+                resolve_skill=lambda name: (
+                    manager.resolve_skill_name(name, project_id=project_id) if manager else None
+                ),
+                catalog=catalog,
+            )
+            context = route.context
+            if route.kind in ("help", "unknown"):
+                if route.kind == "unknown":
+                    context = f"Unknown Gobby name {route.unknown_name!r}.\n\n"
+                    context += capability_menu(catalog, "/gobby")
+                skills = self._router_skills(session_id, project_id)
+                context += "\n\nInstalled standalone skills:\n" + standalone_menu(
+                    skills, catalog, "/gobby"
+                )
+                context += "\nMenus list choices only; do not execute listed operations."
+            elif route.arguments:
+                context += f"\n\nUser arguments: {route.arguments}"
+            return HookResponse(
+                decision="block",
+                reason="Gobby router resolved through its capability catalog",
+                context=context,
+            )
+
         # --- Tier 1: Local DB resolve ---
         if self._skill_manager:
             try:
@@ -141,45 +174,37 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     f"Local skill resolution failed for {skill_name!r}"
                 ) from exc
             if skill is not None:
-                return self._build_skill_response(skill.name, raw_skill_name, tool_input)
+                return self._build_skill_response(skill, raw_skill_name, tool_input)
 
-        # --- Tier 2: gobby-skills MCP get_skill fallback ---
-        if self._call_tool:
-            try:
-                result = self._call_tool("gobby-skills", "get_skill", {"name": skill_name})
-            except _EXPECTED_SKILL_RESOLUTION_ERRORS as exc:
-                raise SkillResolutionError(
-                    f"MCP skill resolution failed for {skill_name!r}"
-                ) from exc
-            if result and isinstance(result, dict) and result.get("success"):
-                skill_data = result.get("skill") or result.get("result", {}).get("skill")
-                if skill_data and isinstance(skill_data, dict) and skill_data.get("name"):
-                    return self._build_skill_response(
-                        skill_data.get("name", skill_name),
-                        raw_skill_name,
-                        tool_input,
-                        source="MCP",
-                    )
+        if raw_skill_name.startswith("gobby:"):
+            context = f"Unknown Gobby skill {skill_name!r}.\n\n"
+            context += capability_menu(catalog, "/gobby")
+            context += "\n\nInstalled standalone skills:\n" + standalone_menu(
+                self._router_skills(session_id, project_id), catalog, "/gobby"
+            )
+            context += "\nDiscover installed skills with list_skills on gobby-skills."
+            return HookResponse(decision="block", reason="Unknown Gobby skill", context=context)
 
         return None
 
     def _build_skill_response(
         self,
-        name: str,
+        skill: ParsedSkill,
         raw_skill_name: str,
         tool_input: dict[str, Any],
-        source: str = "local",
     ) -> HookResponse:
-        """Build a blocking HookResponse with an on-demand skill fetch directive."""
-        context = format_skill_fetch_context(name, str(tool_input.get("args", "") or ""))
-
+        """Build a blocking response with a visible, level-aware skill load."""
+        args = str(tool_input.get("args", "") or "")
+        route = route_gobby_request(f"skill {skill.name} {args}", resolve_skill=lambda _: skill)
+        context = route.context
+        if args:
+            context += f"\n\nUser arguments: {args}"
         self.logger.info(
-            "Resolved gobby skill '%s' via %s (requested: '%s')", name, source, raw_skill_name
+            "Resolved gobby skill '%s' locally (requested: '%s')", skill.name, raw_skill_name
         )
-
         return HookResponse(
             decision="block",
-            reason=f"Gobby skill '{name}' resolved via {source} — fetch it with gobby-skills",
+            reason=f"Gobby skill '{skill.name}' resolved locally — fetch it with gobby-skills",
             context=context,
         )
 

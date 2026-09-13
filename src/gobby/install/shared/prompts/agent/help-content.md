@@ -1,13 +1,21 @@
 ---
 name: agent/help-content
-description: Help listing for the Gobby router command showing available skills
-version: "1.0"
-required_variables: [skills_list, command_prefix]
+description: Catalog capabilities and dynamically discovered installed standalone skills
+version: "2.0"
+required_variables: [skills_list, capabilities_list, command_prefix]
 ---
-# Gobby Skills
+# Gobby
+
+Capabilities:
+
+{{ capabilities_list }}
+
+Use `{{ command_prefix }} <capability> references` for topic descriptions and
+exact invocation examples. Menus list choices only; do not execute their operations.
 
 Installed skills below are generated from `discover_core_skills()`. Invoke one
-with `{{ command_prefix }} <skill>`:
+with `{{ command_prefix }} <skill>`, or explicitly with
+`{{ command_prefix }} skill <skill>` when its name collides with a capability:
 
 {{ skills_list }}
 

@@ -10,6 +10,12 @@ import psycopg
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.session_types import has_prior_session_activity
+from gobby.skills.capability_catalog import load_capability_catalog
+from gobby.skills.capability_routing import (
+    capability_menu,
+    route_gobby_request,
+    standalone_menu,
+)
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hook_receipts import retire_session_hook_effects
 
@@ -20,7 +26,6 @@ _GOBBY_CMD_PATTERN = re.compile(
     r"^[/\$]gobby(?::(\S+))?(?:\s+(.*)|\s*)$",
     re.IGNORECASE | re.DOTALL,
 )
-_HELP_SKILL_LIST_LIMIT = 50
 
 
 def _load_agent_prompt(
@@ -304,51 +309,31 @@ class AgentEventHandlerMixin(EventHandlersBase):
         skill_name = match.group(1)  # None for bare /gobby or space syntax
         args = (match.group(2) or "").strip()
 
-        # Support space syntax: Gobby expand → treat first word of args as skill name.
-        # Also supports Gobby skill(s) <name> as a namespace prefix.
-        resolved = None
-        if not skill_name and args and self._skill_manager:
-            parts = args.split(None, 1)
-            first_word = parts[0]
-            if first_word.lower() in ("skill", "skills"):
-                # Gobby skill(s) <name> → shift to second word.
-                if len(parts) > 1:
-                    sub_parts = parts[1].split(None, 1)
-                    skill_name = sub_parts[0]
-                    args = sub_parts[1] if len(sub_parts) > 1 else ""
-                    resolved = self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
-                # Bare Gobby skills → fall through to help.
-            elif first_word.lower() != "help":
-                skill_name = first_word
-                resolved = self._skill_manager.resolve_skill_name(first_word, **project_kwargs)
-                if resolved:
-                    args = parts[1] if len(parts) > 1 else ""
-
-        # Bare Gobby or Gobby help → generate help.
-        if not skill_name or skill_name.lower() == "help":
+        request = " ".join(part for part in (skill_name, args) if part)
+        if not request or request.lower() in ("help", "skill"):
             return self._generate_help_content(
-                session_id,
-                command_prefix=command_prefix,
-                **project_kwargs,
+                session_id, command_prefix=command_prefix, **project_kwargs
             )
-
-        # Gobby skillname → resolve and direct the agent to fetch it on demand.
-        if self._skill_manager is None:
+        manager = self._skill_manager
+        if manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skill = (
-            resolved
-            if resolved
-            else self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
+        route = route_gobby_request(
+            request,
+            resolve_skill=lambda name: manager.resolve_skill_name(name, **project_kwargs),
+            command_prefix=command_prefix,
         )
-
-        if not skill:
+        if route.kind == "help":
+            return self._generate_help_content(
+                session_id, command_prefix=command_prefix, **project_kwargs
+            )
+        if route.kind == "unknown":
             return self._skill_not_found_context(
-                skill_name,
+                route.unknown_name or request,
+                **({"session_id": session_id} if session_id else {}),
                 command_prefix=command_prefix,
                 **project_kwargs,
             )
-
-        return skill_fetch_directive(skill.name)
+        return route.context
 
     def _suggest_skills(self, prompt: str, project_id: str | None = None) -> str | None:
         """Suggest skills based on trigger keyword matching.
@@ -384,60 +369,27 @@ class AgentEventHandlerMixin(EventHandlersBase):
         """Generate help content listing all available skills."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skills = self._skill_manager.discover_core_skills(project_id)
+        skills = self._router_skills(session_id, project_id)
 
-        if session_id and self._session_manager:
-            try:
-                from gobby.workflows.state_manager import SessionVariableManager
-
-                sv_mgr = SessionVariableManager(self._session_manager.db)
-                sv = sv_mgr.get_variables(session_id)
-                if sv:
-                    active_names = sv.get("_active_skill_names")
-                    if active_names is not None:
-                        active_set = set(active_names)
-                        skills = [s for s in skills if s.name in active_set]
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to filter help content by active skills for session %s: %s",
-                    session_id,
-                    e,
-                )
-
-        # Sort alphabetically, skip always-apply skills and the router entrypoint.
-        user_skills = sorted(
-            [s for s in skills if not s.is_always_apply() and s.name != "gobby"],
-            key=lambda s: s.name,
-        )
-
-        skill_lines = []
-        for skill in user_skills[:_HELP_SKILL_LIST_LIMIT]:
-            desc = skill.description.split(".")[0] if skill.description else ""
-            skill_lines.append(f"- `{command_prefix} {skill.name}` — {desc}")
-        hidden_count = len(user_skills) - len(skill_lines)
-        if hidden_count > 0:
-            skill_lines.append(
-                f"- ... {hidden_count} more skills. Use `list_skills()` on `gobby-skills`."
-            )
-        skills_list = "\n".join(skill_lines)
-
+        catalog = load_capability_catalog()
+        skills_list = standalone_menu(skills, catalog, command_prefix)
+        capabilities_list = capability_menu(catalog, command_prefix)
         fallback = (
-            "# Gobby Skills\n\n"
-            "Installed skills below are generated from `discover_core_skills()`. "
-            f"Invoke one with `{command_prefix} <skill>`:\n\n"
-            f"{skills_list}\n\n"
-            '**Skill discovery**: `list_skills()` / `get_skill(name="skill-name")` '
-            "on `gobby-skills`.\n"
-            '**Hub search**: `search_hub(query="...")` on `gobby-skills`.\n'
-            "**MCP tools**: call leased known tools directly. For a known unleased tool, "
-            "call `get_tool_schema` directly, then `call_tool`. Use `list_tools` only for "
-            "an unknown tool name and `list_mcp_servers` only for unknown server or "
-            "registry inspection."
+            "# Gobby\n\nCapabilities:\n\n"
+            + capabilities_list
+            + "\n\nInstalled standalone skills:\n\n"
+            + skills_list
+            + "\n\nMenus list choices only; do not execute listed operations. "
+            + f"Use `{command_prefix} <capability> references` for topics. "
+            + "Discover installed skills with list_skills on gobby-skills."
         )
-
         return _load_agent_prompt(
             "help-content",
-            {"skills_list": skills_list, "command_prefix": command_prefix},
+            {
+                "skills_list": skills_list,
+                "capabilities_list": capabilities_list,
+                "command_prefix": command_prefix,
+            },
             fallback,
         )
 
@@ -446,11 +398,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         name: str,
         command_prefix: str = "/gobby",
         project_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Generate context for an unrecognized skill name."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skills = self._skill_manager.discover_core_skills(project_id)
+        skills = self._router_skills(session_id, project_id)
 
         # Find close matches (name contains or starts with input)
         name_lower = name.lower()
@@ -458,6 +411,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             s.name
             for s in skills
             if not s.is_always_apply()
+            and not s.is_internal()
             and (name_lower in s.name.lower() or s.name.lower().startswith(name_lower))
         )[:5]
 
@@ -476,7 +430,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         )
         fallback = "\n".join(lines)
 
-        return _load_agent_prompt(
+        context = _load_agent_prompt(
             "skill-not-found",
             {
                 "skill_name": name,
@@ -484,6 +438,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 "command_prefix": command_prefix,
             },
             fallback,
+        )
+        return (
+            context
+            + "\n\n"
+            + self._generate_help_content(
+                session_id, command_prefix=command_prefix, project_id=project_id
+            )
         )
 
     def handle_after_agent(self, event: HookEvent) -> HookResponse:

@@ -8,12 +8,25 @@ Handles installing, backing up, and routing skills across CLI integrations.
 import logging
 import shutil
 from pathlib import Path
-from shutil import copy2
 from typing import Any
 
 from gobby.cli.utils import get_install_dir
+from gobby.skills.capability_catalog import load_capability_catalog
+from gobby.skills.capability_routing import capability_menu
 
 logger = logging.getLogger(__name__)
+
+
+def _router_carrier(source: Path) -> str:
+    """Project catalog metadata into provider carriers without reference bodies."""
+    catalog = load_capability_catalog(source.parent)
+    return (
+        source.read_text(encoding="utf-8")
+        + "\n## Available Capabilities\n\n"
+        + "Generated from the bundled catalog. Use the provider's active trigger.\n\n"
+        + capability_menu(catalog, "<trigger>")
+        + "\n"
+    )
 
 
 def backup_gobby_skills(skills_dir: Path) -> dict[str, Any]:
@@ -107,7 +120,7 @@ def install_router_skills_as_commands(target_commands_dir: Path) -> list[str]:
         target_cmd = target_commands_dir / f"{skill_name}.md"
 
         try:
-            copy2(source_skill_md, target_cmd)
+            target_cmd.write_text(_router_carrier(source_skill_md), encoding="utf-8")
             installed.append(f"{skill_name}.md")
         except OSError as e:
             logger.error("Failed to copy router skill %s: %s", skill_name, e)
@@ -161,7 +174,7 @@ def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
         target_skill_md = target_skill_dir / "SKILL.md"
 
         try:
-            copy2(source_skill_md, target_skill_md)
+            target_skill_md.write_text(_router_carrier(source_skill_md), encoding="utf-8")
             installed.append(f"{skill_name}/")
         except OSError as e:
             logger.error("Failed to copy router skill %s: %s", skill_name, e)

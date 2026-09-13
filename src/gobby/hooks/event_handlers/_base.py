@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
     from gobby.hooks.skill_manager import HookSkillManager
     from gobby.sessions.liveness_monitor import SessionLivenessMonitor
+    from gobby.skills.parser import ParsedSkill
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
@@ -65,6 +66,32 @@ class EventHandlersBase:
     _handler_map: dict[
         HookEventType, Callable[[HookEvent], HookResponse | Coroutine[Any, Any, HookResponse]]
     ]
+
+    def _router_skills(self, session_id: str | None, project_id: str | None) -> list[ParsedSkill]:
+        """Discover installed skills with the same active-session filter on all carriers."""
+        if self._skill_manager is None:
+            return []
+        skills = self._skill_manager.discover_core_skills(project_id)
+
+        if session_id and self._session_manager:
+            try:
+                from gobby.workflows.state_manager import SessionVariableManager
+
+                sv_mgr = SessionVariableManager(self._session_manager.db)
+                sv = sv_mgr.get_variables(session_id)
+                if sv:
+                    active_names = sv.get("_active_skill_names")
+                    if active_names is not None:
+                        active_set = set(active_names)
+                        skills = [s for s in skills if s.name in active_set]
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to filter help content by active skills for session %s: %s",
+                    session_id,
+                    e,
+                )
+
+        return skills
 
     def get_session_manager(self) -> HookSessionManager | None:
         """Return the configured hook session manager, if available."""

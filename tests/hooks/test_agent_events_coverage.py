@@ -80,16 +80,20 @@ class _TestHandler(AgentEventHandlerMixin):
     """Concrete implementation with required attributes for testing."""
 
     def __init__(self) -> None:
-        self.logger = MagicMock()
-        self._session_manager = MagicMock()
+        self.logger_mock = MagicMock()
+        self.logger = self.logger_mock
+        self.session_manager_mock = MagicMock()
+        self._session_manager = self.session_manager_mock
         self._session_coordinator = None
         self._message_processor_resolver = _resolve_none
         self._task_manager = None
         self._workflow_handler = None
         self._workflow_config_resolver = _resolve_none
-        self._skill_manager = MagicMock()
+        self.skill_manager_mock = MagicMock()
+        self._skill_manager = self.skill_manager_mock
         self._session_task_manager = None
-        self._dispatch_session_summaries_fn = MagicMock()
+        self.dispatch_summaries_mock = MagicMock()
+        self._dispatch_session_summaries_fn = self.dispatch_summaries_mock
         self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value="proj-1")
         self._handler_map = {}
@@ -123,14 +127,14 @@ class TestHandleBeforeAgent:
         handler = _TestHandler()
         skill = MagicMock(name="project-only")
         skill.name = "project-only"
-        handler._skill_manager.resolve_skill_name.return_value = skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = skill
         event = _make_event(data={"prompt": "/gobby project-only"})
         event.project_id = "project-a"
 
         response = handler.handle_before_agent(event)
 
         assert response.context is not None
-        handler._skill_manager.resolve_skill_name.assert_called_with(
+        handler.skill_manager_mock.resolve_skill_name.assert_called_with(
             "project-only",
             project_id="project-a",
         )
@@ -150,7 +154,7 @@ class TestHandleBeforeAgent:
         assert handler._turn_lifecycle.begin_turn.call_args.args[0] == "sess-1"
         # The reducer owns the paused/active transition; the handler never
         # writes session status directly.
-        handler._session_manager.update_session_status.assert_not_called()
+        handler.session_manager_mock.update_session_status.assert_not_called()
 
     def test_resets_subagent_count_at_start_of_parent_turn(self) -> None:
         handler = _TestHandler()
@@ -183,15 +187,15 @@ class TestHandleBeforeAgent:
         with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
             handler.handle_before_agent(event)
 
-        handler._dispatch_session_summaries_fn.assert_called_once_with(
+        handler.dispatch_summaries_mock.assert_called_once_with(
             "sess-1",
             False,
             None,
             False,
         )
         mock_svm_cls.return_value.set_variable.assert_not_called()
-        assert handler._dispatch_session_summaries_fn.call_count == 1
-        assert handler._dispatch_session_summaries_fn.call_args is not None
+        assert handler.dispatch_summaries_mock.call_count == 1
+        assert handler.dispatch_summaries_mock.call_args is not None
 
     def test_exit_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -202,19 +206,19 @@ class TestHandleBeforeAgent:
         )
 
         handler.handle_before_agent(event)
-        handler._dispatch_session_summaries_fn.assert_called_once_with(
+        handler.dispatch_summaries_mock.assert_called_once_with(
             "sess-1",
             False,
             None,
             False,
         )
-        assert handler._dispatch_session_summaries_fn.call_count == 1
-        assert handler._dispatch_session_summaries_fn.call_args is not None
+        assert handler.dispatch_summaries_mock.call_count == 1
+        assert handler.dispatch_summaries_mock.call_args is not None
 
     def test_skill_interception(self) -> None:
         handler = _TestHandler()
-        handler._skill_manager.resolve_skill_name.return_value = None
-        handler._skill_manager.match_triggers.return_value = []
+        handler.skill_manager_mock.resolve_skill_name.return_value = None
+        handler.skill_manager_mock.match_triggers.return_value = []
 
         event = _make_event(
             data={"prompt": "hello"},
@@ -379,7 +383,7 @@ class TestHandleBeforeAgent:
         handler = _TestHandler()
         handler._skill_manager = None
         handler._turn_lifecycle = MagicMock()
-        handler._session_manager.get.return_value = MagicMock(
+        handler.session_manager_mock.get.return_value = MagicMock(
             project_id="proj-1",
             message_count=186,
             turn_count=74,
@@ -409,9 +413,9 @@ class TestHandleBeforeAgent:
         assert result.context is None
         assert "## Role" not in (result.context or "")
         handler._turn_lifecycle.begin_turn.assert_called_once()
-        handler._session_manager.update_session_status.assert_not_called()
-        handler._session_manager.reset_transcript_processed.assert_not_called()
-        handler._session_manager.get.assert_called_once_with("sess-1")
+        handler.session_manager_mock.update_session_status.assert_not_called()
+        handler.session_manager_mock.reset_transcript_processed.assert_not_called()
+        handler.session_manager_mock.get.assert_called_once_with("sess-1")
         mock_resolve_agent.assert_not_called()
         mock_merge.assert_any_call("sess-1", {"_agent_context_injected": True})
         assert _staged_preamble_guard(result) == {}
@@ -419,7 +423,7 @@ class TestHandleBeforeAgent:
     def test_persona_switch_reinjects_agent_preamble_once(self) -> None:
         handler = _TestHandler()
         handler._skill_manager = None
-        handler._session_manager.get.return_value = MagicMock(
+        handler.session_manager_mock.get.return_value = MagicMock(
             project_id="proj-1",
             message_count=12,
             turn_count=5,
@@ -492,7 +496,7 @@ class TestHandleBeforeAgent:
         assert second.context is None
         mock_resolve.assert_called_once_with(
             "operator",
-            handler._session_manager.db,
+            handler.session_manager_mock.db,
             project_id="proj-1",
         )
         _merge_calls_without_preamble_guard(mock_merge)
@@ -500,7 +504,7 @@ class TestHandleBeforeAgent:
     def test_explicit_rehydrate_reinjects_agent_preamble_once(self) -> None:
         handler = _TestHandler()
         handler._skill_manager = None
-        handler._session_manager.get.return_value = MagicMock(
+        handler.session_manager_mock.get.return_value = MagicMock(
             project_id="proj-1",
             message_count=20,
             turn_count=9,
@@ -607,7 +611,7 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "expand"
         mock_skill.content = "# Expand skill"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby:expand")
         assert result is not None
@@ -619,7 +623,7 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "expand"
         mock_skill.content = "# Expand"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby expand some args")
         assert result is not None
@@ -632,7 +636,7 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "expand"
         mock_skill.content = "# Expand"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("$gobby expand some args")
 
@@ -646,7 +650,7 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "coderabbit"
         mock_skill.content = "# CodeRabbit"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command(
             "$gobby coderabbit CodeRabbit finding 1\n"
@@ -668,12 +672,12 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "plan"
         mock_skill.content = "# Plan\n" + ("x" * 20_000)
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command(command)
 
         assert result is not None
-        assert skill_fetch_directive("plan") in result
+        assert skill_fetch_directive("gobby:references/plan/overview.md") in result
         assert "User arguments:" not in result
         assert "draft auth" not in result
         assert "<skill-context" not in result
@@ -682,7 +686,7 @@ class TestInterceptSkillCommand:
 
     def test_gobby_skill_not_found(self) -> None:
         handler = _TestHandler()
-        handler._skill_manager.resolve_skill_name.return_value = None
+        handler.skill_manager_mock.resolve_skill_name.return_value = None
 
         with patch.object(handler, "_skill_not_found_context", return_value="not found text"):
             result = handler._intercept_skill_command("/gobby:nonexistent")
@@ -690,7 +694,7 @@ class TestInterceptSkillCommand:
 
     def test_codex_gobby_skill_not_found_uses_codex_prefix(self) -> None:
         handler = _TestHandler()
-        handler._skill_manager.resolve_skill_name.return_value = None
+        handler.skill_manager_mock.resolve_skill_name.return_value = None
 
         with patch.object(
             handler, "_skill_not_found_context", return_value="not found text"
@@ -712,7 +716,7 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "expand"
         mock_skill.content = "# Expand"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby:expand --tdd")
         assert result is not None
@@ -724,20 +728,20 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "bridge"
         mock_skill.content = "# Bridge skill"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby skills bridge")
         assert result is not None
-        assert skill_fetch_directive("bridge") in result
+        assert skill_fetch_directive("gobby:references/skills/overview.md") in result
         assert "# Bridge skill" not in result
-        handler._skill_manager.resolve_skill_name.assert_called_with("bridge")
+        handler.skill_manager_mock.resolve_skill_name.assert_not_called()
 
     def test_gobby_skill_singular_namespace(self) -> None:
         handler = _TestHandler()
         mock_skill = MagicMock()
         mock_skill.name = "bridge"
         mock_skill.content = "# Bridge skill"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby skill bridge")
         assert result is not None
@@ -748,18 +752,17 @@ class TestInterceptSkillCommand:
         mock_skill = MagicMock()
         mock_skill.name = "bridge"
         mock_skill.content = "# Bridge"
-        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+        handler.skill_manager_mock.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby skills bridge --verbose")
         assert result is not None
         assert "User arguments:" not in result
         assert "--verbose" not in result
 
-    def test_gobby_skills_bare_returns_help(self) -> None:
+    def test_gobby_skills_bare_loads_capability(self) -> None:
         handler = _TestHandler()
-        with patch.object(handler, "_generate_help_content", return_value="help text"):
-            result = handler._intercept_skill_command("/gobby skills")
-        assert result == "help text"
+        result = handler._intercept_skill_command("/gobby skills")
+        assert result == skill_fetch_directive("gobby:references/skills/overview.md")
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +785,7 @@ class TestSuggestSkills:
 
     def test_no_matches(self) -> None:
         handler = _TestHandler()
-        handler._skill_manager.match_triggers.return_value = []
+        handler.skill_manager_mock.match_triggers.return_value = []
         result = handler._suggest_skills("write some code")
         assert result is None
 
@@ -790,7 +793,7 @@ class TestSuggestSkills:
         handler = _TestHandler()
         mock_skill = MagicMock()
         mock_skill.name = "commit"
-        handler._skill_manager.match_triggers.return_value = [(mock_skill, 0.9)]
+        handler.skill_manager_mock.match_triggers.return_value = [(mock_skill, 0.9)]
 
         with patch(
             "gobby.hooks.event_handlers._agent._load_agent_prompt",
@@ -815,13 +818,38 @@ class TestSuggestSkills:
 class TestGenerateHelpContent:
     """Tests for _generate_help_content."""
 
+    @pytest.mark.parametrize("router_request", ["$gobby help", "$gobby unknown"])
+    def test_router_help_and_unknown_preserve_active_visibility(self, router_request: str) -> None:
+        from gobby.skills.parser import ParsedSkill
+
+        handler = _TestHandler()
+        handler.skill_manager_mock.resolve_skill_name.return_value = None
+        handler.skill_manager_mock.discover_core_skills.return_value = [
+            ParsedSkill(name="brevity", description="Visible", content=""),
+            ParsedSkill(name="restraint", description="Inactive", content=""),
+            ParsedSkill(name="unknown-hidden", description="Internal", content="", internal=True),
+        ]
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as state:
+            state.return_value.get_variables.return_value = {
+                "_active_skill_names": ["brevity", "unknown-hidden"]
+            }
+            result = handler._intercept_skill_command(
+                router_request, "session-1", "project-override"
+            )
+        assert result is not None
+        assert "$gobby brevity" in result
+        assert "restraint" not in result
+        assert "unknown-hidden" not in result
+        assert "$gobby tasks" in result
+
     def test_generate_help(self) -> None:
         handler = _TestHandler()
         mock_skill = MagicMock()
         mock_skill.name = "expand"
         mock_skill.description = "Expand tasks. Into subtasks."
         mock_skill.is_always_apply.return_value = False
-        handler._skill_manager.discover_core_skills.return_value = [mock_skill]
+        mock_skill.is_internal.return_value = False
+        handler.skill_manager_mock.discover_core_skills.return_value = [mock_skill]
 
         with patch(
             "gobby.hooks.event_handlers._agent._load_agent_prompt",
@@ -836,13 +864,15 @@ class TestGenerateHelpContent:
         expand_skill.name = "expand"
         expand_skill.description = "Expand tasks. Into subtasks."
         expand_skill.is_always_apply.return_value = False
+        expand_skill.is_internal.return_value = False
 
         plan_skill = MagicMock()
         plan_skill.name = "plan"
         plan_skill.description = "Draft plans."
         plan_skill.is_always_apply.return_value = False
+        plan_skill.is_internal.return_value = False
 
-        handler._skill_manager.discover_core_skills.return_value = [
+        handler.skill_manager_mock.discover_core_skills.return_value = [
             plan_skill,
             expand_skill,
         ]
@@ -855,8 +885,8 @@ class TestGenerateHelpContent:
 
         skills_list = mock_load.call_args.args[1]["skills_list"]
         assert "- `/gobby expand` — Expand tasks" in skills_list
-        assert "- `/gobby plan` — Draft plans" in skills_list
-        assert skills_list.index("/gobby expand") < skills_list.index("/gobby plan")
+        assert "- `/gobby skill plan` — Draft plans" in skills_list
+        assert skills_list.index("/gobby expand") < skills_list.index("/gobby skill plan")
 
     def test_generate_help_uses_command_prefix(self) -> None:
         handler = _TestHandler()
@@ -864,7 +894,8 @@ class TestGenerateHelpContent:
         expand_skill.name = "expand"
         expand_skill.description = "Expand tasks."
         expand_skill.is_always_apply.return_value = False
-        handler._skill_manager.discover_core_skills.return_value = [expand_skill]
+        expand_skill.is_internal.return_value = False
+        handler.skill_manager_mock.discover_core_skills.return_value = [expand_skill]
 
         with patch(
             "gobby.hooks.event_handlers._agent._load_agent_prompt",
@@ -882,7 +913,8 @@ class TestGenerateHelpContent:
         skill.name = "expand"
         skill.description = "Expand tasks."
         skill.is_always_apply.return_value = False
-        handler._skill_manager.discover_core_skills.return_value = [skill]
+        skill.is_internal.return_value = False
+        handler.skill_manager_mock.discover_core_skills.return_value = [skill]
 
         with (
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls,
@@ -895,8 +927,8 @@ class TestGenerateHelpContent:
             result = handler._generate_help_content(session_id="sess-1")
 
         assert result == "help"
-        handler.logger.warning.assert_called_once()
-        assert "active skills" in handler.logger.warning.call_args.args[0]
+        handler.logger_mock.warning.assert_called_once()
+        assert "active skills" in handler.logger_mock.warning.call_args.args[0]
 
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()
@@ -904,12 +936,13 @@ class TestGenerateHelpContent:
         regular_skill.name = "expand"
         regular_skill.description = "Expand tasks."
         regular_skill.is_always_apply.return_value = False
+        regular_skill.is_internal.return_value = False
 
         auto_skill = MagicMock()
         auto_skill.name = "auto-inject"
         auto_skill.is_always_apply.return_value = True
 
-        handler._skill_manager.discover_core_skills.return_value = [
+        handler.skill_manager_mock.discover_core_skills.return_value = [
             regular_skill,
             auto_skill,
         ]
@@ -931,13 +964,15 @@ class TestGenerateHelpContent:
         regular_skill.name = "expand"
         regular_skill.description = "Expand tasks."
         regular_skill.is_always_apply.return_value = False
+        regular_skill.is_internal.return_value = False
 
         router_skill = MagicMock()
         router_skill.name = "gobby"
         router_skill.description = "Router."
         router_skill.is_always_apply.return_value = False
+        router_skill.is_internal.return_value = False
 
-        handler._skill_manager.discover_core_skills.return_value = [
+        handler.skill_manager_mock.discover_core_skills.return_value = [
             regular_skill,
             router_skill,
         ]
@@ -973,14 +1008,15 @@ class TestSkillNotFoundContext:
         mock_skill = MagicMock()
         mock_skill.name = "expand"
         mock_skill.is_always_apply.return_value = False
-        handler._skill_manager.discover_core_skills.return_value = [mock_skill]
+        mock_skill.is_internal.return_value = False
+        handler.skill_manager_mock.discover_core_skills.return_value = [mock_skill]
 
         with patch(
             "gobby.hooks.event_handlers._agent._load_agent_prompt",
             return_value="not found msg",
         ) as mock_load:
             result = handler._skill_not_found_context("expa", command_prefix="$gobby")
-        assert result == "not found msg"
+        assert result.startswith("not found msg\n\n")
         assert mock_load.call_args.args[1]["command_prefix"] == "$gobby"
 
     def test_no_skill_manager(self) -> None:
@@ -1001,7 +1037,6 @@ class TestHandleAfterAgent:
 
     def test_with_session(self) -> None:
         handler = _TestHandler()
-        handler._apply_debug_echo = MagicMock()
         handler._turn_lifecycle = MagicMock()
         event = _make_event(
             event_type=HookEventType.AFTER_AGENT,
@@ -1009,12 +1044,13 @@ class TestHandleAfterAgent:
             turn_disposition="completed",
         )
 
-        result = handler.handle_after_agent(event)
+        with patch.object(handler, "_apply_debug_echo") as debug_echo:
+            result = handler.handle_after_agent(event)
         assert result.decision == "allow"
         handler._turn_lifecycle.end_turn.assert_called_once()
         assert handler._turn_lifecycle.end_turn.call_args.args[:2] == ("sess-1", "completed")
-        handler._session_manager.update_session_status.assert_not_called()
-        handler._apply_debug_echo.assert_called_once_with(result)
+        handler.session_manager_mock.update_session_status.assert_not_called()
+        debug_echo.assert_called_once_with(result)
 
     def test_unknown_disposition_never_settles_the_turn(self) -> None:
         handler = _TestHandler()
@@ -1060,7 +1096,7 @@ class TestHandleStop:
         assert result.decision == "allow"
         handler._turn_lifecycle.end_turn.assert_called_once()
         assert handler._turn_lifecycle.end_turn.call_args.args[:2] == ("sess-1", "completed")
-        handler._session_manager.update_session_status.assert_not_called()
+        handler.session_manager_mock.update_session_status.assert_not_called()
 
     def test_stop_retires_session_hook_effects(self) -> None:
         assert callable(getattr(agent_mod, "retire_session_hook_effects", None))
@@ -1106,11 +1142,10 @@ class TestHandlePreCompact:
 
         result = handler.handle_pre_compact(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_not_called()
+        handler.session_manager_mock.update_session_status.assert_not_called()
 
     def test_manual_claude_updates_status(self) -> None:
         handler = _TestHandler()
-        handler._dispatch_session_summaries_fn = MagicMock()
         event = _make_event(
             event_type=HookEventType.PRE_COMPACT,
             source=SessionSource.CLAUDE,
@@ -1120,10 +1155,10 @@ class TestHandlePreCompact:
 
         result = handler.handle_pre_compact(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_called_with(
+        handler.session_manager_mock.update_session_status.assert_called_with(
             "sess-1", "awaiting_handoff"
         )
-        handler._dispatch_session_summaries_fn.assert_called_once_with(
+        handler.dispatch_summaries_mock.assert_called_once_with(
             "sess-1",
             False,
             None,
@@ -1133,7 +1168,6 @@ class TestHandlePreCompact:
     @pytest.mark.parametrize("trigger", ["auto", "clear"])
     def test_non_handoff_compact_trigger_summarizes_without_status(self, trigger: str) -> None:
         handler = _TestHandler()
-        handler._dispatch_session_summaries_fn = MagicMock()
         event = _make_event(
             event_type=HookEventType.PRE_COMPACT,
             source=SessionSource.CLAUDE,
@@ -1143,8 +1177,8 @@ class TestHandlePreCompact:
 
         result = handler.handle_pre_compact(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_not_called()
-        handler._dispatch_session_summaries_fn.assert_called_once_with(
+        handler.session_manager_mock.update_session_status.assert_not_called()
+        handler.dispatch_summaries_mock.assert_called_once_with(
             "sess-1",
             False,
             None,
@@ -1181,7 +1215,7 @@ class TestSubagentEvents:
 
         result = handler.handle_subagent_start(event)
         assert result.decision == "allow"
-        cast(MagicMock, handler._session_manager.db.fetchone).assert_not_called()
+        cast(MagicMock, handler.session_manager_mock.db.fetchone).assert_not_called()
         assert not hasattr(handler, "_pending_subagent_depths")
 
     def test_subagent_start_increments_count_and_derives_is_subagent(self) -> None:

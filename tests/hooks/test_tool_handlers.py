@@ -15,6 +15,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.parser import ParsedSkill
 
 from ._event_handler_helpers import make_event
 
@@ -23,6 +24,107 @@ pytestmark = pytest.mark.unit
 
 class TestToolHandlers:
     """Test BEFORE_TOOL and AFTER_TOOL handlers."""
+
+    @pytest.mark.parametrize("name", ["brevity", "gobby:brevity"])
+    def test_native_standalone_level(self, event_handlers: EventHandlers, name: str) -> None:
+        manager = MagicMock()
+        manager.resolve_skill_name.return_value = ParsedSkill(
+            name="brevity",
+            description="Concise",
+            content="PRIVATE",
+            metadata={"gobby": {"levels": ["normal", "max"]}},
+        )
+        event_handlers._skill_manager = manager
+        response = event_handlers._resolve_skill_tool_call(
+            {"tool_input": {"skill": name, "args": "max preserve facts"}}, "project-override"
+        )
+        assert response is not None
+        assert response.context is not None
+        assert '"level": "max"' in response.context
+        assert "User arguments: max preserve facts" in response.context
+        manager.resolve_skill_name.assert_called_once_with(
+            name.removeprefix("gobby:"), project_id="project-override"
+        )
+
+    @pytest.mark.parametrize("router_request", ["help", "missing"])
+    def test_native_router_filters_active_skills(
+        self, event_handlers: EventHandlers, router_request: str
+    ) -> None:
+        manager = MagicMock()
+        manager.resolve_skill_name.return_value = None
+        manager.discover_core_skills.return_value = [
+            ParsedSkill(name="brevity", description="Visible", content=""),
+            ParsedSkill(name="restraint", description="Inactive", content=""),
+            ParsedSkill(name="hidden", description="Internal", content="", internal=True),
+        ]
+        event_handlers._skill_manager = manager
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as state:
+            state.return_value.get_variables.return_value = {
+                "_active_skill_names": ["brevity", "hidden"]
+            }
+            response = event_handlers._resolve_skill_tool_call(
+                {"tool_input": {"skill": "gobby", "args": router_request}},
+                "project-override",
+                "session-1",
+            )
+        assert response is not None
+        assert response.context is not None
+        assert "/gobby brevity" in response.context
+        assert "restraint" not in response.context
+        assert "hidden" not in response.context
+        assert "/gobby tasks" in response.context
+        state.return_value.get_variables.assert_called_once_with("session-1")
+
+    @pytest.mark.parametrize("name", ["gobby", "gobby:tasks", "tasks"])
+    def test_native_capability_reference(self, event_handlers: EventHandlers, name: str) -> None:
+        event_handlers._skill_manager = MagicMock()
+        args = "tasks references closing" if name == "gobby" else "references closing"
+        response = event_handlers.handle_before_tool(
+            make_event(
+                HookEventType.BEFORE_TOOL,
+                data={"tool_name": "Skill", "tool_input": {"skill": name, "args": args}},
+            )
+        )
+        assert response.decision == "block"
+        assert response.context is not None
+        assert '"path":"references/tasks/closing.md"' in response.context
+        assert "overview.md" not in response.context
+        event_handlers._skill_manager.resolve_skill_name.assert_not_called()
+
+    def test_native_router_retains_request_arguments(self, event_handlers: EventHandlers) -> None:
+        event_handlers._skill_manager = MagicMock()
+        response = event_handlers.handle_before_tool(
+            make_event(
+                HookEventType.BEFORE_TOOL,
+                data={
+                    "tool_name": "Skill",
+                    "tool_input": {"skill": "gobby", "args": "tasks close #42"},
+                },
+            )
+        )
+        assert response.decision == "block"
+        assert response.context is not None
+        assert "User arguments: close #42" in response.context
+
+    def test_native_router_unknown_lists_choices(self, event_handlers: EventHandlers) -> None:
+        manager = MagicMock()
+        manager.resolve_skill_name.return_value = None
+        manager.discover_core_skills.return_value = []
+        event_handlers._skill_manager = manager
+        response = event_handlers.handle_before_tool(
+            make_event(
+                HookEventType.BEFORE_TOOL,
+                data={
+                    "tool_name": "Skill",
+                    "tool_input": {"skill": "gobby", "args": "no-such-capability"},
+                },
+            )
+        )
+        assert response.decision == "block"
+        assert response.context is not None
+        assert "Unknown Gobby name" in response.context
+        assert "/gobby tasks" in response.context
+        assert "get_skill_file" not in response.context
 
     def test_before_tool_allows(self, event_handlers: EventHandlers) -> None:
         """Test BEFORE_TOOL allows by default."""
@@ -103,7 +205,7 @@ class TestToolHandlers:
 class TestToolHandlerEdgeCases:
     """Test BEFORE_TOOL and AFTER_TOOL edge cases."""
 
-    def test_before_tool_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_before_tool_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test BEFORE_TOOL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -116,7 +218,9 @@ class TestToolHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_before_tool_records_autonomous_tool_start(self, mock_dependencies: dict) -> None:
+    def test_before_tool_records_autonomous_tool_start(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         """BEFORE_TOOL marks the call in flight for stagnation detection."""
         progress_tracker = MagicMock()
         handlers = EventHandlers(**mock_dependencies, progress_tracker=progress_tracker)
@@ -135,7 +239,7 @@ class TestToolHandlerEdgeCases:
             tool_args={"command": "uv run pytest tests/foo.py"},
         )
 
-    def test_after_tool_failure_status(self, mock_dependencies: dict) -> None:
+    def test_after_tool_failure_status(self, mock_dependencies: dict[str, Any]) -> None:
         """Test AFTER_TOOL handles is_failure metadata."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -150,7 +254,7 @@ class TestToolHandlerEdgeCases:
 
     def test_after_tool_tracks_native_outcome_and_skips_wrapper_echo(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
     ) -> None:
         handlers = EventHandlers(**mock_dependencies)
         native_event = make_event(
@@ -183,7 +287,7 @@ class TestToolHandlerEdgeCases:
         assert track_outcome.call_count == 1
         assert track_outcome.call_args.args[1:] == ("sess-123", native_event)
 
-    def test_after_tool_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_after_tool_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test AFTER_TOOL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -196,7 +300,9 @@ class TestToolHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_after_tool_records_autonomous_progress(self, mock_dependencies: dict) -> None:
+    def test_after_tool_records_autonomous_progress(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         """AFTER_TOOL feeds normalized tool traffic to the progress tracker."""
         progress_tracker = MagicMock()
         handlers = EventHandlers(**mock_dependencies, progress_tracker=progress_tracker)
@@ -222,7 +328,7 @@ class TestToolHandlerEdgeCases:
 
     def test_edit_tracking_failure_logs_warning(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
         tmp_path: Path,
     ) -> None:
@@ -257,7 +363,9 @@ class TestToolHandlerEdgeCases:
         assert warning.levelno == logging.WARNING
         assert warning.exc_info is not None
 
-    def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict, tmp_path: Path) -> None:
+    def test_after_tool_edit_marks_had_edits(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
@@ -280,7 +388,7 @@ class TestToolHandlerEdgeCases:
         assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
     def test_after_tool_edit_marks_had_edits_for_in_repo_path(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test AFTER_TOOL marks had_edits when the edited path resolves inside cwd."""
         repo_root = Path("/tmp/project")
@@ -339,7 +447,7 @@ class TestToolHandlerEdgeCases:
     )
     def test_after_tool_shell_non_edits_skip_tracking(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         data: dict[str, Any],
         metadata: dict[str, Any],
     ) -> None:
@@ -528,7 +636,7 @@ class TestToolHandlerEdgeCases:
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_records_candidate_without_sync_git(
-        self, mock_dependencies: dict, tmp_path: Path
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """The sync hook records candidates; async status later filters clean or ignored paths."""
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
@@ -558,7 +666,7 @@ class TestToolHandlerEdgeCases:
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
     def test_after_tool_non_ignored_edit_still_marks_had_edits(
-        self, mock_dependencies: dict, tmp_path: Path
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """Paths git does not ignore keep the existing tracking behavior."""
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
@@ -590,7 +698,7 @@ class TestToolHandlerEdgeCases:
 
     def test_structured_multi_file_edit_is_recorded_atomically(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         tmp_path: Path,
     ) -> None:
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
@@ -633,7 +741,7 @@ class TestToolHandlerEdgeCases:
 
     def test_structured_edit_without_paths_skips_tracking_and_warns(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
@@ -665,7 +773,7 @@ class TestToolHandlerEdgeCases:
 
     def test_failed_structured_edit_does_not_change_attribution(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
     ) -> None:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -690,7 +798,7 @@ class TestToolHandlerEdgeCases:
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_absolute_path_without_repo_context_not_tracked(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """Out-of-repo absolute paths without cwd are not attributed as repo edits."""
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
@@ -999,6 +1107,7 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
+        assert response.context is not None
         assert "User arguments: status" in response.context
 
     def test_skill_tool_unknown_allows_native_handler(
@@ -1119,112 +1228,46 @@ class TestSkillToolInterception:
         with pytest.raises(ValueError, match="bad skill payload"):
             handlers_with_skills.handle_before_tool(event)
 
-    def test_skill_tool_tier2_mcp_fallback(
-        self, mock_dependencies: dict[str, Any], skill_manager: MagicMock
+    @pytest.mark.parametrize("name", ["playwright", "/loop", "nonexistent", "gobby:missing"])
+    def test_unresolved_native_name_never_fetches_hidden_body(
+        self, mock_dependencies: dict[str, Any], skill_manager: MagicMock, name: str
     ) -> None:
-        """Tier 2: When local resolve fails, falls back to gobby-skills MCP get_skill."""
         skill_manager.resolve_skill_name.return_value = None
-        mock_call_tool = MagicMock(
+        skill_manager.discover_core_skills.return_value = []
+        hidden_fetch = MagicMock(
             return_value={
                 "success": True,
-                "skill": {"name": "playwright", "content": "# Playwright\nBrowser automation."},
+                "skill": {"name": "playwright", "content": "HIDDEN BODY"},
             }
         )
         mock_dependencies["skill_manager"] = skill_manager
-        mock_dependencies["call_tool"] = mock_call_tool
+        mock_dependencies["call_tool"] = hidden_fetch
         handlers = EventHandlers(**mock_dependencies)
-
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "playwright"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": name}},
         )
         response = handlers.handle_before_tool(event)
+        hidden_fetch.assert_not_called()
+        if name.startswith("gobby:"):
+            assert response.decision == "block"
+            assert response.context is not None
+            assert "Unknown Gobby skill" in response.context
+            assert "/gobby tasks" in response.context
+        else:
+            assert response.decision == "allow"
 
-        assert response.decision == "block"
-        assert skill_fetch_directive("playwright") in (response.context or "")
-        assert "Browser automation" not in (response.context or "")
-        assert "<skill-context" not in (response.context or "")
-        mock_call_tool.assert_any_call("gobby-skills", "get_skill", {"name": "playwright"})
-
-    def test_skill_tool_hub_match_not_searched_for_native_loop(
-        self, mock_dependencies: dict[str, Any], skill_manager: MagicMock
-    ) -> None:
-        """Hub-only matches are not searched; native Skill names pass through."""
-        skill_manager.resolve_skill_name.return_value = None
-
-        def _mock_call(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
-            if tool == "get_skill":
-                return {"success": False}
-            if tool == "search_hub":
-                return {
-                    "success": True,
-                    "results": [
-                        {
-                            "display_name": "playwright-cli",
-                            "slug": "playwright-cli",
-                            "description": "Browser automation via Playwright",
-                            "hub_name": "clawdhub",
-                        }
-                    ],
-                }
-            return {"success": False}
-
-        mock_call_tool = MagicMock(side_effect=_mock_call)
-        mock_dependencies["skill_manager"] = skill_manager
-        mock_dependencies["call_tool"] = mock_call_tool
-        handlers = EventHandlers(**mock_dependencies)
-
-        event = make_event(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "/loop"}},
-        )
-        response = handlers.handle_before_tool(event)
-
-        assert response.decision == "allow"
-        mock_call_tool.assert_called_once_with("gobby-skills", "get_skill", {"name": "/loop"})
-        assert all(call.args[1] != "search_hub" for call in mock_call_tool.call_args_list)
-
-    def test_skill_tool_unresolved_name_allows_native_handler(
-        self, mock_dependencies: dict[str, Any], skill_manager: MagicMock
-    ) -> None:
-        """Unresolved names pass through after local and MCP misses."""
-        skill_manager.resolve_skill_name.return_value = None
-
-        def _mock_call(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
-            return {"success": False}
-
-        mock_call_tool = MagicMock(side_effect=_mock_call)
-        mock_dependencies["skill_manager"] = skill_manager
-        mock_dependencies["call_tool"] = mock_call_tool
-        handlers = EventHandlers(**mock_dependencies)
-
-        event = make_event(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "nonexistent"}},
-        )
-        response = handlers.handle_before_tool(event)
-
-        assert response.decision == "allow"
-        mock_call_tool.assert_called_once_with("gobby-skills", "get_skill", {"name": "nonexistent"})
-
-    def test_skill_tool_no_manager_but_has_call_tool(
+    def test_no_local_manager_does_not_probe_mcp_body(
         self, mock_dependencies: dict[str, Any]
     ) -> None:
-        """Without skill_manager but with call_tool, tier 2 still works."""
-        mock_call_tool = MagicMock(
-            return_value={
-                "success": True,
-                "skill": {"name": "playwright", "content": "# Playwright skill"},
-            }
+        hidden_fetch = MagicMock()
+        mock_dependencies["call_tool"] = hidden_fetch
+        handlers = EventHandlers(**mock_dependencies)
+        response = handlers.handle_before_tool(
+            make_event(
+                HookEventType.BEFORE_TOOL,
+                data={"tool_name": "Skill", "tool_input": {"skill": "playwright"}},
+            )
         )
-        mock_dependencies["call_tool"] = mock_call_tool
-        handlers = EventHandlers(**mock_dependencies)  # no skill_manager
-
-        event = make_event(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "playwright"}},
-        )
-        response = handlers.handle_before_tool(event)
-
-        assert response.decision == "block"
-        assert skill_fetch_directive("playwright") in (response.context or "")
+        assert response.decision == "allow"
+        hidden_fetch.assert_not_called()

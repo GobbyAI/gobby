@@ -2,14 +2,41 @@
 
 from importlib.resources import files
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from gobby.skills.parser import parse_skill_file
+from gobby.hooks.event_handlers._agent import AgentEventHandlerMixin
+from gobby.hooks.skill_manager import HookSkillManager
+from gobby.skills.parser import ParsedSkill, parse_skill_file
 
 pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path(str(files("gobby").joinpath("install/shared/skills/gobby/SKILL.md")))
+
+
+def test_reference_contract_3_1_2() -> None:
+    """Provider interception keeps project resolution and multiline level arguments."""
+    override = ParsedSkill(
+        name="brevity",
+        description="Project brevity",
+        content="PROJECT BODY",
+        metadata={"gobby": {"levels": ["normal", "max"]}},
+    )
+    handler = AgentEventHandlerMixin()
+    handler._skill_manager = HookSkillManager()
+    with patch.object(
+        handler._skill_manager, "discover_core_skills", return_value=[override]
+    ) as discover:
+        result = handler._intercept_skill_command(
+            "$gobby skill brevity max\nretain evidence", project_id="project-override"
+        )
+    discover.assert_called_once_with("project-override")
+    assert result is not None
+    assert '"name": "brevity"' in result
+    assert '"level": "max"' in result
+    assert "retain evidence" not in result
+    assert "PROJECT BODY" not in result
 
 
 class TestGobbyRouterSkill:
