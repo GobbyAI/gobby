@@ -138,6 +138,7 @@ class ServiceContainer:
     provider_capacity_service: Any | None = None  # ProviderCapacityService
     provider_capability_service: Any | None = None  # CapabilityRefreshCoordinator
     provider_capability_resolver: Any | None = None  # CapabilityResolver
+    local_context_service: Any | None = None  # LocalContextService
     model_metadata_coverage_auditor: Any | None = None  # ModelMetadataCoverageAuditor
     generation_endpoint_health: Any | None = None  # GenerationEndpointHealthCoordinator
     web_chat_runtime_manager: Any | None = None  # WebChatRuntimeManager

@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.providers.capabilities.local_context_vllm import (
+    parse_vllm_served_records,
+    vllm_api_base,
+    vllm_health_url,
+    vllm_models_url,
+)
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -42,6 +48,14 @@ class LocalModelError(Exception):
     """Raised when local model pre-flight fails."""
 
 
+def _origin(api_base: str) -> str:
+    """Return a local endpoint base without a trailing ``/v1`` or slash."""
+    base = api_base.strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")].rstrip("/")
+    return base
+
+
 def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     """Count running agents that were spawned against a local endpoint.
 
@@ -54,39 +68,6 @@ def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     return sum(
         1 for run in run_manager.list_active_for_machine(require_machine_id()) if run.is_local
     )
-
-
-def _origin(api_base: str) -> str:
-    """Return ``api_base`` without a trailing ``/v1`` segment or slash.
-
-    The path prefix is preserved so endpoints served behind an ingress
-    (``https://gw/models/vllm/v1``) keep their mount point.
-    """
-    base = api_base.strip().rstrip("/")
-    if base.endswith("/v1"):
-        base = base[: -len("/v1")].rstrip("/")
-    return base
-
-
-def vllm_api_base(api_base: str) -> str:
-    """Return the canonical ``{origin}/v1`` base for every vLLM wire request.
-
-    ``api_base`` configured with or without a trailing ``/v1`` (or slash)
-    yields exactly one base, so the resolver, discovery, the generation
-    client, and the Codex override block never build ``/v1/v1/...`` nor a
-    bare-origin ``/chat/completions``.
-    """
-    return f"{_origin(api_base)}/v1"
-
-
-def vllm_models_url(api_base: str) -> str:
-    """Return the single ``{origin}/v1/models`` discovery URL for ``api_base``."""
-    return f"{vllm_api_base(api_base)}/models"
-
-
-def vllm_health_url(api_base: str) -> str:
-    """Return the ``{origin}/health`` probe URL for ``api_base``."""
-    return f"{_origin(api_base)}/health"
 
 
 def _headers(api_key: str | None) -> dict[str, str]:
@@ -380,23 +361,7 @@ async def _ensure_ollama_model(
 
 
 def _vllm_served_model_ids(payload: Any) -> list[str]:
-    if not isinstance(payload, dict):
-        return []
-    models = payload.get("data")
-    if not isinstance(models, list):
-        models = payload.get("models")
-    if not isinstance(models, list):
-        return []
-    ids: list[str] = []
-    for model in models:
-        if not isinstance(model, dict):
-            continue
-        for key in ("id", "model", "name"):
-            value = model.get(key)
-            if isinstance(value, str) and value.strip():
-                ids.append(value.strip())
-                break
-    return ids
+    return parse_vllm_served_records(payload).model_ids()
 
 
 def _format_served_models(served: list[str]) -> str:
