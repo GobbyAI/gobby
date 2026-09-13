@@ -10,6 +10,7 @@ from gobby.workflows.definitions import WorkflowStep
 
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
 _REFERENCE_PATH_PATTERN = re.compile(r"tool_input\.path\s*==\s*['\"]([^'\"]+)['\"]")
+_OR_CLAUSE_PATTERN = re.compile(r"\s+or\s+")
 _SKILL_LIST_VARIABLE_PATTERN = re.compile(
     r"vars(?:\.([A-Za-z_][A-Za-z0-9_]*)|\.get\(\s*['\"]([^'\"]+)['\"]\s*[,\)])"
 )
@@ -64,8 +65,14 @@ def _skill_load_targets(
         if isinstance(condition, str):
             matches = _SKILL_LOAD_TARGET_PATTERN.findall(condition)
             if handler.get("tool") == "get_skill_file":
-                paths = _REFERENCE_PATH_PATTERN.findall(condition)
-                matches = [f"{name}:{path}" for name in matches for path in paths]
+                # Pair names and paths within each `or` clause; a cross product
+                # would invent targets the handler never accepts.
+                matches = [
+                    f"{name}:{path}"
+                    for clause in _OR_CLAUSE_PATTERN.split(condition)
+                    for name in _SKILL_LOAD_TARGET_PATTERN.findall(clause)
+                    for path in _REFERENCE_PATH_PATTERN.findall(clause)
+                ]
             targets.extend(matches)
             declares_targets = declares_targets or bool(matches)
 

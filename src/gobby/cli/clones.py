@@ -328,12 +328,22 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
 
     if json_format:
         click.echo(json_dumps(result, indent=2, default=str))
-        if not result.get("success"):
+        if not result.get("success") or result.get("stash_restore_error"):
             raise SystemExit(1)
         return
 
     if result.get("success"):
         click.echo(f"Merged clone {clone_id} to {target_branch}")
+        for warning in result.get("warnings") or []:
+            click.echo(f"Warning: {warning}", err=True)
+        if result.get("stash_restore_error"):
+            # The merge landed, but the project's .gobby/ files are still stashed.
+            click.echo(
+                "Restore them with `git stash apply "
+                f"{result.get('retained_stash_oid')}` in the project checkout.",
+                err=True,
+            )
+            raise SystemExit(1)
     else:
         # Check for merge conflicts
         if result.get("has_conflicts"):

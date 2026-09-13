@@ -260,7 +260,10 @@ class VoiceMixin(VoiceWarmupMixin):
         if not stt:
             voice_config = self._get_voice_config()
             if not voice_config or not voice_config.enabled:
-                error_msg = "Voice is not enabled. Run gobby install voice on the daemon host."
+                error_msg = (
+                    "Voice is not enabled. Turn on Voice features in Settings "
+                    "or run gobby install voice on the daemon host."
+                )
             elif not voice_config.stt_enabled:
                 error_msg = "Speech-to-text is disabled in config."
             else:

@@ -315,6 +315,32 @@ class TestClonesMergeCommand:
         assert result.exit_code == 1
         assert "conflict" in result.output.lower() or "src/foo.py" in result.output
 
+    @pytest.mark.parametrize("extra_args", [[], ["--json"]])
+    def test_merge_clone_reports_stash_restore_failure(
+        self, mock_clone_manager: MagicMock, mock_httpx: MagicMock, extra_args: list[str]
+    ) -> None:
+        """A landed merge whose .gobby/ stash failed to restore exits 1 with the stash oid."""
+        from gobby.cli.clones import clones
+
+        mock_clone_manager.list_clones.return_value = [MOCK_CLONE]
+        mock_clone_manager.get.return_value = MOCK_CLONE
+        error = "Failed to restore stashed .gobby/ files: conflict"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "warnings": [error],
+            "stash_restore_error": error,
+            "retained_stash_oid": "abc123",
+        }
+        mock_httpx.return_value = mock_response
+
+        result = CliRunner().invoke(clones, ["merge", "clone-123", *extra_args])
+
+        assert result.exit_code == 1
+        assert error in result.output
+        assert "abc123" in result.output
+
 
 class TestClonesDeleteCommand:
     """Tests for 'clones delete' command."""

@@ -382,16 +382,13 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
 
 
 @merge.command("apply")
-@click.option("--force", "-f", is_flag=True, help="Force apply even with pending conflicts")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def merge_apply(force: bool, json_format: bool) -> None:
+def merge_apply(json_format: bool) -> None:
     """Apply resolved changes and complete the merge.
 
     Examples:
 
         gobby merge apply
-
-        gobby merge apply --force
     """
     project = get_project_context()
     if not project:
@@ -409,14 +406,13 @@ def merge_apply(force: bool, json_format: bool) -> None:
             click.echo("Error: No active merge operation found.", err=True)
             raise SystemExit(1)
 
-        # Check for pending conflicts
+        # merge_apply rejects every conflict that is not resolved; report it up front.
         conflicts = manager.list_conflicts(resolution_id=resolution.id)
-        pending = [c for c in conflicts if c.status == "pending"]
+        unresolved = [c for c in conflicts if c.status != "resolved"]
 
-        if pending and not force:
+        if unresolved:
             click.echo(
-                f"Error: {len(pending)} pending conflict(s). "
-                "Resolve them or use --force to apply anyway.",
+                f"Error: {len(unresolved)} unresolved conflict(s). Resolve them before applying.",
                 err=True,
             )
             raise SystemExit(1)

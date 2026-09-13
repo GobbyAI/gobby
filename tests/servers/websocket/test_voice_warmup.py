@@ -758,7 +758,11 @@ class TestVoiceWarmup:
     @pytest.mark.parametrize(
         ("enabled", "stt_enabled", "recovery"),
         [
-            (False, True, "Run gobby install voice on the daemon host."),
+            (
+                False,
+                True,
+                "Turn on Voice features in Settings or run gobby install voice on the daemon host.",
+            ),
             (True, False, "Speech-to-text is disabled in config."),
             (True, True, "Run uv sync in the daemon checkout."),
         ],

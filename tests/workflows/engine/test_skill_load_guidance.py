@@ -93,6 +93,32 @@ def test_reference_guidance_extracts_explicit_file_target() -> None:
     assert "get_tool_schema" in guidance
 
 
+def test_reference_guidance_pairs_names_and_paths_per_clause() -> None:
+    step = WorkflowStep.model_validate(
+        {
+            "name": "load_skill",
+            "allowed_mcp_tools": ["gobby-skills:get_skill_file"],
+            "on_mcp_success": [
+                {
+                    "server": "gobby-skills",
+                    "tool": "get_skill_file",
+                    "when": (
+                        "(tool_input.name == 'gobby' and tool_input.path == 'references/tasks/closing.md')"
+                        " or (tool_input.name == 'python' and tool_input.path == 'references/testing.md')"
+                    ),
+                }
+            ],
+        }
+    )
+
+    guidance = skill_load_block_guidance(step)
+
+    assert '{"name":"gobby","path":"references/tasks/closing.md"}' in guidance
+    assert '{"name":"python","path":"references/testing.md"}' in guidance
+    assert '"name":"gobby","path":"references/testing.md"' not in guidance
+    assert '"name":"python","path":"references/tasks/closing.md"' not in guidance
+
+
 def test_guidance_keeps_explicit_handler_target() -> None:
     step = WorkflowStep.model_validate(
         {

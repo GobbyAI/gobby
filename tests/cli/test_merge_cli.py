@@ -4,7 +4,7 @@ Tests for CLI merge commands:
 - gobby merge start <source-branch> [--strategy=auto|ai-only|human]
 - gobby merge status [--verbose]
 - gobby merge resolve <file> [--strategy=ai|human]
-- gobby merge apply [--force]
+- gobby merge apply
 - gobby merge abort
 """
 
@@ -627,42 +627,6 @@ class TestMergeApplyCommand:
     @patch("gobby.cli.merge.get_worktree_context")
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_project_context")
-    def test_merge_apply_with_force(
-        self,
-        mock_project_ctx: MagicMock,
-        mock_get_manager: MagicMock,
-        mock_worktree_ctx: MagicMock,
-        mock_run_resolution_tool: AsyncMock,
-        runner: CliRunner,
-        mock_resolution: MagicMock,
-    ) -> None:
-        """Test merge apply with --force option."""
-        from gobby.cli import cli
-
-        mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_worktree_ctx.return_value = None
-        mock_manager = MagicMock()
-        mock_manager.get_active_resolution.return_value = mock_resolution
-        mock_manager.list_conflicts.return_value = []
-        mock_get_manager.return_value = mock_manager
-        mock_run_resolution_tool.return_value = {
-            "success": True,
-            "files_merged": [],
-            "commit_sha": "merged-sha",
-        }
-
-        result = runner.invoke(cli, ["merge", "apply", "--force"])
-
-        assert result.exit_code == 0
-        mock_run_resolution_tool.assert_awaited_once_with(mock_manager, "mr-abc123", "merge_apply")
-        mock_manager.update_resolution.assert_not_called()
-        assert "Applied merge: mr-abc123" in result.output
-        assert "commit: merged-sha" in result.output
-
-    @patch("gobby.cli.merge._run_resolution_tool", new_callable=AsyncMock)
-    @patch("gobby.cli.merge.get_worktree_context")
-    @patch("gobby.cli.merge.get_merge_manager")
-    @patch("gobby.cli.merge.get_project_context")
     def test_merge_apply_failure_does_not_report_success(
         self,
         mock_project_ctx: MagicMock,
@@ -754,9 +718,8 @@ class TestMergeApplyCommand:
 
         result = runner.invoke(cli, ["merge", "apply"])
 
-        # Should fail or warn about pending conflicts
-        assert result.exit_code != 0 or "pending" in result.output.lower()
-        assert "pending conflict" in result.output.lower()
+        assert result.exit_code == 1
+        assert "1 unresolved conflict(s)" in result.output
         mock_manager.get_active_resolution.assert_called_once_with(worktree_id=None)
         mock_manager.list_conflicts.assert_called_once_with(resolution_id="mr-abc123")
 
