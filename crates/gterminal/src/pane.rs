@@ -12,6 +12,7 @@ mod terminal;
 mod xtgettcap;
 
 pub use self::runtime::ChildExit;
+pub use self::runtime::ChildExitWatch;
 pub use self::runtime::PaneRuntime;
 pub use self::shell::{PaneLaunchEnv, PaneShellConfig, ShellMode};
 pub use self::state::PaneState;
