@@ -253,6 +253,15 @@ class _NativeAgents:
                 )
                 evidence_manifest_hash = str(query_result["evidence_manifest_hash"])
                 self.answer_evidence_hashes.append(evidence_manifest_hash)
+                rewritten = draft.model_copy(update={"question": "A rewritten question"})
+                with pytest.raises(ValueError, match="question must match the original request"):
+                    await self.service.submit_answer(
+                        run_id=spec.run_id,
+                        attempt=spec.attempt,
+                        draft=rewritten.model_dump(mode="json"),
+                        draft_hash=rewritten.content_hash,
+                        evidence_manifest_hash=evidence_manifest_hash,
+                    )
                 await self.service.submit_answer(
                     run_id=spec.run_id,
                     attempt=spec.attempt,

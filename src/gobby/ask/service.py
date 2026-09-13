@@ -320,6 +320,8 @@ class AskService:
             if state.evidence_manifest_hash != evidence_manifest_hash:
                 raise ValueError("Ask answer submission evidence hash is stale")
             record = self._record(run_id, principal.project_id)
+            if answer.question != record.request.question:
+                raise ValueError("Ask answer question must match the original request exactly")
             artifact = await asyncio.to_thread(
                 self._artifacts(record).write_body,
                 "answer-draft",
