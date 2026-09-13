@@ -1031,7 +1031,7 @@
 				<key>INFOPLIST_FILE</key>
 				<string>Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>GobbyAnnotate</string>
+				<string>Gobby Annotate</string>
 				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
@@ -1105,7 +1105,7 @@
 				<key>INFOPLIST_FILE</key>
 				<string>Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>GobbyAnnotate</string>
+				<string>Gobby Annotate</string>
 				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
@@ -1370,7 +1370,7 @@
 				<key>INFOPLIST_FILE</key>
 				<string>Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>GobbyAnnotate</string>
+				<string>Gobby Annotate</string>
 				<key>INFOPLIST_KEY_NSPrincipalClass</key>
 				<string>NSApplication</string>
 				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
@@ -1448,7 +1448,7 @@
 				<key>INFOPLIST_FILE</key>
 				<string>Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>GobbyAnnotate</string>
+				<string>Gobby Annotate</string>
 				<key>INFOPLIST_KEY_NSPrincipalClass</key>
 				<string>NSApplication</string>
 				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
