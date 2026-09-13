@@ -34,18 +34,30 @@
         "behavioral-skill-validation",
         "best-practices",
         "see-also"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     },
     {
       "path": "docs/guides/cli-commands.md",
       "anchors": [
         "skills"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     },
     {
       "path": "docs/guides/http-endpoints.md",
       "anchors": [
         "memory-skills-workflows-and-rules"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     }
   ],

@@ -24,12 +24,14 @@
         "http",
         "mcp",
         "file-locations",
-        "see-also"
+        "see-also",
+        "postgresql-operations"
       ],
       "evidence": [
         "source-inventory",
         "focused-install-recovery",
-        "independent-review"
+        "independent-review",
+        "postgres-operator-contract"
       ],
       "audit_status": "verified"
     },
@@ -1145,6 +1147,89 @@
         "focused-install-recovery"
       ],
       "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby mcp-server",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/mcp.py",
+        "symbol": "mcp_server"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres backup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "backup_cmd"
+      },
+      "verification": [
+        "public-cli-inventory",
+        "postgres-operator-contract"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres force-revoke-run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "force_revoke_run_cmd"
+      },
+      "verification": [
+        "public-cli-inventory",
+        "postgres-operator-contract"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "install_cmd"
+      },
+      "verification": [
+        "public-cli-inventory",
+        "postgres-operator-contract"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres restore",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "restore_cmd"
+      },
+      "verification": [
+        "public-cli-inventory",
+        "postgres-operator-contract"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres scoped-roles",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "scoped_roles_cmd"
+      },
+      "verification": [
+        "public-cli-inventory",
+        "postgres-operator-contract"
+      ],
+      "audience": "operator"
     }
   ],
   "shared_surfaces": [
@@ -1261,6 +1346,24 @@
       "kind": "validation",
       "command": "uv run python /tmp/gobby_admin_validate.py",
       "result": "22 capabilities, 63 Python symbols, all 49 CLI registry entries, 14 route decorators and 104 local links/anchors passed. Includes all eight audited guides. Native client options verified by source and six test suites; standby variants by source and dedicated tests."
+    },
+    {
+      "id": "public-cli-inventory",
+      "kind": "cli-introspection",
+      "command": "uv run python: recursively inspect visible Click commands, unwrapped callback source identities and parameter declarations without invoking callbacks",
+      "result": "Mapped previously omitted public command identities, including operator task/plan equivalents and PostgreSQL administration. All mappings point to existing operation topics; CLI callbacks were not invoked against live state."
+    },
+    {
+      "id": "postgres-operator-contract",
+      "kind": "source-inspection",
+      "command": "gcode symbol-at src/gobby/cli/postgres.py install_cmd/scoped_roles_cmd/force_revoke_run_cmd/backup_cmd/restore_cmd; Click parameter introspection",
+      "result": "Verified installer delegation, credential-free role listing, confirmation and incomplete-revocation behavior, stopped-daemon backup/restore gates, configured restore target and explicit clean/yes/allow-unverified flags. Added operator reference and guide coverage without live mutation."
+    },
+    {
+      "id": "native-schema-inspection",
+      "kind": "source-inspection",
+      "command": "Read crates/gdaemon/src/main.rs SchemaCommand, verify_schema, print_schema_identity",
+      "result": "Version prints embedded identity without hub connection; verify enforces expected identity, resolves configured database/current schema and delegates SchemaRunner verification before reporting checked receipt, seed-row and object counts. No native mutation probe."
     }
   ],
   "discrepancies": [
@@ -1386,6 +1489,24 @@
       "verification": [
         "client-source",
         "native-client"
+      ],
+      "audience": "operator"
+    },
+    {
+      "command": "gdaemon schema verify",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": "crates/gdaemon/src/main.rs::verify_schema",
+      "verification": [
+        "native-schema-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "command": "gdaemon schema version --json",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": "crates/gdaemon/src/main.rs::print_schema_identity",
+      "verification": [
+        "native-schema-inspection"
       ],
       "audience": "operator"
     }

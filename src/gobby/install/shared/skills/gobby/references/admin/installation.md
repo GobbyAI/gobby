@@ -44,6 +44,10 @@ binaries in place or hand-edit schema identity pins. Check installed rows after
 sync instead of inferring active policy from templates. Load the skills and
 integrations capabilities for their respective install-specific procedures.
 
+`gobby postgres install` is the operator entrypoint to install or configure the
+PostgreSQL component through the shared installer. Inspect its result before
+assuming that the datastore and connection configuration are ready.
+
 `gobby init -C <checkout>` registers the project, attempts initial code indexing,
 and installs applicable Git hooks. Indexing failure is reported separately from
 project initialization; inspect the output before assuming the index is ready.

@@ -25,9 +25,22 @@ hub and machine before choosing a repair.
    principals, datastore health, and client access before reopening work.
 
 Keep an interrupted restore stopped until its partial state is understood.
+For a standalone PostgreSQL archive, `gobby postgres restore DUMP_OR_DIRECTORY`
+targets the configured database and refuses while the daemon is running.
+It verifies the backup unless the operator explicitly uses `--allow-unverified`.
+`--clean` drops existing database objects; `--yes` skips confirmation. These
+options do not select an isolated target: configure and verify that target first.
 Retain the primary failure and any cleanup/restart failure as separate evidence.
 Use isolated fixtures or temporary services for rehearsal; the user's daemon
 database is never a test target.
+
+For native schema diagnostics, `gdaemon schema version --json` prints the
+binary's embedded identity without opening the hub. `gdaemon schema verify`
+checks the configured hub's current schema after enforcing checkout identity;
+its report counts checked receipts, seed rows and catalog objects. Preserve an
+identity mismatch and coordinate the normal cutover with its owner. Direct
+`schema apply` and `sweep-test-schemas` are migration/test implementation
+entrypoints; use the documented Python maintenance workflow for live recovery.
 
 `gobby files migrate` is hub-local and requires a provisioned `files_home` and
 the stopped-daemon maintenance singleton. Upgrade or stop remote writers first;

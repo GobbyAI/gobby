@@ -26,6 +26,12 @@ and shutdown-related 503 as an admission problem before debugging chart data.
    Redact credentials before sharing evidence. Repair the responsible subsystem,
    then repeat the original observation.
 
+The operator command `gobby observations list` inspects unmodeled observations
+sorted by count. Filter with `--source` or `--kind`, bound output with `--limit`
+(default 50), and use `--json` for structured output. Preserve the reported count
+semantics when interpreting results; these are not a replacement for traces or
+per-operation metrics.
+
 Current code still stores local spans, serves `/api/traces`, and can broadcast
 trace events. The Activity panel deliberately hides the Traces tab; do not send
 users to `#traces`. List/detail APIs are the current inspection surface. A

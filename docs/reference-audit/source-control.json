@@ -14,10 +14,6 @@
       "anchors": [
         "worktree-management-guide",
         "quick-start",
-        "create-a-worktree-for-a-task-branch",
-        "inspect-and-filter-worktrees",
-        "attach-or-clear-session-ownership",
-        "sync-detect-stale-worktrees-and-clean-them-up",
         "mental-model",
         "status-and-ownership",
         "cli-reference",

@@ -25,7 +25,8 @@
       ],
       "evidence": [
         "source-audit",
-        "focused-agents"
+        "focused-agents",
+        "coordination-wait-contract"
       ]
     },
     {
@@ -1109,6 +1110,34 @@
       ],
       "audience": "operator/client",
       "route": "GET /api/providers/models"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "wait_for_coordination",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/coordination.py",
+        "symbol": "wait_for_coordination"
+      },
+      "verification": [
+        "coordination-wait-contract"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "cancel_coordination_wait",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/coordination.py",
+        "symbol": "cancel_coordination_wait"
+      },
+      "verification": [
+        "coordination-wait-contract"
+      ],
+      "audience": "agent"
     }
   ],
   "delegated_operations": {
@@ -1152,6 +1181,12 @@
       "kind": "local-validation",
       "command": "uv run Python: load_capability_catalog, AST qualified symbols, Markdown local paths/anchors; git diff --cached --check",
       "result": "5 capabilities valid;67 operation paths and qualified implementation symbols resolve;15 Markdown files and all audit guide anchors valid; staged whitespace clean."
+    },
+    {
+      "id": "coordination-wait-contract",
+      "kind": "source-and-schema",
+      "command": "get_tool_schema(gobby-agents, wait_for_coordination/cancel_coordination_wait); gcode symbol-at coordination.py and CoordinationWaitManager.register; docs/guides/agents.md runtime-tools",
+      "result": "Registered schemas and implementation agree: exactly one keyed/status condition, 900-second default/3600 maximum, idempotent registration without expiry extension, owner release message metadata, waiter-only cancellation. Guide already reflects current contract; messaging reference extended. No live wait mutation."
     }
   ],
   "discrepancies": [

@@ -1151,6 +1151,409 @@
         "focused-task-tests"
       ],
       "audience": "operator-only"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks advance",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/stages.py",
+        "symbol": "advance_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks backup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "backup_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks blocked",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "blocked_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks close",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "close_task_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks commit auto",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/commits.py",
+        "symbol": "auto_link"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks commit link",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/commits.py",
+        "symbol": "link_commit"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks commit list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/commits.py",
+        "symbol": "list_commits"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks commit unlink",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/commits.py",
+        "symbol": "unlink_commit"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks create",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "create_task"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks de-escalate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "de_escalate_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks delete",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "delete_task"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks dep add",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/deps.py",
+        "symbol": "dep_add"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks dep cycles",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/deps.py",
+        "symbol": "dep_cycles"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks dep remove",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/deps.py",
+        "symbol": "dep_remove"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks dep tree",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/deps.py",
+        "symbol": "dep_tree"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks diff",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/commits.py",
+        "symbol": "diff_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks import github",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "import_github"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks label add",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/labels.py",
+        "symbol": "add_label"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks label remove",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/labels.py",
+        "symbol": "remove_label"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "list_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks ready",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "ready_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks reindex",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/search.py",
+        "symbol": "reindex_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks reopen",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "reopen_task_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks restore",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/main.py",
+        "symbol": "restore_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/review.py",
+        "symbol": "review_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/search.py",
+        "symbol": "search_tasks"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "show_task"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks stages",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/stages.py",
+        "symbol": "stages_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks stats",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "task_stats"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks suggest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/ai.py",
+        "symbol": "suggest_cmd"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tasks update",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/creation.md",
+      "implementation": {
+        "path": "src/gobby/cli/tasks/crud.py",
+        "symbol": "update_task"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
     }
   ],
   "delegated_operations": {
@@ -1280,6 +1683,12 @@
       "kind": "isolated-tests",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_tdd_enforcement_rules.py -q",
       "result": "33 passed."
+    },
+    {
+      "id": "public-cli-inventory",
+      "kind": "cli-introspection",
+      "command": "uv run python: recursively inspect visible Click commands, unwrapped callback source identities and parameter declarations without invoking callbacks",
+      "result": "Mapped previously omitted public command identities, including operator task/plan equivalents and PostgreSQL administration. All mappings point to existing operation topics; CLI callbacks were not invoked against live state."
     }
   ],
   "discrepancies": [

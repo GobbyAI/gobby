@@ -804,6 +804,71 @@
         "source-inspection"
       ],
       "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans archive",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "archive_plan_command"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "list_plans_command"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans register",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "register_plan_command"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "show_plan_command"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby plans validate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/plan/coverage.md",
+      "implementation": {
+        "path": "src/gobby/cli/plans.py",
+        "symbol": "validate_plan_command"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
     }
   ],
   "delegated_operations": {
@@ -897,6 +962,12 @@
       "kind": "review",
       "command": "code-review OCR delegate by review_reference_identity",
       "result": "16/16files reviewed,100% coverage,no material findings. Taskless-only task-state wording clarified after review."
+    },
+    {
+      "id": "public-cli-inventory",
+      "kind": "cli-introspection",
+      "command": "uv run python: recursively inspect visible Click commands, unwrapped callback source identities and parameter declarations without invoking callbacks",
+      "result": "Mapped previously omitted public command identities, including operator task/plan equivalents and PostgreSQL administration. All mappings point to existing operation topics; CLI callbacks were not invoked against live state."
     }
   ],
   "discrepancies": [

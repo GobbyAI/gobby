@@ -21,6 +21,10 @@ agents use their authorized domain MCP tools.
    and hook connection with a scoped read. A connected MCP server is not an
    installed skill. Load the skills or integrations capability for those flows.
 
+For a stdio provider transport, `gobby mcp-server` runs the MCP proxy process.
+It can auto-start the daemon and forwards daemon tools; use it as the client's
+configured transport command, not as a read-only health probe.
+
 Ordinary daemon restarts preserve native terminals. gclient reconnects and
 reattaches surviving terminal IDs; an unconfirmed write can leave a pane
 read-only until control is reacquired. Do not blindly replay uncertain writes.

@@ -39,6 +39,10 @@
         "export-and-import",
         "customization-and-scope",
         "public-tooling"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     },
     {
@@ -63,6 +67,10 @@
         "multi-effect-ordering",
         "override-precedence-and-acknowledge-variables",
         "practical-advice"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     },
     {
@@ -80,18 +88,30 @@
         "event-flow",
         "definitions-vs-runtime-state",
         "recommended-reading"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     },
     {
       "path": "docs/guides/cli-commands.md",
       "anchors": [
         "rules-and-pipelines"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     },
     {
       "path": "docs/guides/http-endpoints.md",
       "anchors": [
         "memory-skills-workflows-and-rules"
+      ],
+      "evidence": [
+        "source-audit",
+        "library-integrity"
       ]
     }
   ],

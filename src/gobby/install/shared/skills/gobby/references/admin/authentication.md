@@ -33,5 +33,12 @@ OAuth uses the respective capability. Do not edit token hashes through generic
 configuration, print `--show` output into evidence, or weaken authentication to
 resolve a client configuration error.
 
+For managed execution database access, the operator can inspect
+`gobby postgres scoped-roles --json`; it lists active scoped roles without
+credential material. `gobby postgres force-revoke-run EXECUTION_UUID` revokes
+all scoped roles for that execution, with confirmation unless `--yes` is used.
+An incomplete revocation reports a pending retry rather than success. Identify
+the affected execution and coordinate its interruption before revoking access.
+
 See [authentication](../../../../../../../../docs/guides/admin-operations.md#authentication)
 and [HTTP authentication](../../../../../../../../docs/guides/http-endpoints.md).

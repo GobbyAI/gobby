@@ -437,6 +437,19 @@
         "cli-help",
         "focused-current"
       ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby observations list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/cli/observations.py",
+        "symbol": "list_observations"
+      },
+      "verification": [
+        "public-cli-inventory"
+      ],
+      "audience": "operator"
     }
   ],
   "shared_operations": [
@@ -536,6 +549,12 @@
       "id": "independent-review",
       "command": "review_reference_identity initial and follow-up review",
       "result": "14/14 owned paths reviewed, 0 skipped. High token project-scope finding fixed and follow-up accepted; no remaining material findings."
+    },
+    {
+      "id": "public-cli-inventory",
+      "kind": "cli-introspection",
+      "command": "uv run python: recursively inspect visible Click commands, unwrapped callback source identities and parameter declarations without invoking callbacks",
+      "result": "Mapped previously omitted public command identities, including operator task/plan equivalents and PostgreSQL administration. All mappings point to existing operation topics; CLI callbacks were not invoked against live state."
     }
   ],
   "discrepancies": [

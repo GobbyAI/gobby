@@ -18,6 +18,17 @@ recipient read or acted on it. Use `get_inter_session_message` for a message ID
 and `get_inter_session_messages` for supported bounded mailbox filters. Read all
 needed windows; lists are not automatically exhaustive.
 
+For a coordinated hold, load the schema for `wait_for_coordination` and register
+once against the owner session. Supply exactly one condition: a unique
+`coordination_key`, or a nonempty list of canonical session `statuses`. Yield
+when the outcome is `waiting`. The owner releases a keyed hold with a durable
+`coordination_release` message to you containing the matching
+`metadata.coordination_key`; ordinary message text does not release it.
+The default timeout is 900 seconds, maximum 3600. Repeating the same condition
+returns the original wait and expiry, even after completion; use a fresh key
+for a new hold. Preserve `wait_id` and inspect the terminal outcome. Only the
+waiting session can use `cancel_coordination_wait` to cancel its own wait.
+
 For a task blocker, send the parent the failing command, diagnostics, paths,
 impact, and exact task identity in `metadata.task_id`. In configured worker steps,
 a successful matching `message_type="task_blocker"` sets the blocker transition;

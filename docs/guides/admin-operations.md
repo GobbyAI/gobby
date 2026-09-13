@@ -261,6 +261,29 @@ Qdrant/FalkorDB artifact. `--clean` drops database objects and `--yes` skips
 confirmation. Rehearse against an isolated target and follow
 [Hub Backup Disaster Recovery](cli-commands.md#hub-backup-disaster-recovery).
 
+## PostgreSQL Operations
+
+`gobby postgres install` invokes the shared PostgreSQL installer. Inspect its
+reported installation/configuration result before assuming the datastore is ready.
+
+For a PostgreSQL-only logical backup, stop the daemon, then use
+`gobby postgres backup --output-dir DIRECTORY`. This verifies the database backup;
+it does not capture hub files or other datastores. Use the verified hub backup
+workflow above when those artifacts are also needed.
+
+`gobby postgres restore DUMP_OR_DIRECTORY` restores into the configured target
+database and refuses while the daemon is running. Rehearse against an explicitly
+configured isolated target first. `--clean` drops existing objects, `--yes` skips
+confirmation, and `--allow-unverified` bypasses normal archive verification.
+Preserve failure output and keep a partially restored target stopped until its
+state is understood.
+
+`gobby postgres scoped-roles --json` lists active managed execution roles without
+credential material. `gobby postgres force-revoke-run EXECUTION_UUID` revokes all
+roles for one execution, confirming unless `--yes` is supplied. Coordinate the
+affected execution before revoking its access. A pending retry is an incomplete
+revocation, not a successful cleanup.
+
 ## Lifecycle And Recovery
 
 Start and restart from the main checkout. Startup validates native/schema
