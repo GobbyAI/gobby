@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -12,7 +11,6 @@ from uuid import uuid4
 import pytest
 from fastapi import APIRouter
 from fastapi.routing import APIRoute
-from pytest import FixtureRequest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import CONFIG_REGISTRY
@@ -71,17 +69,6 @@ class CountingRuntime:
         return self.current
 
 
-@pytest.fixture
-def policy_db(monkeypatch: pytest.MonkeyPatch, request: FixtureRequest) -> HubDatabase:
-    """Load the isolated database with this worktree's matching native migrator."""
-    binary = Path.cwd() / "target" / "debug" / "gdaemon"
-    monkeypatch.setattr(
-        "gobby.storage.schema_contract.resolve_native_bin",
-        lambda name: str(binary) if name == "gdaemon" else None,
-    )
-    return cast(HubDatabase, request.getfixturevalue("temp_db"))
-
-
 def _endpoint(router: APIRouter, path: str, method: str) -> Callable[..., Awaitable[Any]]:
     for route in router.routes:
         if isinstance(route, APIRoute) and route.path == path and method.upper() in route.methods:
@@ -99,8 +86,8 @@ def _route_methods(router: APIRouter) -> set[tuple[str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_rules_use_runtime_snapshot(policy_db: HubDatabase) -> None:
-    manager = RuleDefinitionManager(policy_db)
+async def test_rules_use_runtime_snapshot(temp_db: HubDatabase) -> None:
+    manager = RuleDefinitionManager(temp_db)
     manager.create(
         name="live-runtime-policy",
         definition_json=RuleDefinitionBody(
@@ -116,7 +103,7 @@ async def test_rules_use_runtime_snapshot(policy_db: HubDatabase) -> None:
             }
         )
     )
-    engine = RuleEngine(policy_db, config_runtime=runtime)
+    engine = RuleEngine(temp_db, config_runtime=runtime)
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=str(uuid4()),
@@ -223,9 +210,20 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
 
     runtime.snapshot_reads = 0
     stale_config = DaemonConfig(tmux={"socket_path": "/tmp/stale.sock"})
+    # The run carries a terminal id; the tmux session name lives on the terminal row,
+    # so the payload needs the terminal manager to reach it.
+    terminal_manager = SimpleNamespace(
+        get=lambda terminal_id: SimpleNamespace(session_name=f"gobby-{terminal_id}")
+    )
     attention_server = cast(
         Any,
-        SimpleNamespace(services=SimpleNamespace(config=stale_config, config_runtime=runtime)),
+        SimpleNamespace(
+            services=SimpleNamespace(
+                config=stale_config,
+                config_runtime=runtime,
+                terminal_manager=terminal_manager,
+            )
+        ),
     )
     payload = _run_tmux_payload(
         attention_server,
@@ -234,8 +232,9 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
 
     assert payload == {
         "socket_path": "/tmp/live-policy.sock",
-        "session_name": "agent-session",
+        "session_name": "gobby-agent-session",
         "pane_pid": 42,
+        "terminal_id": "agent-session",
     }
     assert runtime.snapshot_reads == 1
 

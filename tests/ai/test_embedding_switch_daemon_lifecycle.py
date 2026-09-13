@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -52,18 +50,6 @@ from gobby.storage.embedding_generation_state import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _worktree_gdaemon() -> Iterator[None]:
-    patch = pytest.MonkeyPatch()
-    binary = Path.cwd() / "target" / "debug" / "gdaemon"
-    patch.setattr(
-        "gobby.storage.schema_contract.resolve_native_bin",
-        lambda name: str(binary) if name == "gdaemon" else None,
-    )
-    yield
-    patch.undo()
 
 
 @dataclass
