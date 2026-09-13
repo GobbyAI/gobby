@@ -33,6 +33,7 @@ from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
@@ -214,6 +215,9 @@ class WebSocketServer(
         terminal_config: Any | None = None,
         terminal_services: Any | None = None,
         host_manager: Any | None = None,
+        *,
+        lease_registry: Any,
+        write_coordinator: Any,
     ) -> None:
         """Attach composition-root terminal services after construction."""
         self.terminal_manager = terminal_manager
@@ -221,6 +225,8 @@ class WebSocketServer(
         self.terminal_config = terminal_config
         self.terminal_services = terminal_services
         self.terminal_host_manager = host_manager
+        self.lease_registry = lease_registry
+        self.write_coordinator = write_coordinator
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
 
@@ -392,8 +398,12 @@ class WebSocketServer(
                 "terminal_create": TerminalCreateMixin._handle_terminal_create.__get__(self),
                 "terminal_kill": TerminalCreateMixin._handle_terminal_kill.__get__(self),
                 "terminal_resize": self._handle_terminal_resize,
-                "terminal_take_control": self._handle_terminal_take_control,
-                "terminal_release_control": self._handle_terminal_release_control,
+                "terminal_take_control": TerminalControlMixin._handle_terminal_take_control.__get__(
+                    self
+                ),
+                "terminal_release_control": TerminalControlMixin._handle_terminal_release_control.__get__(
+                    self
+                ),
                 "terminal_set_viewport": self._handle_terminal_set_viewport,
                 "terminal_set_scroll_offset": self._handle_terminal_set_scroll_offset,
                 "terminal_paste": self._handle_terminal_paste,

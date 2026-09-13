@@ -54,7 +54,7 @@ async def test_external_tmux_row_resizes_and_releases(
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
     runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
     server = _SizingServer(row, runtime)
-    attachment = server.lease_registry.attach("term-1", viewer="gclient")
+    attachment = await server.lease_registry.attach("term-1", viewer="gclient")
 
     await server._handle_terminal_resize(
         object(),
@@ -93,8 +93,8 @@ async def test_proxy_socket_failure_applies_re_elected_size(
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
     runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
     server = _SizingServer(row, runtime)
-    web = server.lease_registry.attach("term-1", viewer="web")
-    gclient = server.lease_registry.attach("term-1", viewer="gclient")
+    web = await server.lease_registry.attach("term-1", viewer="web")
+    gclient = await server.lease_registry.attach("term-1", viewer="gclient")
     websocket = object()
 
     await server._handle_terminal_resize(

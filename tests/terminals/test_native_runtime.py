@@ -21,6 +21,7 @@ from gobby.terminals.host_client import (
     encode_control_line,
 )
 from gobby.terminals.host_protocol import HostListRow
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
     NativeBatchOperation,
@@ -599,7 +600,11 @@ async def test_attention_and_lease_writes_serialize_native(
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     recapture_at: list[int] = []
 
     async def recapture(_terminal: Any) -> None:
@@ -607,7 +612,9 @@ async def test_attention_and_lease_writes_serialize_native(
         assert coordinator.lock_held(terminal.id)
 
     coordinator.set_attention_gate(recapture)
-    await coordinator.grant_lease(terminal.id, "att-1")
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-1")
+    granted = await coordinator.lease_registry.take_control(terminal.id, "att-1")
+    assert granted.lease_generation is not None
 
     async def attention() -> None:
         await coordinator.write(
@@ -632,7 +639,7 @@ async def test_attention_and_lease_writes_serialize_native(
                 kind="text",
                 payload="lease",
                 attachment_id="att-1",
-                expected_lease_generation=1,
+                expected_lease_generation=granted.lease_generation,
             )
         )
 
@@ -662,8 +669,14 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
-    await coordinator.grant_lease(terminal.id, "att-1")
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-1")
+    granted = await coordinator.lease_registry.take_control(terminal.id, "att-1")
+    assert granted.lease_generation is not None
     delay_started = asyncio.Event()
     original_sleep = asyncio.sleep
 
@@ -684,7 +697,7 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
                 kind="text",
                 payload="interleave",
                 attachment_id="att-1",
-                expected_lease_generation=1,
+                expected_lease_generation=granted.lease_generation,
             )
         )
         interleaved.append("done")
@@ -742,8 +755,17 @@ async def test_native_wake_batch_preserves_target_results_order_and_latches() ->
     terminals = [_native_terminal(host, host_terminal_id=f"ht-{index}") for index in range(1, 4)]
     store = MemoryTerminalStore()
     store.rows.update({terminal.id: terminal for terminal in terminals})
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
-    store.persist_unresolved_write(terminals[2].id, "wake:session-3", "automatic")
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    store.persist_unresolved_write(
+        terminals[2].id,
+        "wake:session-3",
+        "automatic",
+        daemon_epoch="test-epoch",
+    )
     operations = (
         NativeBatchOperation(kind="key", payload="ctrl_u"),
         NativeBatchOperation(kind="key", payload="ctrl_k", delay_ms=15),
@@ -791,7 +813,11 @@ async def test_native_wake_batch_decode_failure_is_indeterminate_and_keeps_latch
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     request = NativeWakeBatchRequest(
         result_id="session-1",
         terminal_id=terminal.id,
@@ -821,7 +847,9 @@ async def test_coordinator_writes_reach_the_native_runtime() -> None:
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
     coordinator = WriteCoordinator(
-        cast(UnresolvedWriteStore, store), runtime_registry(tmux, native)
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(tmux, native),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
     outcome = await coordinator.write(

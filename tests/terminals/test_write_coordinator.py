@@ -12,6 +12,7 @@ from gobby.storage.terminals import (
     UNRESOLVED_WRITE_MAX_ENTRIES,
     UnresolvedWriteCapacityError,
 )
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     AutomaticWriteQuarantined,
     Delivered,
@@ -60,8 +61,29 @@ def _coordinator(
     terminal = make_memory_terminal(backend=backend, unresolved_writes=unresolved)
     store = MemoryTerminalStore(terminal)
     fake = runtime or FakeRuntime(backend=backend)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(fake))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(fake),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     return coordinator, fake, store
+
+
+async def _grant(
+    coordinator: WriteCoordinator,
+    terminal_id: str,
+    attachment_id: str = "att-1",
+    *,
+    takeover: bool = False,
+) -> int:
+    await coordinator.lease_registry.attach(terminal_id, attachment_id=attachment_id)
+    result = await coordinator.lease_registry.take_control(
+        terminal_id,
+        attachment_id,
+        takeover=takeover,
+    )
+    assert result.granted
+    return result.lease_generation
 
 
 @pytest.mark.asyncio
@@ -78,7 +100,7 @@ async def test_attention_and_lease_writes_serialize() -> None:
         assert coordinator.lock_held(terminal.id)
 
     coordinator.set_attention_gate(recapture)
-    await coordinator.grant_lease(terminal.id, "att-1")
+    await _grant(coordinator, terminal.id)
 
     async def attention() -> None:
         await coordinator.write(
@@ -168,7 +190,7 @@ async def test_coordinator_owns_lock_identity_and_latch() -> None:
 async def test_sequence_holds_lock_across_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     coordinator, runtime, store = _coordinator()
     terminal = next(iter(store.rows.values()))
-    await coordinator.grant_lease(terminal.id, "att-1")
+    await _grant(coordinator, terminal.id)
     delay_started = asyncio.Event()
     original_sleep = asyncio.sleep
 
@@ -344,14 +366,15 @@ async def test_sequence_cancellation_settles_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lease_revalidated_immediately_before_effect() -> None:
+async def test_revalidate_before_persist() -> None:
     hold = asyncio.Event()
     started = asyncio.Event()
     runtime = FakeRuntime(hold=hold)
     runtime.started = started
     coordinator, _fake, store = _coordinator(runtime)
     terminal = next(iter(store.rows.values()))
-    await coordinator.grant_lease(terminal.id, "att-1")
+    await _grant(coordinator, terminal.id)
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="att-2")
 
     async def first() -> None:
         await coordinator.write(
@@ -366,7 +389,9 @@ async def test_lease_revalidated_immediately_before_effect() -> None:
 
     holder = asyncio.create_task(first())
     await started.wait()
-    takeover_task = asyncio.create_task(coordinator.takeover_lease(terminal.id, "att-2"))
+    takeover_task = asyncio.create_task(
+        coordinator.lease_registry.take_control(terminal.id, "att-2", takeover=True)
+    )
     await _let_tasks_run()
 
     async def waiting_operator() -> None:
@@ -390,6 +415,120 @@ async def test_lease_revalidated_immediately_before_effect() -> None:
     await takeover_task
     await waiter
     assert all(payload != "should-not-land" for _kind, payload in runtime.write_log)
+    assert "op" not in _unresolved(store, terminal.id)
+
+
+@pytest.mark.asyncio
+async def test_operator_latch_carries_daemon_epoch() -> None:
+    coordinator, runtime, store = _coordinator()
+    terminal = next(iter(store.rows.values()))
+    generation = await _grant(coordinator, terminal.id)
+    runtime.outcome = IndeterminateWrite(detail="reply lost")
+
+    await coordinator.write(
+        WriteRequest(
+            terminal_id=terminal.id,
+            action_key="ws:att-1:1",
+            origin="operator",
+            kind="text",
+            payload="hello",
+            attachment_id="att-1",
+            expected_lease_generation=generation,
+        )
+    )
+
+    entry = _unresolved(store, terminal.id)["ws:att-1:1"]
+    assert entry["origin"] == "operator"
+    assert entry["daemon_epoch"] == coordinator.lease_registry.daemon_epoch
+    assert isinstance(entry["at"], str)
+
+
+@pytest.mark.asyncio
+async def test_lease_mutations_linearize_with_dispatch() -> None:
+    for mutation in ("takeover", "release", "finalize", "exit"):
+        hold = asyncio.Event()
+        coordinator, runtime, store = _coordinator(FakeRuntime(hold=hold))
+        terminal = next(iter(store.rows.values()))
+        generation = await _grant(coordinator, terminal.id)
+        if mutation == "takeover":
+            await coordinator.lease_registry.attach(terminal.id, attachment_id="att-2")
+
+        write_task = asyncio.create_task(
+            coordinator.write(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"ws:att-1:{mutation}",
+                    origin="operator",
+                    kind="text",
+                    payload=mutation,
+                    attachment_id="att-1",
+                    expected_lease_generation=generation,
+                )
+            )
+        )
+        await runtime.started.wait()
+        assert f"ws:att-1:{mutation}" in _unresolved(store, terminal.id)
+
+        mutation_task: asyncio.Task[Any]
+        if mutation == "takeover":
+            mutation_task = asyncio.create_task(
+                coordinator.lease_registry.take_control(
+                    terminal.id,
+                    "att-2",
+                    takeover=True,
+                )
+            )
+        elif mutation == "release":
+            mutation_task = asyncio.create_task(coordinator.lease_registry.release_control("att-1"))
+        elif mutation == "finalize":
+            mutation_task = asyncio.create_task(
+                coordinator.lease_registry.finalize("att-1", reason="test")
+            )
+        else:
+            mutation_task = asyncio.create_task(coordinator.clear_on_exit(terminal.id))
+
+        await _let_tasks_run()
+        assert not mutation_task.done()
+        assert f"ws:att-1:{mutation}" in _unresolved(store, terminal.id)
+        hold.set()
+        await write_task
+        await mutation_task
+        assert f"ws:att-1:{mutation}" not in _unresolved(store, terminal.id)
+
+    registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    attachment = await registry.attach("term-reuse", attachment_id="att-old")
+    async with registry.lock("term-reuse"):
+        cell = registry._lock_cells["term-reuse"]
+        finalize_task = asyncio.create_task(
+            registry.finalize(attachment.attachment_id, reason="test")
+        )
+        await _let_tasks_run()
+        reattach_task = asyncio.create_task(registry.attach("term-reuse", attachment_id="att-new"))
+        await _let_tasks_run()
+        assert registry._lock_cells["term-reuse"] is cell
+    await finalize_task
+    reattached = await reattach_task
+    assert reattached.attachment_id == "att-new"
+    assert "term-reuse" not in registry._lock_cells
+
+    entered = asyncio.Event()
+
+    async def queued_waiter() -> None:
+        async with registry.lock("term-cancel"):
+            entered.set()
+
+    async with registry.lock("term-cancel"):
+        owner_cell = registry._lock_cells["term-cancel"]
+        waiter = asyncio.create_task(queued_waiter())
+        await _let_tasks_run()
+        assert registry._lock_cells["term-cancel"] is owner_cell
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not entered.is_set()
+        assert registry._lock_cells["term-cancel"] is owner_cell
+        assert registry.lock_held("term-cancel")
+    assert "term-cancel" not in registry._lock_cells
 
     await coordinator.write(
         WriteRequest(
@@ -446,14 +585,19 @@ async def test_unresolved_write_capacity_is_reserved_before_dispatch() -> None:
     terminal_big = next(iter(store_big.rows.values()))
     store_big.rows[terminal_big.id].unresolved_writes = {}
     with pytest.raises(UnresolvedWriteCapacityError):
-        store_big.persist_unresolved_write(terminal_big.id, "big", huge_origin)
+        store_big.persist_unresolved_write(
+            terminal_big.id,
+            "big",
+            huge_origin,
+            daemon_epoch="test-epoch",
+        )
     assert runtime_big.write_log == []
 
     existing = filled.copy()
     existing_key = next(iter(existing))
     coordinator_existing, runtime_existing, store_existing = _coordinator(unresolved=existing)
     terminal_existing = next(iter(store_existing.rows.values()))
-    await coordinator_existing.grant_lease(terminal_existing.id, "att-1")
+    await _grant(coordinator_existing, terminal_existing.id)
     await coordinator_existing.write(
         WriteRequest(
             terminal_id=terminal_existing.id,
@@ -477,15 +621,26 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
             action_key: str,
             origin: str,
             *,
+            daemon_epoch: str,
             at: Any = None,
         ) -> Any:
-            super().persist_unresolved_write(terminal_id, action_key, origin, at=at)
+            super().persist_unresolved_write(
+                terminal_id,
+                action_key,
+                origin,
+                daemon_epoch=daemon_epoch,
+                at=at,
+            )
             raise RuntimeError("hard-kill")
 
     terminal = make_memory_terminal()
     store = KillAfterPersist(terminal)
     runtime = FakeRuntime()
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     with pytest.raises(RuntimeError, match="hard-kill"):
         await coordinator.write(
             WriteRequest(
@@ -506,7 +661,11 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
 
     store2 = MemoryTerminalStore(make_memory_terminal())
     runtime2 = KillAfterBytes()
-    coordinator2 = WriteCoordinator(cast(UnresolvedWriteStore, store2), runtime_registry(runtime2))
+    coordinator2 = WriteCoordinator(
+        cast(UnresolvedWriteStore, store2),
+        runtime_registry(runtime2),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     terminal2 = next(iter(store2.rows.values()))
     with pytest.raises(RuntimeError, match="killed-after-bytes"):
         await coordinator2.write(
@@ -522,7 +681,11 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
 
     store3 = MemoryTerminalStore(make_memory_terminal())
     runtime3 = FakeRuntime(outcome=Delivered())
-    coordinator3 = WriteCoordinator(cast(UnresolvedWriteStore, store3), runtime_registry(runtime3))
+    coordinator3 = WriteCoordinator(
+        cast(UnresolvedWriteStore, store3),
+        runtime_registry(runtime3),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     terminal3 = next(iter(store3.rows.values()))
     await coordinator3.write(
         WriteRequest(
@@ -541,7 +704,11 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
 
     store4 = MemoryTerminalStore(make_memory_terminal())
     runtime4 = FailTyped()
-    coordinator4 = WriteCoordinator(cast(UnresolvedWriteStore, store4), runtime_registry(runtime4))
+    coordinator4 = WriteCoordinator(
+        cast(UnresolvedWriteStore, store4),
+        runtime_registry(runtime4),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     terminal4 = next(iter(store4.rows.values()))
     with pytest.raises(RuntimeError, match="no-effect"):
         await coordinator4.write(
@@ -559,7 +726,11 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
     hold = asyncio.Event()
     runtime5 = FakeRuntime(hold=hold)
     store5 = MemoryTerminalStore(make_memory_terminal())
-    coordinator5 = WriteCoordinator(cast(UnresolvedWriteStore, store5), runtime_registry(runtime5))
+    coordinator5 = WriteCoordinator(
+        cast(UnresolvedWriteStore, store5),
+        runtime_registry(runtime5),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     terminal5 = next(iter(store5.rows.values()))
     task = asyncio.create_task(
         coordinator5.run_sequence(
@@ -664,6 +835,7 @@ async def test_dispatch_resolves_the_runtime_per_terminal_backend() -> None:
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(tmux_runtime, native_runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
     for terminal, payload in ((tmux_terminal, "to-tmux"), (native_terminal, "to-native")):
@@ -687,7 +859,9 @@ async def test_unregistered_backend_is_a_stage_none_write_error() -> None:
     terminal = make_memory_terminal(backend="native")
     store = MemoryTerminalStore(terminal)
     coordinator = WriteCoordinator(
-        cast(UnresolvedWriteStore, store), runtime_registry(FakeRuntime(backend="tmux"))
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(FakeRuntime(backend="tmux")),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
     with pytest.raises(TerminalWriteError) as excinfo:

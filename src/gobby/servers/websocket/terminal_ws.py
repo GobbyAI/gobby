@@ -7,7 +7,6 @@ import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-from unittest.mock import Mock
 
 from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_observation
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -19,7 +18,12 @@ from gobby.terminals.leases import (
     TerminalLeaseRegistry,
     paste_oversize,
 )
-from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    TerminalWriteError,
+    UnregisteredBackendError,
+)
 from gobby.terminals.tmux_discovery import pane_owners, sweep_tmux_terminals
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
@@ -174,7 +178,12 @@ class TerminalWsMixin:
             return
         registry = self._leases()
         viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
-        record = registry.attach(terminal_id, str(delivery), websocket=websocket, viewer=viewer)
+        record = await registry.attach(
+            terminal_id,
+            str(delivery),
+            websocket=websocket,
+            viewer=viewer,
+        )
         locator: AttachLocator | None = None
         if str(delivery) == "direct":
             locator, failure = await self._resolve_attach_locator(row)
@@ -187,7 +196,7 @@ class TerminalWsMixin:
         else:
             failure = await self._start_proxy_attach(websocket, row, record, encoding)
         if failure is not None:
-            registry.finalize(record.attachment_id, failure)
+            await registry.finalize(record.attachment_id, failure)
             await self._send_json(
                 websocket,
                 {
@@ -225,7 +234,7 @@ class TerminalWsMixin:
             if attachment_id in self._proxy().attachments:
                 await self._proxy().finalize_attachment(attachment_id, "detach")
             else:
-                event = self._leases().finalize(attachment_id, "detach")
+                event = await self._leases().finalize(attachment_id, "detach")
                 if event is not None:
                     await self._apply_terminal_sizing(event.terminal_id, event.sizing)
                     payload = {
@@ -412,46 +421,7 @@ class TerminalWsMixin:
             },
         )
 
-    async def _handle_terminal_take_control(self, websocket: Any, data: dict[str, Any]) -> None:
-        terminal_id = str(data.get("terminal_id") or "")
-        attachment_id = str(data.get("attachment_id") or "")
-        takeover = bool(data.get("takeover"))
-        registry = self._leases()
-        previous = registry.holder(terminal_id)
-        result = registry.take_control(terminal_id, attachment_id, takeover=takeover)
-        if result.granted and previous and previous != attachment_id:
-            await self._fanout_lease_lost(
-                previous,
-                attachment_id,
-                result.lease_generation,
-                requester=websocket,
-            )
-        control = {
-            "type": "terminal_control_result",
-            "attachment_id": attachment_id,
-            "granted": result.granted,
-            "reason": result.reason,
-            "lease_generation": result.lease_generation,
-        }
-        await self._send_control(websocket, control)
-
-    async def _handle_terminal_release_control(self, websocket: Any, data: dict[str, Any]) -> None:
-        attachment_id = str(data.get("attachment_id") or "")
-        result = self._leases().release_control(attachment_id)
-        await self._send_json(
-            websocket,
-            {
-                "type": "terminal_control_result",
-                "attachment_id": attachment_id,
-                "granted": result.granted,
-                "reason": result.reason,
-                "lease_generation": result.lease_generation,
-            },
-        )
-
     async def _handle_terminal_input(self, websocket: Any, data: dict[str, Any]) -> None:
-        if not data.get("attachment_id"):
-            return
         await self._handle_operator_write(websocket, data, kind="input")
 
     async def _handle_terminal_paste(self, websocket: Any, data: dict[str, Any]) -> None:
@@ -477,7 +447,15 @@ class TerminalWsMixin:
         attachment_id = data.get("attachment_id")
         seq = data.get("client_write_seq")
         payload = data.get("data") if kind == "input" else data.get("text")
-        if not isinstance(terminal_id, str) or not isinstance(attachment_id, str):
+        if not isinstance(attachment_id, str) or not attachment_id:
+            await self._write_outcome(
+                websocket,
+                data,
+                outcome="refused",
+                reason="attachment_required",
+            )
+            return
+        if not isinstance(terminal_id, str):
             return
         if not isinstance(payload, str):
             payload = ""
@@ -549,34 +527,31 @@ class TerminalWsMixin:
         """Deliver an admitted write to the backend; returns (outcome, reason)."""
         outcome: WriteOutcome = "delivered"
         reason: str | None = None
-        manager = getattr(self, "terminal_manager", None)
-        row = None if manager is None else manager.get(terminal_id)
-        runtime = None if row is None else self._runtime_for(row.backend)
+        coordinator = getattr(self, "write_coordinator", None)
+        if coordinator is None:
+            return "refused", "runtime_unavailable"
         try:
-            if runtime is not None:
-                if kind == "paste":
-                    result = await runtime.write_paste(row, payload)
-                elif kind == "input":
-                    result = await runtime.write_input(row, payload.encode("utf-8"))
-                else:
-                    result = await runtime.write_text(row, payload, False)
-            elif getattr(self, "write_coordinator", None) is not None:
-                from gobby.terminals.write_coordinator import WriteRequest
+            from gobby.terminals.write_coordinator import (
+                RuntimeUnavailableError,
+                StaleTerminalLeaseError,
+                WriteRequest,
+            )
 
-                coordinator = self.write_coordinator
-                result = await coordinator.write(
-                    WriteRequest(
-                        terminal_id=terminal_id,
-                        action_key=f"ws:{attachment_id}:{seq}",
-                        origin="operator",
-                        kind=kind,
-                        payload=payload,
-                        attachment_id=attachment_id,
-                        expected_lease_generation=generation,
-                    )
+            result = await coordinator.write(
+                WriteRequest(
+                    terminal_id=terminal_id,
+                    action_key=f"ws:{attachment_id}:{seq}",
+                    origin="operator",
+                    kind=kind,
+                    payload=payload,
+                    attachment_id=attachment_id,
+                    expected_lease_generation=generation,
                 )
-            else:
-                return outcome, reason
+            )
+        except RuntimeUnavailableError:
+            return "refused", "runtime_unavailable"
+        except StaleTerminalLeaseError:
+            return "refused", "lease_lost"
         except TerminalWriteError as exc:
             if exc.stage == "partial":
                 reason = (
@@ -678,9 +653,7 @@ class TerminalWsMixin:
             return None
         try:
             runtime = resolve(backend)
-        except Exception:
-            return None
-        if isinstance(runtime, Mock):
+        except UnregisteredBackendError:
             return None
         return runtime
 
@@ -745,9 +718,8 @@ class TerminalWsMixin:
 
     def _leases(self) -> TerminalLeaseRegistry:
         registry = getattr(self, "lease_registry", None)
-        if registry is None:
-            registry = TerminalLeaseRegistry()
-            self.lease_registry = registry
+        if not isinstance(registry, TerminalLeaseRegistry):
+            raise RuntimeError("terminal lease registry is not configured")
         return registry
 
     def _project_id(self, websocket: Any) -> str | None:

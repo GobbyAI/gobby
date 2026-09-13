@@ -28,7 +28,9 @@ from gobby.storage.terminals import (
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.dimensions import MAX_CELLS, MAX_FRAME_SIZE
 from gobby.terminals.frame_client import FrameLagError, FrameProtocolError, decode_frame
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, WriteOutcome
+from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.terminals.ws_protocol import (
     TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
     TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES,
@@ -308,7 +310,14 @@ def _harness(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Harness:
     registry.register(cast(TerminalRuntime, native_rt))
     registry.register(cast(TerminalRuntime, tmux_rt))
     server = _ws_server()
-    server.configure_terminals(manager, registry, MagicMock())
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
     frames: dict[str, FakeProxyFrame] = {}
     frame_list: list[FakeProxyFrame] = []
 
@@ -1065,8 +1074,15 @@ async def test_write_seq_ledger_tmux_and_native(
         )
         for seq in range(2, 66)
     ]
-    # Every admitted write reaches the held runtime before the capacity probe.
-    await _until(lambda: len(harness.native_rt.host_writes) >= writes_before + 64)
+
+    # Admission fills the replay ledger while the single registry lock keeps
+    # every dispatch after the first queued behind the held runtime.
+    def ledger_is_full() -> bool:
+        record = harness.server.lease_registry.get(att)
+        return record is not None and len(record.writes) == 64
+
+    await _until(ledger_is_full)
+    assert len(harness.native_rt.host_writes) == writes_before + 1
     await _send(
         harness.server,
         ws,

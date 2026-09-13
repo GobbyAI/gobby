@@ -20,11 +20,13 @@ from tests.terminals.fakes import FakeRuntime
 pytestmark = pytest.mark.unit
 
 
-def test_single_instance_reaches_every_consumer() -> None:
+def test_single_lease_registry_is_injected() -> None:
     from gobby.config.terminals import TerminalConfig
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.services import TerminalServices
+    from gobby.terminals.write_coordinator import WriteCoordinator
 
     annotations = GobbyRunner.__annotations__
     assert "terminal_manager" in annotations
@@ -32,6 +34,7 @@ def test_single_instance_reaches_every_consumer() -> None:
     assert "terminal_config" in annotations
     assert "frame_client" in annotations
     assert "terminal_services" in annotations
+    assert "lease_registry" in annotations
 
     container_names = {item.name for item in fields(ServiceContainer)}
     assert "terminal_manager" in container_names
@@ -39,10 +42,14 @@ def test_single_instance_reaches_every_consumer() -> None:
     assert "terminal_config" in container_names
     assert "frame_client" in container_names
     assert "terminal_services" in container_names
+    assert "write_coordinator" in container_names
+    assert "lease_registry" in container_names
 
     manager = MagicMock(spec=TerminalManager)
     registry = TerminalRuntimeRegistry()
     registry.register(FakeRuntime(backend="tmux"))
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    coordinator = WriteCoordinator(manager, registry, lease_registry=leases)
     config = TerminalConfig()
 
     database = MagicMock(spec=HubDatabase)
@@ -55,7 +62,13 @@ def test_single_instance_reaches_every_consumer() -> None:
         terminal_manager=manager,
         terminal_runtime_registry=registry,
         terminal_config=config,
-        terminal_services=TerminalServices(manager=manager, registry=registry),
+        terminal_services=TerminalServices(
+            manager=manager,
+            registry=registry,
+            coordinator=coordinator,
+        ),
+        write_coordinator=coordinator,
+        lease_registry=leases,
     )
     assert services.terminal_manager is manager
     assert services.terminal_runtime_registry is registry
@@ -69,7 +82,12 @@ def test_single_instance_reaches_every_consumer() -> None:
     ws_config.max_message_size = 1024
     server = WebSocketServer(ws_config, MagicMock(), AsyncMock(return_value="test-user"))
     server.configure_terminals(
-        manager, registry, config, terminal_services=services.terminal_services
+        manager,
+        registry,
+        config,
+        terminal_services=services.terminal_services,
+        lease_registry=leases,
+        write_coordinator=coordinator,
     )
     assert server.terminal_manager is manager
     assert server.terminal_services is services.terminal_services
@@ -78,6 +96,13 @@ def test_single_instance_reaches_every_consumer() -> None:
     assert server.terminal_manager is services.terminal_manager
     assert server.terminal_runtime_registry is services.terminal_runtime_registry
     assert server.terminal_config is services.terminal_config
+    assert server.lease_registry is services.lease_registry
+    assert server.write_coordinator is services.write_coordinator
+    assert coordinator.lease_registry is leases
+    assert not hasattr(coordinator, "_leases")
+    assert not hasattr(coordinator, "_locks")
+    assert not hasattr(coordinator, "grant_lease")
+    assert not hasattr(coordinator, "takeover_lease")
 
 
 def test_proxy_frame_opener_is_bound_on_the_websocket_server(tmp_path: Path) -> None:
@@ -125,12 +150,25 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
 
     wiring_source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
     flattened = " ".join(wiring_source.split())
-    assert "WriteCoordinator(runner.terminal_manager, terminal_runtime_registry)" in flattened
+    assert "lease_registry=runner.lease_registry" in flattened
     # The single-runtime resolve is what broke every write to a native terminal.
     assert 'resolve("tmux")' not in wiring_source
 
     monitor_source = Path(lifecycle_monitor.__file__).read_text(encoding="utf-8")
-    assert "WriteCoordinator(manager, registry)" in " ".join(monitor_source.split())
+    assert "build_terminal_services(" in monitor_source
+
+
+def test_wiring_sweeps_orphans_before_accepting_writes() -> None:
+    from gobby.runner_init import terminal_wiring
+
+    source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
+    assert source.count("TerminalLeaseRegistry()") == 1
+    assert source.count("clear_orphaned_attachment_writes(") == 1
+    manager_built = source.index("runner.terminal_manager = TerminalManager(")
+    registry_built = source.index("runner.lease_registry = TerminalLeaseRegistry()")
+    swept = source.index("runner.terminal_manager.clear_orphaned_attachment_writes(")
+    coordinator_built = source.index("runner.write_coordinator = WriteCoordinator(")
+    assert manager_built < registry_built < swept < coordinator_built
 
 
 def test_orchestration_gives_the_wake_dispatcher_its_terminal_lookup() -> None:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -12,7 +13,10 @@ import pytest
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager, native_locator_key
+from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.runtime import Delivered, TerminalRuntime, WriteOutcome
+from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
@@ -24,6 +28,11 @@ _HOST_SOCKET = "/private/tmp/gobby-test/gterm-frames.sock"
 
 
 class _NativeRuntime:
+    backend = "native"
+
+    def __init__(self) -> None:
+        self.inputs: list[bytes] = []
+
     async def attach_locator(self, _terminal: Any) -> AttachLocator:
         return AttachLocator(
             backend="native",
@@ -32,12 +41,32 @@ class _NativeRuntime:
             host_terminal_id=_HOST_TERMINAL_ID,
         )
 
+    async def write_input(self, terminal: Any, data: bytes) -> WriteOutcome:
+        del terminal
+        self.inputs.append(data)
+        return Delivered()
 
-class _RuntimeRegistry:
-    def resolve(self, backend: str) -> _NativeRuntime:
-        if backend != "native":
-            raise KeyError(backend)
-        return _NativeRuntime()
+
+class _RuntimeRegistry(TerminalRuntimeRegistry):
+    def __init__(self, runtime: _NativeRuntime | None = None) -> None:
+        super().__init__()
+        self.runtime = runtime or _NativeRuntime()
+        self.register(cast(TerminalRuntime, self.runtime))
+
+
+class _PausedCloseFrame:
+    def __init__(self) -> None:
+        self.close_started = asyncio.Event()
+        self.release_close = asyncio.Event()
+        self.read_forever = asyncio.Event()
+
+    async def read_message(self) -> dict[str, Any]:
+        await self.read_forever.wait()
+        return {}
+
+    async def close(self) -> None:
+        self.close_started.set()
+        await self.release_close.wait()
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +83,23 @@ def _ws_server() -> WebSocketServer:
     config.ping_timeout = 10
     config.max_message_size = 1024
     return WebSocketServer(config, MagicMock(), AsyncMock(return_value="user"))
+
+
+def _configure(
+    server: WebSocketServer,
+    temp_db: HubDatabase,
+    runtimes: Any | None = None,
+) -> None:
+    manager = TerminalManager(temp_db)
+    runtimes = _RuntimeRegistry() if runtimes is None else runtimes
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        runtimes,
+        MagicMock(),
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, runtimes, lease_registry=leases),
+    )
 
 
 def _live_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> str:
@@ -82,7 +128,7 @@ async def test_lease_request_result_and_lost_events(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
+    _configure(server, temp_db)
     observer = MockWebSocket()
     holder = MockWebSocket()
     server.clients[observer] = {"subscriptions": {"*"}}
@@ -169,7 +215,7 @@ async def test_attach_result_supplies_attachment_identity(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
+    _configure(server, temp_db)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -211,7 +257,7 @@ async def test_direct_delivery_registers_without_frame_relay(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
+    _configure(server, temp_db)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -261,7 +307,7 @@ async def test_paste_is_lease_gated_and_size_capped(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
+    _configure(server, temp_db)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -321,7 +367,7 @@ async def test_disconnect_releases_direct_and_proxy_leases(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
+    _configure(server, temp_db)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -378,7 +424,7 @@ async def test_release_control_is_idempotent_and_races_takeover(
 ) -> None:
     terminal_id = _live_row(temp_db, sample_project)
     server = _ws_server()
-    server.configure_terminals(TerminalManager(temp_db), _RuntimeRegistry(), MagicMock())
+    _configure(server, temp_db)
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(
@@ -441,10 +487,10 @@ async def test_release_control_is_idempotent_and_races_takeover(
 @pytest.mark.asyncio
 async def test_lease_write_linearizes_with_takeover() -> None:
     registry = TerminalLeaseRegistry()
-    a = registry.attach("t", frame_delivery="proxy")
-    b = registry.attach("t", frame_delivery="proxy")
-    gen = registry.take_control("t", a.attachment_id, takeover=False).lease_generation
-    registry.take_control("t", b.attachment_id, takeover=True)
+    a = await registry.attach("t", frame_delivery="proxy")
+    b = await registry.attach("t", frame_delivery="proxy")
+    gen = (await registry.take_control("t", a.attachment_id, takeover=False)).lease_generation
+    await registry.take_control("t", b.attachment_id, takeover=True)
     refused = registry.admit_write(
         "t",
         attachment_id=a.attachment_id,
@@ -459,32 +505,32 @@ async def test_lease_write_linearizes_with_takeover() -> None:
 @pytest.mark.asyncio
 async def test_stale_lease_generation_is_ignored() -> None:
     registry = TerminalLeaseRegistry()
-    a = registry.attach("t", frame_delivery="proxy")
-    first = registry.take_control("t", a.attachment_id, takeover=False)
-    b = registry.attach("t", frame_delivery="proxy")
-    second = registry.take_control("t", b.attachment_id, takeover=True)
+    a = await registry.attach("t", frame_delivery="proxy")
+    first = await registry.take_control("t", a.attachment_id, takeover=False)
+    b = await registry.attach("t", frame_delivery="proxy")
+    second = await registry.take_control("t", b.attachment_id, takeover=True)
     assert second.lease_generation > first.lease_generation
 
 
 @pytest.mark.asyncio
 async def test_frame_and_lag_paths_finalize_the_lease() -> None:
     registry = TerminalLeaseRegistry()
-    a = registry.attach("t", frame_delivery="proxy")
-    registry.take_control("t", a.attachment_id, takeover=False)
-    event = registry.finalize(a.attachment_id, reason="proxy_lag")
+    a = await registry.attach("t", frame_delivery="proxy")
+    await registry.take_control("t", a.attachment_id, takeover=False)
+    event = await registry.finalize(a.attachment_id, reason="proxy_lag")
     assert event is not None
     assert event.reason == "proxy_lag"
-    again = registry.take_control("t", a.attachment_id, takeover=False)
+    again = await registry.take_control("t", a.attachment_id, takeover=False)
     assert again.reason == "stale_attachment"
 
 
 @pytest.mark.asyncio
 async def test_observer_finalization_keeps_holder_writable() -> None:
     registry = TerminalLeaseRegistry()
-    holder = registry.attach("t", frame_delivery="proxy")
-    observer = registry.attach("t", frame_delivery="proxy")
-    granted = registry.take_control("t", holder.attachment_id, takeover=False)
-    registry.finalize(observer.attachment_id, reason="detach")
+    holder = await registry.attach("t", frame_delivery="proxy")
+    observer = await registry.attach("t", frame_delivery="proxy")
+    granted = await registry.take_control("t", holder.attachment_id, takeover=False)
+    await registry.finalize(observer.attachment_id, reason="detach")
     assert registry.holder("t") == holder.attachment_id
     admitted = registry.admit_write(
         "t",
@@ -500,11 +546,11 @@ async def test_observer_finalization_keeps_holder_writable() -> None:
 @pytest.mark.asyncio
 async def test_takeover_then_old_disconnect_keeps_new_holder_writable() -> None:
     registry = TerminalLeaseRegistry()
-    old = registry.attach("t", frame_delivery="proxy")
-    registry.take_control("t", old.attachment_id, takeover=False)
-    new = registry.attach("t", frame_delivery="proxy")
-    granted = registry.take_control("t", new.attachment_id, takeover=True)
-    registry.finalize(old.attachment_id, reason="ws_loss")
+    old = await registry.attach("t", frame_delivery="proxy")
+    await registry.take_control("t", old.attachment_id, takeover=False)
+    new = await registry.attach("t", frame_delivery="proxy")
+    granted = await registry.take_control("t", new.attachment_id, takeover=True)
+    await registry.finalize(old.attachment_id, reason="ws_loss")
     admitted = registry.admit_write(
         "t",
         attachment_id=new.attachment_id,
@@ -519,12 +565,129 @@ async def test_takeover_then_old_disconnect_keeps_new_holder_writable() -> None:
 @pytest.mark.asyncio
 async def test_equal_generation_held_and_release_results_are_applied() -> None:
     registry = TerminalLeaseRegistry()
-    holder = registry.attach("t", frame_delivery="proxy")
-    other = registry.attach("t", frame_delivery="proxy")
-    registry.take_control("t", holder.attachment_id, takeover=False)
-    held = registry.take_control("t", other.attachment_id, takeover=False)
+    holder = await registry.attach("t", frame_delivery="proxy")
+    other = await registry.attach("t", frame_delivery="proxy")
+    await registry.take_control("t", holder.attachment_id, takeover=False)
+    held = await registry.take_control("t", other.attachment_id, takeover=False)
     assert held.reason == "held"
-    released = registry.release_control(holder.attachment_id)
-    duplicate = registry.release_control(holder.attachment_id)
+    released = await registry.release_control(holder.attachment_id)
+    duplicate = await registry.release_control(holder.attachment_id)
     assert released.reason == "released" or released.granted is True
     assert duplicate.reason == "released"
+
+
+@pytest.mark.asyncio
+async def test_attachment_required_and_runtime_unavailable(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db, TerminalRuntimeRegistry())
+    websocket = MockWebSocket()
+
+    await server._handle_terminal_input(
+        websocket,
+        {
+            "terminal_id": terminal_id,
+            "data": "missing attachment",
+            "client_write_seq": 1,
+        },
+    )
+    missing = websocket.messages_of_type("terminal_write_outcome")[-1]
+    assert (missing["outcome"], missing["reason"]) == (
+        "refused",
+        "attachment_required",
+    )
+
+    attachment = await server.lease_registry.attach(
+        terminal_id,
+        attachment_id="unavailable-runtime",
+    )
+    granted = await server.lease_registry.take_control(
+        terminal_id,
+        attachment.attachment_id,
+    )
+    assert granted.granted
+    await server._handle_terminal_input(
+        websocket,
+        {
+            "terminal_id": terminal_id,
+            "attachment_id": attachment.attachment_id,
+            "data": "no runtime",
+            "client_write_seq": 2,
+        },
+    )
+    unavailable = websocket.messages_of_type("terminal_write_outcome")[-1]
+    assert (unavailable["outcome"], unavailable["reason"]) == (
+        "refused",
+        "runtime_unavailable",
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_revokes_authority_before_frame_close(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    locator = AttachLocator(
+        backend="native",
+        frame_host_epoch=_HOST_EPOCH,
+        host_socket=_HOST_SOCKET,
+        host_terminal_id=_HOST_TERMINAL_ID,
+    )
+    for cleanup_path in ("finalize_attachment", "socket_fail"):
+        runtime = _NativeRuntime()
+        server = _ws_server()
+        _configure(server, temp_db, _RuntimeRegistry(runtime))
+        monkeypatch.setattr(server, "_apply_terminal_sizing", AsyncMock())
+        websocket = MockWebSocket()
+        attachment_id = f"attachment-{cleanup_path}"
+        await server.lease_registry.attach(
+            terminal_id,
+            attachment_id=attachment_id,
+            frame_delivery="proxy",
+            websocket=websocket,
+        )
+        granted = await server.lease_registry.take_control(terminal_id, attachment_id)
+        assert granted.granted
+        frame = _PausedCloseFrame()
+        proxy = server._proxy()
+        await proxy.start_proxy(
+            websocket,
+            terminal_id=terminal_id,
+            attachment_id=attachment_id,
+            locator=locator,
+            frame=frame,
+            encoding="json",
+        )
+
+        if cleanup_path == "finalize_attachment":
+            cleanup = asyncio.create_task(proxy.finalize_attachment(attachment_id, "ws_close"))
+        else:
+            cleanup = asyncio.create_task(proxy._on_socket_fail(websocket, "ws_close"))
+        await frame.close_started.wait()
+        assert not cleanup.done()
+        assert server.lease_registry.get(attachment_id) is None
+
+        writer = MockWebSocket()
+        await server._handle_terminal_input(
+            writer,
+            {
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+                "data": "racing write",
+                "client_write_seq": 1,
+            },
+        )
+        refused = writer.messages_of_type("terminal_write_outcome")[-1]
+        assert (refused["outcome"], refused["reason"]) == (
+            "refused",
+            "stale_attachment",
+        )
+        assert runtime.inputs == []
+        frame.release_close.set()
+        await cleanup
+        await asyncio.sleep(0)

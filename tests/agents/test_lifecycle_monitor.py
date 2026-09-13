@@ -48,6 +48,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import NamedKey, SnapshotResult, TerminalWriteError, WriteOutcome
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -163,7 +164,11 @@ def _fake_terminal_services(
     return TerminalServices(
         manager=manager,
         registry=registry,
-        coordinator=WriteCoordinator(manager, runtime_registry(runtime)),
+        coordinator=WriteCoordinator(
+            manager,
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        ),
     )
 
 

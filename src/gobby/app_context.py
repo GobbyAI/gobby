@@ -42,7 +42,9 @@ if TYPE_CHECKING:
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.services import TerminalServices
+    from gobby.terminals.write_coordinator import WriteCoordinator
 
 
 @dataclass
@@ -112,6 +114,8 @@ class ServiceContainer:
     terminal_host_config: TerminalHostConfig | None = None
     terminal_host_manager: TerminalHostManager | None = None
     frame_client: Any | None = None
+    write_coordinator: WriteCoordinator | None = None
+    lease_registry: TerminalLeaseRegistry | None = None
 
     # Communications
     communications_manager: Any | None = None  # CommunicationsManager

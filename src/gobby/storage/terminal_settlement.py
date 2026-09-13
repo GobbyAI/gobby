@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -13,6 +14,11 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
+
+UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES = 256
+UNRESOLVED_WRITE_MAX_ENTRIES = 32
+UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
@@ -32,6 +38,13 @@ class IllegalTerminalTransitionError(RuntimeError):
     """Raised when a caller requests a state edge outside the allowlist."""
 
 
+class UnresolvedWriteCapacityError(RuntimeError):
+    """Raised when an unresolved-write latch would exceed durable bounds."""
+
+    def __init__(self) -> None:
+        super().__init__("unresolved_write_capacity")
+
+
 @dataclass(slots=True)
 class _SettlementLockCell:
     lock: asyncio.Lock
@@ -46,10 +59,26 @@ def _terminal(row: Mapping[str, Any] | None) -> Terminal | None:
     return Terminal.from_row(row)
 
 
+def _serialized_unresolved_size(payload: Mapping[str, object]) -> int:
+    return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+
+
+def _unresolved_mapping(value: object) -> dict[str, Any]:
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, Mapping):
+        raise TypeError(f"expected unresolved-write mapping, got {type(value)!r}")
+    return dict(value)
+
+
 class TerminalSettlementMixin:
     """Storage CAS operations owned by one terminal spawn attempt."""
 
     db: HubDatabase
+
+    if TYPE_CHECKING:
+
+        def get(self, terminal_id: str) -> Terminal | None: ...
 
     def __init__(self) -> None:
         self._settlement_locks: dict[str, _SettlementLockCell] = {}
@@ -68,6 +97,129 @@ class TerminalSettlementMixin:
             cell.references -= 1
             if cell.references == 0 and self._settlement_locks.get(terminal_id) is cell:
                 del self._settlement_locks[terminal_id]
+
+    def persist_unresolved_write(
+        self,
+        terminal_id: str,
+        action_key: str,
+        origin: str,
+        *,
+        daemon_epoch: str,
+        at: datetime | None = None,
+    ) -> Terminal:
+        """Write-ahead latch one action_key, enforcing durable map bounds."""
+        if not daemon_epoch:
+            raise ValueError("daemon_epoch is required")
+        if (
+            not action_key
+            or len(action_key.encode("utf-8")) > UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES
+        ):
+            raise UnresolvedWriteCapacityError()
+        current = self.get(terminal_id)
+        if current is None:
+            raise KeyError(terminal_id)
+        writes = dict(current.unresolved_writes)
+        if action_key not in writes and len(writes) >= UNRESOLVED_WRITE_MAX_ENTRIES:
+            raise UnresolvedWriteCapacityError()
+        writes[action_key] = {
+            "at": (at or utc_now()).isoformat(),
+            "origin": origin,
+            "daemon_epoch": daemon_epoch,
+        }
+        if _serialized_unresolved_size(writes) > UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES:
+            raise UnresolvedWriteCapacityError()
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET unresolved_writes = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (Jsonb(writes), str(UUID(terminal_id))),
+        )
+        result = _terminal(row)
+        if result is None:
+            raise KeyError(terminal_id)
+        return result
+
+    def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal:
+        """Drop one action_key from the durable unresolved-write map."""
+        current = self.get(terminal_id)
+        if current is None:
+            raise KeyError(terminal_id)
+        writes = dict(current.unresolved_writes)
+        writes.pop(action_key, None)
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET unresolved_writes = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (Jsonb(writes), str(UUID(terminal_id))),
+        )
+        result = _terminal(row)
+        if result is None:
+            raise KeyError(terminal_id)
+        return result
+
+    def clear_all_unresolved_writes(self, terminal_id: str) -> Terminal:
+        """Drop every action_key from the durable unresolved-write map."""
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET unresolved_writes = '{}'::jsonb, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (str(UUID(terminal_id)),),
+        )
+        result = _terminal(row)
+        if result is None:
+            raise KeyError(terminal_id)
+        return result
+
+    def clear_orphaned_attachment_writes(self, machine_id: str, daemon_epoch: str) -> int:
+        """Clear dead-daemon WebSocket latches on rows owned by this machine."""
+        if not daemon_epoch:
+            raise ValueError("daemon_epoch is required")
+        cleared = 0
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, unresolved_writes
+                FROM terminals
+                WHERE machine_id = %s
+                FOR UPDATE
+                """,
+                (str(UUID(machine_id)),),
+            ).fetchall()
+            for row in rows:
+                writes = _unresolved_mapping(row["unresolved_writes"] or {})
+                retained = {
+                    action_key: entry
+                    for action_key, entry in writes.items()
+                    if not (
+                        action_key.startswith("ws:")
+                        and (
+                            not isinstance(entry, Mapping)
+                            or entry.get("daemon_epoch") != daemon_epoch
+                        )
+                    )
+                }
+                removed = len(writes) - len(retained)
+                if removed == 0:
+                    continue
+                conn.execute(
+                    """
+                    UPDATE terminals
+                    SET unresolved_writes = %s, updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (Jsonb(retained), row["id"]),
+                )
+                cleared += removed
+        return cleared
 
     def fail_pending(self, terminal_id: str) -> Terminal | None:
         """CAS pending to exited for a spawn that never produced a resource."""

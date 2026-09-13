@@ -817,6 +817,7 @@ class TestHubApiKeyResolution:
 
 def test_terminal_tools_receive_composition_root_services() -> None:
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.write_coordinator import WriteCoordinator
     from tests.terminals.fakes import (
         FakeRuntime,
@@ -829,7 +830,11 @@ def test_terminal_tools_receive_composition_root_services() -> None:
     runtime = FakeRuntime()
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
-    coordinator = WriteCoordinator(store, runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        store,
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     captured: dict[str, object] = {}
 
     def fake_create_session_messages_registry(**kwargs: Any) -> Any:

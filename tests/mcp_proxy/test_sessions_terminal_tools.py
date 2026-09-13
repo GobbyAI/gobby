@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.terminals.fakes import (
     FakeRuntime,
@@ -30,7 +31,11 @@ async def test_send_and_capture_are_backend_neutral(temp_db: HubDatabase) -> Non
     runtime.snapshot_text = "pane"
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     tools = InternalToolRegistry(name="gobby-sessions", description="sessions")
     session_manager = MagicMock()
     register_terminal_tools(

@@ -13,6 +13,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import TerminalRuntime
 from gobby.terminals.web_spawn import WebSpawnResult, spawn_web_terminal
 from tests.servers.test_tmux_mixin import MockWebSocket
@@ -220,6 +221,7 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
     config.ping_timeout = 10
     config.max_message_size = 1024
     server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     server.terminal_manager = _manager(temp_db)
     runtime = MagicMock()
     runtime.backend = "tmux"
@@ -275,6 +277,7 @@ def _create_server(temp_db: HubDatabase) -> tuple[WebSocketServer, MagicMock]:
         max_message_size=1024,
     )
     server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     server.terminal_manager = _manager(temp_db)
     runtime = MagicMock(backend="native")
     server.terminal_runtime_registry = MagicMock(resolve=MagicMock(return_value=runtime))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MethodType
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -12,12 +13,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.servers.websocket import terminal_ws
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.storage.terminals import Terminal
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalWriteError, WriteOutcome
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal, runtime_registry
 
 TmuxResult = tuple[int, str, str]
@@ -60,6 +64,33 @@ class _RecordingRuntime:
         return Delivered()
 
 
+class _PausedRuntime:
+    backend: Literal["tmux", "native"] = "tmux"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls: list[tuple[str, object]] = []
+
+    async def _record(self, kind: str, payload: object) -> WriteOutcome:
+        self.calls.append((kind, payload))
+        self.started.set()
+        await self.release.wait()
+        return Delivered()
+
+    async def write_input(self, terminal: Terminal, data: bytes) -> WriteOutcome:
+        del terminal
+        return await self._record("input", data)
+
+    async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
+        del terminal, submit
+        return await self._record("text", text)
+
+    async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome:
+        del terminal
+        return await self._record("paste", text)
+
+
 class _WebSocket:
     def __init__(self) -> None:
         self.sent_messages: list[str] = []
@@ -72,7 +103,7 @@ class _WebSocket:
         return [message for message in messages if message.get("type") == message_type]
 
 
-def _server(terminal: Terminal, runtime: Any) -> tuple[WebSocketServer, str]:
+async def _server(terminal: Terminal, runtime: Any) -> tuple[WebSocketServer, str]:
     config = MagicMock()
     config.host = "localhost"
     config.port = 60888
@@ -80,10 +111,19 @@ def _server(terminal: Terminal, runtime: Any) -> tuple[WebSocketServer, str]:
     config.ping_timeout = 10
     config.max_message_size = 1024
     server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="user"))
-    server.configure_terminals(MemoryTerminalStore(terminal), runtime_registry(runtime))
+    store = MemoryTerminalStore(terminal)
+    runtimes = runtime_registry(runtime)
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    coordinator = WriteCoordinator(store, runtimes, lease_registry=leases)
+    server.configure_terminals(
+        store,
+        runtimes,
+        lease_registry=leases,
+        write_coordinator=coordinator,
+    )
     attachment_id = "input-attachment"
-    server._leases().attach(terminal.id, attachment_id=attachment_id)
-    result = server._leases().take_control(terminal.id, attachment_id)
+    await server._leases().attach(terminal.id, attachment_id=attachment_id)
+    result = await server._leases().take_control(terminal.id, attachment_id)
     assert result.granted
     return server, attachment_id
 
@@ -111,7 +151,7 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
     sessions = _Sessions()
     runtime = TmuxTerminalRuntime(cast(TmuxSessionManager, sessions))
     terminal = make_memory_terminal()
-    server, attachment_id = _server(terminal, runtime)
+    server, attachment_id = await _server(terminal, runtime)
     websocket = _WebSocket()
 
     for seq, data in enumerate(("\x04", "\x03", "\x1b[A"), start=1):
@@ -158,7 +198,7 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
 async def test_single_input_handler_is_bound_and_backend_neutral() -> None:
     assert not hasattr(HandlerMixin, "_handle_terminal_input")
     terminal = make_memory_terminal()
-    server, _attachment_id = _server(terminal, _RecordingRuntime())
+    server, attachment_id = await _server(terminal, _RecordingRuntime())
     websocket = _WebSocket()
     # Shadow the mixin method on the instance: dispatch must bind TerminalWsMixin
     # explicitly rather than looking the handler up through the instance.
@@ -171,7 +211,9 @@ async def test_single_input_handler_is_bound_and_backend_neutral() -> None:
         json.dumps(
             {
                 "type": "terminal_input",
-                "terminal_id": "tmux-2367e0fb25",
+                "terminal_id": terminal.id,
+                "attachment_id": attachment_id,
+                "client_write_seq": 1,
                 "data": "\x1b[?1;2c",
             }
         ),
@@ -181,7 +223,8 @@ async def test_single_input_handler_is_bound_and_backend_neutral() -> None:
     assert isinstance(handler, MethodType)
     assert handler.__self__ is server
     assert handler.__func__ is TerminalWsMixin._handle_terminal_input
-    assert websocket.sent_messages == []
+    outcome = websocket.messages_of_type("terminal_write_outcome")[-1]
+    assert outcome["outcome"] == "delivered"
 
 
 @pytest.mark.asyncio
@@ -193,7 +236,7 @@ async def test_partial_write_reports_indeterminate_on_the_wire() -> None:
         ]
     )
     terminal = make_memory_terminal()
-    server, attachment_id = _server(terminal, runtime)
+    server, attachment_id = await _server(terminal, runtime)
     websocket = _WebSocket()
 
     for seq in (1, 2):
@@ -223,7 +266,7 @@ async def test_failed_write_completes_ledger_and_admits_next_seq() -> None:
         effects=[TerminalWriteError(stage="none", delivered_bytes=0), Delivered()]
     )
     terminal = make_memory_terminal()
-    server, attachment_id = _server(terminal, runtime)
+    server, attachment_id = await _server(terminal, runtime)
     websocket = _WebSocket()
     first = _input_message(terminal, attachment_id, seq=1, data="failed")
 
@@ -252,7 +295,7 @@ async def test_failed_write_completes_ledger_and_admits_next_seq() -> None:
 async def test_disconnect_cancellation_closes_ledger_without_replying() -> None:
     runtime = _RecordingRuntime(effects=[asyncio.CancelledError(), Delivered()])
     terminal = make_memory_terminal()
-    server, attachment_id = _server(terminal, runtime)
+    server, attachment_id = await _server(terminal, runtime)
     websocket = _WebSocket()
     first = _input_message(terminal, attachment_id, seq=1, data="cancelled")
 
@@ -286,3 +329,54 @@ async def test_disconnect_cancellation_closes_ledger_without_replying() -> None:
     )
     assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
     assert runtime.inputs == [b"cancelled", b"next"]
+
+
+@pytest.mark.asyncio
+async def test_operator_writes_route_through_coordinator() -> None:
+    for index, kind in enumerate(("input", "paste", "text"), start=1):
+        terminal = make_memory_terminal()
+        runtime = _PausedRuntime()
+        server, attachment_id = await _server(terminal, runtime)
+        coordinator_write = AsyncMock(wraps=server.write_coordinator.write)
+        server.write_coordinator.write = coordinator_write
+        websocket = _WebSocket()
+        data = {
+            "terminal_id": terminal.id,
+            "attachment_id": attachment_id,
+            "client_write_seq": index,
+            "data" if kind == "input" else "text": f"payload-{kind}",
+        }
+        takeover_task: asyncio.Task[Any] | None = None
+        if kind == "input":
+            await server.lease_registry.attach(terminal.id, attachment_id="takeover")
+            write_task = asyncio.create_task(server._handle_terminal_input(websocket, data))
+        elif kind == "paste":
+            write_task = asyncio.create_task(server._handle_terminal_paste(websocket, data))
+        else:
+            write_task = asyncio.create_task(
+                server._handle_operator_write(websocket, data, kind="text")
+            )
+
+        await runtime.started.wait()
+        assert coordinator_write.await_count == 1
+        awaited = coordinator_write.await_args
+        assert awaited is not None
+        request = awaited.args[0]
+        assert request.kind == kind
+        assert runtime.calls[0][0] == kind
+        if kind == "input":
+            takeover_task = asyncio.create_task(
+                server.lease_registry.take_control(terminal.id, "takeover", takeover=True)
+            )
+            await asyncio.sleep(0)
+            assert not takeover_task.done()
+        runtime.release.set()
+        await write_task
+        if takeover_task is not None:
+            await takeover_task
+        assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+
+    source = Path(terminal_ws.__file__).read_text(encoding="utf-8")
+    assert ".write_input(" not in source
+    assert ".write_paste(" not in source
+    assert ".write_text(" not in source

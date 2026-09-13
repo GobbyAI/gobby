@@ -343,8 +343,11 @@ class MemoryTerminalStore:
         action_key: str,
         origin: str,
         *,
+        daemon_epoch: str,
         at: datetime | None = None,
     ) -> Terminal:
+        if not daemon_epoch:
+            raise ValueError("daemon_epoch is required")
         if (
             not action_key
             or len(action_key.encode("utf-8")) > UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES
@@ -354,12 +357,38 @@ class MemoryTerminalStore:
         writes = dict(current.unresolved_writes)
         if action_key not in writes and len(writes) >= UNRESOLVED_WRITE_MAX_ENTRIES:
             raise UnresolvedWriteCapacityError()
-        writes[action_key] = {"at": (at or utc_now()).isoformat(), "origin": origin}
+        writes[action_key] = {
+            "at": (at or utc_now()).isoformat(),
+            "origin": origin,
+            "daemon_epoch": daemon_epoch,
+        }
         serialized = json.dumps(writes, separators=(",", ":")).encode("utf-8")
         if len(serialized) > UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES:
             raise UnresolvedWriteCapacityError()
         current.unresolved_writes = writes
         return current
+
+    def clear_orphaned_attachment_writes(self, machine_id: str, daemon_epoch: str) -> int:
+        if not daemon_epoch:
+            raise ValueError("daemon_epoch is required")
+        cleared = 0
+        for current in self.rows.values():
+            if current.machine_id != machine_id:
+                continue
+            writes = dict(current.unresolved_writes)
+            retained = {
+                action_key: entry
+                for action_key, entry in writes.items()
+                if not (
+                    action_key.startswith("ws:")
+                    and (
+                        not isinstance(entry, Mapping) or entry.get("daemon_epoch") != daemon_epoch
+                    )
+                )
+            }
+            cleared += len(writes) - len(retained)
+            current.unresolved_writes = retained
+        return cleared
 
     def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal:
         current = self.rows[terminal_id]
@@ -626,6 +655,7 @@ def runtime_registry(*runtimes: Any) -> TerminalRuntimeRegistry:
 def bind_spawn_runtime(request: object) -> tuple[MemoryTerminalStore, FakeRuntime]:
     """Attach an in-memory manager and FakeRuntime to a SpawnRequest."""
     from gobby.agents.spawn_models import SpawnRequest
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 
     spawn = cast(SpawnRequest, request)
@@ -635,5 +665,9 @@ def bind_spawn_runtime(request: object) -> tuple[MemoryTerminalStore, FakeRuntim
     registry = runtime_registry(runtime)
     spawn.terminal_manager = cast(TerminalManager, manager)
     spawn.terminal_runtime_registry = registry
-    spawn.write_coordinator = WriteCoordinator(cast(UnresolvedWriteStore, manager), registry)
+    spawn.write_coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, manager),
+        registry,
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     return manager, runtime

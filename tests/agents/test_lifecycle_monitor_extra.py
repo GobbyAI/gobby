@@ -22,6 +22,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from gobby.workflows.state_manager import SessionVariableManager
@@ -70,7 +71,11 @@ def _memory_terminal_services(*terminal_ids: str) -> TerminalServices:
     return TerminalServices(
         manager=cast(TerminalManager, store),
         registry=registry,
-        coordinator=WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime)),
+        coordinator=WriteCoordinator(
+            cast(UnresolvedWriteStore, store),
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        ),
     )
 
 

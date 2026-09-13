@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.terminals.leases import TerminalLeaseRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +57,9 @@ def mock_mcp_manager() -> MagicMock:
 
 @pytest.fixture
 def server(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> WebSocketServer:
-    return WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+    instance = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+    instance.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    return instance
 
 
 class TestTmuxMixinInit:
@@ -117,4 +120,4 @@ class TestTerminalInputRouting:
                 ws, {"run_id": "tmux-68bd19945ce3", "data": "\x1b[?1;2c"}
             )
 
-        assert ws.sent_messages == []
+        assert ws.last_message()["reason"] == "attachment_required"

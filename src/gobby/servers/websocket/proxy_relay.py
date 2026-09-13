@@ -273,6 +273,7 @@ class ProxyHub:
         owned = self.by_socket.get(record.websocket)
         if owned is not None:
             owned.discard(attachment_id)
+        event = await self._owner._leases().finalize(attachment_id, reason)
         task = record.task
         record.task = None
         if task is not None and task is not asyncio.current_task():
@@ -285,7 +286,6 @@ class ProxyHub:
                     await result
                 except Exception:
                     logger.debug("frame close failed", exc_info=True)
-        event = self._owner._leases().finalize(attachment_id, reason)
         if event is None:
             return
         await self._owner._apply_terminal_sizing(event.terminal_id, event.sizing)
@@ -311,7 +311,7 @@ class ProxyHub:
     async def _on_socket_fail(self, websocket: Any, reason: str) -> None:
         ids = list(self.by_socket.get(websocket, set()))
         for attachment_id in ids:
-            event = self._owner._leases().finalize(attachment_id, reason)
+            event = await self._owner._leases().finalize(attachment_id, reason)
             if event is not None:
                 await self._owner._apply_terminal_sizing(event.terminal_id, event.sizing)
             record = self.attachments.pop(attachment_id, None)

@@ -6,7 +6,8 @@ import asyncio
 import secrets
 import threading
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, Literal
@@ -40,6 +41,7 @@ class ControlResult:
     granted: bool
     reason: str | None
     lease_generation: int
+    displaced_attachment_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,12 @@ class _Lease:
     sizing_owner: str | None = None
 
 
+@dataclass(slots=True)
+class _LeaseLockCell:
+    lock: asyncio.Lock
+    references: int = 0
+
+
 @dataclass
 class _LifecyclePublication:
     event: dict[str, Any]
@@ -146,6 +154,7 @@ class TerminalLeaseRegistry:
     def __init__(self, *, daemon_epoch: str | None = None) -> None:
         self._attachments: dict[str, _Attachment] = {}
         self._leases: dict[str, _Lease] = {}
+        self._lock_cells: dict[str, _LeaseLockCell] = {}
         self._by_websocket: dict[object, set[str]] = {}
         self.daemon_epoch = str(uuid4())
         if daemon_epoch is not None:
@@ -306,7 +315,27 @@ class TerminalLeaseRegistry:
                 _fail_publication(item, error)
             self._lifecycle_condition.notify_all()
 
-    def attach(
+    @asynccontextmanager
+    async def lock(self, terminal_id: str) -> AsyncIterator[None]:
+        """Borrow the registry-owned serialization lock for one terminal."""
+        cell = self._lock_cells.get(terminal_id)
+        if cell is None:
+            cell = _LeaseLockCell(asyncio.Lock())
+            self._lock_cells[terminal_id] = cell
+        cell.references += 1
+        try:
+            async with cell.lock:
+                yield
+        finally:
+            cell.references -= 1
+            if cell.references == 0 and self._lock_cells.get(terminal_id) is cell:
+                del self._lock_cells[terminal_id]
+
+    def lock_held(self, terminal_id: str) -> bool:
+        cell = self._lock_cells.get(terminal_id)
+        return cell is not None and cell.lock.locked()
+
+    async def attach(
         self,
         terminal_id: str,
         frame_delivery: str = "proxy",
@@ -315,19 +344,20 @@ class TerminalLeaseRegistry:
         attachment_id: str | None = None,
         viewer: Viewer = "gclient",
     ) -> _Attachment:
-        delivery = "direct" if frame_delivery == "direct" else "proxy"
-        minted = attachment_id or secrets.token_hex(16)
-        record = _Attachment(
-            attachment_id=minted,
-            terminal_id=terminal_id,
-            frame_delivery=delivery,
-            viewer=viewer,
-        )
-        self._attachments[minted] = record
-        self._lease(terminal_id)
-        if websocket is not None:
-            self._by_websocket.setdefault(websocket, set()).add(minted)
-        return record
+        async with self.lock(terminal_id):
+            delivery = "direct" if frame_delivery == "direct" else "proxy"
+            minted = attachment_id or secrets.token_hex(16)
+            record = _Attachment(
+                attachment_id=minted,
+                terminal_id=terminal_id,
+                frame_delivery=delivery,
+                viewer=viewer,
+            )
+            self._attachments[minted] = record
+            self._lease(terminal_id)
+            if websocket is not None:
+                self._by_websocket.setdefault(websocket, set()).add(minted)
+            return record
 
     def get(self, attachment_id: str) -> _Attachment | None:
         record = self._attachments.get(attachment_id)
@@ -341,75 +371,86 @@ class TerminalLeaseRegistry:
     def generation(self, terminal_id: str) -> int:
         return self._lease(terminal_id).generation
 
-    def take_control(
+    async def take_control(
         self,
         terminal_id: str,
         attachment_id: str,
         *,
         takeover: bool = False,
     ) -> ControlResult:
-        record = self.get(attachment_id)
-        if record is None or record.terminal_id != terminal_id:
+        async with self.lock(terminal_id):
+            record = self.get(attachment_id)
+            if record is None or record.terminal_id != terminal_id:
+                return ControlResult(
+                    attachment_id, False, "stale_attachment", self.generation(terminal_id)
+                )
+            lease = self._lease(terminal_id)
+            if lease.holder == attachment_id:
+                return ControlResult(attachment_id, True, None, lease.generation)
+            if lease.holder is not None and not takeover:
+                return ControlResult(attachment_id, False, "held", lease.generation)
+            displaced = lease.holder
+            self._bump(lease)
+            lease.holder = attachment_id
             return ControlResult(
-                attachment_id, False, "stale_attachment", self.generation(terminal_id)
+                attachment_id,
+                True,
+                None,
+                lease.generation,
+                displaced_attachment_id=displaced,
             )
-        lease = self._lease(terminal_id)
-        if lease.holder == attachment_id:
-            return ControlResult(attachment_id, True, None, lease.generation)
-        if lease.holder is not None and not takeover:
-            return ControlResult(attachment_id, False, "held", lease.generation)
-        self._bump(lease)
-        lease.holder = attachment_id
-        return ControlResult(attachment_id, True, None, lease.generation)
 
-    def release_control(self, attachment_id: str) -> ControlResult:
+    async def release_control(self, attachment_id: str) -> ControlResult:
         record = self.get(attachment_id)
         if record is None:
             return ControlResult(attachment_id, False, "stale_attachment", 0)
-        lease = self._lease(record.terminal_id)
-        if lease.holder != attachment_id:
+        async with self.lock(record.terminal_id):
+            record = self.get(attachment_id)
+            if record is None:
+                return ControlResult(attachment_id, False, "stale_attachment", 0)
+            lease = self._lease(record.terminal_id)
+            if lease.holder != attachment_id:
+                return ControlResult(attachment_id, False, "released", lease.generation)
+            self._bump(lease)
+            lease.holder = None
             return ControlResult(attachment_id, False, "released", lease.generation)
-        self._bump(lease)
-        lease.holder = None
-        return ControlResult(attachment_id, False, "released", lease.generation)
 
-    def displaced_holder(self, terminal_id: str, new_holder: str) -> str | None:
-        current = self._lease(terminal_id).holder
-        if current is None or current == new_holder:
-            return None
-        return current
-
-    def finalize(self, attachment_id: str, reason: str) -> FinalizedEvent | None:
+    async def finalize(self, attachment_id: str, reason: str) -> FinalizedEvent | None:
         record = self._attachments.get(attachment_id)
         if record is None or record.finalized:
             return None
-        lease = self._lease(record.terminal_id)
-        if lease.holder == attachment_id:
-            self._bump(lease)
-            lease.holder = None
-        record.finalized = True
-        record.writes.clear()
-        sizing: SizingDecision | None = None
-        if lease.sizing_owner == attachment_id:
-            owner = self._elect_sizing_owner(record.terminal_id)
-            lease.sizing_owner = None if owner is None else owner.attachment_id
-            if owner is not None and owner.geometry is not None:
-                sizing = SizingDecision(owner.viewer, *owner.geometry)
-        if not self._live_viewers(record.terminal_id):
-            lease.sizing_owner = None
-            sizing = SizingDecision(None)
-        return FinalizedEvent(
-            terminal_id=record.terminal_id,
-            attachment_id=attachment_id,
-            reason=reason,
-            lease_generation=lease.generation,
-            sizing=sizing,
-        )
+        terminal_id = record.terminal_id
+        async with self.lock(terminal_id):
+            record = self._attachments.get(attachment_id)
+            if record is None or record.finalized:
+                return None
+            lease = self._lease(terminal_id)
+            if lease.holder == attachment_id:
+                self._bump(lease)
+                lease.holder = None
+            record.finalized = True
+            record.writes.clear()
+            sizing: SizingDecision | None = None
+            if lease.sizing_owner == attachment_id:
+                owner = self._elect_sizing_owner(terminal_id)
+                lease.sizing_owner = None if owner is None else owner.attachment_id
+                if owner is not None and owner.geometry is not None:
+                    sizing = SizingDecision(owner.viewer, *owner.geometry)
+            if not self._live_viewers(terminal_id):
+                lease.sizing_owner = None
+                sizing = SizingDecision(None)
+            return FinalizedEvent(
+                terminal_id=terminal_id,
+                attachment_id=attachment_id,
+                reason=reason,
+                lease_generation=lease.generation,
+                sizing=sizing,
+            )
 
-    def finalize_websocket(self, websocket: object, reason: str) -> list[FinalizedEvent]:
+    async def finalize_websocket(self, websocket: object, reason: str) -> list[FinalizedEvent]:
         events: list[FinalizedEvent] = []
         for attachment_id in list(self._by_websocket.pop(websocket, set())):
-            event = self.finalize(attachment_id, reason)
+            event = await self.finalize(attachment_id, reason)
             if event is not None:
                 events.append(event)
         return events

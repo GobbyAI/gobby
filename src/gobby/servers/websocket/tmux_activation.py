@@ -592,7 +592,7 @@ async def _fail(
     """
     await teardown_bridge(host, attachment_id)
     registry = host._leases()
-    event = registry.finalize(attachment_id, reason)
+    event = await registry.finalize(attachment_id, reason)
     generation = (
         event.lease_generation if event is not None else registry.generation(pending.terminal_id)
     )

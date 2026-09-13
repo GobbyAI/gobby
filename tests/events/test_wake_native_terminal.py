@@ -14,6 +14,7 @@ from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.terminals.fakes import (
@@ -93,6 +94,7 @@ def managed_chain(monkeypatch: pytest.MonkeyPatch) -> ManagedChain:
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(tmux, native),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
     async def no_sleep(_seconds: float) -> None:
@@ -278,6 +280,7 @@ async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
     async def no_sleep(_seconds: float) -> None:
@@ -384,7 +387,12 @@ async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
 ) -> None:
     """A latch persisted by an earlier daemon life must not suppress wakes forever."""
     wake_key = f"wake:{managed_chain.row.id}"
-    managed_chain.store.persist_unresolved_write(managed_chain.row.id, wake_key, "automatic")
+    managed_chain.store.persist_unresolved_write(
+        managed_chain.row.id,
+        wake_key,
+        "automatic",
+        daemon_epoch="test-epoch",
+    )
     pane_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
@@ -413,7 +421,12 @@ async def test_undelivered_composer_clear_leaves_the_earlier_wake_latched(
     """Only a Delivered drain proves the composer is empty; a lost one settles nothing."""
     wake_key = f"wake:{managed_chain.row.id}"
     clear_key = f"wake-clear:{managed_chain.row.id}"
-    managed_chain.store.persist_unresolved_write(managed_chain.row.id, wake_key, "automatic")
+    managed_chain.store.persist_unresolved_write(
+        managed_chain.row.id,
+        wake_key,
+        "automatic",
+        daemon_epoch="test-epoch",
+    )
     managed_chain.native.outcomes = [IndeterminateWrite(detail="lost")]
     pane_sender = AsyncMock()
     dispatcher = WakeDispatcher(
@@ -491,6 +504,7 @@ async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     monkeypatch.setattr(
         "gobby.runner_init.orchestration.wake_write_services",

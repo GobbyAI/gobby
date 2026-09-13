@@ -16,6 +16,7 @@ import pytest
 from psycopg.errors import CheckViolation, NotNullViolation, UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import (
@@ -37,6 +38,8 @@ from gobby.storage.terminals import (
     truncate_title,
 )
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.postgres import TEST_USER_ID
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -832,13 +835,24 @@ def test_unresolved_writes_are_bounded(
             pending.id,
             "k" * (UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES + 1),
             "automatic",
+            daemon_epoch="test-epoch",
         )
 
     for index in range(UNRESOLVED_WRITE_MAX_ENTRIES):
         key = f"{index:02d}" + ("a" * (UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES - 2))
-        manager.persist_unresolved_write(pending.id, key, "automatic")
+        manager.persist_unresolved_write(
+            pending.id,
+            key,
+            "automatic",
+            daemon_epoch="test-epoch",
+        )
     with pytest.raises(UnresolvedWriteCapacityError):
-        manager.persist_unresolved_write(pending.id, "overflow-key", "automatic")
+        manager.persist_unresolved_write(
+            pending.id,
+            "overflow-key",
+            "automatic",
+            daemon_epoch="test-epoch",
+        )
 
     loaded = manager.get(pending.id)
     assert loaded is not None
@@ -847,7 +861,111 @@ def test_unresolved_writes_are_bounded(
     huge_origin = "o" * UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES
     other = _create_pending(manager, sample_project["id"])
     with pytest.raises(UnresolvedWriteCapacityError):
-        manager.persist_unresolved_write(other.id, "big", huge_origin)
+        manager.persist_unresolved_write(
+            other.id,
+            "big",
+            huge_origin,
+            daemon_epoch="test-epoch",
+        )
+
+
+def test_latch_entries_carry_daemon_epoch(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"])
+
+    with pytest.raises(ValueError, match="daemon_epoch"):
+        manager.persist_unresolved_write(
+            pending.id,
+            "ws:empty",
+            "operator",
+            daemon_epoch="",
+        )
+
+    manager.persist_unresolved_write(
+        pending.id,
+        "ws:attachment:1",
+        "operator",
+        daemon_epoch="epoch-current",
+    )
+    loaded = _manager(temp_db).get(pending.id)
+    assert loaded is not None
+    entry = loaded.unresolved_writes["ws:attachment:1"]
+    assert entry["origin"] == "operator"
+    assert entry["daemon_epoch"] == "epoch-current"
+    assert isinstance(entry["at"], str)
+
+
+def test_orphan_sweep_clears_only_dead_epochs_on_this_machine(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    current_epoch = "epoch-current"
+    old_epoch = "epoch-old"
+    other_machine_id = "22000000-0000-4000-8000-000000000002"
+    manager = _manager(temp_db)
+    local = _create_pending(manager, sample_project["id"])
+    LocalMachineManager(temp_db).upsert_seen(other_machine_id, TEST_USER_ID)
+    with patch("gobby.utils.machine_id._cached_machine_id", other_machine_id):
+        other = _create_pending(manager, sample_project["id"])
+
+    for action_key, daemon_epoch in (
+        ("ws:old:1", old_epoch),
+        ("ws:current:1", current_epoch),
+        ("wake:automatic", old_epoch),
+    ):
+        manager.persist_unresolved_write(
+            local.id,
+            action_key,
+            "operator" if action_key.startswith("ws:") else "automatic",
+            daemon_epoch=daemon_epoch,
+        )
+    manager.persist_unresolved_write(
+        other.id,
+        "ws:other-machine:1",
+        "operator",
+        daemon_epoch=old_epoch,
+    )
+
+    reloaded = _manager(temp_db)
+    assert reloaded.clear_orphaned_attachment_writes(LOCAL_MACHINE_ID, current_epoch) == 1
+    local_after = reloaded.get(local.id)
+    other_after = reloaded.get(other.id)
+    assert local_after is not None
+    assert other_after is not None
+    assert set(local_after.unresolved_writes) == {"ws:current:1", "wake:automatic"}
+    assert set(other_after.unresolved_writes) == {"ws:other-machine:1"}
+
+    memory_local = make_memory_terminal(terminal_id="memory-local")
+    memory_local.machine_id = LOCAL_MACHINE_ID
+    memory_other = make_memory_terminal(terminal_id="memory-other")
+    memory_other.machine_id = other_machine_id
+    memory = MemoryTerminalStore(memory_local)
+    memory.rows[memory_other.id] = memory_other
+    memory.persist_unresolved_write(
+        memory_local.id,
+        "ws:old:1",
+        "operator",
+        daemon_epoch=old_epoch,
+    )
+    memory.persist_unresolved_write(
+        memory_local.id,
+        "ws:current:1",
+        "operator",
+        daemon_epoch=current_epoch,
+    )
+    memory.persist_unresolved_write(
+        memory_other.id,
+        "ws:other-machine:1",
+        "operator",
+        daemon_epoch=old_epoch,
+    )
+
+    assert memory.clear_orphaned_attachment_writes(LOCAL_MACHINE_ID, current_epoch) == 1
+    assert set(memory.rows[memory_local.id].unresolved_writes) == {"ws:current:1"}
+    assert set(memory.rows[memory_other.id].unresolved_writes) == {"ws:other-machine:1"}
 
 
 def test_title_is_byte_bounded(

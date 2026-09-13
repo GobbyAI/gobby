@@ -17,18 +17,27 @@ from gobby.storage.terminal_settlement import (
     ALLOWED_EDGES as ALLOWED_EDGES,
 )
 from gobby.storage.terminal_settlement import (
+    UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES as UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES,
+)
+from gobby.storage.terminal_settlement import (
+    UNRESOLVED_WRITE_MAX_ENTRIES as UNRESOLVED_WRITE_MAX_ENTRIES,
+)
+from gobby.storage.terminal_settlement import (
+    UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES as UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES,
+)
+from gobby.storage.terminal_settlement import (
     IllegalTerminalTransitionError as IllegalTerminalTransitionError,
 )
 from gobby.storage.terminal_settlement import (
     TerminalSettlementMixin,
 )
-from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.storage.terminal_settlement import (
+    UnresolvedWriteCapacityError as UnresolvedWriteCapacityError,
+)
+from gobby.utils.datetime import normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
 TITLE_MAX_BYTES = 1024
-UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES = 256
-UNRESOLVED_WRITE_MAX_ENTRIES = 32
-UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
 FRAMES_SOCKET_NAME = "gterm-frames.sock"
 TERMINAL_STATES = ("pending", "live", "exited", "orphaned")
 
@@ -49,13 +58,6 @@ class MachineOwnershipMismatchError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("machine_ownership_mismatch")
-
-
-class UnresolvedWriteCapacityError(RuntimeError):
-    """Raised when an unresolved-write latch would exceed durable bounds."""
-
-    def __init__(self) -> None:
-        super().__init__("unresolved_write_capacity")
 
 
 def tmux_locator_key(
@@ -249,10 +251,6 @@ def _native_locator(locator: Mapping[str, object]) -> dict[str, str]:
     if extra:
         raise ValueError("native locator may only contain host_terminal_id")
     return {"host_terminal_id": str(locator["host_terminal_id"])}
-
-
-def _serialized_unresolved_size(payload: Mapping[str, object]) -> int:
-    return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
 
 
 def mint_terminal_id() -> str:
@@ -651,80 +649,6 @@ class TerminalManager(TerminalSettlementMixin):
             (rows, cols, str(UUID(terminal_id))),
         )
         return None if row is None else Terminal.from_row(row)
-
-    def persist_unresolved_write(
-        self,
-        terminal_id: str,
-        action_key: str,
-        origin: str,
-        *,
-        at: datetime | None = None,
-    ) -> Terminal:
-        """Write-ahead latch one action_key, enforcing durable map bounds."""
-        if (
-            not action_key
-            or len(action_key.encode("utf-8")) > UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES
-        ):
-            raise UnresolvedWriteCapacityError()
-        current = self.get(terminal_id)
-        if current is None:
-            raise KeyError(terminal_id)
-        writes = dict(current.unresolved_writes)
-        if action_key not in writes and len(writes) >= UNRESOLVED_WRITE_MAX_ENTRIES:
-            raise UnresolvedWriteCapacityError()
-        writes[action_key] = {
-            "at": (at or utc_now()).isoformat(),
-            "origin": origin,
-        }
-        if _serialized_unresolved_size(writes) > UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES:
-            raise UnresolvedWriteCapacityError()
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET unresolved_writes = %s, updated_at = now()
-            WHERE id = %s
-            RETURNING *
-            """,
-            (Jsonb(writes), str(UUID(terminal_id))),
-        )
-        if row is None:
-            raise KeyError(terminal_id)
-        return Terminal.from_row(row)
-
-    def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal:
-        """Drop one action_key from the durable unresolved-write map."""
-        current = self.get(terminal_id)
-        if current is None:
-            raise KeyError(terminal_id)
-        writes = dict(current.unresolved_writes)
-        writes.pop(action_key, None)
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET unresolved_writes = %s, updated_at = now()
-            WHERE id = %s
-            RETURNING *
-            """,
-            (Jsonb(writes), str(UUID(terminal_id))),
-        )
-        if row is None:
-            raise KeyError(terminal_id)
-        return Terminal.from_row(row)
-
-    def clear_all_unresolved_writes(self, terminal_id: str) -> Terminal:
-        """Drop every action_key from the durable unresolved-write map."""
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET unresolved_writes = '{}'::jsonb, updated_at = now()
-            WHERE id = %s
-            RETURNING *
-            """,
-            (str(UUID(terminal_id)),),
-        )
-        if row is None:
-            raise KeyError(terminal_id)
-        return Terminal.from_row(row)
 
     def set_automatic_write_quarantine(self, terminal_id: str, action_key: str) -> Terminal:
         """Set both quarantine columns together."""
