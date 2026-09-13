@@ -142,7 +142,10 @@ test("activity panel shows non-current web chats with a web badge", async ({
     });
   });
 
-  await page.route("**/api/**", async (route) => {
+  // Predicate, not a glob: "**/api/**" also matches vite's own module
+  // requests for src/api/*, which stubs them as JSON and the app never boots.
+  const isApiRequest = (url: URL) => url.pathname.startsWith("/api/");
+  await page.route(isApiRequest, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
@@ -366,7 +369,10 @@ test("activity panel refreshes sessions after a session_event websocket message"
   });
 
   let catalogSessions = [sessions[1], sessions[0]];
-  await page.route("**/api/**", async (route) => {
+  // Predicate, not a glob: "**/api/**" also matches vite's own module
+  // requests for src/api/*, which stubs them as JSON and the app never boots.
+  const isApiRequest = (url: URL) => url.pathname.startsWith("/api/");
+  await page.route(isApiRequest, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();

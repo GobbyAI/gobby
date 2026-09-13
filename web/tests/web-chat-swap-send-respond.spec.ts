@@ -219,7 +219,10 @@ test("can swap to another web chat, send a message, and receive a response", asy
 }) => {
   await setupMockWebSocket(page);
 
-  await page.route("**/api/**", async (route) => {
+  // Predicate, not a glob: "**/api/**" also matches vite's own module
+  // requests for src/api/*, which stubs them as JSON and the app never boots.
+  const isApiRequest = (url: URL) => url.pathname.startsWith("/api/");
+  await page.route(isApiRequest, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
@@ -426,10 +429,10 @@ test("can swap to another web chat, send a message, and receive a response", asy
   await waitForConnection(page);
 
   await expect(
-    page.getByRole("button", { name: /#202 current web chat/i }),
+    page.getByRole("button", { name: /#202: current web chat/i }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: /#202 current web chat/i }).click();
+  await page.getByRole("button", { name: /#202: current web chat/i }).click();
   await expect(
     page.getByRole("dialog", { name: "Command palette" }),
   ).toBeVisible();
@@ -439,7 +442,7 @@ test("can swap to another web chat, send a message, and receive a response", asy
     .click();
 
   await expect(
-    page.getByRole("button", { name: /#203 other web chat/i }),
+    page.getByRole("button", { name: /#203: other web chat/i }),
   ).toBeVisible();
   await expect(page.getByText("Attach")).toHaveCount(0);
   await expect(page.getByText("Other chat history")).toBeVisible();

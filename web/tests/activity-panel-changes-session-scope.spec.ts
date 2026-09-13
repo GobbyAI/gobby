@@ -103,7 +103,10 @@ async function setupMocks(page: Page, current: SessionRecord) {
     });
   });
 
-  await page.route("**/api/**", async (route) => {
+  // Predicate, not a glob: "**/api/**" also matches vite's own module
+  // requests for src/api/*, which stubs them as JSON and the app never boots.
+  const isApiRequest = (url: URL) => url.pathname.startsWith("/api/");
+  await page.route(isApiRequest, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const json = (body: unknown) =>
