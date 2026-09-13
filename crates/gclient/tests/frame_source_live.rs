@@ -182,9 +182,9 @@ fn build_test_gterm() -> PathBuf {
         .and_then(Path::parent)
         .expect("target profile directory")
         .join("gterm");
-    if binary.is_file() {
-        return binary;
-    }
+    // Every worktree shares this target directory, so an existing binary may come from another
+    // checkout. Always let Cargo validate it against this tree; incremental no-op builds keep the
+    // common path cheap, and Cargo's shared build lock safely serializes required rebuilds.
     let status = Command::new(env!("CARGO"))
         .current_dir(&workspace)
         .args([
@@ -249,6 +249,19 @@ fn recv_control(stream: &mut StdUnixStream) -> Value {
     serde_json::from_slice(&line).expect("decode control reply")
 }
 
+fn recv_response_with_id(stream: &mut StdUnixStream, expected_id: &str) -> Value {
+    loop {
+        let message = recv_control(stream);
+        if message.get("id").and_then(Value::as_str) == Some(expected_id) {
+            return message;
+        }
+        assert!(
+            message.get("event").is_some(),
+            "unexpected control message: {message}"
+        );
+    }
+}
+
 fn control_connection_at(host_dir: &Path) -> StdUnixStream {
     let mut stream =
         StdUnixStream::connect(host_dir.join(CONTROL_SOCKET)).expect("connect control");
@@ -256,19 +269,20 @@ fn control_connection_at(host_dir: &Path) -> StdUnixStream {
         &mut stream,
         &json!({
             "method": "hello",
+            "id": "hello-1",
             "protocol_version": 1,
             "control_token": "control-token"
         }),
     );
-    let reply = recv_control(&mut stream);
+    let reply = recv_response_with_id(&mut stream, "hello-1");
     assert_eq!(reply["ok"], true, "control hello: {reply}");
     stream
 }
 
 fn control_epoch_at(host_dir: &Path) -> String {
     let mut control = control_connection_at(host_dir);
-    send_control(&mut control, &json!({"method": "ping"}));
-    let reply = recv_control(&mut control);
+    send_control(&mut control, &json!({"method": "ping", "id": "ping-1"}));
+    let reply = recv_response_with_id(&mut control, "ping-1");
     assert_eq!(reply["ok"], true, "control ping: {reply}");
     reply["host_epoch"]
         .as_str()
@@ -278,18 +292,19 @@ fn control_epoch_at(host_dir: &Path) -> String {
 
 fn spawn_native_terminal_at(host_dir: &Path) -> (String, String) {
     let mut control = control_connection_at(host_dir);
-    send_control(&mut control, &json!({"method": "ping"}));
-    let ping = recv_control(&mut control);
+    send_control(&mut control, &json!({"method": "ping", "id": "ping-1"}));
+    let ping = recv_response_with_id(&mut control, "ping-1");
     let epoch = ping["host_epoch"].as_str().expect("host epoch").to_string();
     send_control(
         &mut control,
         &json!({
             "method": "reserve_observer",
+            "id": "reserve-observer-1",
             "terminal_id": "gclient-real-native",
             "reserve_key": "gclient-reserve"
         }),
     );
-    let reserved = recv_control(&mut control);
+    let reserved = recv_response_with_id(&mut control, "reserve-observer-1");
     assert_eq!(reserved["ok"], true, "reserve native observer: {reserved}");
     send_control(
         &mut control,
@@ -308,7 +323,7 @@ fn spawn_native_terminal_at(host_dir: &Path) -> (String, String) {
             "commit_deadline_ms": 5000
         }),
     );
-    let prepared = recv_control(&mut control);
+    let prepared = recv_response_with_id(&mut control, "spawn-1");
     assert_eq!(prepared["ok"], true, "prepare native terminal: {prepared}");
     let host_terminal_id = prepared["host_terminal_id"]
         .as_str()
@@ -318,11 +333,12 @@ fn spawn_native_terminal_at(host_dir: &Path) -> (String, String) {
         &mut control,
         &json!({
             "method": "spawn_commit",
+            "id": "spawn-commit-1",
             "terminal_id": "gclient-real-native",
             "spawn_key": "gclient-spawn"
         }),
     );
-    let committed = recv_control(&mut control);
+    let committed = recv_response_with_id(&mut control, "spawn-commit-1");
     assert_eq!(committed["ok"], true, "commit native terminal: {committed}");
     (epoch, host_terminal_id)
 }
