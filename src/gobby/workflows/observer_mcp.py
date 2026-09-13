@@ -33,19 +33,16 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
 
     tracked = _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
     if server_name == "gobby-skills" and inner_tool in {"get_skill", "get_skill_file"}:
+        reference = inner_tool == "get_skill_file"
         if tracked:
-            _track_loaded_skill(
-                variables,
-                tool_output,
-                session_id,
-                reference=inner_tool == "get_skill_file",
-            )
-        elif inner_tool == "get_skill":
+            _track_loaded_skill(variables, tool_output, session_id, reference=reference)
+        else:
             _track_unresolvable_claimed_task_extra_skill(
                 variables,
                 event.data.get("tool_input") or {},
                 tool_output,
                 session_id,
+                reference=reference,
             )
 
 
@@ -132,15 +129,16 @@ def _track_unresolvable_claimed_task_extra_skill(
     tool_input: dict[str, Any] | Any,
     tool_output: dict[str, Any] | Any,
     session_id: str,
+    *,
+    reference: bool = False,
 ) -> None:
-    """Record a claimed-task extra after get_skill definitively reports it missing."""
-    name = _requested_skill_name(tool_input)
+    """Record a claimed-task extra after retrieval definitively reports it missing."""
+    name = _requested_instruction(tool_input, reference=reference)
     extras = variables.get("claimed_task_extra_skills") or []
     if not name or not isinstance(extras, list) or name not in extras:
         return
 
-    error = _skill_error(tool_output)
-    if error != f"Skill not found: {name}":
+    if not _is_not_found(tool_output):
         return
 
     unresolvable = variables.get("unresolvable_claimed_task_extra_skills") or []
@@ -156,7 +154,8 @@ def _track_unresolvable_claimed_task_extra_skill(
     variables["unresolvable_claimed_task_extra_skills"] = unresolvable
 
 
-def _requested_skill_name(tool_input: dict[str, Any] | Any) -> str | None:
+def _requested_instruction(tool_input: dict[str, Any] | Any, *, reference: bool) -> str | None:
+    """Return the requested skill name, or the exact identity of a requested reference."""
     if not isinstance(tool_input, dict):
         return None
     arguments = tool_input.get("arguments", tool_input.get("args", tool_input))
@@ -168,19 +167,31 @@ def _requested_skill_name(tool_input: dict[str, Any] | Any) -> str | None:
     if not isinstance(arguments, dict):
         return None
     name = arguments.get("name")
-    return name if isinstance(name, str) and name else None
+    if not isinstance(name, str) or not name:
+        return None
+    if not reference:
+        return name
+    path = arguments.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    from gobby.skills.instruction_requirements import parse_instruction_requirement
+
+    try:
+        return parse_instruction_requirement(f"{name}:{path}").identity
+    except ValueError:
+        return None
 
 
-def _skill_error(tool_output: dict[str, Any] | Any) -> str | None:
+def _is_not_found(tool_output: dict[str, Any] | Any) -> bool:
+    """Return whether gobby-skills reported the requested skill or file as not found."""
     candidate = tool_output
     for _ in range(3):
         if not isinstance(candidate, dict):
-            return None
-        error = candidate.get("error")
-        if isinstance(error, str):
-            return error
-        candidate = candidate.get("result")
-    return None
+            return False
+        if candidate.get("error_code") == "not_found":
+            return True
+        candidate = candidate.get("result", candidate.get("structuredContent"))
+    return False
 
 
 def _track_mcp_call(

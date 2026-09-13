@@ -320,7 +320,7 @@ class TestSyncBundledSkills:
         # Skills are directly visible (source='installed')
         installed = skill_manager.list_skills(source="installed")
         assert len(installed) > 0
-        assert skill_manager.get_by_name("tasks") is not None
+        assert skill_manager.get_by_name("gobby") is not None
 
     def test_sync_bundled_skills_creates_as_installed_source(
         self, db: HubDatabase, skill_manager: LocalSkillManager
@@ -330,7 +330,7 @@ class TestSyncBundledSkills:
 
         sync_bundled_skills(db)
 
-        skill = skill_manager.get_by_name("memory")
+        skill = skill_manager.get_by_name("restraint")
         assert skill is not None
         assert skill.source == "installed"
         assert skill.enabled is True
@@ -343,26 +343,10 @@ class TestSyncBundledSkills:
 
         sync_bundled_skills(db)
 
-        skill = skill_manager.get_by_name("memory")
+        skill = skill_manager.get_by_name("restraint")
         assert skill is not None
-        assert skill.name == "memory"
+        assert skill.name == "restraint"
         assert len(skill.content) > 0
-
-    def test_memory_skill_documents_search_first_and_optional_writes(
-        self, db: HubDatabase, skill_manager: LocalSkillManager
-    ) -> None:
-        from gobby.skills.sync import sync_bundled_skills
-
-        sync_bundled_skills(db)
-        skill = skill_manager.get_by_name("memory")
-        assert skill is not None
-
-        assert "At task claim: search the task subject before editing" in skill.content
-        assert "Every hit carries `rationale`, `similarity`, and `memory_type`" in skill.content
-        assert "results are evidence, not authority" in skill.content
-        assert "review_task_memories(task_id, changes_summary)" in skill.content
-        assert "after the post-close prompt" in skill.content
-        assert "Most turns and most completed tasks need no memory write" in skill.content
 
     def test_removed_bundled_skill_directories_do_not_sync(
         self, db: HubDatabase, skill_manager: LocalSkillManager
@@ -554,7 +538,7 @@ class TestSyncBundledSkills:
 
         sync_bundled_skills(db)
 
-        skill = skill_manager.get_by_name("memory")
+        skill = skill_manager.get_by_name("restraint")
         assert skill is not None
         assert skill.source_type == "filesystem"
 
@@ -566,11 +550,11 @@ class TestSyncBundledSkills:
 
         sync_bundled_skills(db)
 
-        skill = skill_manager.get_by_name("memory")
+        skill = skill_manager.get_by_name("restraint")
         assert skill is not None
         assert skill.project_id is None
 
-    @pytest.mark.parametrize("skill_name", ["memory", "handoff-discipline"])
+    @pytest.mark.parametrize("skill_name", ["gobby", "restraint"])
     def test_sync_bundled_skills_updates_changed_content(
         self, db: HubDatabase, skill_manager: LocalSkillManager, skill_name: str
     ) -> None:
@@ -607,7 +591,7 @@ class TestSyncBundledSkills:
         assert refreshed.content == original_content
         assert refreshed.content != stale_content
 
-    @pytest.mark.parametrize("skill_name", ["memory", "handoff-discipline"])
+    @pytest.mark.parametrize("skill_name", ["gobby", "restraint"])
     def test_sync_bundled_skills_have_gobby_metadata(
         self, db: HubDatabase, skill_manager: LocalSkillManager, skill_name: str
     ) -> None:
@@ -669,11 +653,11 @@ class TestSyncBundledSkills:
                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 (
                     stale_id,
-                    "loading-skills",
+                    "restraint",
                     "Stale worktree copy",
                     "# Stale template content",
                     "/repo/.claude/worktrees/task-17495/src/gobby/install/shared/"
-                    "skills/loading-skills/SKILL.md",
+                    "skills/restraint/SKILL.md",
                     "local",
                     project_id,
                     "project",
@@ -701,16 +685,14 @@ class TestSyncBundledSkills:
 
         assert result["success"] is True
         assert result["purged_project_overrides"] == 1
-        stale = skill_manager.get_by_name(
-            "loading-skills", project_id=project_id, include_deleted=True
-        )
+        stale = skill_manager.get_by_name("restraint", project_id=project_id, include_deleted=True)
         assert stale is not None
         assert stale.deleted_at is not None
         legit = skill_manager.get_by_name("my-skill", project_id=project_id)
         assert legit is not None
         assert legit.deleted_at is None
         # Resolution now lands on the freshly synced installed row
-        resolved = skill_manager.get_by_name("loading-skills", project_id=project_id)
+        resolved = skill_manager.get_by_name("restraint", project_id=project_id)
         assert resolved is not None
         assert resolved.source == "installed"
 

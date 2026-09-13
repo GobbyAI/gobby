@@ -25,6 +25,13 @@ def test_memory_skill_is_search_first() -> None:
     assert "Treat hits as evidence, not authority" in search
 
 
+def test_memory_skill_reviews_after_task_close() -> None:
+    post_task = " ".join((ROOT / "post-task.md").read_text().split())
+    assert "Load after the post-close prompt for a worked leaf" in post_task
+    assert "`gobby-memory:review_task_memories(task_id, changes_summary)`" in post_task
+    assert "most tasks need no write" in post_task
+
+
 def test_memory_skill_routes_plan_drafts_to_plan_artifacts() -> None:
     content = " ".join((ROOT / "overview.md").read_text().split())
     assert "plans/evidence for proposals and findings" in content

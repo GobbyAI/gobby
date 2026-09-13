@@ -75,7 +75,7 @@ class TestToolHandlers:
         assert "/gobby tasks" in response.context
         state.return_value.get_variables.assert_called_once_with("session-1")
 
-    @pytest.mark.parametrize("name", ["gobby", "gobby:tasks", "tasks"])
+    @pytest.mark.parametrize("name", ["gobby", "gobby:tasks"])
     def test_native_capability_reference(self, event_handlers: EventHandlers, name: str) -> None:
         event_handlers._skill_manager = MagicMock()
         args = "tasks references closing" if name == "gobby" else "references closing"
@@ -90,6 +90,44 @@ class TestToolHandlers:
         assert '"path":"references/tasks/closing.md"' in response.context
         assert "overview.md" not in response.context
         event_handlers._skill_manager.resolve_skill_name.assert_not_called()
+
+    def test_bare_capability_name_stays_with_native_skill(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        manager = MagicMock()
+        manager.resolve_skill_name.return_value = None
+        event_handlers._skill_manager = manager
+        response = event_handlers.handle_before_tool(
+            make_event(
+                HookEventType.BEFORE_TOOL,
+                data={"tool_name": "Skill", "tool_input": {"skill": "config", "args": "edit"}},
+            )
+        )
+        assert response.decision == "allow"
+        assert response.context is None
+        assert manager.resolve_skill_name.call_args.args == ("config",)
+
+    @pytest.mark.parametrize(("skill", "bare"), [("gobby:tasks", False), ("restraint", True)])
+    def test_unreadable_catalog_allows_native_skill(
+        self, event_handlers: EventHandlers, skill: str, bare: bool
+    ) -> None:
+        manager = MagicMock()
+        manager.resolve_skill_name.return_value = None
+        event_handlers._skill_manager = manager
+        with patch(
+            "gobby.hooks.event_handlers._tool.load_capability_catalog",
+            side_effect=ValueError("invalid catalog"),
+        ) as load_catalog:
+            response = event_handlers.handle_before_tool(
+                make_event(
+                    HookEventType.BEFORE_TOOL,
+                    data={"tool_name": "Skill", "tool_input": {"skill": skill}},
+                )
+            )
+        assert response.decision == "allow"
+        # Bare names never need the catalog, so its failure cannot hide a local skill.
+        assert load_catalog.called is not bare
+        assert manager.resolve_skill_name.called is bare
 
     def test_native_router_retains_request_arguments(self, event_handlers: EventHandlers) -> None:
         event_handlers._skill_manager = MagicMock()

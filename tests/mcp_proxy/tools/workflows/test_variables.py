@@ -416,7 +416,7 @@ class TestCreateVariable:
         mgr.create.assert_called_once()
         call_kwargs = mgr.create.call_args
         assert call_kwargs[1]["default_value"] == "hello"
-        assert call_kwargs[1]["source"] == "installed"
+        assert call_kwargs[1]["source"] == "custom"
 
     def test_create_variable_name_collision(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import create_variable

@@ -219,8 +219,9 @@ when a typed default is needed. Definition update treats `None` as unchanged;
 it is not a public MCP null-reset mechanism.
 
 Creation rejects existing names, including bundled collisions. It creates a
-global installed user row: `project_path` selects the export destination, **not**
-the DB project scope, and `make_template` selects the global export directory.
+global custom user row, so file sync never refreshes or prunes it: `project_path`
+selects the export destination, **not** the DB project scope, and `make_template`
+selects the global export directory.
 Update changes value/description; deletion soft-deletes a definition, not a
 session key. Export returns a single named YAML document. It is not a complete
 backup of scope, tags or enabled state. Auto-export may be skipped (no destination

@@ -105,6 +105,22 @@ def test_failed_reinstall_leaves_prior_bundled_rows(hub_db: HubDatabase) -> None
     assert kept.deleted_at is None
 
 
+def test_reinstall_reports_sync_warnings(hub_db: HubDatabase) -> None:
+    def warn_sync(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {
+            "total_synced": 1,
+            "errors": [],
+            "warnings": ["tasks[1].additional_skills: replace plan"],
+            "details": {},
+        }
+
+    with patch("gobby.sync_registry.sync_bundled_content_to_db", side_effect=warn_sync):
+        _deleted, result = _reinstall_bundled_definitions(hub_db, {"skills"}, skip_types=None)
+
+    assert result["errors"] == []
+    assert result["warnings"] == ["tasks[1].additional_skills: replace plan"]
+
+
 @patch("gobby.sync_registry.sync_bundled_content_to_db")
 @patch("gobby.cli.runtime.require_cli_database")
 @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))

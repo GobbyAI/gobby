@@ -299,7 +299,7 @@ def _reinstall_bundled_definitions(
     from gobby.sync_registry import sync_bundled_content_to_db
 
     deleted = 0
-    merged: dict[str, Any] = {"total_synced": 0, "errors": [], "details": {}}
+    merged: dict[str, Any] = {"total_synced": 0, "errors": [], "warnings": [], "details": {}}
     for kind in sorted(kinds):
         try:
             with db.transaction():
@@ -310,6 +310,7 @@ def _reinstall_bundled_definitions(
                     raise RuntimeError("; ".join(str(item) for item in errors))
                 deleted += kind_deleted
                 merged["total_synced"] += int(result.get("total_synced") or 0)
+                merged["warnings"].extend(result.get("warnings") or [])
                 merged["details"].update(result.get("details") or {})
         except Exception as exc:
             merged["errors"].append(f"Failed to reinstall bundled {kind}: {exc}")

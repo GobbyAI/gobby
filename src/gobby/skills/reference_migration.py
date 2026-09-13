@@ -158,6 +158,18 @@ def migrate_instruction_requirements(
                                     catalog=catalog,
                                     result=result,
                                 )
+                            elif (
+                                isinstance(effect, dict)
+                                and effect.get("type") == "load_skill"
+                                and isinstance(effect.get("skill"), str)
+                            ):
+                                [effect["skill"]] = _requirement_list(
+                                    [effect["skill"]],
+                                    location=f"{location}.effects[{index}].skill",
+                                    owned=owned,
+                                    catalog=catalog,
+                                    result=result,
+                                )
                         if body != rule.definition_json:
                             rules.update_from_sync(candidate.id, definition_json=body)
                             changed = True

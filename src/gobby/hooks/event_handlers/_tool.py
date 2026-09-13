@@ -134,8 +134,17 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if ":" in skill_name:
             return None
 
-        catalog = load_capability_catalog()
-        if skill_name == "gobby" or any(item.name == skill_name for item in catalog.capabilities):
+        # Capability names own only the Gobby namespace. A bare native name such as
+        # "config" stays with the provider unless it resolves to a Gobby skill below.
+        catalog = None
+        if skill_name == "gobby" or raw_skill_name.startswith("gobby:"):
+            try:
+                catalog = load_capability_catalog()
+            except (OSError, ValueError) as exc:
+                raise SkillResolutionError("Gobby capability catalog is unavailable") from exc
+        if catalog is not None and (
+            skill_name == "gobby" or any(item.name == skill_name for item in catalog.capabilities)
+        ):
             args = str(tool_input.get("args", "") or "")
             request = args if skill_name == "gobby" else f"{skill_name} {args}"
             manager = self._skill_manager
@@ -176,7 +185,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if skill is not None:
                 return self._build_skill_response(skill, raw_skill_name, tool_input)
 
-        if raw_skill_name.startswith("gobby:"):
+        if catalog is not None:
+            # Only an unresolved gobby-namespaced name reaches here with a catalog.
             context = f"Unknown Gobby skill {skill_name!r}.\n\n"
             context += capability_menu(catalog, "/gobby")
             context += "\n\nInstalled standalone skills:\n" + standalone_menu(

@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any
 
 import psycopg
 
-from gobby.skills.instruction_requirements import instruction_is_loaded
+from gobby.skills.instruction_requirements import (
+    instruction_is_loaded,
+    parse_instruction_requirement,
+)
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import extract_artifact_references, parse_test_reference
 from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
@@ -61,6 +64,8 @@ def build_claimed_task_extra_skill_state(
                         _append_unique(acceptance_test_paths, parsed[0])
 
     unresolved = _string_list(variables.get(UNRESOLVABLE_EXTRA_SKILLS_VARIABLE))
+    # A malformed identifier can never load, so it must not hold the extras gate.
+    _extend_unique(unresolved, [skill for skill in extras if not _is_instruction(skill)])
     return {
         EXTRA_SKILLS_VARIABLE: extras,
         UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
@@ -87,6 +92,14 @@ def missing_claimed_task_extra_skills(variables: dict[str, Any]) -> list[str]:
         for skill in _string_list(variables.get(EXTRA_SKILLS_VARIABLE))
         if not instruction_is_loaded(skill, variables) and skill not in unresolved
     ]
+
+
+def _is_instruction(skill: str) -> bool:
+    try:
+        parse_instruction_requirement(skill)
+    except ValueError:
+        return False
+    return True
 
 
 def _load_task(task_manager: LocalTaskManager, task_id: str) -> Any | None:

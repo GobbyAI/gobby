@@ -301,6 +301,47 @@ class TestMultiRootUserSync:
             "global_variable",
         }
 
+    def test_install_elsewhere_keeps_mcp_created_definitions(
+        self, temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gobby.paths
+        import gobby.utils.project_context
+        from gobby.cli.installers.shared import _sync_user_templates_to_db
+        from gobby.mcp_proxy.tools.workflows._rules import create_rule
+        from gobby.mcp_proxy.tools.workflows._variables import create_variable
+        from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+        rules = RuleDefinitionManager(temp_db)
+        variables = SessionVariableDefaultManager(temp_db)
+        creator = tmp_path / "creator"
+        rule = {"event": "before_tool", "effects": [{"type": "inject_context", "template": "x"}]}
+        assert create_rule(rules, "mcp-rule", rule, project_path=creator)["success"] is True
+        assert create_variable(variables, "mcp_limit", 3, project_path=creator)["success"] is True
+
+        # Install from a different checkout whose user roots hold other templates.
+        other = tmp_path / "other"
+        _write_rule(other / "rules", "other-rule")
+        (other / "variables").mkdir()
+        (other / "variables" / "other.yaml").write_text(
+            "variables:\n  other_limit:\n    value: 1\n"
+        )
+        monkeypatch.setattr(
+            gobby.utils.project_context, "get_project_context", lambda cwd=None: None
+        )
+        monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: other / "rules")
+        monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: tmp_path / "no-rules")
+        monkeypatch.setattr(
+            gobby.paths, "get_project_variables_dir", lambda _path: other / "variables"
+        )
+        monkeypatch.setattr(gobby.paths, "get_global_variables_dir", lambda: tmp_path / "no-vars")
+        _stub_mcp_dirs(monkeypatch, tmp_path)
+        _sync_user_templates_to_db(temp_db)
+
+        assert rules.get_by_name("mcp-rule") is not None
+        created_variable = variables.get_by_name("mcp_limit")
+        assert created_variable is not None
+        assert created_variable.default_value == 3
+
 
 _RULE_YAML = (
     "rules:\n  {name}:\n    event: before_tool\n    effect:\n"

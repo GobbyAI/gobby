@@ -1233,10 +1233,50 @@ class TestDetectMcpCall:
 
         assert "loaded_skills" not in variables
 
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments", "requirement", "message"),
+        [
+            ("get_skill", {"name": "typo-skill"}, "typo-skill", "Skill not found: typo-skill"),
+            (
+                "get_skill_file",
+                {"name": "gobby", "path": "references/plan/missing.md"},
+                "gobby:references/plan/missing.md",
+                "File not found: references/plan/missing.md",
+            ),
+        ],
+    )
     def test_missing_claimed_task_extra_is_recorded_as_unresolvable(
-        self, variables, make_after_tool_event, caplog
+        self,
+        variables,
+        make_after_tool_event,
+        caplog,
+        tool_name: str,
+        arguments: dict[str, str],
+        requirement: str,
+        message: str,
+    ) -> None:
+        variables["claimed_task_extra_skills"] = [requirement]
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-skills",
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+            tool_output={"success": False, "error_code": "not_found", "message": message},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["unresolvable_claimed_task_extra_skills"] == [requirement]
+        assert f"suppressing unresolvable claimed-task extra skill {requirement}" in caplog.text
+
+    def test_structured_not_found_is_recorded_as_unresolvable(
+        self, variables, make_after_tool_event
     ) -> None:
         variables["claimed_task_extra_skills"] = ["typo-skill"]
+        not_found = {"success": False, "error_code": "not_found", "message": "Skill not found"}
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={
@@ -1244,14 +1284,48 @@ class TestDetectMcpCall:
                 "tool_name": "get_skill",
                 "arguments": {"name": "typo-skill"},
             },
-            tool_output={"result": {"success": False, "error": "Skill not found: typo-skill"}},
+            tool_output={"result": {"structuredContent": not_found}},
         )
 
-        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
-            detect_mcp_call(event, variables, SESSION_ID)
+        detect_mcp_call(event, variables, SESSION_ID)
 
         assert variables["unresolvable_claimed_task_extra_skills"] == ["typo-skill"]
-        assert "suppressing unresolvable claimed-task extra skill typo-skill" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments", "requirement", "error_code"),
+        [
+            ("get_skill", {"name": "typo-skill"}, "typo-skill", "internal_error"),
+            (
+                "get_skill_file",
+                {"name": "gobby", "path": "references/plan/overview.md"},
+                "gobby:references/plan/overview.md",
+                "stale_cursor",
+            ),
+        ],
+    )
+    def test_transient_skill_error_keeps_extra_required(
+        self,
+        variables,
+        make_after_tool_event,
+        tool_name: str,
+        arguments: dict[str, str],
+        requirement: str,
+        error_code: str,
+    ) -> None:
+        variables["claimed_task_extra_skills"] = [requirement]
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-skills",
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+            tool_output={"success": False, "error_code": error_code, "message": "retry"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert "unresolvable_claimed_task_extra_skills" not in variables
 
     def test_ignores_missing_server_or_tool(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(

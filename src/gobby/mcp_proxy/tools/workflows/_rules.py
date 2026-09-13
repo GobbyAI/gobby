@@ -339,11 +339,13 @@ def create_rule(
 
     tags = definition.get("tags") or ["user"]
 
+    # The DB row owns an MCP-created rule; its YAML is only an export, so user
+    # template sync must never refresh or prune it.
     row = def_manager.create(
         name=name,
         definition_json=definition,
         enabled=True,
-        source="installed",
+        source="custom",
         tags=tags,
     )
     logger.info("Created rule '%s' (id=%s)", name, row.id)

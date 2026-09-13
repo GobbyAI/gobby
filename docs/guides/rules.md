@@ -433,8 +433,9 @@ assume another domain's `override: true` format enables same-name rule overrides
 Current rule-file roots are `.gobby/workflows/rules/` and
 `~/.gobby/workflows/rules/`. Operator imports within a registered checkout use
 that project's ID; outside one they are global. MCP `create_rule` creates a
-global installed row. Its `project_path` controls export location only, and
-`make_template` selects global export. It is not a scope selector.
+global custom row, so file sync never refreshes or prunes it. Its `project_path`
+controls export location only, and `make_template` selects global export. It is
+not a scope selector.
 
 Managed sync applies enabled defaults until the user pins a toggle. It refreshes
 managed definitions, protects live custom rows, and prunes absent managed rows

@@ -188,6 +188,16 @@ def test_refresh_state_drops_unresolvable_names_after_last_claim() -> None:
     }
 
 
+def test_malformed_extra_is_unresolvable() -> None:
+    manager = MagicMock()
+    manager.get_task.return_value = _task(additional_skills=["../tasks", "python"])
+
+    state = build_claimed_task_extra_skill_state({"claimed_tasks": {"task-1": "#1"}}, manager)
+
+    assert state["unresolvable_claimed_task_extra_skills"] == ["../tasks"]
+    assert missing_claimed_task_extra_skills(state) == ["python"]
+
+
 @pytest.mark.parametrize(
     "error",
     [

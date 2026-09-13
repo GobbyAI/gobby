@@ -563,7 +563,7 @@ class TestSyncBundledPipelines:
 
         rows = pipeline_manager.list_all()
         names = [row.name for row in rows]
-        assert set(names) == {"expand-task", "gobby-merge", "review"}
+        assert set(names) == {"expand-task", "gobby-merge", "native-ask", "review"}
 
         expand_task = pipeline_manager.get_by_name("expand-task")
         gobby_merge = pipeline_manager.get_by_name("gobby-merge")

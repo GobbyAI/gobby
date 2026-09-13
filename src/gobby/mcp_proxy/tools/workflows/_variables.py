@@ -401,12 +401,14 @@ def create_variable(
     if deleted_row is not None and deleted_row.deleted_at:
         def_manager.hard_delete(deleted_row.id)
 
+    # The DB row owns an MCP-created variable; its YAML is only an export, so user
+    # template sync must never refresh or prune it.
     row = def_manager.create(
         name=name,
         default_value=value,
         description=description,
         enabled=True,
-        source="installed",
+        source="custom",
         tags=["user"],
     )
     logger.info("Created variable '%s' (id=%s)", name, row.id)
