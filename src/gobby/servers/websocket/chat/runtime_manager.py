@@ -26,7 +26,6 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
 )
 from gobby.ai.endpoints import (
-    endpoint_provider,
     parse_endpoint_model_selector,
     parse_endpoint_selector,
 )
@@ -300,33 +299,15 @@ class WebChatRuntimeManager:
         if endpoint is None:
             return None, None
 
-        from gobby.app_context import get_app_context
-        from gobby.providers.capabilities.local_context_config import endpoint_route
+        from gobby.agents.local_model import refresh_local_model_context
         from gobby.utils.machine_id import require_machine_id
 
-        route = endpoint_route(
-            machine_id=require_machine_id(),
+        return await refresh_local_model_context(
+            endpoint,
             endpoint_name=selector.endpoint_name,
-            endpoint=endpoint,
-            provider=endpoint_provider(selector.endpoint_name),
-            model_id=selector.model or endpoint.model,
+            model=selector.model or endpoint.model,
+            machine_id=require_machine_id(),
         )
-        if not route.is_local:
-            return None, None
-        context = get_app_context()
-        service = getattr(context, "local_context_service", None)
-        if service is None:
-            return route, None
-        try:
-            return route, await service.refresh(route)
-        except Exception:
-            logger.warning(
-                "Local chat context refresh failed (endpoint=%s, model=%s)",
-                selector.endpoint_name,
-                route.model_id,
-                exc_info=True,
-            )
-            return route, None
 
     async def create_session(
         self,
@@ -354,11 +335,7 @@ class WebChatRuntimeManager:
             record = await ensure_agy_support()
             if not record.supported:
                 raise RuntimeError(record.reason)
-        local_route = None
-        local_observation = None
         local_context_provider = provider in {"claude", "codex"}
-        if local_context_provider:
-            local_route, local_observation = await self._refresh_local_context(model)
         session: ChatSessionProtocol
         if provider == "qwen":
             session = QwenManagedChatSession(
@@ -409,8 +386,6 @@ class WebChatRuntimeManager:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if local_context_provider:
             context_session = cast(Any, session)
-            context_session._local_context_route = local_route
-            context_session._local_context_observation = local_observation
             context_session._local_context_refresher = self._refresh_local_context
         self._apply_launch_snapshot(session, snapshot)
         return session

@@ -21,7 +21,11 @@ from gobby.agents.constants import (
     MCP_CONNECT_TIMEOUT_MS_VALUE,
 )
 from gobby.agents.external_write_grants import GRANT_KEY, revalidate_write_grant
-from gobby.agents.local_model import LocalModelError, ensure_local_model
+from gobby.agents.local_model import (
+    LocalModelError,
+    ensure_local_model,
+    refresh_local_model_context,
+)
 from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
     notify_parent_of_recovery,
@@ -56,9 +60,11 @@ from gobby.ask.permissions import (
     UnsupportedAskRuntime,
 )
 from gobby.providers.version_gate import ensure_agy_support
+from gobby.sessions.context_usage import local_context_variable_updates
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 from gobby.storage.terminals import Terminal
+from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +193,8 @@ async def resume_agent_run(
     codex_oss_provider: str | None = None
     endpoint_api_base: str | None = None
     endpoint_api_token: str | None = None
+    local_context_route = None
+    local_context_observation = None
     try:
         endpoint_selection = resolve_generation_endpoint_selector(
             daemon_config,
@@ -239,6 +247,12 @@ async def resume_agent_run(
         else:
             endpoint_api_base = endpoint.api_base
             endpoint_api_token = endpoint.api_key
+        local_context_route, local_context_observation = await refresh_local_model_context(
+            endpoint,
+            endpoint_name=endpoint_selection.name,
+            model=resume_model,
+            machine_id=get_machine_id(),
+        )
 
     native_session_id = _provider_native_session_id(
         original_run,
@@ -274,6 +288,11 @@ async def resume_agent_run(
     if not child_session_id:
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
     metadata = dict(resume_metadata)
+    local_context_updates = local_context_variable_updates(
+        local_context_route,
+        local_context_observation,
+    )
+    metadata.update(local_context_updates)
     if managed_runtime_profile is not None:
         metadata.update(
             {
@@ -292,8 +311,10 @@ async def resume_agent_run(
     metadata[daemon_resume_keys.RESUME_PHASE_KEY] = "prepared"
 
     initial_variables = dict(resume_metadata.get("initial_variables") or {})
+    initial_variables.update(local_context_updates)
     initial_variables["daemon_stop_resume"] = True
     initial_variables["resumed_from_agent_run_id"] = original_run.id
+    metadata["initial_variables"] = initial_variables
 
     try:
         spawn_context = prepare_terminal_resume(

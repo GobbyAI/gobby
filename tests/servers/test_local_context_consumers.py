@@ -234,6 +234,11 @@ async def test_generation_and_chat_refresh(monkeypatch: pytest.MonkeyPatch) -> N
         model="endpoint:first/same",
     )
     assert isinstance(local_session, CodexManagedChatSession)
+    assert local_session._local_context_route is None
+    local_refresher = local_session._local_context_refresher
+    assert local_refresher is not None
+    route, observation = await local_refresher("endpoint:first/same")
+    await local_session._set_local_context(route, observation)
     assert service.events[-1] == ("refresh", "endpoint:first", "same")
     assert local_session._resolve_context_window() == 65_536
 
@@ -282,9 +287,17 @@ async def test_chat_context_endpoint_isolation(monkeypatch: pytest.MonkeyPatch) 
         conversation_id="second",
         model="endpoint:second/same",
     )
-
     assert isinstance(first, CodexManagedChatSession)
     assert isinstance(second, CodexManagedChatSession)
+    first_refresher = first._local_context_refresher
+    second_refresher = second._local_context_refresher
+    assert first_refresher is not None
+    assert second_refresher is not None
+    first_context = await first_refresher("endpoint:first/same")
+    second_context = await second_refresher("endpoint:second/same")
+    await first._set_local_context(*first_context)
+    await second._set_local_context(*second_context)
+
     assert first._resolve_context_window() == 32_768
     assert second._resolve_context_window() == 65_536
     assert first._local_context_route is not None
@@ -318,6 +331,10 @@ async def test_chat_context_endpoint_isolation(monkeypatch: pytest.MonkeyPatch) 
         model="endpoint:first/same",
     )
     assert isinstance(claude, ChatSession)
+    claude_refresher = claude._local_context_refresher
+    assert claude_refresher is not None
+    claude_context = await claude_refresher("endpoint:first/same")
+    await claude._set_local_context(*claude_context)
     assert claude._local_context_route is not None
     assert claude._local_context_route.endpoint_id == "endpoint:first"
     assert claude._resolve_context_window_fallback() == 32_768
@@ -326,22 +343,17 @@ async def test_chat_context_endpoint_isolation(monkeypatch: pytest.MonkeyPatch) 
     claude._client = MagicMock()
     claude._client.set_model = AsyncMock()
     claude._connected = True
-    monkeypatch.setattr(
-        "gobby.agents.local_model.ensure_local_model",
-        AsyncMock(side_effect=lambda endpoint, **_kwargs: endpoint.model),
-    )
+    reconnect = AsyncMock()
+    monkeypatch.setattr(claude, "_reconnect_for_model_change", reconnect)
     await claude.switch_model("endpoint:second/same")
 
-    assert service.events[-1] == ("refresh", "endpoint:second", "same")
-    claude._client.set_model.assert_awaited_once_with("same")
+    reconnect.assert_awaited_once_with("endpoint:second/same")
+    claude._client.set_model.assert_not_awaited()
     assert claude._local_context_route is not None
-    assert claude._local_context_route.endpoint_id == "endpoint:second"
-    assert claude._resolve_context_window_fallback() == 65_536
+    assert claude._local_context_route.endpoint_id == "endpoint:first"
+    assert claude._resolve_context_window_fallback() == 32_768
 
     refresh_count = len(service.events)
     await claude.switch_model("endpoint:remote/remote-model")
     assert len(service.events) == refresh_count
-    assert claude._local_context_route is None
-    assert claude._local_context_observation is None
-    assert claude._last_model == "remote-model"
-    assert claude._context_model() == "remote-model"
+    assert reconnect.await_count == 2

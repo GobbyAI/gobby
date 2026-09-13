@@ -427,6 +427,14 @@ class CodexWebChatBackend:
             except LocalModelError as exc:
                 raise RuntimeError(local_model_preflight_message(local_endpoint, exc)) from exc
 
+        if session._local_context_refresher is not None:
+            context_model = session._model_selector or session._model
+            selector = parse_endpoint_model_selector(context_model)
+            if selector is not None and session._model:
+                context_model = f"endpoint:{selector.endpoint_name}/{session._model}"
+            route, observation = await session._local_context_refresher(context_model or "")
+            await session._set_local_context(route, observation)
+
         if session._thread_id:
             thread = await client.resume_thread(session._thread_id)
         elif session.resume_session_id:

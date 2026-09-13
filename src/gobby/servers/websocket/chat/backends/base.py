@@ -242,12 +242,36 @@ class ManagedChatSessionBase:
         return True
 
     async def switch_model(self, new_model: str) -> None:
-        refreshed_context = None
-        if self._local_context_refresher is not None:
-            refreshed_context = await self._local_context_refresher(new_model)
         await self._backend.switch_model(self, new_model)
-        if refreshed_context is not None:
-            self._local_context_route, self._local_context_observation = refreshed_context
+        if self._local_context_refresher is not None:
+            route, observation = await self._local_context_refresher(new_model)
+            await self._set_local_context(route, observation)
+
+    async def _set_local_context(
+        self,
+        route: LocalContextRoute | None,
+        observation: LocalContextObservation | None,
+    ) -> None:
+        self._local_context_route = route
+        self._local_context_observation = observation
+        if self._session_manager_ref is None or self.db_session_id is None:
+            return
+        from gobby.sessions.context_usage import persist_local_context_variables
+
+        try:
+            await asyncio.to_thread(
+                persist_local_context_variables,
+                self._session_manager_ref,
+                self.db_session_id,
+                route,
+                observation,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist managed chat local context",
+                extra={"session_id": self.db_session_id},
+                exc_info=True,
+            )
 
     def add_output_tokens(self, tokens: int) -> int:
         self._accumulated_output_tokens += max(0, tokens)

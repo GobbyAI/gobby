@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,8 @@ async def build_spawn_context(
     effective_isolation: str,
     reasoning: SpawnReasoningResolution,
     initial_variables: dict[str, Any] | None,
+    local_context_route: LocalContextRoute | None,
+    local_context_observation: LocalContextObservation | None,
     session_manager: Any | None,
     task_additional_skills: list[str] | None,
     enhanced_prompt: str,
@@ -35,6 +41,22 @@ async def build_spawn_context(
     effective_initial_variables: dict[str, Any] = {}
     if initial_variables:
         effective_initial_variables.update(initial_variables)
+    from gobby.sessions.context_usage import (
+        LOCAL_CONTEXT_OBSERVATION_VARIABLE,
+        LOCAL_CONTEXT_ROUTE_VARIABLE,
+        local_context_variable_updates,
+    )
+
+    if local_context_route is not None:
+        context_updates = local_context_variable_updates(
+            local_context_route,
+            local_context_observation,
+        )
+    else:
+        context_updates = {}
+        effective_initial_variables.pop(LOCAL_CONTEXT_ROUTE_VARIABLE, None)
+        effective_initial_variables.pop(LOCAL_CONTEXT_OBSERVATION_VARIABLE, None)
+    effective_initial_variables.update(context_updates)
     if reasoning.status != "not_requested":
         effective_initial_variables.update(
             {
@@ -106,6 +128,7 @@ async def build_spawn_context(
         workflow=effective_workflow,
         initial_variables=effective_initial_variables,
     )
+    resume_metadata.update(context_updates)
     return effective_initial_variables, resume_metadata
 
 

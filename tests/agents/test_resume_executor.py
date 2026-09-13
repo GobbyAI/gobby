@@ -14,7 +14,17 @@ from gobby.agents import resume_executor
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.ask.permissions import AskPermissionStore
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
+from gobby.providers.capabilities.local_context import (
+    LocalContextInstance,
+    LocalContextObservation,
+)
+from gobby.providers.capabilities.local_context_config import LocalContextRoute, endpoint_route
+from gobby.sessions.context_usage import (
+    LOCAL_CONTEXT_OBSERVATION_VARIABLE,
+    LOCAL_CONTEXT_ROUTE_VARIABLE,
+)
 from gobby.storage.agents import AgentRun
 from tests.terminals.fakes import bind_spawn_runtime
 
@@ -485,17 +495,64 @@ async def test_resume_vllm_endpoint_uses_config_override(
 ) -> None:
     secret = "sk-vllm-resume-never-in-argv"
     metadata = _resume_metadata()
-    metadata["model"] = "endpoint:metal/Qwen/Qwen2.5-7B-Instruct"
+    metadata["model"] = "endpoint:metal"
     storage = MagicMock()
     runner = _runner(storage=storage)
     spawner = MagicMock()
     spawner.spawn.return_value = _spawn_result()
     finalize = AsyncMock()
-    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     build_cli = MagicMock(return_value=(["codex", "resume"], {}))
     monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
-    ensure_local_model = AsyncMock(return_value="Qwen/Qwen2.5-7B-Instruct")
+    concrete_model = "Qwen/Qwen2.5-7B-Instruct"
+    events: list[str] = []
+    context: dict[str, LocalContextRoute | LocalContextObservation] = {}
+
+    async def ensure_local_model(
+        endpoint: GenerationEndpointConfig,
+        **_kwargs: object,
+    ) -> str:
+        assert endpoint.model == "auto"
+        events.append("ensure")
+        return concrete_model
+
+    async def refresh_local_context(
+        endpoint: GenerationEndpointConfig,
+        *,
+        endpoint_name: str,
+        model: str,
+        machine_id: str | None = None,
+    ) -> tuple[LocalContextRoute, LocalContextObservation]:
+        assert model == concrete_model
+        events.append("refresh")
+        route = endpoint_route(
+            machine_id=machine_id or "",
+            endpoint_name=endpoint_name,
+            endpoint=endpoint,
+            model_id=model,
+        )
+        observation = LocalContextObservation(
+            machine_id=route.machine_id,
+            endpoint_id=route.endpoint_id,
+            configuration_fingerprint=route.configuration_fingerprint,
+            provider=route.provider,
+            model_id=route.model_id,
+            canonical_limit=65_536,
+            provenance={"runtime_limit": "test:runtime"},
+            instances=(
+                LocalContextInstance(
+                    model_id=route.model_id,
+                    runtime_limit=32_768,
+                    provenance={"runtime_limit": "test:runtime"},
+                ),
+            ),
+        )
+        context.update(route=route, observation=observation)
+        return route, observation
+
     monkeypatch.setattr(resume_executor, "ensure_local_model", ensure_local_model)
+    monkeypatch.setattr(resume_executor, "refresh_local_model_context", refresh_local_context)
+    monkeypatch.setattr(resume_executor, "get_machine_id", lambda: metadata["machine_id"])
 
     result = await resume_executor.resume_agent_run(
         _original_run(),
@@ -510,7 +567,7 @@ async def test_resume_vllm_endpoint_uses_config_override(
                             "protocol": "vllm",
                             "api_base": "http://127.0.0.1:8000/v1",
                             "api_key": secret,
-                            "model": "Qwen/Qwen2.5-7B-Instruct",
+                            "model": "auto",
                         }
                     }
                 }
@@ -519,11 +576,11 @@ async def test_resume_vllm_endpoint_uses_config_override(
     )
 
     assert result.success is True
-    ensure_local_model.assert_awaited_once()
+    assert events == ["ensure", "refresh"]
     build_kwargs = build_cli.call_args.kwargs
     assert build_kwargs["cli"] == "codex"
     assert build_kwargs["codex_oss_provider"] is None
-    assert build_kwargs["model"] == "Qwen/Qwen2.5-7B-Instruct"
+    assert build_kwargs["model"] == concrete_model
     overrides = build_kwargs["config_overrides"]
     assert 'model_provider="gobby-vllm-metal"' in overrides
     assert 'model_providers.gobby-vllm-metal.wire_api="responses"' in overrides
@@ -534,6 +591,17 @@ async def test_resume_vllm_endpoint_uses_config_override(
     spawned = runner._test_runtime.last_request
     assert spawned is not None and spawned.env is not None
     assert spawned.env[CODEX_ENDPOINT_API_KEY_ENV] == secret
+    route = context["route"]
+    observation = context["observation"]
+    assert isinstance(route, LocalContextRoute)
+    assert isinstance(observation, LocalContextObservation)
+    initial_variables = prepare.call_args.kwargs["initial_variables"]
+    resume_metadata = prepare.call_args.kwargs["resume_metadata_json"]
+    assert initial_variables[LOCAL_CONTEXT_ROUTE_VARIABLE] == route.to_dict()
+    assert initial_variables[LOCAL_CONTEXT_OBSERVATION_VARIABLE] == observation.to_dict()
+    assert resume_metadata[LOCAL_CONTEXT_ROUTE_VARIABLE] == route.to_dict()
+    assert resume_metadata[LOCAL_CONTEXT_OBSERVATION_VARIABLE] == observation.to_dict()
+    assert resume_metadata["initial_variables"] == initial_variables
 
 
 @pytest.mark.asyncio

@@ -18,14 +18,17 @@ from gobby.providers.capabilities.local_context_vllm import (
     vllm_health_url,
     vllm_models_url,
 )
-from gobby.utils.machine_id import require_machine_id
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 
 if TYPE_CHECKING:
     from gobby.config.ai import GenerationEndpointConfig
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
     from gobby.storage.agents import LocalAgentRunManager
 
 __all__ = [
     "ensure_local_model",
+    "refresh_local_model_context",
     "LocalModelError",
     "resolve_vllm_served_model",
     "select_vllm_served_model",
@@ -262,6 +265,49 @@ async def ensure_local_model(
             ) from e
 
     raise LocalModelError(f"Unsupported generation endpoint protocol: {config.protocol}")
+
+
+async def refresh_local_model_context(
+    config: GenerationEndpointConfig,
+    *,
+    endpoint_name: str,
+    model: str,
+    machine_id: str | None = None,
+) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+    """Refresh context for the resolved local route without changing model lifecycle."""
+    from gobby.ai.endpoints import endpoint_provider
+    from gobby.app_context import get_app_context
+    from gobby.providers.capabilities.local_context_config import endpoint_route
+
+    selected_machine = machine_id or get_machine_id()
+    if selected_machine is None:
+        logger.warning(
+            "Local context refresh skipped because machine identity is unavailable",
+            extra={"endpoint": endpoint_name, "model": model},
+        )
+        return None, None
+    route = endpoint_route(
+        machine_id=selected_machine,
+        endpoint_name=endpoint_name,
+        endpoint=config,
+        provider=endpoint_provider(endpoint_name),
+        model_id=model,
+    )
+    if not route.is_local:
+        return None, None
+
+    try:
+        service = getattr(get_app_context(), "local_context_service", None)
+        if service is None:
+            return route, None
+        return route, await service.refresh(route)
+    except Exception:
+        logger.warning(
+            "Local context refresh failed",
+            extra={"endpoint": endpoint_name, "model": model},
+            exc_info=True,
+        )
+        return route, None
 
 
 async def _ensure_lmstudio_model(

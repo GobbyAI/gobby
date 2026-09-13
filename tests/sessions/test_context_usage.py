@@ -7,6 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.config.ai import GenerationEndpointConfig
+from gobby.providers.capabilities.local_context import (
+    LocalContextInstance,
+    LocalContextObservation,
+)
+from gobby.providers.capabilities.local_context_config import endpoint_route
 from gobby.providers.capabilities.seed import apply_seed
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.sessions import context_usage
@@ -309,6 +315,100 @@ def test_effective_context_window_prefers_latest_token_event_window() -> None:
     )
 
     assert effective_context_window_for_session(session, db=FakeDb()) == 258_400
+
+
+@pytest.mark.unit
+def test_local_session_observation() -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://127.0.0.1:8000/v1",
+        model="resolved-model",
+    )
+    route = endpoint_route(
+        machine_id="machine-a",
+        endpoint_name="metal",
+        endpoint=endpoint,
+    )
+    observation = LocalContextObservation(
+        machine_id=route.machine_id,
+        endpoint_id=route.endpoint_id,
+        configuration_fingerprint=route.configuration_fingerprint,
+        provider=route.provider,
+        model_id=route.model_id,
+        canonical_limit=65_536,
+        provenance={"runtime_limit": "test:runtime"},
+        instances=(
+            LocalContextInstance(
+                model_id=route.model_id,
+                runtime_limit=32_768,
+                provenance={"runtime_limit": "test:runtime"},
+            ),
+        ),
+    )
+    evidence = context_usage.local_context_variable_updates(route, observation)
+    session = SimpleNamespace(
+        id="session-local",
+        is_local=True,
+        machine_id="machine-a",
+        model="endpoint:metal/resolved-model",
+        source="codex",
+        context_window=48_000,
+        context_usage_confidence="reported",
+    )
+
+    assert effective_context_window_for_session(session, variables=evidence) == 32_768
+    assert (
+        effective_context_window_for_session(
+            session,
+            variables={**evidence, "context_window": 28_000},
+        )
+        == 28_000
+    )
+    assert (
+        effective_context_window_for_session(
+            session,
+            variables={**evidence, "context_window": 28_000},
+            overrides={"resolved-model": 26_000},
+        )
+        == 26_000
+    )
+
+    unverified = {**evidence, "context_window": 8_000}
+    unverified[context_usage.LOCAL_CONTEXT_OBSERVATION_VARIABLE] = None
+    with patch.object(
+        context_usage,
+        "_reported_session_context_window",
+        side_effect=AssertionError("reported values must not run before local evidence"),
+    ):
+        assert effective_context_window_for_session(session, variables=unverified) is None
+
+    malformed_route = dict(evidence)
+    malformed_route[context_usage.LOCAL_CONTEXT_ROUTE_VARIABLE] = {
+        **route.to_dict(),
+        "is_local": "yes",
+    }
+    assert effective_context_window_for_session(session, variables=malformed_route) is None
+
+    mismatched_observation = dict(evidence)
+    mismatched_observation[context_usage.LOCAL_CONTEXT_OBSERVATION_VARIABLE] = {
+        **observation.to_dict(),
+        "model_id": "other-model",
+    }
+    assert effective_context_window_for_session(session, variables=mismatched_observation) is None
+
+    for changed_session in (
+        SimpleNamespace(**{**vars(session), "model": "endpoint:metal/other-model"}),
+        SimpleNamespace(**{**vars(session), "model": "endpoint:other/resolved-model"}),
+        SimpleNamespace(**{**vars(session), "machine_id": "machine-b"}),
+    ):
+        assert (
+            effective_context_window_for_session(
+                changed_session,
+                variables={**evidence, "context_window": 8_000},
+                overrides={"resolved-model": 4_000},
+            )
+            is None
+        )
 
 
 @pytest.mark.unit
