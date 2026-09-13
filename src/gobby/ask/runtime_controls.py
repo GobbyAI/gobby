@@ -154,6 +154,15 @@ def normalized_ask_srt_policy_digest(
     filesystem = normalized["filesystem"]
     for key in ("denyRead", "allowRead", "allowWrite", "denyWrite"):
         filesystem[key] = [normalize_path(value) for value in filesystem[key]]
+    # Long prompts add a read grant inside the already-readable launch assets.
+    # It changes no capability unless a more specific read denial is present.
+    if "<run>/assets" in filesystem["allowRead"] and not any(
+        path == "<run>/assets" or path.startswith("<run>/assets/")
+        for path in filesystem["denyRead"]
+    ):
+        filesystem["allowRead"] = [
+            path for path in filesystem["allowRead"] if path != "<run>/assets/prompt.md"
+        ]
     if managed_bootstrap_path is not None:
         bootstrap = Path(managed_bootstrap_path).expanduser().resolve(strict=False)
         if bootstrap.name != "grant.json" or bootstrap.parent != run_root:

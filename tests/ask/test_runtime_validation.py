@@ -607,6 +607,51 @@ def _gcode_runtime_policy(
     }
 
 
+def test_policy_digest_ignores_only_redundant_owned_prompt_reads(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    scratch = tmp_path / "scratch"
+    run = tmp_path / "runtime"
+    assets = run / "assets"
+    assets.mkdir(parents=True)
+    prompt = assets / "prompt.md"
+    policy = _gcode_runtime_policy(
+        source_root=source,
+        scratch_root=scratch,
+        run_root=run,
+        gcode_runtime_home=_gcode_runtime_home(scratch),
+    )
+
+    def digest() -> str:
+        return normalized_ask_srt_policy_digest(
+            policy,
+            source_root=str(source),
+            scratch_root=str(scratch),
+            policy_path=str(assets / "settings.json"),
+        )
+
+    expected = digest()
+    policy["filesystem"]["allowRead"].append(str(prompt))
+    assert digest() == expected
+
+    # A prompt-only grant cannot stand in for the directory grant.
+    policy["filesystem"]["allowRead"].remove(str(assets))
+    assert digest() != expected
+    policy["filesystem"]["allowRead"].insert(0, str(assets))
+
+    # Neither write access nor a symlink to an external prompt is redundant.
+    policy["filesystem"]["allowWrite"].append(str(prompt))
+    assert digest() != expected
+    policy["filesystem"]["allowWrite"].pop()
+    policy["filesystem"]["denyRead"].append(str(prompt))
+    denied = digest()
+    policy["filesystem"]["allowRead"].remove(str(prompt))
+    assert digest() != denied
+    policy["filesystem"]["denyRead"].pop()
+    policy["filesystem"]["allowRead"].append(str(prompt))
+    prompt.symlink_to(tmp_path / "foreign-prompt.md")
+    assert digest() != expected
+
+
 def test_policy_digest_normalizes_the_workspace_keyed_gcode_runtime_home(tmp_path: Path) -> None:
     """Two launches under different roots agree despite workspace-keyed runtime homes."""
     digests = set()
