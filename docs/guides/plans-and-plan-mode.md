@@ -175,10 +175,11 @@ include:
 - `root_task_ref`
 - coverage manifest metadata
 
-`create_plan` requires a real `root_task_ref` and generates the initial coverage
-manifest. Do not create a planning task only to register a draft. Manual
-expansion registers against its real epic; `gobby build` creates or reuses the
-real root and preserves its configured unattended stage sequence.
+`create_plan` requires a real root task (`root_task_ref`, or `#N` inferred from a
+`task-<N>-*` plan filename) and generates the initial coverage manifest. Do not
+create a planning task only to register a draft. Manual expansion registers
+against its real epic; `gobby build` creates or reuses the real root and
+preserves its configured unattended stage sequence.
 
 Coverage manifests are generated under the project root and are removed when a
 plan is archived or deleted.

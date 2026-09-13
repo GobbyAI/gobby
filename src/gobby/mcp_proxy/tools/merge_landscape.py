@@ -86,7 +86,7 @@ class WorktreeManagerProtocol(Protocol):
         self,
         *,
         project_id: str | None = None,
-        status: str | None = None,
+        status: str | tuple[str, ...] | None = None,
         limit: int | None = None,
     ) -> list[Any]: ...
 
@@ -311,10 +311,9 @@ def register_merge_landscape_tools(
 
         worktrees = worktree_manager.list_worktrees(
             project_id=project_id,
-            status=None,
+            status=("active", "merged"),
             limit=200,
         )
-        worktrees = [wt for wt in worktrees if getattr(wt, "status", None) in {"active", "merged"}]
 
         out: list[dict[str, Any]] = []
         for wt in worktrees:

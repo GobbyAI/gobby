@@ -47,8 +47,8 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
         "epic-qa:<lesson_type>:<check-key>",
         "source_kind=qa_rejection",
         "code-domain",
-        "checklist for qa-miss",
-        "validation for validation-miss",
+        "`guardrail_target=checklist` for qa-miss",
+        "`validation` for validation-miss",
         "path tags",
         "Incomplete or unproven classes mint nothing",
     )

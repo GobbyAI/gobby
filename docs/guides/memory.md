@@ -361,7 +361,7 @@ bounded diagnostics, do independent work, or yield; do not run an unbounded
 polling loop or invent an automatic wake. Operators can use:
 
 ```bash
-gobby memory dream --dry-run [--full-sweep] [--timeout SECONDS]
+gobby memory dream --dry-run [--full] [--timeout SECONDS]
 gobby memory dream status RUN_ID
 gobby memory dream revert RUN_ID
 ```

@@ -8,7 +8,7 @@ pytestmark = pytest.mark.unit
 REFERENCES = Path("src/gobby/install/shared/skills/gobby/references/review")
 
 
-def test_id_opt_in_present() -> None:
+def test_epic_review_references_pin_routing_and_verdict_mapping() -> None:
     epic = " ".join((REFERENCES / "epic.md").read_text().split())
     outcomes = " ".join((REFERENCES / "outcomes.md").read_text().split())
     for term in (
@@ -21,5 +21,13 @@ def test_id_opt_in_present() -> None:
         "Never call `close_task` from epic review",
     ):
         assert term in epic
-    for term in ("approve_review", "reject_review", "escalate_task", "cited_subtasks"):
+    for term in (
+        'Approve → `gobby-tasks-ops:complete_stage` with `stage_name="epic_qa"`',
+        "Request changes → `gobby-tasks-ops:fail_stage` with the verdict in `reason` and "
+        "`cited_subtasks`",
+        "Needs discussion → `gobby-tasks:escalate_task` with a `needs_human:` reason",
+        "Do not substitute `approve_review`/`reject_review` for an in-progress epic QA verdict",
+        "`record_review_lesson` derives occurrence identity from `source_review` and "
+        "`finding_fingerprint`",
+    ):
         assert term in outcomes

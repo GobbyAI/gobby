@@ -10,7 +10,7 @@ current session instance. Create a distinct user definition
 with `create_agent_definition`; use `toggle_agent_definition`,
 `update_agent_rules`, `update_agent_variables`, and `update_agent_step_workflow`
 for the corresponding authorized edits. Re-read after mutation. The step tool
-replaces the nested workflow; null clears it. `delete_agent_definition` removes
+replaces the nested workflow; `clear_step_workflow=true` clears it. `delete_agent_definition` removes
 a definition through its supported lifecycle. Follow schema-specific deletion
 options, including any protection of bundled content.
 

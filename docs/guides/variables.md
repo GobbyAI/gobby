@@ -209,7 +209,8 @@ back to strings; it does not decode list/object JSON. See [CLI](./cli-commands.m
 `gobby-workflows` exposes definition `list_variables`, `get_variable_definition`,
 `create_variable`, `update_variable`, `delete_variable`, and `export_variable`.
 Fetch each schema before use. Top-level runtime get/set are separate and expose
-session scope only. `get_step_status` is shared agent-step diagnostic guidance.
+session scope only on the stdio carrier; the daemon HTTP MCP server also accepts
+`scope=step`. `get_step_status` is shared agent-step diagnostic guidance.
 
 The registered definition create/update schemas currently expose `value` as a
 **string**, even though internal functions accept richer values; those functions

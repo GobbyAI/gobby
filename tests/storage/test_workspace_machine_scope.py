@@ -177,6 +177,52 @@ def test_every_workspace_lifecycle_surface_is_machine_scoped(
     assert foreign_session_id != local_session_id
 
 
+def test_list_worktrees_filters_status_set_before_limit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = str(uuid.uuid4())
+    _insert_machine(temp_db, machine_id)
+    _set_local_machine(monkeypatch, machine_id)
+    now = datetime.now(UTC)
+    ids: dict[WorktreeStatus, str] = {}
+    for age_hours, status in (
+        (3, WorktreeStatus.ACTIVE),
+        (2, WorktreeStatus.MERGED),
+        (1, WorktreeStatus.ABANDONED),
+    ):
+        ids[status] = str(uuid.uuid4())
+        temp_db.execute(
+            """
+            INSERT INTO worktrees (
+                id, project_id, machine_id, branch_name, worktree_path, base_branch,
+                status, merge_state, created_at
+            ) VALUES (%s, %s, %s, %s, %s, 'main', %s, 'pending', %s)
+            """,
+            (
+                ids[status],
+                sample_project["id"],
+                machine_id,
+                f"task/{status.value}",
+                f"/tmp/{status.value}",
+                status.value,
+                now - timedelta(hours=age_hours),
+            ),
+        )
+
+    listed = LocalWorktreeManager(temp_db).list_worktrees(
+        status=(WorktreeStatus.ACTIVE.value, WorktreeStatus.MERGED.value),
+        limit=2,
+    )
+
+    # The newest abandoned row must not consume a limit slot.
+    assert [item.id for item in listed] == [
+        ids[WorktreeStatus.MERGED],
+        ids[WorktreeStatus.ACTIVE],
+    ]
+
+
 def test_workspace_session_binding_requires_same_machine(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

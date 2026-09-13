@@ -280,7 +280,7 @@ available at `/mcp`.
 | `DELETE` | `/api/mcp/servers/{name}` | Remove the exact `(name, resolved project)` row. |
 | `GET` | `/api/mcp/templates` | List templates visible to the resolved project with parameter contracts. |
 | `GET` | `/api/mcp/status` | Return MCP registry/status data. |
-| `POST` | `/api/mcp/refresh` | Refresh one resolved instance via `refresh_server`. Body may include `server`, `server_id`, `project_id`, `scope`, and `force`. |
+| `POST` | `/api/mcp/refresh` | Re-index tool schemas: `server`/`server_id` targets one resolved instance; otherwise every internal registry and enabled visible instance. Body may include `server`, `server_id`, `project_id`, `scope`, and `force`. |
 | `GET` | `/api/mcp/tools` | List tools across servers. |
 | `POST` | `/api/mcp/tools/search` | Search tools. |
 | `POST` | `/api/mcp/tools/recommend` | Recommend tools for a task. |
@@ -688,8 +688,8 @@ the MCP cleanup tool's Git-deletion options.
 | `GET` | `/api/config/secrets` | List secret names. |
 | `POST` | `/api/config/secrets` | Save a secret. |
 | `DELETE` | `/api/config/secrets/{name}` | Delete a secret. |
-| `GET` | `/api/config/prompts` | List prompt overrides. |
-| `GET` | `/api/config/prompts/{path:path}` | Read a prompt override. |
+| `GET` | `/api/config/prompts` | List bundled and overridden prompts with category, source, and `has_override`; paginated by `limit`/`offset`. |
+| `GET` | `/api/config/prompts/{path:path}` | Read a prompt's effective content and variables, plus bundled content when overridden. |
 | `PUT` | `/api/config/prompts/{path:path}` | Save a prompt override. |
 | `DELETE` | `/api/config/prompts/{path:path}` | Delete a prompt override. |
 | `POST` | `/api/config/export` | Export config. |

@@ -366,7 +366,7 @@ Isolation is a runtime setting for spawned runs:
 | `none` | Work in the caller's current repository context |
 | `worktree` | Create or reuse a git worktree with separate branch state |
 | `clone` | Use a separate clone for stronger filesystem isolation |
-| `inherit` | Defer to caller/runtime defaults |
+| `inherit` | Definition-only; resolves to `none` unless the spawn passes `isolation` |
 
 Docs leaf work may run inside a parent epic's existing isolation context. In
 that case the agent definition can keep `isolation: inherit`, and dispatch

@@ -24,6 +24,8 @@ category-appropriate transcript validation, and one bounded criteria review.
 Changed evidence earns a new review; retrying unchanged evidence reuses its verdict.
 When `unlinked_tagged_commits` names additional commits, link those belonging to
 the task before retrying. Otherwise use `link_commit` only to keep a task open.
+On `task_scope_mismatch`, retry with a specific `scope_justification` explaining
+why paths outside the declared Targets belong to the task.
 
 Validation is drawn from claiming, closing, and worked-on sessions within their
 link windows. Code/refactor/test require a clean test-category run; config

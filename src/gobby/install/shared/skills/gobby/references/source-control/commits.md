@@ -21,7 +21,7 @@ standalone `code-review` skill before the pre-commit review.
 5. Keep the returned commit SHA for the task's lifecycle transition. Follow the
    close or autonomous stage workflow; a commit alone does not close work.
 
-Use `feat`, `fix`, `refactor`, `test`, `docs` or `chore` as appropriate to the
+Use `feat`, `fix`, `refactor`, `docs` or `chore` as appropriate to the
 repository convention. Replace example project/task names with the actual ones.
 Never commit credentials, unrelated staged files or an unverified claim of
 completion. A failed commit hook is a finding to fix and verify before retrying.

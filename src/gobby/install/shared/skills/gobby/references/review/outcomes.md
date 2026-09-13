@@ -22,7 +22,7 @@ findings:
 
 Use OK only for passing checks, Gap for missing behavior/evidence and Drift for
 extra or divergent behavior. Explain outcomes to the user as approve / reject /
-escalate. Do not use `needs_discussion` under yolo mode; judge available evidence
+escalate. Do not use `needs_discussion` for unattended work; judge available evidence
 as approve or request changes.
 
 For an open epic whose `epic_qa` stage is in progress, the reviewer maps:
@@ -60,8 +60,9 @@ Prove `qa-miss` (leaf QA approved while the defect remained) and `validation-mis
 per proven class with `source_kind=qa_rejection`, `source="epic-reviewer"`,
 `decision=confirmed`, stable `source_review="epic-qa:<epic-ref>:<re-review-id>"`,
 `pattern_id=epic-qa:<lesson_type>:<check-key>` and class-suffixed finding fingerprint.
-Derive occurrence identity with `build_occurrence_key`; use checklist for qa-miss
-and validation for validation-miss. Include the cited file in finding and evidence,
+`record_review_lesson` derives occurrence identity from `source_review` and
+`finding_fingerprint`; set `guardrail_target=checklist` for qa-miss and
+`validation` for validation-miss. Include the cited file in finding and evidence,
 leaf task ref and confirmed fix proof; normalized lessons carry code-domain and
 path tags. Incomplete or unproven classes mint nothing. Follow
 [memory review learning](../memory/review-lessons.md) for the tool contract.

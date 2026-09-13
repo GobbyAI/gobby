@@ -267,7 +267,7 @@ confirmation. Rehearse against an isolated target and follow
 reported installation/configuration result before assuming the datastore is ready.
 
 For a PostgreSQL-only logical backup, stop the daemon, then use
-`gobby postgres backup --output-dir DIRECTORY`. This verifies the database backup;
+`gobby postgres backup --output DIRECTORY`. This verifies the database backup;
 it does not capture hub files or other datastores. Use the verified hub backup
 workflow above when those artifacts are also needed.
 

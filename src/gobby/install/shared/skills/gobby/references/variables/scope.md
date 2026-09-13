@@ -1,7 +1,8 @@
 # Variable scope
 
 Load before choosing project/global defaults, a target session, or step values.
-Top-level variable tools are session-only and require explicit `session_id`.
+Top-level variable tools require explicit `session_id`; the stdio carrier is
+session-only, while the daemon HTTP MCP server also accepts `scope=step`.
 Definitions are a different API: MCP lists can contain multiple project scopes,
 while name-based management is not a project-selection API.
 

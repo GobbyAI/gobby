@@ -14,7 +14,7 @@ selector configuration, following the agents reference library.
 
 Bundled definitions remain Gobby-owned. Use a distinct custom name and select it
 intentionally. Do not customize the bundled installed body even where low-level
-updates accept it. Current rule sync rejects user collisions with bundled names;
+updates accept it. Current rule sync skips user rules that collide with bundled names;
 do not assume `override: true` makes same-name rule YAML supported. Verify the
 domain loader instead of copying another domain's override layout.
 

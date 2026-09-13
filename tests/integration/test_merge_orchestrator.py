@@ -245,7 +245,7 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
     data = yaml.safe_load(yaml_path.read_text())
 
     assert data["name"] == "merge-orchestrator"
-    step_names = [s["name"] for s in data["steps"]]
+    step_names = [s["name"] for s in data["step_workflow"]["steps"]]
     assert step_names == [
         "claim",
         "load_skill",
@@ -261,11 +261,13 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
     assert data["model"] == "gpt-5.6-sol"
     assert data["isolation"] == "none"
 
-    plan_step = next(step for step in data["steps"] if step["name"] == "plan")
+    plan_step = next(step for step in data["step_workflow"]["steps"] if step["name"] == "plan")
     assert "gobby-agents:list_agent_runs" in plan_step["allowed_mcp_tools"]
     assert "gobby-agents:list_running_agents" in plan_step["allowed_mcp_tools"]
 
-    execute_step = next(step for step in data["steps"] if step["name"] == "execute")
+    execute_step = next(
+        step for step in data["step_workflow"]["steps"] if step["name"] == "execute"
+    )
     handlers = execute_step["on_mcp_success"]
     no_resolution_handlers = [
         handler

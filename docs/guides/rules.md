@@ -427,7 +427,7 @@ scope: this is a definition export, not a full database backup.
 Keep bundled definitions Gobby-owned: customize using a distinct named rule and
 intentional agent selectors, not by editing an installed bundled body. Public
 low-level updates accepting a body are not authorization to change bundled
-policy. Current rule sync rejects user collisions with bundled names; do not
+policy. Current rule sync skips user rules that collide with bundled names; do not
 assume another domain's `override: true` format enables same-name rule overrides.
 
 Current rule-file roots are `.gobby/workflows/rules/` and

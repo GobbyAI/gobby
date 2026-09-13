@@ -361,7 +361,7 @@ class LocalWorktreeManager:
     def list_worktrees(
         self,
         project_id: str | None = None,
-        status: str | None = None,
+        status: str | tuple[str, ...] | None = None,
         agent_session_id: str | None = None,
         limit: int = 50,
     ) -> list[Worktree]:
@@ -370,7 +370,7 @@ class LocalWorktreeManager:
 
         Args:
             project_id: Filter by project
-            status: Filter by status
+            status: Filter by one status, or by any status in a tuple (applied before limit)
             agent_session_id: Filter by owning session
             limit: Maximum number of results
 
@@ -383,7 +383,10 @@ class LocalWorktreeManager:
         if project_id:
             conditions.append("project_id = %s")
             params.append(project_id)
-        if status:
+        if isinstance(status, tuple):
+            conditions.append("status = ANY(%s)")
+            params.append(list(status))
+        elif status:
             conditions.append("status = %s")
             params.append(status)
         if agent_session_id:

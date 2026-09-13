@@ -50,7 +50,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `pipelines` | Manage pipeline definitions and runs. | `src/gobby/cli/pipelines.py` |
 | `plan` | Run plan utility commands. | `src/gobby/cli/plan.py` |
 | `plans` | Manage DB-backed plan records. | `src/gobby/cli/plans.py` |
-| `postgres` | Manage the PostgreSQL hub (status and migrations). | `src/gobby/cli/postgres.py` |
+| `postgres` | Manage the local PostgreSQL hub (install, status, backup/restore, scoped roles). | `src/gobby/cli/postgres.py` |
 | `profiles` | Manage build profile registry rows. | `src/gobby/cli/profiles.py` |
 | `projects` | Inspect and manage project identities and local checkouts. | `src/gobby/cli/projects.py` |
 | `qdrant` | Manage Qdrant helper commands. | `src/gobby/cli/qdrant.py` |

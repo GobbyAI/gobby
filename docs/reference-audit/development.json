@@ -342,7 +342,7 @@
       "id": "schemas",
       "kind": "inspection",
       "command": "gobby-communications get_tool_schema for add_channel, list_channels, send_message",
-      "result": "2026-09-12 registered schemas inspected; add_channel requires type/name/config and accepts secrets; list_channels has no arguments; send_message requires channel/content. No channel, message, credential or installed configuration mutation performed."
+      "result": "2026-09-12 registered schemas inspected; add_channel requires channel_type/name/config and accepts secrets; list_channels has no arguments; send_message requires channel/content. No channel, message, credential or installed configuration mutation performed."
     },
     {
       "id": "python-contracts",

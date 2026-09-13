@@ -6,7 +6,7 @@ Use `uv run gobby hub-backup --help` for restore-verified hub snapshots and
 tasks capability; configuration export is not a complete hub backup.
 
 For a PostgreSQL-only logical backup, the operator can use
-`gobby postgres backup --output-dir DIRECTORY` after stopping the daemon.
+`gobby postgres backup --output DIRECTORY` after stopping the daemon.
 The command delegates archive creation and verification to the PostgreSQL
 backup service and reports the resulting artifacts. This does not back up hub
 files or other datastores. Use `gobby postgres restore --help` and the recovery
