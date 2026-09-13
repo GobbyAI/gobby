@@ -95,8 +95,8 @@ async def create_worktree(
         worktree_path = await asyncio.to_thread(
             factory, branch_name, Path(git_manager.repo_path).name
         )
-    else:
-        worktree_path = str(Path(worktree_path).expanduser())
+    # Overlay grants and index identities use the canonical checkout root.
+    worktree_path = str(Path(worktree_path).expanduser().resolve())
 
     resolved_use_local = use_local
     if resolved_use_local is None and create_branch:
