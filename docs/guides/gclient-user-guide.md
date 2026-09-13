@@ -486,8 +486,8 @@ aside and the client starts from an empty layout.
 
 The gterm host that runs your terminals outlives the daemon: `gobby stop`,
 `gobby start`, and `gobby restart` leave every terminal running by default, and
-the restarted daemon adopts the surviving host. Only `gobby stop --terminals`
-drains it.
+the restarted daemon adopts the surviving host. `gobby stop --terminals` and
+`gobby restart --terminals` explicitly drain it.
 
 The client rides through the gap. When the daemon's connection drops:
 
@@ -531,4 +531,4 @@ With this action available you can set `destroy-unattached off` in
 `~/.tmux.conf`, so closing a tab detaches its session instead of killing it, and
 clear the leftovers from here when you are done with them.
 
-_Last verified: 2026-09-10_
+_Last verified: 2026-09-13_

@@ -91,8 +91,9 @@ gobby start [--verbose]
 | --- | --- |
 | `--verbose` | Enable verbose startup output. |
 
-`gobby start` always starts PostgreSQL, Qdrant, and FalkorDB with Docker
-Compose and waits for container health before launching the daemon.
+In local datastore mode, `gobby start` starts PostgreSQL, Qdrant, and FalkorDB
+with Docker Compose and waits for container health before launching the daemon.
+Remote mode checks the configured services and leaves their lifecycle to the hub.
 The Web UI lifecycle follows the persistent `ui.enabled` setting. When it is
 enabled, the daemon owns production UI serving and the development-server
 lifecycle; set it to `false` persistently to run the daemon without the UI.
@@ -198,7 +199,7 @@ gobby install [OPTIONS] [COMPONENT]...
 gobby uninstall [OPTIONS] [COMPONENT]...
 ```
 
-Bare `gobby install` is the only full install. It claims the files home, writes
+Bare `gobby install` is the only full install. In local mode it claims the files home, writes
 daemon config, provisions the managed PostgreSQL, Qdrant, and FalkorDB stack,
 creates the account identity, installs hooks for every detected CLI and Git
 hooks for the current repository, runs the RTK, web UI exposure, embedding, and
@@ -242,12 +243,17 @@ runtime. When no CLI hooks are detected it still cleans the RTK and Impeccable
 artifacts. Docker containers, data volumes, `bootstrap.yaml`, secrets, and the
 files home are never touched.
 
-The full install requires a running Docker daemon and always provisions the
+The full local install requires a running Docker daemon and provisions the
 managed PostgreSQL, Qdrant, and FalkorDB profiles, independent of the
 embedding-provider choice. The installer applies `unless-stopped` to new and
 existing managed containers; use `--no-container-restarts` when another
 supervisor owns their lifecycle. Re-running bare `gobby install` repairs the
 selected policy with `docker update` and refreshes the managed Compose file.
+
+Remote mode skips local managed-service provisioning and requires an authenticated
+`hub_daemon_url` owner; it rejects `files_home` and reuses the hub token. See
+[the current remote-mode limitation](remote-docker-acceptance.md#current-status)
+before attempting a multi-machine setup.
 
 On a fresh datastore, interactive installation prompts for the initial user's
 name, email, password, and confirmation. It creates that user and assigns the
@@ -348,8 +354,9 @@ gobby auth token [--show] [--rotate]
 | `token --rotate` | Replace the token file and stored hash; recopy the file to other machines. |
 
 The token command reads `$GOBBY_HOME/local_cli_token` (default
-`~/.gobby/local_cli_token`). Rotation is picked up by running clients within
-about five seconds.
+`~/.gobby/local_cli_token`). The daemon refreshes its credential cache on a
+request after the five-second refresh interval. Clients holding the old token
+must reread or receive the replacement token; rotation does not distribute it.
 
 ### `gobby mcp-server`
 
@@ -1019,7 +1026,7 @@ exit 2 because remote clients hold no datastore credentials.
 ## Admin And Diagnostics
 
 ```bash
-gobby sync [--force] [--verify-only] [--type TYPE] [--verbose] [--reinstall rules|agents|pipelines|variables|all]
+gobby sync [--force] [--verify-only] [--fail-on-verify] [--type TYPE] [--verbose] [--reinstall rules|agents|pipelines|variables|all]
 gobby tokens audit [--session SESSION] [--all] [--fix] [--project PROJECT]
 gobby comms status
 gobby comms send CHANNEL MESSAGE
@@ -1040,6 +1047,13 @@ running its own code against the overwritten rows; `--force` overwrites anyway
 and prints a banner naming both checkouts. With no daemon reachable the sync
 proceeds. `gobby install` re-points the service at the invoking checkout, so
 its sync is a deliberate whole-checkout cutover.
+
+Production sync verifies bundled integrity and blocks affected content types
+when verification fails or is unavailable. `--verify-only --fail-on-verify`
+returns a failing exit status for an unsuccessful check without syncing.
+Development mode skips the integrity check and reports that fact.
+`--reinstall` replaces only bundled definitions in its selected types; user and
+project definitions are preserved.
 
 To test a branch's bundled content before merge: for content-only changes
 (rule and skill edits the running code already understands) run

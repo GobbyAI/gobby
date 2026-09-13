@@ -1,244 +1,152 @@
 # Web UI
 
-The Web UI is the browser surface for operating a local Gobby daemon. It owns the
-chat shell, project dashboard, task and workflow views, source-control panels,
-configuration pages, and the operational dashboard.
-
-## Mental Model
-
-The daemon owns the UI lifecycle whenever persistent `ui.enabled` is `true`.
-Production installs serve the built React app from the daemon HTTP port. In a
-source checkout, `dev` mode (and `auto` when source is available) starts and
-stops the frontend development server with the daemon on a separate port.
-
-- Installed Web UI and HTTP API: `http://localhost:60887`
-- Dev Web UI: `http://localhost:60889`
-- WebSocket API: `ws://localhost:60888`
-- Tailscale UI URL, when enabled: shown by `gobby status`
-
-The app is a hash-routed shell. `web/src/App.tsx` reads the active hash, renders
-the matching page, and keeps shared state for the selected project, chat session,
-providers, MCP servers, skills, settings, and voice status. The header exposes
-the current project and connection state. The left navigation exposes the main
-work surfaces: Chat, Project, Workflows, Cron Jobs, Reports, Traces,
-Memory, Skills, Integrations, and Configuration. The dashboard is available
-at `/#dashboard`. Task and MCP views are reached through the chat Activity
-panel rather than the left navigation.
-
-Chrome DevTools MCP was used to inspect the running local UI while preparing this
-guide. The inspection verified top-level navigation, Chat, Dashboard, Project
-overview, Project Settings, Source Control, and network calls including
-`/api/admin/status`, `/api/providers/models`, `/api/projects`, and
-`/api/source-control/*`.
+The Web UI provides Chat, its Activity panel, and a Settings overlay for a
+Gobby daemon. The daemon owns sessions and operational state; the browser is
+a client of its authenticated HTTP and WebSocket interfaces.
 
 ## Quick Start
 
-Start or inspect the daemon:
+Inspect or start the daemon from its serving checkout:
 
 ```bash
-uv run gobby start --verbose
 uv run gobby status
+uv run gobby start --verbose
 ```
 
-Open the web app:
+The installed application normally uses `http://localhost:60887`. A source
+development server normally uses port 60889. Use the actual addresses reported
+by `gobby status`; bootstrap can change the ports and host.
 
-```text
-http://localhost:60887/#chat
-```
-
-The interactive installer creates the initial account. Reset its password when
-needed:
+The installer establishes the canonical account. To reset the sole installed
+user's password, run:
 
 ```bash
 uv run gobby auth credentials
-uv run gobby restart
 ```
 
-The login page accepts the canonical account email and password and exchanges
-them for an HTTP-only `gobby_session` cookie owned by that user. The same cookie
-authorizes API requests and the `/ws` browser proxy.
-
-Check the backend directly when the UI appears disconnected:
-
-```bash
-curl -sS http://localhost:60887/api/auth/status
-TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  http://localhost:60887/api/admin/status
-```
-
-Use the Tailscale URL from `gobby status` when operating from another trusted
-device.
-
-Authentication is required for every stateful browser HTTP and WebSocket
-surface. `gobby auth credentials` resets the sole installed user's password;
-it never removes the user or disables login. Token-based daemon clients remain
-an independent machine-local credential path.
+The reset revokes that user's browser sessions. Sign in again with the account
+email and new password; restarting the daemon is not required for the reset.
+The HTTP-only `gobby_session` cookie authorizes browser API calls and the
+`/ws` proxy. Local daemon tokens remain a separate client credential path.
 
 ## Navigation
 
-The application shell lives in `web/src/App.tsx` and
-`web/src/components/app/appNavigation.tsx`.
+`web/src/App.tsx` renders Chat as the page surface. Select the project in the
+header, use Chat's Activity panel for its available work views, and open the
+Settings control for configuration. Activity selection is component state,
+not a set of top-level hash routes.
 
-| Surface | Route | Primary owner |
-|---------|-------|---------------|
-| Chat | `/#chat` | `web/src/components/chat/ChatPage.tsx` |
-| Project | `/#projects` | `web/src/components/projects/ProjectsPage.tsx` |
-| Workflows | `/#workflows` | `web/src/components/workflows/WorkflowsPage.tsx` |
-| Cron Jobs | `/#cron` | `web/src/components/CronJobsPage.tsx` |
-| Reports | `/#reports` | `web/src/components/workflows/ReportsPage.tsx` |
-| Traces | `/#traces` | `web/src/components/traces/TracesPage.tsx` |
-| Memory | `/#memory` | `web/src/components/memory/MemoryPage.tsx` |
-| Skills | `/#skills` | `web/src/components/skills/SkillsPage.tsx` |
-| Integrations | `/#integrations` | `web/src/components/integrations/IntegrationsPage.tsx` |
-| Dashboard | `/#dashboard` | `web/src/components/dashboard/DashboardPage.tsx` |
+Earlier guides listed standalone Project, Dashboard, Reports, Traces, and
+other navigation pages. Those entries and `appNavigation.tsx` no longer
+describe the application shell. Do not use `#dashboard`, `#projects`, or
+`#traces` as supported routes. The trace backend still exists, but Activity
+deliberately hides its Traces tab; see [observability](observability.md).
 
-Project-scoped pages should read the active project from the shell rather than
-re-resolving it independently. Most hooks pass `project_id` through query
-parameters.
+Project selection comes from the shell. A hub-visible project does not imply
+that the current machine has its checkout; honor checkout-required messages
+before attempting filesystem or source-control operations.
 
 ## Web Chat
 
-Web chat combines HTTP session reads with WebSocket streaming:
+Chat combines HTTP session reads with WebSocket delivery. Its main owners are
+`web/src/components/chat/ChatPage.tsx` and `web/src/hooks/useChat/`.
 
-- Session creation and replay use `/api/sessions`, `/api/sessions/{id}`, and
-  `/api/sessions/{id}/messages`.
-- Web-chat session creation uses `/api/sessions/web-chat`.
-- Provider and model controls read `/api/providers` and `/api/providers/models`.
-- Chat settings persist through `/api/config/ui-settings`.
-- Voice status uses `/api/voice/status`.
-- Artifact events arrive over the same live UI channel used by chat.
+- Session creation and replay use session HTTP routes; web-chat creation uses
+  `/api/sessions/web-chat`.
+- Provider and model controls read the provider catalog. Source freshness is
+  reported separately from last-good model facts.
+- Session viewing, attachment, and continuation have distinct interaction
+  modes. Observe their visible mode and delivery status before sending input.
+- Voice and artifact events share the browser's live connection. Use the
+  respective guides for provider setup.
 
-The main React owners are `web/src/hooks/useChat/*`,
-`web/src/components/chat/ChatPage.tsx`, and provider controls under
-`web/src/components/chat/`.
+Attachment limits come from the effective `chat.attachment_max_file_bytes`,
+`chat.attachment_max_total_bytes_per_message`, and
+`chat.attachment_max_files_per_message` settings. The effective total cannot
+exceed the per-file limit multiplied by the file count. Use smaller files or
+fewer attachments when validation rejects the payload; changing a limit is an
+operator configuration update, not an automatic retry remedy.
 
-`/api/providers/models` returns provider entries with canonical model facts,
-fact provenance, and `refresh: { generation, sources }`. The UI treats
-`refresh.sources[].state` as source freshness (`pending`, `ok`, `stale`, or
-`error`) while continuing to use last-good models.
-Bundled Claude and Droid seeds cover an empty store until provider collectors
-replace them atomically during startup or the 24-hour refresh cycle.
+For CLI-session delivery, `INVALID_ATTACHMENT` means the supplied attachments
+failed validation and must be corrected. `ATTACHMENT_ERROR` reports a processing
+failure; preserve the error, check service health, and inspect delivery state
+before retrying. The implementation owners are
+`src/gobby/servers/chat_attachment_limits.py` and
+`src/gobby/servers/websocket/handlers/session_observe_proxy.py`.
 
-A chat send carries no speed parameter. Droid's `-fast` ids are ordinary rows in
-that response and are picked through the model control like any other model.
+An uncertain send result is not permission to replay a mutation. Preserve the
+displayed error and session identity, reconnect, and inspect the conversation
+before retrying.
 
-### Chat Attachments
-
-Stored chat attachments upload through `POST /api/chat/attachments`, are
-referenced in WebSocket `chat_message` or `send_to_cli_session` frames as
-`attachments: [{ "id": "..." }]`, and are bound when a message is accepted.
-Clients should retry only after the user changes the attachment set when the
-server returns `INVALID_ATTACHMENT`; this code means the attachment payload,
-count, ID, type, or size is invalid. `ATTACHMENT_ERROR` means processing failed
-after validation, so clients may offer a normal retry.
-
-Limits are enforced on both HTTP upload and WebSocket binding:
-
-- Web chat stored attachments use the configured per-file, per-message count,
-  and per-message total limits from chat configuration.
-- Terminal proxy attachments accept at most 10 legacy base64 files per message,
-  each up to 25 MB, with a 250 MB total cap.
-- MIME sniffing must match the declared type except for generic binary types,
-  text-compatible types, and recognized zip container formats.
-
-## Dashboard
-
-The dashboard aggregates runtime health, task counts, sessions, token usage,
-memory totals, and metrics charts. It is backed by admin and metrics routes:
-
-- `/api/admin/status`
-- `/api/admin/stats`
-- `/api/admin/usage`
-- `/api/admin/tokens/timeseries`
-- `/api/metrics/snapshots`
-
-## Projects And Source Control
-
-`ProjectsPage` owns project overview, files, source control, GitHub issues and
-pull requests, CI/CD, and settings. The Source Control tab uses
-`web/src/hooks/useSourceControl.ts` and `web/src/components/source-control/`.
-
-Source-control API calls are rooted at `/api/source-control`:
-
-- `/api/source-control/status`
-- `/api/source-control/branches`
-- `/api/source-control/worktrees`
-- `/api/source-control/clones`
-- `/api/source-control/prs`
-- `/api/source-control/issues`
-- `/api/source-control/cicd/runs`
-
-The Settings tab edits project integration fields such as GitHub URL, GitHub
-repository, Linear team ID, Linear project ID, and project tool approval rules.
+See [sessions](sessions.md), [providers and models](providers-and-models.md),
+and [voice](voice.md) for their operating contracts.
 
 ## CLI
 
-The UI is operated through daemon commands rather than a separate web CLI:
+Persistent `ui.enabled` controls whether the daemon manages the UI. Production
+mode serves the built application through the daemon HTTP server. Development
+mode, and automatic mode when source is available, use the frontend dev server.
+Discover explicit development, build, status, and exposure operations with:
 
 ```bash
-uv run gobby start --verbose
-uv run gobby status
-uv run gobby restart
+uv run gobby ui --help
 ```
 
-Both startup commands follow persistent `ui.enabled`; set it to `false` to run
-the daemon without the UI. The existing `gobby ui` commands remain available for
-explicit UI development, build, and status operations.
-
-Use `gobby status` as the source of truth for local ports, Tailscale status, and
-service health.
+Use the Configuration capability to inspect desired and active settings before
+changing them. Follow any reported restart requirement and coordinate active
+sessions before restarting. A login failure alone is not a reason to rebuild
+the UI or restart the daemon.
 
 ## HTTP
 
-The installed browser app normally calls the daemon origin on `:60887`. During
-frontend development, the `:60889` dev server proxies API routes to the daemon
-services. Direct API debugging can use the HTTP daemon port from `gobby status`.
+1. Read `gobby status` and the public health/startup responses. Distinguish a
+   process that answers HTTP from completed startup readiness.
+2. Check authentication. `/api/auth/status` is public; stateful API calls
+   require valid credentials.
+3. Inspect the browser's failed HTTP request or WebSocket close reason and
+   record the affected session and timestamp. Match that evidence to bounded
+   daemon logs before choosing a repair.
+4. After the repair, repeat the failed read and verify the live connection.
 
-Useful checks:
+Manual authenticated checks, from a trusted client with the local token:
 
 ```bash
-curl -sS http://localhost:60887/api/admin/status
-curl -sS http://localhost:60887/api/providers/models
-curl -sS http://localhost:60887/api/projects
+BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
+TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+curl -fsS "$BASE/api/health"
+curl -fsS "$BASE/api/auth/status"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/admin/status"
 ```
 
-Authentication state is exposed through `/api/auth/status`. When local auth is
-enabled, login and logout use `/api/auth/login` and `/api/auth/logout`.
+Keep the token out of logs and shared evidence. See
+[admin authentication](admin-operations.md#authentication) for rotation and
+[HTTP endpoints](http-endpoints.md) for route ownership and access rules.
 
 ## MCP
 
-The Web UI does not replace the MCP proxy. It visualizes and operates the same
-daemon state that agents reach through MCP tools. For UI research or debugging,
-use context-aware discovery against `chrome-devtools`: call a leased known tool
-directly, or call `get_tool_schema` directly before an unleased known tool. Use
-`list_tools` only when the tool name is unknown and `list_mcp_servers` only when
-the server or registry is unknown.
+The browser and MCP proxy operate the same domain state. Agents should use
+the relevant Gobby MCP tools for task lifecycle, configuration, sessions,
+memory, and other supported operations. Discover a known tool's schema before
+its first use; discover tool or server names only when unknown.
 
-For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
-`gobby-cron`, `gobby-metrics`, `gobby-memory`, and `gobby-skills`. File previews
-are UI-owned: FilesTab uses `/api/files/read` and `/api/files/image`, while plan
-review and generated-image rendering use their chat transports directly.
+Browser inspection is useful for UI-specific behavior, but it does not replace
+domain lifecycle tools. A connected browser MCP server is not an installed
+skill, and UI visibility does not grant permission to perform an operation.
 
 ## File Locations
 
-- `web/src/App.tsx`: application shell and route selection.
-- `web/src/components/app/appNavigation.tsx`: top-level navigation metadata.
-- `web/src/components/chat/`: chat page, provider controls, activity panel.
-- `web/src/components/dashboard/`: dashboard cards and charts.
-- `web/src/components/projects/`: project overview, files, settings, source
-  control tabs.
-- `web/src/components/source-control/`: branch, worktree, clone, issue, PR, and
-  CI/CD views.
-- `web/src/hooks/`: API hooks used by UI surfaces.
+- `web/src/App.tsx`: authenticated shell, project selection, Chat, and overlays.
+- `web/src/components/chat/`: Chat and Activity panel.
+- `web/src/components/settings/`: Settings overlay and sections.
+- `web/src/hooks/`: client API, session, settings, and connection state.
 - `src/gobby/servers/routes/`: HTTP route owners.
-- `src/gobby/servers/websocket/`: WebSocket chat and live event owners.
+- `src/gobby/servers/websocket/`: live protocol and delivery owners.
 
 ## See Also
 
-- [frontend-style-guide.md](frontend-style-guide.md)
-- [providers-and-models.md](providers-and-models.md)
-- [observability.md](observability.md)
-- [http-endpoints.md](http-endpoints.md)
+- [Admin operations](admin-operations.md)
+- [Observability](observability.md)
+- [gclient](gclient-user-guide.md)
+- [Frontend development](frontend-style-guide.md)
 
-_Last verified: 2026-07-10_
+_Last verified: 2026-09-13_

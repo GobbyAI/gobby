@@ -1,7 +1,7 @@
 # Admin Operations
 
 Admin operations cover local daemon access, authentication, secrets, service
-management, config import/export, full-state pack/unpack, setup state, and
+management, config import/export, portable pack/unpack, setup state, and
 diagnostics.
 
 ## Mental Model
@@ -13,6 +13,11 @@ runtime state. Treat them as operational actions, not normal code edits.
 Use the CLI for machine-level operations. Use HTTP admin routes for status and UI
 diagnostics. Use secrets for credentials instead of committing values into config
 or docs.
+
+The CLI examples in this guide are operator procedures. Agents use domain MCP
+tools for task lifecycle and other supported domain operations. A request for
+documentation or diagnostics does not authorize a live restart, secret rotation,
+restore, or datastore exposure. Rehearse mutations in isolated state.
 
 ## Quick Start
 
@@ -80,7 +85,8 @@ GET  /api/auth/status
 
 1. Check the current state with `gobby auth token`.
 2. Run `gobby auth token --rotate` on the hub machine.
-3. Wait up to five seconds for running clients to refresh.
+3. Have clients reread the token. The daemon refreshes its credential cache on
+   a request after the five-second refresh interval.
 4. Copy `$GOBBY_HOME/local_cli_token` (default `~/.gobby/local_cli_token`) to
    every additional trusted client machine and set mode `0600`.
 5. Re-run the verification matrix below. The old token must return `401`.
@@ -170,6 +176,17 @@ $secret:NAME
 
 Prefer secrets for API keys used by integrations, services, and workflows.
 
+`secrets get NAME` checks existence; it does not reveal the value. Select scope
+with `--project` or `--global`, which are mutually exclusive. Without either,
+the CLI selects the registered current project when available, otherwise global
+scope. An unknown explicit project fails rather than falling back to global.
+The `set` command uses a hidden prompt or stripped stdin and rejects empty values.
+
+`gobby secrets rekey --posture key-file|passphrase` rewraps the data-encryption
+key without re-encrypting every secret. Preserve recovery material and arrange
+supported passphrase delivery to noninteractive services before changing posture.
+See the [secret contract](../contracts/secrets.md).
+
 ## Service Helpers
 
 The service CLI installs and manages the daemon under the host service manager:
@@ -197,10 +214,11 @@ POST /api/config/import
 
 ## Pack And Unpack
 
-`gobby pack` creates a full-state snapshot. It can include the
-database, bootstrap config, machine ID, secret salt, transcripts, summaries,
-services, hooks, certs, scripts, current project `.gobby`, and
-Docker volumes such as Qdrant and FalkorDB data.
+`gobby pack` creates a portable archive of its selected state. It can include a
+PostgreSQL logical dump, bootstrap config, machine ID, secret material,
+transcripts, summaries, services, hooks, certs, scripts, current project
+`.gobby`, hub-owned files, and Qdrant/FalkorDB Docker volumes. Its inventory is
+defined in `src/gobby/cli/pack.py`; it is not a copy of every local file.
 
 Common commands:
 
@@ -209,12 +227,56 @@ uv run gobby pack --dry-run
 uv run gobby pack gobby-pack.tar.gz
 uv run gobby pack --no-docker
 uv run gobby pack --no-transcripts
+uv run gobby unpack gobby-pack.tar.gz --dry-run
 uv run gobby unpack gobby-pack.tar.gz
-uv run gobby unpack gobby-pack.tar.gz --force
 ```
 
 Packing may stop daemon or service components to create a consistent snapshot.
-Use `--dry-run` before a real pack on active machines.
+Coordinate that window and use `--dry-run` before a real pack on active machines.
+Dry-run lists contents; it does not prove restore success.
+
+Unpack requires the destination's existing files-home configuration and preserves
+that root when merging bootstrap. It skips archived `machine_id` unless
+`--restore-identity` explicitly selects same-machine disaster recovery.
+`--force` suppresses overwrite confirmation; `--no-postgres` and `--no-docker`
+skip those restore payloads, not every service lifecycle action. A failed
+extraction can leave partial state and stopped services. Inspect the failure
+before restarting or repeating the restore.
+
+## Verified Hub Backups
+
+Use `gobby hub-backup --output DIRECTORY --json` for a staged, restore-verified
+hub backup. The output directory must be absent and outside the source files
+tree. Inspect the published manifest and each store's archive/restore evidence;
+an existing archive alone is insufficient. The normal command coordinates a
+stopped-daemon maintenance window and restores prior daemon lifecycle.
+
+The `--epoch` option is for a matching hub-maintenance child invocation, which
+owns lifecycle and leaves the daemon stopped. Do not supply a made-up epoch.
+
+`hub-backup restore` verifies the manifest and requires the daemon stopped plus
+an explicit `--database-url` target. It restores hub files, PostgreSQL globals
+and data, and reconciles principals. It does not automatically restore every
+Qdrant/FalkorDB artifact. `--clean` drops database objects and `--yes` skips
+confirmation. Rehearse against an isolated target and follow
+[Hub Backup Disaster Recovery](cli-commands.md#hub-backup-disaster-recovery).
+
+## Lifecycle And Recovery
+
+Start and restart from the main checkout. Startup validates native/schema
+identity, claims the singleton, starts local managed services, and waits for
+health and readiness. Remote mode skips local Compose lifecycle. An accepted
+OS service request alone does not establish readiness.
+
+Stop/restart can be refused by maintenance ownership, protected cron runs, or
+pending handoffs. Inspect the reported blocker. `--wait` defers eligible work;
+`--force` and `--wait` are mutually exclusive and do not bypass every gate.
+Native terminals survive ordinary daemon restarts; `--terminals` drains them.
+
+For schema disagreement, use the coherent [cutover procedure](release-guide.md#local-install-check).
+For interrupted destructive maintenance, inspect `gobby hub-maintenance status`
+and use `resume` with the hub-recorded campaign state. `abort` records a
+partial-state disposition and releases the fence; it is not a rollback.
 
 ## Setup And Diagnostics
 
@@ -251,7 +313,7 @@ shortcut around task claiming, validation, commit linking, or task closure.
 
 ## HTTP
 
-Admin HTTP routes power the Web UI dashboard, setup flows, auth checks, metrics,
+Admin HTTP routes power Web UI status, setup flows, auth checks, metrics,
 and config screens. Use HTTP for read-oriented diagnostics and UI workflows. Use
 the CLI for machine-level service and backup operations.
 
@@ -274,6 +336,8 @@ Use progressive discovery before calling any server.
 - `src/gobby/cli/secrets.py`: secrets CLI.
 - `src/gobby/cli/service.py`: service manager CLI.
 - `src/gobby/cli/pack.py`: pack/unpack.
+- `src/gobby/cli/hub_backup/`: verified hub backups and restore.
+- `src/gobby/cli/hub_maintenance.py`: fenced maintenance campaigns.
 - `src/gobby/servers/routes/auth.py`: auth HTTP routes.
 - `src/gobby/servers/routes/admin/`: setup, health, status, metrics, usage,
   savings, and lifecycle routes.
@@ -290,4 +354,4 @@ Use progressive discovery before calling any server.
 - [prompts.md](prompts.md)
 - [cron-scheduler.md](cron-scheduler.md)
 
-_Last verified: 2026-07-10_
+_Last verified: 2026-09-13_

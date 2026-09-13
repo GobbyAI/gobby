@@ -50,28 +50,33 @@ depend on it. Every binary crate resolves `gobby-core` from crates.io at publish
 time, so the new core version must be indexed first.
 
 ```bash
-git tag gobby-core-v0.9.1
-git push origin gobby-core-v0.9.1
+git tag gobby-core-v0.10.0
+git push origin gobby-core-v0.10.0
 
-# Wait for crates.io to index gobby-core 0.9.1.
+# Wait for crates.io to index gobby-core 0.10.0.
 
-git tag gcode-v1.6.0
-git tag gdaemon-v0.3.0
-git tag ghook-v0.8.3
+git tag gcode-v1.7.0
+git tag gdaemon-v0.4.0
+git tag ghook-v0.9.0
 
 # Push the tags ONE AT A TIME. GitHub Actions does not create push events for
 # any tag when more than three tags arrive in a single push, so a batched
 # `git push origin <tag> <tag> <tag> <tag> ...` silently triggers NO release
 # workflows. Push each tag in its own invocation:
-for tag in gcode-v1.6.0 gdaemon-v0.3.0 ghook-v0.8.3; do
+for tag in gcode-v1.7.0 gdaemon-v0.4.0 ghook-v0.9.0; do
   git push origin "refs/tags/$tag"
 done
 ```
 
-If a batch push already created the tags on the remote without triggering
-workflows, delete them first (`git push origin --delete <tag> ...`) and re-push
-individually as above — re-pushing an existing remote tag ref is a no-op and
-fires no event.
+These versioned commands illustrate the manifest versions in the table; they
+are not an instruction to recreate existing release tags. Before publishing,
+verify each target tag is absent and select the intended release commit.
+If remote tags already exist without a workflow run, inspect their commits,
+release state, and published artifacts before choosing a maintainer recovery.
+Do not delete or move published tags as routine retry behavior.
+
+GitHub documents the three-tag event limit in its
+[push event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push).
 
 The release workflows verify binary crate tag/version alignment where the
 installer expects GitHub assets. `gobby-core` has no binary artifact matrix.
@@ -129,4 +134,4 @@ cargo build --release -p gobby-code -p gobby-daemon -p gobby-hooks
 The repository CI still owns cross-target release packaging. Local validation
 only proves manifests, lockfile resolution, and native release binaries.
 
-_Last verified: 2026-08-06_
+_Last verified: 2026-09-13_

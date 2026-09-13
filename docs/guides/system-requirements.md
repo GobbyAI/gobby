@@ -1,8 +1,9 @@
 # System Requirements
 
-Gobby runs as a local Python daemon backed by a required Docker Compose stack:
-PostgreSQL, Qdrant, and FalkorDB. The daemon is small; the managed datastore
-stack drives most hardware and Docker requirements.
+The current local installation runs a Python daemon backed by a managed Docker
+Compose stack: PostgreSQL, Qdrant, and FalkorDB. The daemon is small; the
+datastore stack drives most hardware and Docker requirements. Remote bootstrap
+and preflight also exist, with the limits described below.
 
 Use this guide to decide what has to be installed before running Gobby.
 
@@ -10,10 +11,13 @@ Use this guide to decide what has to be installed before running Gobby.
 
 | Setup | Required | Good default |
 |-------|----------|--------------|
-| Gobby daemon | Python 3.13+, `uv`, Docker with Compose v2, the managed PostgreSQL/Qdrant/FalkorDB stack, and the listed local ports | 4+ CPU cores, 16 GB RAM, SSD/NVMe storage |
+| Local Gobby hub | Python 3.13+, `uv`, Docker with Compose v2, the managed PostgreSQL/Qdrant/FalkorDB stack, and the listed local ports | 4+ CPU cores, 16 GB RAM, SSD/NVMe storage |
 | Daemon + web UI | Daemon requirements; installed UI is served on port 60887 | 16 GB RAM |
 | Local embedding model | LM Studio with `lms` or Ollama with `ollama` | 16 GB RAM, GPU or unified memory when also running a chat model |
 | Local generation (LM Studio, Ollama, vLLM / vllm-metal) | Operator-managed runtime plus a named `ai.generation.endpoints` entry; Gobby does not start the server | 16+ GB RAM or unified memory; GPU or Apple Silicon for chat models |
+
+Hardware figures here are planning estimates, not enforced minimums or measured
+capacity guarantees. Model size, concurrency, and stored data determine actual usage.
 
 An embedding provider remains optional. Choosing `None` disables semantic
 embedding work, but does not skip installation or startup of the managed
@@ -31,9 +35,17 @@ provider you choose.
 | Linux | Use Docker Engine plus the Docker Compose plugin. Linux avoids the Docker Desktop VM memory allocation step. |
 | Windows | Use Windows 10/11 with WSL2 for Docker-based services. Local shell tooling and filesystem paths should be verified in the target environment. |
 
-Docker Compose v2 is a hard installation and startup requirement. Gobby does
-not support an external PostgreSQL server or a production daemon without the
-managed Qdrant and FalkorDB services.
+Docker Compose v2 is required on the local datastore-owning hub. Current
+`datastore_mode: remote` skips local Compose provisioning and lifecycle and
+checks the configured remote services instead. It is the transitional Python
+bridge, not the planned thin-node runtime. Generic external PostgreSQL is not
+a substitute for the managed hub schema and service contract.
+
+ROADMAP.md decisions 11, 13, and 17 settle the destination: thin nodes perform
+machine-local duties and datastores remain on the hub. Physical M0 acceptance
+is still separate from isolated transport tests; the
+[historical runbook](remote-docker-acceptance.md#current-status) records its
+current files-owner limitation.
 
 ## Daemon
 
@@ -70,8 +82,9 @@ independent of the selected embedding provider.
 | FalkorDB | `falkordb/falkordb:latest` | Redis protocol `127.0.0.1:16379`, Browser `http://localhost:13000` | Graph storage for graph-augmented search and memory relationships |
 
 The installer writes the Compose file under `~/.gobby/services/docker-compose.yml`.
-`gobby start` starts all profiles and waits for their health checks before
-launching the daemon.
+In local mode, `gobby start` starts all profiles and waits for their health
+checks before launching the daemon. Remote mode does not manage those local
+containers.
 
 Run the default installer to configure hooks, an embedding provider, and the
 required managed services:
@@ -156,8 +169,10 @@ Default ports are chosen to avoid common development-server conflicts.
 
 If a port is already in use, change the matching bootstrap/config value before starting the
 daemon or pass the relevant installer flag where one exists. Qdrant exposes
-`--port` on `gobby qdrant install`; FalkorDB's shipped Compose mapping uses the
-fixed 13000/16379 host ports.
+`--port` on `gobby qdrant install`. FalkorDB defaults to host ports 13000/16379;
+the Compose template accepts `GOBBY_FALKORDB_BROWSER_PORT` and
+`GOBBY_FALKORDB_PORT`, and the runtime resolves the Redis port from configuration.
+Keep advertised endpoints and Compose mappings consistent.
 
 ## Storage
 
@@ -241,9 +256,10 @@ The owner contract lives in
 
 ### `uv run gobby install` Cannot Start Docker Services
 
-Verify Docker is installed, running, and provides the `docker compose` command. Re-run with
-the daemon stopped after resolving the Docker or Compose health error. The
-managed stack cannot be skipped.
+Verify Docker is installed, running, and provides the `docker compose` command.
+Re-run with the daemon stopped after resolving the Docker or Compose health
+error. A local hub install requires the managed stack; remote mode has its own
+connectivity and owner-authentication preflight.
 
 ### Qdrant Is Not Healthy
 
@@ -273,16 +289,18 @@ container receives the password through `GOBBY_FALKORDB_PASSWORD`.
 Symptom: daemon logs repeat `Git command timed out`, hooks feel slow or stop
 applying, and `git status --untracked-files=all` in the checkout takes seconds.
 
-Cause: macOS caps cached vnodes, and a large build tree exhausts the cache. Each
-`git status` walk then thrashes it and never finishes inside the daemon's budget.
-Check for saturation, where the two numbers are equal:
+One possible cause is vnode-cache pressure from a large build tree. First
+compare an ordinary Git invocation with the daemon's timeout and inspect disk
+load and untracked-file counts; a timeout alone does not identify this cause.
+Check the current vnode count and ceiling:
 
 ```bash
 sysctl kern.maxvnodes kern.num_vnodes
 ```
 
-Raise the ceiling now, and persist it with a LaunchDaemon because current macOS
-no longer reads `/etc/sysctl.conf`:
+If diagnostics establish vnode pressure, an operator can test a higher ceiling
+and persist the selected value with a LaunchDaemon. The following is a privileged
+example, not an installer requirement; choose a value appropriate to the host:
 
 ```bash
 sudo sysctl kern.maxvnodes=1048576
@@ -331,4 +349,4 @@ more RAM or VRAM than the embedding model.
 - [hub-owned-files-home.md](../architecture/hub-owned-files-home.md) - Hub files owner contract
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
 
-_Last verified: 2026-08-20_
+_Last verified: 2026-09-13_

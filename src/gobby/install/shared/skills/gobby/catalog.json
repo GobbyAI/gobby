@@ -936,6 +936,68 @@
           "when": "Investigating daemon health, charts, instrumentation, or exporters"
         }
       ]
+    },
+    {
+      "name": "admin",
+      "description": "Install, operate, diagnose, back up, and recover Gobby",
+      "overview": "references/admin/overview.md",
+      "when": "Working with installation, daemon lifecycle, credentials, recovery, or client access",
+      "topics": [
+        {
+          "name": "installation",
+          "description": "Set up, repair, or remove an installation",
+          "path": "references/admin/installation.md",
+          "when": "Installing the hub or provider components and preparing native cutover"
+        },
+        {
+          "name": "daemon",
+          "description": "Coordinate daemon and service lifecycle",
+          "path": "references/admin/daemon.md",
+          "when": "Starting, stopping, restarting, or diagnosing lifecycle gates"
+        },
+        {
+          "name": "health",
+          "description": "Inspect readiness and degraded services",
+          "path": "references/admin/health.md",
+          "when": "Investigating unreachable clients, startup, or subsystem health"
+        },
+        {
+          "name": "authentication",
+          "description": "Manage browser and daemon client credentials",
+          "path": "references/admin/authentication.md",
+          "when": "Diagnosing login or token failures and preparing authorized rotation"
+        },
+        {
+          "name": "secrets",
+          "description": "Manage scoped credentials and key wrapping",
+          "path": "references/admin/secrets.md",
+          "when": "Storing, locating, deleting, or rewrapping secrets"
+        },
+        {
+          "name": "backups",
+          "description": "Create and inspect verified hub backups",
+          "path": "references/admin/backups.md",
+          "when": "Preparing snapshots, restore rehearsals, or backup retention"
+        },
+        {
+          "name": "recovery",
+          "description": "Recover from startup, maintenance, or restore failures",
+          "path": "references/admin/recovery.md",
+          "when": "Investigating schema refusal, interrupted campaigns, or damaged state"
+        },
+        {
+          "name": "portability",
+          "description": "Move installation state and hub-owned files",
+          "path": "references/admin/portability.md",
+          "when": "Preparing pack/unpack, machine migration, or files-home migration"
+        },
+        {
+          "name": "clients",
+          "description": "Connect browser, terminal, and provider clients",
+          "path": "references/admin/clients.md",
+          "when": "Setting up client access or diagnosing reconnect and protocol failures"
+        }
+      ]
     }
   ]
 }

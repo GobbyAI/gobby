@@ -106,6 +106,11 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/shutdown` | Graceful daemon shutdown. |
 | `POST` | `/api/admin/restart` | Restart the daemon through service-managed or direct restart helpers. |
 | `POST` | `/api/admin/workflows/reload` | Reload installed workflow definitions. |
+| `GET` | `/api/admin/cron/protected-runs` | Active restart-protected cron runs; inspect before lifecycle changes. |
+| `GET` | `/api/admin/lease/status` | Database-wide daemon lease and current owner mode. |
+| `POST` | `/api/admin/lease/promote` | Ask standby to acquire ownership; active owner reports no promotion. |
+| `POST` | `/api/admin/lease/handoff` | Active owner relinquishes after quiescence checks; conflicts return 409. |
+| `POST` | `/api/admin/lease/recover` | Explicit stale-owner recovery on standby; active owner refuses with 409. |
 | `GET` | `/api/admin/stats` | Aggregate daemon statistics. |
 | `GET` | `/api/admin/usage` | Token-event breakdown; `hours` (0 means all history) and optional `project_id`. Storage failures log and return empty totals. |
 | `GET` | `/api/admin/tokens/timeseries` | Token-event buckets; `hours`, optional `project_id`, and `granularity` (`30m`, `1h`, `1d`). |
@@ -115,6 +120,12 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/test/set-session-usage` | Test helper for setting session usage. |
 
 ### `GET /api/admin/status`
+
+The standby daemon serves health, status, and lease-control routes only; this
+is not the full application API. Normal shutdown/restart preserves the native
+terminal host unless `terminals=true` or the configured drain policy requests
+termination. Protected cron runs can refuse lifecycle changes; use the CLI's
+`--wait` or explicit `--force` handling after coordination.
 
 Returns a JSON object with daemon health and runtime details:
 

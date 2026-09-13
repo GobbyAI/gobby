@@ -1,0 +1,1399 @@
+{
+  "version": 1,
+  "capability": "admin",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/admin-operations.md",
+      "anchors": [
+        "admin-operations",
+        "mental-model",
+        "quick-start",
+        "authentication",
+        "rotate-the-local-token",
+        "manual-verification-matrix",
+        "secrets",
+        "service-helpers",
+        "configuration-export-and-import",
+        "pack-and-unpack",
+        "verified-hub-backups",
+        "lifecycle-and-recovery",
+        "setup-and-diagnostics",
+        "cli",
+        "http",
+        "mcp",
+        "file-locations",
+        "see-also"
+      ],
+      "evidence": [
+        "source-inventory",
+        "focused-install-recovery",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/system-requirements.md",
+      "anchors": [
+        "system-requirements",
+        "quick-matrix",
+        "platform-notes",
+        "daemon",
+        "managed-datastore-stack",
+        "embeddings",
+        "local-generation-runtimes",
+        "memory-and-search-footprint",
+        "ports",
+        "storage",
+        "hub-owned-files-home",
+        "hub-host",
+        "remote-node",
+        "troubleshooting",
+        "uv-run-gobby-install-cannot-start-docker-services",
+        "qdrant-is-not-healthy",
+        "falkordb-authentication-fails",
+        "the-daemons-git-commands-time-out-on-macos",
+        "local-embeddings-are-slow",
+        "see-also"
+      ],
+      "evidence": [
+        "source-inventory",
+        "requirements-source",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/release-guide.md",
+      "anchors": [
+        "rust-helper-release-guide",
+        "current-release-set",
+        "version-rules",
+        "merge-order",
+        "tag-order",
+        "local-install-check",
+        "validation"
+      ],
+      "evidence": [
+        "source-inventory",
+        "release-source",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/remote-docker-acceptance.md",
+      "anchors": [
+        "remote-docker-stack-live-test-runbook",
+        "current-status",
+        "safety-contract",
+        "topology-and-variables",
+        "safe-container-identity-helpers",
+        "phase-1-protect-and-inventory-the-local-installation",
+        "phase-2-provision-the-isolated-stack-on-machine-a",
+        "phase-3-prepare-the-isolated-daemon-home-on-machine-b",
+        "phase-4-stop-the-local-production-runtime-without-removing-it",
+        "phase-5-start-the-active-daemon-on-machine-b",
+        "phase-6-network-and-acl-acceptance",
+        "phase-7-task-session-vector-and-graph-continuity",
+        "phase-8-postgresql-connection-capacity",
+        "phase-9-return-the-docker-workload-to-machine-b",
+        "completion-record"
+      ],
+      "evidence": [
+        "source-inventory",
+        "focused-install-recovery",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/gclient-user-guide.md",
+      "anchors": [
+        "gclient-user-guide",
+        "launching",
+        "layout",
+        "the-prefix-key",
+        "default-keybindings",
+        "tabs",
+        "panes",
+        "terminals-and-control",
+        "sidebar-and-projects",
+        "client",
+        "tabs-and-panes",
+        "attach-and-control",
+        "attention-prompts-and-respond",
+        "modes",
+        "settings",
+        "customising-the-keymap",
+        "mouse",
+        "workspace-persistence",
+        "daemon-restarts-and-reconnects",
+        "orphaned-terminals"
+      ],
+      "evidence": [
+        "source-inventory",
+        "client-source",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/web-ui.md",
+      "anchors": [
+        "web-ui",
+        "quick-start",
+        "navigation",
+        "web-chat",
+        "cli",
+        "http",
+        "mcp",
+        "file-locations",
+        "see-also"
+      ],
+      "evidence": [
+        "source-inventory",
+        "attachments",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "daemon-and-setup",
+        "gobby-start",
+        "gobby-stop",
+        "gobby-restart",
+        "gobby-status",
+        "gobby-health",
+        "gobby-init",
+        "gobby-install-and-gobby-uninstall",
+        "gobby-cutover",
+        "gobby-auth",
+        "hub-backup-disaster-recovery",
+        "admin-and-diagnostics",
+        "working-profile-prerequisites"
+      ],
+      "evidence": [
+        "source-inventory",
+        "cli-registry",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "authentication",
+        "mounted-non-api-surfaces",
+        "admin",
+        "get-apiadminstatus",
+        "auth"
+      ],
+      "evidence": [
+        "source-inventory",
+        "route-decorators",
+        "independent-review"
+      ],
+      "audit_status": "verified"
+    }
+  ],
+  "operations": [
+    {
+      "surface": "cli",
+      "command": "gobby install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/install.py",
+        "symbol": "install"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby uninstall",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/uninstall.py",
+        "symbol": "uninstall"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby init",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/init.py",
+        "symbol": "init"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby sync",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/sync.py",
+        "symbol": "sync"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cutover",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/cutover.py",
+        "symbol": "cutover"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby start",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon.py",
+        "symbol": "start"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby stop",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon.py",
+        "symbol": "stop"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby restart",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon.py",
+        "symbol": "restart"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon.py",
+        "symbol": "status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby health",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon_health.py",
+        "symbol": "health"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby service install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/service.py",
+        "symbol": "install"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby service uninstall",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/service.py",
+        "symbol": "uninstall"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby service status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/service.py",
+        "symbol": "status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby service enable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/service.py",
+        "symbol": "enable"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby service disable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/service.py",
+        "symbol": "disable"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby lease status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon_lease.py",
+        "symbol": "status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby lease promote",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon_lease.py",
+        "symbol": "promote"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby lease handoff",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon_lease.py",
+        "symbol": "handoff"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby lease recover",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/daemon_lease.py",
+        "symbol": "recover"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby datastores expose",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/datastores.py",
+        "symbol": "expose"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby datastores rotate-password",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
+      "implementation": {
+        "path": "src/gobby/cli/datastores.py",
+        "symbol": "rotate_password"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby qdrant install",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/cli/qdrant.py",
+        "symbol": "qdrant_install"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby qdrant status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
+      "implementation": {
+        "path": "src/gobby/cli/qdrant.py",
+        "symbol": "qdrant_status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby auth credentials",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/auth.py",
+        "symbol": "credentials"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby auth token",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/auth.py",
+        "symbol": "token"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby secrets set",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
+      "implementation": {
+        "path": "src/gobby/cli/secrets.py",
+        "symbol": "set_secret"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby secrets list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
+      "implementation": {
+        "path": "src/gobby/cli/secrets.py",
+        "symbol": "list_secrets"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby secrets get",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
+      "implementation": {
+        "path": "src/gobby/cli/secrets.py",
+        "symbol": "get_secret"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby secrets delete",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
+      "implementation": {
+        "path": "src/gobby/cli/secrets.py",
+        "symbol": "delete_secret"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby secrets rekey",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
+      "implementation": {
+        "path": "src/gobby/cli/secrets.py",
+        "symbol": "rekey_secrets"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hub-backup",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/backups.md",
+      "implementation": {
+        "path": "src/gobby/cli/hub_backup/cli.py",
+        "symbol": "hub_backup"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hub-backup restore",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/hub_backup/cli.py",
+        "symbol": "restore_hub_backup"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hub-maintenance run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/hub_maintenance.py",
+        "symbol": "run_campaign"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hub-maintenance resume",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/hub_maintenance.py",
+        "symbol": "resume_campaign"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hub-maintenance status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/hub_maintenance.py",
+        "symbol": "maintenance_status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby hub-maintenance abort",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/hub_maintenance.py",
+        "symbol": "abort_campaign"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby schema apply",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/schema.py",
+        "symbol": "apply_schema"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-sync-schema"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pack",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/portability.md",
+      "implementation": {
+        "path": "src/gobby/cli/pack.py",
+        "symbol": "pack"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby unpack",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/portability.md",
+      "implementation": {
+        "path": "src/gobby/cli/pack.py",
+        "symbol": "unpack"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-files"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui expose",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_expose"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui unexpose",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_unexpose"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui start",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_start"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui stop",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_stop"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui restart",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_restart"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui dev",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "dev"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui build",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "build"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui install-deps",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "install_deps"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "GET /api/health",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_health.py",
+        "symbol": "create_health_router.health_check"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "GET /api/admin/startup-progress",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_health.py",
+        "symbol": "register_health_routes.startup_progress"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "GET /api/admin/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_health.py",
+        "symbol": "register_health_routes.status_check"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "GET /api/admin/cron/protected-runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lifecycle.py",
+        "symbol": "register_lifecycle_routes.protected_cron_runs"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/admin/shutdown",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lifecycle.py",
+        "symbol": "register_lifecycle_routes.shutdown"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/admin/restart",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lifecycle.py",
+        "symbol": "register_lifecycle_routes.restart"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/admin/workflows/reload",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lifecycle.py",
+        "symbol": "register_lifecycle_routes.reload_workflows"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "GET /api/admin/lease/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lease.py",
+        "symbol": "register_lease_routes.lease_status"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-auth-files"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/admin/lease/promote",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lease.py",
+        "symbol": "register_lease_routes.promote"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-auth-files"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/admin/lease/handoff",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lease.py",
+        "symbol": "register_lease_routes.handoff"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-auth-files"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/admin/lease/recover",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_lease.py",
+        "symbol": "register_lease_routes.recover"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-auth-files"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/auth/login",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/auth.py",
+        "symbol": "create_auth_router.login"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "POST /api/auth/logout",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/auth.py",
+        "symbol": "create_auth_router.logout"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "http",
+      "route": "GET /api/auth/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/auth.py",
+        "symbol": "create_auth_router.auth_status"
+      },
+      "verification": [
+        "source-inventory",
+        "route-decorators",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator/client"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby files migrate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/files.py",
+        "symbol": "migrate"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "shared_surfaces": [
+    {
+      "owner": "config",
+      "scope": "Configuration MCP operations and /api/config/secrets list/set/delete HTTP routes are inventoried and verified by docs/reference-audit/config.json. Admin owns credential CLI procedures and links to that configuration reference."
+    },
+    {
+      "owner": "observability",
+      "scope": "Admin metrics, stats, usage, token time series, traces, and telemetry."
+    },
+    {
+      "owner": "tasks",
+      "scope": "Task JSONL backup/import; see docs/reference-audit/tasks.json."
+    },
+    {
+      "owner": "integrations",
+      "scope": "Provider hooks, external integrations, and plugin setup."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-inventory",
+      "kind": "source",
+      "result": "Inventoried CLI/HTTP symbols and inspected operation-relevant source bodies, ownership checks, defaults, lifecycle and failure paths through gcode. Runtime Click registry, AST decorators, isolated Python/native tests and the independent documentation review supply complementary evidence below."
+    },
+    {
+      "id": "focused-auth-files",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_auth.py tests/cli/test_cli_secrets.py tests/config/test_files_home.py tests/cli/test_pack.py tests/cli/test_daemon_remote_mode.py tests/servers/routes/test_daemon_lease_routes.py -q --tb=short",
+      "result": "85 passed in 5.49s; isolated fixtures/test hub; before later documentation edits."
+    },
+    {
+      "id": "focused-install-recovery",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_install.py tests/cli/test_install_front_door.py tests/cli/test_cutover.py tests/cli/test_hub_maintenance.py tests/cli/test_hub_files_restore.py tests/cli/test_postgres_backup.py tests/cli/hub_backup/ tests/cli/test_files_migrate.py tests/cli/test_daemon_singleton.py tests/servers/test_daemon_lease_control.py -q --tb=short",
+      "result": "280 passed in 2.24s; isolated fixtures/test hub; before later documentation edits."
+    },
+    {
+      "id": "catalog-initial",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "14 passed in 0.08s after adding admin as capability 22."
+    },
+    {
+      "id": "cli-help",
+      "kind": "cli",
+      "command": "uv run gobby hub-backup --help; uv run gobby hub-backup restore --help; uv run gobby hub-maintenance --help; uv run gobby unpack --help",
+      "result": "Each command executed separately with exit 0. Confirmed explicit restore target, epoch option, and unpack omission/identity/force flags."
+    },
+    {
+      "id": "focused-services-auth-ui",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_service.py tests/cli/test_daemon_managed_services.py tests/cli/test_datastores_expose.py tests/cli/test_datastores_rotate_password.py tests/cli/test_ui_coverage.py tests/cli/test_ui_mode.py tests/servers/test_auth_middleware.py tests/servers/test_auth_service.py tests/servers/routes/test_auth_routes.py tests/servers/routes/test_admin.py tests/servers/routes/test_admin_status_budget.py -q --tb=short",
+      "result": "276 passed in 15.73s; isolated fixtures/test hub. No live service or authentication changes."
+    },
+    {
+      "id": "catalog-links-initial",
+      "kind": "validation",
+      "command": "uv run python /tmp/gobby_admin_validate.py",
+      "result": "22 catalog capabilities, 62 Python operation symbols, and 72 local links/anchors validated. Fixed incorrect installation reference anchor before passing. Covers references plus admin-operations, CLI and HTTP guides; expand to all audited guides before completion."
+    },
+    {
+      "id": "native-client",
+      "kind": "test",
+      "command": "cargo test -p gobby-client --test startup --test keymap --test persist --test client_loop --test frame_delivery --test parity --quiet",
+      "result": "209 passed, 1 ignored across six suites in 7.23s; mock daemons and temporary fixtures; no installed binary promotion."
+    },
+    {
+      "id": "cli-registry",
+      "kind": "validation",
+      "result": "Resolved every inventoried CLI command through gobby.cli.cli Click groups without invoking callbacks; inspected parameter names. All 49 registered commands resolve."
+    },
+    {
+      "id": "route-decorators",
+      "kind": "source",
+      "result": "Checked method and path against actual admin/auth route decorators and router prefixes. Corrected draft protected-cron-runs to cron/protected-runs and reload-workflows to workflows/reload. Standby source separately exposes health, status, lease status, promote, recover."
+    },
+    {
+      "id": "focused-sync-schema",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_daemon_lease.py tests/cli/test_cli_init.py tests/cli/test_cli_init_git_hooks.py tests/cli/test_cli_schema.py tests/cli/test_cli_sync_coverage.py tests/cli/test_sync_reinstall.py -q --tb=short",
+      "result": "95 passed in 1.91s; isolated fixtures/test hub."
+    },
+    {
+      "id": "release-source",
+      "kind": "source",
+      "result": "Confirmed six crate manifests and all six release workflows: tag prefixes, version checks, four terminal/client targets, six helper targets, core library publication and client terminal dependency preflight. GitHub official push documentation confirms more than three tags suppress tag events. No publication performed.",
+      "url": "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push"
+    },
+    {
+      "id": "client-source",
+      "kind": "source",
+      "result": "Checked startup argument parsing, ClientPrefs defaults, BINDINGS table, ReconnectSupervisor GoingAway handling, live attachment fallback and fixture coverage for persistence/control/close/parity. Corrected terminal drain wording to include restart --terminals."
+    },
+    {
+      "id": "requirements-source",
+      "kind": "source",
+      "result": "Verified pyproject Python requirement, bootstrap ports/bind host, docker-compose.services.yml images/ports/profiles/volumes, installer embedding defaults, local/remote bootstrap owner checks. Qualified hardware estimates and vnode diagnosis; corrected configurable FalkorDB ports."
+    },
+    {
+      "id": "attachments",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_servers_routes_chat_attachments.py tests/servers/websocket/test_servers_websocket_attachments.py tests/servers/websocket/test_servers_websocket_chat_attachments.py -q --tb=short",
+      "result": "57 passed in 8.62s; checked limit resolution and restored INVALID_ATTACHMENT/ATTACHMENT_ERROR instructions against source."
+    },
+    {
+      "id": "independent-review",
+      "kind": "review",
+      "result": "Mendel reviewed all 20 owned files, 100% coverage, no skips. Corrected standby health/status/lease wording and restored web attachment limits/recovery; no other material findings."
+    },
+    {
+      "id": "catalog-links-final",
+      "kind": "validation",
+      "command": "uv run python /tmp/gobby_admin_validate.py",
+      "result": "22 capabilities, 63 Python symbols, all 49 CLI registry entries, 14 route decorators and 104 local links/anchors passed. Includes all eight audited guides. Native client options verified by source and six test suites; standby variants by source and dedicated tests."
+    }
+  ],
+  "discrepancies": [
+    {
+      "id": "web-navigation",
+      "finding": "Web guide described deleted top-level pages and appNavigation.tsx; source App.tsx renders Chat and Settings overlay.",
+      "resolution": "Rewrote guide around current shell and authenticated diagnostics; verified links and restored active attachment constraints and recovery after independent review."
+    },
+    {
+      "id": "remote-local-requirements",
+      "finding": "System requirements called Docker universally required while describing remote setup.",
+      "resolution": "Scoped Compose requirements to the local hub and documented current remote preflight boundaries."
+    },
+    {
+      "id": "m0-runbook-drift",
+      "finding": "Historical remote bootstrap retained files_home, omitted hub_daemon_url, and did not supply the current authenticated files owner. ROADMAP already settles thin-node direction.",
+      "resolution": "Removed obsolete executable recipe, preserved nine acceptance obligations and physical evidence requirements, and documented current implementation limitation. Corrected premature needs-decision label/note on existing #19600; original task criteria and human gates preserved.",
+      "evidence": [
+        "src/gobby/config/bootstrap.py::_parse_mode_owner_fields",
+        "src/gobby/cli/installers/remote_preflight.py::probe_hub_user_md",
+        "src/gobby/daemon_lease_control.py::create_standby_app",
+        "ROADMAP.md decisions 11, 13, 17"
+      ],
+      "status": "documented_current_limitation"
+    },
+    {
+      "id": "release-tag-examples",
+      "finding": "Tag-order examples disagreed with current manifest versions and recommended routine remote tag deletion.",
+      "resolution": "Aligned examples with manifest versions and required maintainer inspection before any published-tag recovery."
+    },
+    {
+      "id": "pack-overclaim",
+      "finding": "Admin guide described pack as full-state and omitted destination files-home and identity behavior.",
+      "resolution": "Documented selected inventory, dry-run limits, explicit identity restoration, restore omissions, and failure recovery."
+    },
+    {
+      "id": "auth-refresh",
+      "finding": "Guides attributed the five-second server credential-cache refresh to client token distribution.",
+      "resolution": "Named daemon cache refresh and required clients to reread or receive the replacement token; AuthService.refresh is authoritative."
+    },
+    {
+      "id": "falkor-port",
+      "finding": "System requirements described FalkorDB host ports as fixed despite Compose variables and configured Redis port resolution.",
+      "resolution": "Documented defaults and matching Compose/configuration mappings."
+    },
+    {
+      "id": "attachment-preservation",
+      "finding": "Web rewrite removed active attachment guidance and linked to guides without it.",
+      "resolution": "Restored concise effective limit and validation-versus-processing recovery instructions; 57 attachment tests pass."
+    }
+  ],
+  "live_state": {
+    "mutations": "No live daemon, datastore, credential, network, or client mutation performed. Task #19600 audit metadata was corrected; root #22237 ownership preserved.",
+    "installed_rows": "No installed rule/profile/workflow enabled-state claims made. References describe inspection requirements; capability installation cutover remains later work."
+  },
+  "standby_variants": [
+    {
+      "route": "GET /api/health",
+      "implementation": {
+        "path": "src/gobby/daemon_lease_control.py",
+        "symbol": "create_standby_app.health"
+      },
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "verification": [
+        "route-decorators",
+        "focused-install-recovery"
+      ]
+    },
+    {
+      "route": "GET /api/admin/status",
+      "implementation": {
+        "path": "src/gobby/daemon_lease_control.py",
+        "symbol": "create_standby_app.status"
+      },
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "verification": [
+        "route-decorators",
+        "focused-install-recovery"
+      ]
+    },
+    {
+      "route": "GET /api/admin/lease/status",
+      "implementation": {
+        "path": "src/gobby/daemon_lease_control.py",
+        "symbol": "create_standby_app.lease_status"
+      },
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "verification": [
+        "route-decorators",
+        "focused-install-recovery"
+      ]
+    },
+    {
+      "route": "POST /api/admin/lease/promote",
+      "implementation": {
+        "path": "src/gobby/daemon_lease_control.py",
+        "symbol": "create_standby_app.promote"
+      },
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "verification": [
+        "route-decorators",
+        "focused-install-recovery"
+      ]
+    },
+    {
+      "route": "POST /api/admin/lease/recover",
+      "implementation": {
+        "path": "src/gobby/daemon_lease_control.py",
+        "symbol": "create_standby_app.recover"
+      },
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "verification": [
+        "route-decorators",
+        "focused-install-recovery"
+      ]
+    }
+  ],
+  "native_cli": [
+    {
+      "command": "gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] [--no-mouse] [--version] [--help]",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": "crates/gclient/src/startup.rs::parse_args",
+      "verification": [
+        "client-source",
+        "native-client"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "verification_limits": [
+    "Physical two-machine M0 acceptance #19600 remains its existing separately gated task; current files-owner limitation is documented against ROADMAP decisions 11, 13 and 17. No physical acceptance is claimed.",
+    "Operator release, privileged host tuning, secret rotation, restore and network examples were source/fixture audited, not executed against live state. Hardware figures are estimates.",
+    "The native test run has one ignored test; no installed binary or running terminal host was replaced. Full pytest was not requested or run.",
+    "CLI and HTTP guides were audited only in the named admin sections; their other capability evidence remains in the corresponding audit files."
+  ]
+}
