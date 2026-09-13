@@ -83,6 +83,28 @@ fn project_lock_key_is_project_scoped() {
 }
 
 #[test]
+fn non_file_batch_needs_no_database_locks() -> anyhow::Result<()> {
+    let project = tempfile::tempdir()?;
+    std::fs::create_dir(project.path().join("src"))?;
+    let ctx = context_for_root(String::new(), "unused", project.path().to_path_buf());
+    let result = lock_project_files(
+        &ctx,
+        &[
+            PathBuf::new(),
+            PathBuf::from("."),
+            project.path().to_path_buf(),
+            PathBuf::from("src/.."),
+            PathBuf::from("src"),
+        ],
+        IndexLockPolicy::maintenance_try(),
+    )?;
+    assert!(result.acquired_files.is_empty());
+    assert!(result.busy_files.is_empty());
+    assert!(result._guard.is_none());
+    Ok(())
+}
+
+#[test]
 fn file_lock_paths_normalize_aliases_before_hashing() -> anyhow::Result<()> {
     let project = tempfile::tempdir()?;
     std::fs::create_dir_all(project.path().join("src"))?;
@@ -218,6 +240,9 @@ mod serial_db {
             &ctx,
             &[
                 PathBuf::from("src/free.rs"),
+                PathBuf::from("."),
+                ctx.project_root.clone(),
+                PathBuf::from("src"),
                 ctx.project_root.join("src/../src/held.rs"),
             ],
             IndexLockPolicy::maintenance_try(),

@@ -440,6 +440,25 @@ async def test_duplicate_edit_waits_for_active_file_and_coalesces_follow_up(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["", ".", "src/..", "absolute", "directory"])
+async def test_non_file_notifications_do_not_poison_batch(
+    harness: TriggerHarness, tmp_path: Path, invalid: str
+) -> None:
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    path = str(root) if invalid == "absolute" else "src" if invalid == "directory" else invalid
+    harness.trigger._schedule_file(path, "proj-1", str(root))
+    root_key = harness.trigger._root_key(str(root))
+    assert root_key not in harness.trigger._pending_by_root
+    assert root_key not in harness.trigger._scheduled_by_root
+
+    # Missing paths must remain eligible: a deleted file still needs an index update.
+    harness.trigger._schedule_file("src/deleted.py", "proj-1", str(root))
+    await harness.trigger._flush(root_key, "proj-1")
+    assert harness.gateway.calls == [(root.resolve(), ("src/deleted.py",), 0.01)]
+
+
+@pytest.mark.asyncio
 async def test_pending_paths_resolve_under_root(
     harness: TriggerHarness,
     tmp_path: Path,

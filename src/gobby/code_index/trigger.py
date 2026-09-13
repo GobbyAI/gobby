@@ -98,6 +98,9 @@ class CodeIndexTrigger:
         """Add a file to its root's next batch (runs on the event loop)."""
         root_key = self._root_key(root_path)
         normalized_path = self._normalize_file_path(file_path, root_key)
+        if normalized_path == "." or (Path(root_key) / normalized_path).is_dir():
+            logger.debug("Ignoring non-file code index notification: %s", file_path)
+            return
         self._pending_by_root.setdefault(root_key, set()).add(normalized_path)
         self._project_id_by_root[root_key] = project_id
         self._overlay_by_root[root_key] = code_overlay_project_id

@@ -165,6 +165,10 @@ pub(crate) fn lock_project_files(
         .iter()
         .map(|path| normalize_file_lock_path(&ctx.project_root, path))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    // File notifications can include a directory (including the root itself).
+    // They have no per-file work; keep valid siblings, including deleted files.
+    ordered_paths
+        .retain(|path| !path.as_os_str().is_empty() && !ctx.project_root.join(path).is_dir());
     ordered_paths.sort();
     ordered_paths.dedup();
     if ordered_paths.is_empty() {
@@ -625,9 +629,6 @@ fn normalize_file_lock_path(project_root: &Path, path: &Path) -> anyhow::Result<
             project_root.display()
         )
     })?;
-    if relative.as_os_str().is_empty() {
-        anyhow::bail!("file lock path must name a file inside the project root")
-    }
     Ok(PathBuf::from(crate::index::normalize_storage_path(
         relative,
     )))
