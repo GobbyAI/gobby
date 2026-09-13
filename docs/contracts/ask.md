@@ -185,6 +185,15 @@ and `publish`. Agent-only tools are `query_evidence`, `read_evidence`,
 authorization remains service-owned even when an adapter schema includes an
 explicit project, stage, or attempt argument.
 
+The MCP submission schemas describe answer and review content in full, including
+claim citations and verdicts. `submit_answer` accepts that content plus the run,
+attempt and latest evidence-manifest hash. `submit_review` additionally accepts
+the immutable draft hash. The adapter derives the investigator or reviewer
+identity from the authenticated agent run and computes the canonical submission
+hash. Content objects reject caller-supplied identity and hash fields. The shared
+service still validates the complete immutable draft or review, matching run,
+attempt, identity and evidence-manifest binding.
+
 ### HTTP
 
 Authenticated local-daemon routes are:
