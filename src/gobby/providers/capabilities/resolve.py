@@ -8,6 +8,11 @@ from typing import Protocol
 
 from gobby.config.ai import ModelMetadataAlias, model_metadata_alias_source_key
 from gobby.llm.context_window_values import positive_context_window
+from gobby.providers.capabilities.local_context import (
+    LocalContextObservation,
+    effective_local_limit,
+    positive_limit,
+)
 from gobby.providers.capabilities.models import (
     ModelCapability,
     ProviderSnapshot,
@@ -20,6 +25,7 @@ class ContextSource(StrEnum):
 
     CALLER_OVERRIDE = "caller_override"
     ROUTE_OVERRIDE = "route_override"
+    LOCAL_OBSERVATION = "local_observation"
     PROVIDER_MATRIX = "provider_matrix"
     OPENROUTER = "openrouter"
     UNKNOWN = "unknown"
@@ -61,6 +67,42 @@ class _ModelMetadataStore(Protocol):
     def get_model_metadata(self, model: str) -> _ReasoningMetadata | None: ...
 
 
+class LocalContextRoute(Protocol):
+    """Minimum route contract required by synchronous local resolution."""
+
+    @property
+    def is_local(self) -> bool: ...
+
+    def matches_observation(self, observation: LocalContextObservation) -> bool: ...
+
+
+def resolve_local_context(
+    local_route: LocalContextRoute | None,
+    local_observation: LocalContextObservation | None,
+    *,
+    caller_override: int | None = None,
+    route_override: int | None = None,
+) -> ContextResolution | None:
+    """Resolve a known local route, or return None for the remote path."""
+    if local_route is None or not local_route.is_local:
+        return None
+    if local_observation is None or not local_route.matches_observation(local_observation):
+        return ContextResolution(None, ContextSource.UNKNOWN)
+
+    local_value = effective_local_limit(
+        local_observation,
+        caller_override,
+        route_override,
+    )
+    if local_value is None:
+        return ContextResolution(None, ContextSource.UNKNOWN)
+    if positive_limit(caller_override) == local_value:
+        return ContextResolution(local_value, ContextSource.CALLER_OVERRIDE)
+    if positive_limit(route_override) == local_value:
+        return ContextResolution(local_value, ContextSource.ROUTE_OVERRIDE)
+    return ContextResolution(local_value, ContextSource.LOCAL_OBSERVATION)
+
+
 class _ReasoningMetadata(Protocol):
     @property
     def reasoning_present(self) -> bool | None: ...
@@ -98,8 +140,19 @@ class CapabilityResolver:
         *,
         caller_override: int | None = None,
         route_override: int | None = None,
+        local_route: LocalContextRoute | None = None,
+        local_observation: LocalContextObservation | None = None,
     ) -> ContextResolution:
-        """Resolve a context limit using the matrix's fixed precedence order."""
+        """Resolve local evidence or use the remote matrix precedence order."""
+        local_resolution = resolve_local_context(
+            local_route,
+            local_observation,
+            caller_override=caller_override,
+            route_override=route_override,
+        )
+        if local_resolution is not None:
+            return local_resolution
+
         caller_value = positive_context_window(caller_override)
         if caller_value is not None:
             return ContextResolution(caller_value, ContextSource.CALLER_OVERRIDE)

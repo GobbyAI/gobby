@@ -27,6 +27,12 @@ from gobby.llm.context_windows import (
     resolve_context_window_with_source,
 )
 from gobby.llm.model_registry import ModelInfo
+from gobby.providers.capabilities.local_context import (
+    ContextDiagnostic,
+    LocalContextInstance,
+    LocalContextObservation,
+)
+from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
@@ -35,6 +41,19 @@ from gobby.storage.model_metadata import ModelMetadataStore
 pytestmark = pytest.mark.unit
 
 MODEL_METADATA_ALIASES_KEY = "ai.model_metadata_aliases"
+
+
+class _LocalRoute:
+    is_local = True
+
+    def matches_observation(self, observation: LocalContextObservation) -> bool:
+        return (
+            observation.machine_id,
+            observation.endpoint_id,
+            observation.configuration_fingerprint,
+            observation.model_id,
+            observation.instance_id,
+        ) == ("machine", "endpoint", "configuration", "model[1m]", None)
 
 
 @pytest.mark.parametrize(
@@ -186,6 +205,101 @@ def test_unknown_context_window_warning_dedup_is_bounded(
     assert sum("codex/future-c" in message for message in warnings) == 1
 
 
+def test_local_context_public_resolution(caplog: pytest.LogCaptureFixture) -> None:
+    route = _LocalRoute()
+    local_model = "model[1m]"
+    instance = LocalContextInstance(model_id=local_model, runtime_limit=32_768)
+    observation = LocalContextObservation(
+        machine_id="machine",
+        endpoint_id="endpoint",
+        configuration_fingerprint="configuration",
+        provider="ollama",
+        model_id=local_model,
+        canonical_limit=262_144,
+        instances=(instance,),
+    )
+    failed_observation = LocalContextObservation(
+        machine_id="machine",
+        endpoint_id="endpoint",
+        configuration_fingerprint="configuration",
+        provider="ollama",
+        model_id=local_model,
+        canonical_limit=262_144,
+        diagnostics=(ContextDiagnostic.ENDPOINT_UNAVAILABLE,),
+        instances=(instance,),
+    )
+    capability_store = MagicMock()
+    capability_store.get_provider_snapshot.return_value = None
+    metadata_store = MagicMock()
+    metadata_store.get_context_window.return_value = None
+    resolver = CapabilityResolver(capability_store, metadata_store)
+    fake_db = MagicMock()
+
+    with caplog.at_level("WARNING", logger="gobby.llm.context_windows"):
+        with (
+            patch("gobby.app_context.get_app_context", return_value=None) as app_context,
+            patch(
+                "gobby.storage.config_repository.ConfigRepository",
+                side_effect=AssertionError("local context must not read alias configuration"),
+            ) as config_repository,
+        ):
+            resolved = resolve_context_window_with_source(
+                local_model,
+                overrides={"model": 65_536},
+                provider="qwen",
+                provider_reported_context_window=48_000,
+                local_route=route,
+                local_observation=observation,
+                db=fake_db,
+            )
+            plain = resolve_context_window(
+                local_model,
+                overrides={"model": 65_536},
+                provider="qwen",
+                provider_reported_context_window=48_000,
+                local_route=route,
+                local_observation=observation,
+                db=fake_db,
+            )
+            local_unknown = resolve_context_window_with_source(
+                local_model,
+                provider="qwen",
+                local_route=route,
+                local_observation=failed_observation,
+                db=fake_db,
+            )
+
+        with patch.object(
+            context_windows,
+            "_get_capability_resolver",
+            return_value=resolver,
+        ):
+            remote_override = resolve_context_window_with_source(
+                "remote-model",
+                overrides={"remote": 65_536},
+                provider_reported_context_window=48_000,
+            )
+            remote_unknown = resolve_context_window_with_source("remote-unknown")
+
+    assert resolved is not None
+    assert (resolved.value, resolved.source) == (32_768, "local_observation")
+    assert plain == 32_768
+    assert local_unknown is not None
+    assert (local_unknown.value, local_unknown.source) == (None, "unknown")
+    assert ContextDiagnostic.ENDPOINT_UNAVAILABLE in failed_observation.diagnostics
+    app_context.assert_not_called()
+    config_repository.assert_not_called()
+    assert fake_db.mock_calls == []
+    assert remote_override is not None
+    assert (remote_override.value, remote_override.source) == (65_536, "override")
+    assert remote_unknown is not None
+    assert (remote_unknown.value, remote_unknown.source) == (None, "unknown")
+    metadata_store.get_context_window.assert_called_once_with("remote-unknown")
+    warnings = [record.getMessage() for record in caplog.records]
+    assert all(local_model not in message for message in warnings)
+    assert sum("remote-unknown" in message for message in warnings) == 1
+
+
 class TestResolveContextWindow:
     """Tests for resolve_context_window()."""
 
@@ -248,22 +362,32 @@ class TestResolveContextWindow:
             assert resolve_context_window(model, provider=provider) == expected
 
     @pytest.mark.parametrize(
-        ("kwargs", "registry_value", "expected_source"),
+        (
+            "overrides",
+            "provider_reported_context_window",
+            "registry_value",
+            "expected_source",
+        ),
         [
-            ({"overrides": {"sonnet": 200_000}}, None, "override"),
-            ({"provider_reported_context_window": 200_000}, None, "provider_reported"),
-            ({}, 200_000, "registry"),
+            ({"sonnet": 200_000}, None, None, "override"),
+            (None, 200_000, None, "provider_reported"),
+            (None, None, 200_000, "registry"),
         ],
     )
     def test_one_million_marker_floors_all_sources_without_changing_attribution(
         self,
-        kwargs: dict[str, object],
+        overrides: dict[str, int] | None,
+        provider_reported_context_window: int | None,
         registry_value: int | None,
         expected_source: str,
     ) -> None:
         """Every winning source honors the marker and retains its attribution."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=registry_value):
-            result = resolve_context_window_with_source("claude-sonnet-4-6[1m]", **kwargs)
+            result = resolve_context_window_with_source(
+                "claude-sonnet-4-6[1m]",
+                overrides=overrides,
+                provider_reported_context_window=provider_reported_context_window,
+            )
 
         assert result is not None
         assert result.value == 1_000_000
