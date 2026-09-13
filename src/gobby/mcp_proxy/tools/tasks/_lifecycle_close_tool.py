@@ -69,6 +69,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary=changes_summary or "",
             reason=reason,
             skip_validation=skip_validation,
             override_justification=override_justification,

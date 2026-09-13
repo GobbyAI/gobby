@@ -53,6 +53,7 @@ async def complete_close_review(
     result = await lifecycle_close._commit_close(
         ctx,
         reviewed,
+        changes_summary=close_arguments["changes_summary"] or "",
         reason=close_arguments["reason"],
         skip_validation=bool(close_arguments["skip_validation"]),
         override_justification=close_arguments["override_justification"],

@@ -183,11 +183,52 @@ async def capture_attribution(
     )
 
 
+def _queue_close_memory_review(
+    ctx: RegistryContext,
+    evaluation: CloseEvaluation,
+    task_id: str,
+    changes_summary: str,
+    reason: str,
+    commit_shas: list[str],
+) -> None:
+    """Queue best-effort review after closure, retaining pre-close attribution."""
+    from gobby.agents.session import ChildSessionManager
+    from gobby.workflows.memory_review_conditions import classify_memory_review_close
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    try:
+        seed = evaluation.edit_session_id
+        lineage = ChildSessionManager(ctx.session_manager).get_session_lineage(seed) if seed else []
+        target = next(
+            (
+                session
+                for session in reversed(lineage)
+                if not session.agent_run_id and not session.agent_depth
+            ),
+            None,
+        )
+        if target is None:
+            logger.debug("No interactive ancestor for memory review of task %s", task_id)
+            return
+        candidate = classify_memory_review_close(
+            ctx.task_manager,
+            task_id=task_id,
+            changes_summary=changes_summary,
+            reason=reason,
+            commit_shas=commit_shas,
+        )
+        if candidate is not None:
+            SessionVariableManager(ctx.task_manager.db).queue_memory_review(target.id, candidate)
+    except Exception:
+        logger.warning("Failed to queue memory review for closed task %s", task_id, exc_info=True)
+
+
 async def commit_close(
     ctx: RegistryContext,
     evaluation: CloseEvaluation,
     *,
     reason: str,
+    changes_summary: str,
     skip_validation: bool,
     override_justification: str | None,
     commit_sha: str | None,
@@ -378,6 +419,10 @@ async def commit_close(
         # and only the in-transaction guard sees it. It is a retry, not a
         # fault, and it reaches the caller as one (#20871).
         return stale_close_response(evaluation, str(exc))
+
+    await asyncio.to_thread(
+        _queue_close_memory_review, ctx, evaluation, task.id, changes_summary, reason, commit_shas
+    )
 
     # A get_task per ancestor the transition closed, so the walk scales with
     # how far up the tree the close reached and stays off the loop.

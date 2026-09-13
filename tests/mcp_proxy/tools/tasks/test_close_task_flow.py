@@ -1119,6 +1119,7 @@ async def test_commit_set_change_returns_stale_without_close() -> None:
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -1173,6 +1174,7 @@ async def test_gate_input_change_returns_stale_without_close(change: str) -> Non
     result = await _commit_close(
         ctx,
         evaluation,
+        changes_summary="Implemented the task changes.",
         reason="completed",
         skip_validation=False,
         override_justification=None,
@@ -1200,6 +1202,7 @@ async def test_children_change_returns_stale_without_close() -> None:
     result = await _commit_close(
         ctx,
         evaluation,
+        changes_summary="Implemented the task changes.",
         reason="completed",
         skip_validation=False,
         override_justification=None,
@@ -1234,6 +1237,7 @@ async def test_new_attributed_paths_during_review_return_stale() -> None:
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -1267,6 +1271,7 @@ async def test_same_owner_reclaim_window_change_returns_stale() -> None:
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -1308,6 +1313,7 @@ async def test_benign_bookkeeping_change_does_not_stale_close() -> None:
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -1345,6 +1351,7 @@ async def test_scope_justification_is_rechecked_and_persisted_on_close() -> None
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -1406,6 +1413,7 @@ async def test_justified_escalated_close_skips_review_and_persists_override() ->
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification="Reviewed and accepted the current implementation.",
@@ -1555,6 +1563,7 @@ async def test_justified_escalated_structural_parent_closes_and_persists_overrid
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification="Reviewed: obsolete escalation, closing deliberately.",
@@ -1777,6 +1786,7 @@ async def test_commit_epic_persists_allowed_valid_status() -> None:
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -1935,6 +1945,7 @@ async def test_commit_close_links_and_closes_off_the_event_loop() -> None:
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -2045,6 +2056,7 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -2135,6 +2147,7 @@ async def test_closing_schedules_the_parent_and_ancestor_broadcasts() -> None:
             result = await _commit_close(
                 ctx,
                 _epic_close_evaluation(task),
+                changes_summary="Implemented the task changes.",
                 reason="completed",
                 skip_validation=False,
                 override_justification=None,
@@ -2172,6 +2185,7 @@ async def test_a_child_created_during_the_close_window_asks_for_a_retry() -> Non
         result = await _commit_close(
             ctx,
             _epic_close_evaluation(task),
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -2225,6 +2239,7 @@ async def test_worked_leaf_with_a_closed_child_passes_the_commit_recheck() -> No
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -2257,6 +2272,7 @@ async def test_gate_input_change_names_the_changed_fields() -> None:
     result = await _commit_close(
         ctx,
         evaluation,
+        changes_summary="Implemented the task changes.",
         reason="completed",
         skip_validation=False,
         override_justification=None,
@@ -2332,6 +2348,7 @@ async def test_tagged_commit_landing_after_evaluation_returns_stale_without_clos
         result = await _commit_close(
             ctx,
             evaluation,
+            changes_summary="Implemented the task changes.",
             reason="completed",
             skip_validation=False,
             override_justification=None,
@@ -2341,3 +2358,200 @@ async def test_tagged_commit_landing_after_evaluation_returns_stale_without_clos
     assert result["error"] == "stale_task_state"
     assert "not linked" in result["message"]
     cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+def _memory_review_close_context(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    spawned: bool = False,
+) -> tuple[RegistryContext, CloseEvaluation, MagicMock]:
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = _ready_evaluation(task)
+    evaluation.edit_session_id = task.claimed_by_session_id
+    evaluation.commit_shas = ["abc1234"]
+    root = SimpleNamespace(id="root", parent_session_id=None, agent_run_id=None, agent_depth=0)
+    parent = SimpleNamespace(
+        id="interactive", parent_session_id="root", agent_run_id=None, agent_depth=0
+    )
+    child = SimpleNamespace(
+        id=task.claimed_by_session_id,
+        parent_session_id="interactive" if spawned else None,
+        agent_run_id="worker" if spawned else None,
+        agent_depth=1 if spawned else 0,
+    )
+    sessions = {item.id: item for item in (root, parent, child)}
+    ctx.session_manager = MagicMock()
+    ctx.session_manager.get.side_effect = sessions.get
+    manager = cast(MagicMock, ctx.task_manager)
+
+    def close_task(*_args: object, **_kwargs: object) -> Task:
+        closed = replace(
+            task,
+            claimed_by_session_id=None,
+            closed_at=datetime(2026, 9, 13, tzinfo=UTC),
+            closed_reason="completed",
+            commits=["abc1234"],
+        )
+        manager.get_task.return_value = closed
+        return closed
+
+    manager.close_task.side_effect = close_task
+    monkeypatch.setattr(
+        close_finalization,
+        "capture_attribution",
+        AsyncMock(
+            return_value=CloseAttributionSnapshot(
+                owner_session_id=task.claimed_by_session_id or "",
+                attributed=False,
+                raw_paths=frozenset(),
+                edited_paths=frozenset(),
+                clean_proof_paths=frozenset(),
+                had_attributed_edits=False,
+                claim_started_at=None,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        close_finalization, "resolve_close_commit_shas", AsyncMock(return_value=(["abc1234"], None))
+    )
+    monkeypatch.setattr(
+        close_finalization, "link_close_commit_shas", MagicMock(return_value=(task, None))
+    )
+    monkeypatch.setattr(close_finalization, "notify_parent_on_task_state_change", MagicMock())
+    monkeypatch.setattr(close_finalization, "_cleanup_closed_claim", MagicMock())
+    queue = MagicMock()
+    monkeypatch.setattr(SessionVariableManager, "queue_memory_review", queue)
+    return ctx, evaluation, queue
+
+
+@pytest.mark.asyncio
+async def test_commit_close_queues_review_on_interactive_claimer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx, evaluation, queue = _memory_review_close_context(monkeypatch)
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        changes_summary="Fixed routing.",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha="abc1234",
+    )
+    assert result["closed"] is True
+    queue.assert_called_once_with(
+        evaluation.edit_session_id,
+        {
+            "closure_id": f"{evaluation.task_id}:2026-09-13T00:00:00+00:00",
+            "task_id": evaluation.task_id,
+            "task_ref": evaluation.task_id,
+            "changes_summary": "Fixed routing.",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_commit_close_queues_review_on_nearest_interactive_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx, evaluation, queue = _memory_review_close_context(monkeypatch, spawned=True)
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        changes_summary="Fixed routing.",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha="abc1234",
+    )
+    assert result["closed"] is True
+    assert queue.call_count == 1
+    assert queue.call_args.args[0] == "interactive"
+    assert (
+        queue.call_args.args[1]["closure_id"] == f"{evaluation.task_id}:2026-09-13T00:00:00+00:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_validator_close_queues_memory_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.mcp_proxy.tools.tasks import _lifecycle_close_orchestration as orchestration
+    from tests.mcp_proxy.tools.tasks.test_lifecycle_close_orchestration import (
+        _authenticate,
+        _review,
+        _Store,
+        _verdict,
+    )
+
+    ctx, evaluation, queue = _memory_review_close_context(monkeypatch, spawned=True)
+    review = _review(status="running", run_id="run")
+    review = replace(
+        review,
+        task_id=evaluation.task_id or "",
+        close_arguments={
+            **review.close_arguments,
+            "changes_summary": "Persisted validator summary.",
+            "commit_sha": "abc1234",
+        },
+    )
+    store = _Store(review)
+    _authenticate(monkeypatch, review)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    result = await orchestration.submit_close_review(
+        ctx,
+        review_id="review",
+        verdict=_verdict("valid"),
+        evaluate_close=AsyncMock(return_value=evaluation),
+        commit_close=_commit_close,
+    )
+    assert result["review_status"] == "closed"
+    assert queue.call_count == 1
+    assert queue.call_args.args[0] == "interactive"
+    assert queue.call_args.args[1]["changes_summary"] == "Persisted validator summary."
+
+
+@pytest.mark.asyncio
+async def test_memory_review_queue_failure_preserves_committed_close(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx, evaluation, queue = _memory_review_close_context(monkeypatch)
+    queue.side_effect = RuntimeError("queue unavailable")
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        changes_summary="Fixed routing.",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha="abc1234",
+    )
+    assert result["closed"] is True
+    assert "Failed to queue memory review" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("agent_run_id", "agent_depth"), [("worker", 0), (None, 1)])
+async def test_memory_review_skips_lineage_without_interactive_session(
+    monkeypatch: pytest.MonkeyPatch,
+    agent_run_id: str | None,
+    agent_depth: int,
+) -> None:
+    ctx, evaluation, queue = _memory_review_close_context(monkeypatch, spawned=True)
+    assert evaluation.edit_session_id is not None
+    session = ctx.session_manager.get(evaluation.edit_session_id)
+    assert session is not None
+    session.parent_session_id = None
+    session.agent_run_id = agent_run_id
+    session.agent_depth = agent_depth
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        changes_summary="Fixed routing.",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha="abc1234",
+    )
+    assert result["closed"] is True
+    queue.assert_not_called()

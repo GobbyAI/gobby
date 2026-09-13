@@ -521,7 +521,6 @@ def build_condition_helpers(
         touches_docker_policy_path,
         touches_ui_design_path,
     )
-    from .memory_review_conditions import queue_memory_review_close
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -772,16 +771,6 @@ def build_condition_helpers(
     funcs["missing_claimed_task_extra_skills"] = _missing_claimed_task_extra_skills
     funcs["task_mutation_requires_tasks_skill"] = _task_mutation_requires_tasks_skill
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
-    funcs["queue_memory_review_close"] = lambda event_data=None, tool_input=None: (
-        queue_memory_review_close(
-            task_manager,
-            event_data
-            if isinstance(event_data, Mapping)
-            else _event_field(ctx.get("event"), "data", {}),
-            tool_input if isinstance(tool_input, Mapping) else ctx.get("tool_input", {}),
-            _get_variables(ctx),
-        )
-    )
 
     # --- Plugin conditions ---
 

@@ -312,6 +312,7 @@ async def submit_close_review(
         ctx,
         evaluation,
         reason=_required_string(args, "reason"),
+        changes_summary=_optional_string(args, "changes_summary") or "",
         skip_validation=bool(args.get("skip_validation", False)),
         override_justification=_optional_string(args, "override_justification"),
         commit_sha=_optional_string(args, "commit_sha"),

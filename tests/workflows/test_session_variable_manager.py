@@ -1358,3 +1358,27 @@ def _session_columns(db: HubDatabase, session_id: str) -> dict[str, Any]:
     )
     assert row is not None
     return dict(row)
+
+
+def test_queue_memory_review_dedupes_and_resets_delivery(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    first = {"closure_id": "first", "task_id": "task-1", "task_ref": "#1"}
+    second = {"closure_id": "second", "task_id": "task-2", "task_ref": "#2"}
+    mgr.queue_memory_review(S1, first)
+    mgr.queue_memory_review(S1, first)
+    assert mgr.get_variables(S1)["_memory_pending_task_reviews"] == [first]
+    mgr.merge_variables(
+        S1,
+        {
+            "_memory_review_stop_delivered": True,
+            "_memory_task_review_records": [{"closure_id": "first"}],
+        },
+    )
+    mgr.queue_memory_review(S1, second)
+    mgr.queue_memory_review(S1, first)
+    variables = mgr.get_variables(S1)
+    assert variables["_memory_pending_task_reviews"] == [second]
+    assert variables["_memory_review_stop_delivered"] is False
+    assert variables["_memory_task_review_records"] == [{"closure_id": "first"}]

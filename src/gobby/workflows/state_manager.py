@@ -174,6 +174,35 @@ class SessionVariableManager:
             return variables
         return {**defaults, **variables}
 
+    def queue_memory_review(self, session_id: str, candidate: dict[str, str]) -> None:
+        """Atomically enqueue a closure on its interactive session."""
+
+        def enqueue(variables: dict[str, Any]) -> tuple[None, bool]:
+            stored = (
+                []
+                if variables.get("_memory_review_stop_delivered")
+                else variables.get("_memory_pending_task_reviews") or []
+            )
+            pending = [dict(item) for item in stored if isinstance(item, Mapping)]
+            reviewed = variables.get("_memory_task_review_records") or []
+            if not isinstance(reviewed, list):
+                reviewed = []
+            closure_id = candidate["closure_id"]
+            duplicate = any(item.get("closure_id") == closure_id for item in pending) or any(
+                isinstance(item, Mapping) and item.get("closure_id") == closure_id
+                for item in reviewed
+            )
+            if not duplicate:
+                pending.append(dict(candidate))
+            changed = variables.get("_memory_pending_task_reviews") != pending
+            variables["_memory_pending_task_reviews"] = pending
+            if not duplicate:
+                changed = changed or variables.get("_memory_review_stop_delivered") is not False
+                variables["_memory_review_stop_delivered"] = False
+            return None, changed
+
+        self._mutate_variables(session_id, enqueue)
+
     def _mutate_variables(
         self,
         session_id: str,
