@@ -221,6 +221,7 @@ class GobbyRunner:
     terminal_host_config: TerminalHostConfig
     terminal_host_manager: TerminalHostManager | None
     frame_client: Any
+    lease_registry: Any
     write_coordinator: Any
     terminal_services: TerminalServices
     terminal_effect_bridge: Any

@@ -10,6 +10,7 @@ from gobby.storage.terminals import (
     UNRESOLVED_WRITE_MAX_ENTRIES,
     UnresolvedWriteCapacityError,
 )
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, Suppressed
 from gobby.terminals.write_coordinator import (
     SequenceDelay,
@@ -36,7 +37,11 @@ def _coordinator(
     terminal = make_memory_terminal(backend=backend, unresolved_writes=unresolved)
     store = MemoryTerminalStore(terminal)
     fake = runtime or FakeRuntime(backend=backend)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(fake))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(fake),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     return coordinator, fake, store
 
 
@@ -48,6 +53,13 @@ def _auto(terminal_id: str, action_key: str, payload: str) -> WriteRequest:
         kind="text",
         payload=payload,
     )
+
+
+async def _grant(coordinator: WriteCoordinator, terminal_id: str) -> int:
+    await coordinator.lease_registry.attach(terminal_id, attachment_id="att-1")
+    result = await coordinator.lease_registry.take_control(terminal_id, "att-1")
+    assert result.lease_generation is not None
+    return result.lease_generation
 
 
 @pytest.mark.asyncio
@@ -74,7 +86,7 @@ async def test_unresolved_write_latch_suppresses_only_the_same_action() -> None:
             kind="text",
             payload="human",
             attachment_id="att-1",
-            expected_lease_generation=await coordinator.grant_lease(terminal.id, "att-1"),
+            expected_lease_generation=await _grant(coordinator, terminal.id),
         )
     )
     assert isinstance(operator, Delivered)
@@ -89,7 +101,7 @@ async def test_unresolved_write_latch_suppresses_only_the_same_action() -> None:
     assert "idle-reprompt" not in row.unresolved_writes
     assert "prompt-answer" in row.unresolved_writes
 
-    coordinator.clear_on_exit(terminal.id)
+    await coordinator.clear_on_exit(terminal.id)
     row = store.get(terminal.id)
     assert row is not None
     assert row.unresolved_writes == {}
@@ -98,7 +110,11 @@ async def test_unresolved_write_latch_suppresses_only_the_same_action() -> None:
         unresolved={"keep-me": {"at": "2026-01-01T00:00:00+00:00", "origin": "automatic"}}
     )
     terminal = next(iter(store.rows.values()))
-    restarted = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    restarted = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     again = await restarted.write(_auto(terminal.id, "keep-me", "again"))
     assert isinstance(again, Suppressed)
     assert runtime.write_log == []
@@ -153,11 +169,15 @@ async def test_unresolved_write_capacity_survives_restart() -> None:
     }
     coordinator, runtime, store = _coordinator(unresolved=writes)
     terminal = next(iter(store.rows.values()))
-    restarted = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    restarted = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     with pytest.raises(UnresolvedWriteCapacityError):
         await restarted.write(_auto(terminal.id, "one-over", "nope"))
     assert runtime.write_log == []
-    restarted.clear_on_exit(terminal.id)
+    await restarted.clear_on_exit(terminal.id)
     delivered = await restarted.write(_auto(terminal.id, "after-exit", "ok"))
     assert isinstance(delivered, Delivered)
 
@@ -166,15 +186,28 @@ async def test_unresolved_write_capacity_survives_restart() -> None:
 async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     coordinator, runtime, store = _coordinator()
     terminal = next(iter(store.rows.values()))
-    store.persist_unresolved_write(terminal.id, "auto-1", "automatic")
-    restarted = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    store.persist_unresolved_write(
+        terminal.id,
+        "auto-1",
+        "automatic",
+        daemon_epoch="test-epoch",
+    )
+    restarted = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     suppressed = await restarted.write(_auto(terminal.id, "auto-1", "retry"))
     assert isinstance(suppressed, Suppressed)
     assert runtime.write_log == []
 
     runtime.outcome = IndeterminateWrite(detail="lost")
     await restarted.write(_auto(terminal.id, "auto-2", "maybe"))
-    restored = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(FakeRuntime()))
+    restored = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(FakeRuntime()),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     again = await restored.write(_auto(terminal.id, "auto-2", "retry-2"))
     assert isinstance(again, Suppressed)
 
@@ -182,7 +215,9 @@ async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     delivered = await coordinator.write(_auto(terminal.id, "auto-3", "done"))
     assert isinstance(delivered, Delivered)
     after_success = WriteCoordinator(
-        cast(UnresolvedWriteStore, store), runtime_registry(FakeRuntime())
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(FakeRuntime()),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     follow = await after_success.write(_auto(terminal.id, "auto-4", "next"))
     assert isinstance(follow, Delivered)
@@ -191,7 +226,11 @@ async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     seq_runtime.outcomes = [Delivered(), IndeterminateWrite(detail="lost")]
     seq_store = MemoryTerminalStore(make_memory_terminal())
     seq_terminal = next(iter(seq_store.rows.values()))
-    seq = WriteCoordinator(cast(UnresolvedWriteStore, seq_store), runtime_registry(seq_runtime))
+    seq = WriteCoordinator(
+        cast(UnresolvedWriteStore, seq_store),
+        runtime_registry(seq_runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     outcome = await seq.run_sequence(
         seq_terminal.id,
         action_key="wake-seq",
@@ -216,7 +255,9 @@ async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     )
     assert isinstance(outcome, IndeterminateWrite)
     restored_seq = WriteCoordinator(
-        cast(UnresolvedWriteStore, seq_store), runtime_registry(FakeRuntime())
+        cast(UnresolvedWriteStore, seq_store),
+        runtime_registry(FakeRuntime()),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     blocked = await restored_seq.run_sequence(
         seq_terminal.id,

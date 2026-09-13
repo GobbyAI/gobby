@@ -45,6 +45,7 @@ from gobby.agents.spawn_executor_support import (
 from gobby.agents.spawn_timing import SPAWN_PHASES
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.prepared_spawn import prepared_spawn
@@ -2784,7 +2785,14 @@ def _codex_delivery_target(runtime: FakeRuntime) -> tuple[WriteCoordinator, Term
 
     terminal = make_memory_terminal()
     store = MemoryTerminalStore(terminal)
-    return WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime)), terminal
+    return (
+        WriteCoordinator(
+            cast(UnresolvedWriteStore, store),
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        ),
+        terminal,
+    )
 
 
 @contextmanager

@@ -13,6 +13,7 @@ from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import TerminalWriteError
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -58,7 +59,11 @@ async def test_prompt_callback_failure_preserves_successful_injection(
     services = TerminalServices(
         manager=store,
         registry=registry,
-        coordinator=WriteCoordinator(store, runtime_registry(runtime)),
+        coordinator=WriteCoordinator(
+            store,
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        ),
     )
     callback = AsyncMock(side_effect=RuntimeError("callback failed"))
     monitor = TerminalPromptMonitor(
@@ -89,7 +94,11 @@ def _monitor_with_probe_error(error: Exception) -> TerminalPromptMonitor:
     services = TerminalServices(
         manager=store,
         registry=runtime_registry(runtime),
-        coordinator=WriteCoordinator(store, runtime_registry(runtime)),
+        coordinator=WriteCoordinator(
+            store,
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        ),
     )
     detector = MagicMock()
     detector.was_dismissed.return_value = False

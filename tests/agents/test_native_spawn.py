@@ -31,6 +31,7 @@ from gobby.terminals.host_client import (
 from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.host_protocol import HostListRow, control_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import NativeTerminalRuntime
 from gobby.terminals.runtime import (
     Delivered,
@@ -458,7 +459,11 @@ async def test_attention_episode_native(temp_db: Any) -> None:
     episode = attention_manager.get("run:run-native")
     assert episode is not None
     assert episode.state == "blocked"
-    coordinator = WriteCoordinator(cast(Any, manager), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(Any, manager),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     outcome = await coordinator.write(
         WriteRequest(
             terminal_id=terminal.id,

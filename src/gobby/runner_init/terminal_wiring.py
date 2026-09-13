@@ -37,13 +37,19 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
     from gobby.terminals.services import TerminalServices
     from gobby.terminals.sync_bridge import TerminalEffectBridge
     from gobby.terminals.tmux_runtime import configured_tmux_runtime
     from gobby.terminals.write_coordinator import WriteCoordinator
+    from gobby.utils.machine_id import require_machine_id
 
     runner.terminal_manager = TerminalManager(runner.database)
+    runner.lease_registry = TerminalLeaseRegistry()
+    runner.terminal_manager.clear_orphaned_attachment_writes(
+        require_machine_id(), runner.lease_registry.daemon_epoch
+    )
     runner.terminal_config = config.terminals
     host_config = getattr(config, "terminal_host", None) or TerminalHostConfig()
     runner.terminal_host_config = host_config
@@ -66,7 +72,11 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     )
     runner.frame_client = getattr(runner.terminal_host_manager, "_frame_client", None)
     runner.terminal_runtime_registry = terminal_runtime_registry
-    runner.write_coordinator = WriteCoordinator(runner.terminal_manager, terminal_runtime_registry)
+    runner.write_coordinator = WriteCoordinator(
+        runner.terminal_manager,
+        terminal_runtime_registry,
+        lease_registry=runner.lease_registry,
+    )
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
     runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)
     runner.terminal_services = TerminalServices(

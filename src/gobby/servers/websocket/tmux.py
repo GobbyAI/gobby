@@ -10,6 +10,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux_activation import (
     STATE_ACTIVATING,
@@ -22,7 +23,6 @@ from gobby.servers.websocket.tmux_activation import (
     teardown_bridge,
 )
 from gobby.terminals.dimensions import validate_dimensions
-from gobby.terminals.leases import TerminalLeaseRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ _DEFAULT_CONFIG = TmuxConfig(socket_name="")
 _GOBBY_CONFIG = TmuxConfig(socket_name="gobby")
 
 
-class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalWsMixin):
+class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalControlMixin, TerminalWsMixin):
     """Mixin providing tmux session management handlers for WebSocketServer.
 
     Requires on the host class:
@@ -95,7 +95,6 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalWsMixin):
         self._tmux_client_bridges: dict[Any, set[str]] = {}
         # Attachments acknowledged but not yet built (attachment_id -> reservation)
         self._tmux_pending: dict[str, PendingAttachment] = {}
-        self.lease_registry = TerminalLeaseRegistry()
 
     async def _cleanup_tmux(self) -> None:
         """Detach every tmux client and proxy attachment. Call from WebSocketServer.stop."""
@@ -114,7 +113,7 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalWsMixin):
         for attachment_id in list(self._tmux_client_bridges.get(websocket, ())):
             await teardown_bridge(self, attachment_id)
             logger.debug("Cleaned up tmux bridge %s for disconnected client", attachment_id)
-        events = self._leases().finalize_websocket(websocket, "ws_close")
+        events = await self._leases().finalize_websocket(websocket, "ws_close")
         for event in events:
             await self._apply_terminal_sizing(event.terminal_id, event.sizing)
         hub = getattr(self, "_proxy_hub", None)
@@ -186,13 +185,16 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalWsMixin):
         session_manager, config, session_name = target
         registry = self._leases()
         viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
-        record = registry.attach(terminal_id, "proxy", websocket=websocket, viewer=viewer)
+        record = await registry.attach(terminal_id, "proxy", websocket=websocket, viewer=viewer)
         # A tmux client is a typing seat: the newest viewer holds the lease,
         # exactly as every attached desktop client can type.
-        displaced = registry.displaced_holder(terminal_id, record.attachment_id)
-        control = registry.take_control(terminal_id, record.attachment_id, takeover=True)
-        if control.granted and displaced is not None:
-            await self._fanout_lease_lost(displaced, record.attachment_id, control.lease_generation)
+        control = await registry.take_control(terminal_id, record.attachment_id, takeover=True)
+        if control.granted and control.displaced_attachment_id is not None:
+            await self._fanout_lease_lost(
+                control.displaced_attachment_id,
+                record.attachment_id,
+                control.lease_generation,
+            )
         cancel_stale_reservations(self, terminal_id, websocket)
         self._tmux_pending[record.attachment_id] = PendingAttachment(
             terminal_id=terminal_id,

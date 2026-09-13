@@ -129,6 +129,7 @@ async def test_dispatch_rejects_changed_prompt_without_sending_keys(
 
 async def test_plan_actions_use_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
     from tests.terminals.fakes import (
         FakeRuntime,
@@ -143,7 +144,11 @@ async def test_plan_actions_use_runtime(monkeypatch: pytest.MonkeyPatch) -> None
     runtime.snapshot_text = CODEX_MENU
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
         id=SESSION_ID,

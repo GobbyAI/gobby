@@ -20,6 +20,7 @@ from gobby.servers.websocket.proxy_relay import _map_host_frame
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals import web_spawn
@@ -208,6 +209,7 @@ def _server(
     )
     server.terminal_manager = manager
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
+    server.write_coordinator = SimpleNamespace(write=AsyncMock(return_value=runtime.write_result))
     server.terminal_config = SimpleNamespace(default_backend=backend)
     cast(Any, server)._sweep_tmux_panes = AsyncMock(return_value={})
     return server, manager, runtime
@@ -246,8 +248,8 @@ async def _assert_write_outcome(
 ) -> None:
     server, _, _ = _server(write_result=write_result)
     registry = server.lease_registry
-    registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
-    registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
+    await registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    await registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     generation = registry.generation(TERMINAL_ID)
     for seq, payload in (primed_writes or {}).items():
         admitted = registry.admit_write(
@@ -349,8 +351,8 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     await server.lease_registry.shutdown_lifecycle_publication()
 
     server, _, _ = _server()
-    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
-    server.lease_registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
+    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    await server.lease_registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     websocket = MockWebSocket()
     await TerminalWsMixin._handle_terminal_detach(server, websocket, _message("detach.json"))
     _assert_golden("attachment_finalized.json", _sent(websocket, 0))
@@ -358,7 +360,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     await server.lease_registry.shutdown_lifecycle_publication()
 
     server, _, _ = _server()
-    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
     await TerminalWsMixin._handle_terminal_set_scroll_offset(
         server, websocket, _message("set_scroll_offset.json")
@@ -366,9 +368,9 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     _assert_golden("scroll_offset_applied.json", _sent(websocket))
 
     server, _, _ = _server()
-    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
-    await TerminalWsMixin._handle_terminal_take_control(
+    await TerminalControlMixin._handle_terminal_take_control(
         server, websocket, _message("take_control.json")
     )
     _assert_golden("control_result.json", _sent(websocket))
@@ -396,7 +398,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     server, manager, _ = _server()
-    server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
     await TerminalSizingMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
     assert websocket.sent_messages == []

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.storage.terminals import Terminal
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import NativeTerminalRuntime
 from gobby.terminals.runtime import (
     Delivered,
@@ -112,6 +113,7 @@ async def test_coordinator_routes_by_kind() -> None:
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
     cases: tuple[tuple[Literal["input", "paste", "text"], str, bool], ...] = (

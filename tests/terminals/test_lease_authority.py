@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -14,26 +15,28 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.unit
 
 
-def test_single_grant_point_across_all_paths() -> None:
+@pytest.mark.asyncio
+async def test_single_grant_point_across_all_paths() -> None:
     registry = TerminalLeaseRegistry()
-    first = registry.attach("term-1", frame_delivery="proxy")
-    granted = registry.take_control("term-1", first.attachment_id, takeover=False)
+    first = await registry.attach("term-1", frame_delivery="proxy")
+    granted = await registry.take_control("term-1", first.attachment_id, takeover=False)
     assert granted.granted is True
-    second = registry.attach("term-1", frame_delivery="direct")
-    held = registry.take_control("term-1", second.attachment_id, takeover=False)
+    second = await registry.attach("term-1", frame_delivery="direct")
+    held = await registry.take_control("term-1", second.attachment_id, takeover=False)
     assert held.granted is False
     assert held.reason == "held"
-    takeover = registry.take_control("term-1", second.attachment_id, takeover=True)
+    takeover = await registry.take_control("term-1", second.attachment_id, takeover=True)
     assert takeover.granted is True
     assert takeover.lease_generation > granted.lease_generation
     assert registry.holder("term-1") == second.attachment_id
     assert _lease_replicas() == [], f"lease replicas exist: {_lease_replicas()}"
 
 
-def test_sizing_owner_follows_viewer_precedence() -> None:
+@pytest.mark.asyncio
+async def test_sizing_owner_follows_viewer_precedence() -> None:
     registry = TerminalLeaseRegistry()
-    web = registry.attach("term-1", viewer="web")
-    gclient = registry.attach("term-1", viewer="gclient")
+    web = await registry.attach("term-1", viewer="web")
+    gclient = await registry.attach("term-1", viewer="gclient")
 
     web_resize = registry.resize_pty(web.attachment_id, rows=24, cols=80)
     gclient_resize = registry.resize_pty(gclient.attachment_id, rows=40, cols=120)
@@ -44,11 +47,45 @@ def test_sizing_owner_follows_viewer_precedence() -> None:
     assert gclient_resize.applied is False
     assert gclient_resize.owner_viewer == "web"
 
-    finalized = registry.finalize(web.attachment_id, reason="detach")
+    finalized = await registry.finalize(web.attachment_id, reason="detach")
     assert finalized is not None
     assert finalized.sizing is not None
     assert finalized.sizing.owner_viewer == "gclient"
     assert (finalized.sizing.rows, finalized.sizing.cols) == (40, 120)
+
+
+@pytest.mark.asyncio
+async def test_lock_cells_are_refcounted() -> None:
+    registry = TerminalLeaseRegistry()
+    owner_entered = asyncio.Event()
+    release_owner = asyncio.Event()
+    waiter_entered = asyncio.Event()
+
+    async def owner() -> None:
+        async with registry.lock("term-1"):
+            owner_entered.set()
+            await release_owner.wait()
+
+    async def waiter() -> None:
+        async with registry.lock("term-1"):
+            waiter_entered.set()
+
+    owner_task = asyncio.create_task(owner())
+    await owner_entered.wait()
+    cell = registry._lock_cells["term-1"]
+    waiter_task = asyncio.create_task(waiter())
+    await asyncio.sleep(0)
+    assert registry._lock_cells["term-1"] is cell
+    assert cell.references == 2
+    waiter_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter_task
+    assert registry._lock_cells["term-1"] is cell
+    assert cell.references == 1
+    release_owner.set()
+    await owner_task
+    assert "term-1" not in registry._lock_cells
+    assert not waiter_entered.is_set()
 
 
 def test_lifecycle_sequence_rotates_epoch_before_overflow() -> None:

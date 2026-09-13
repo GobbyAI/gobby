@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import IndeterminateWrite, LoopMisuse
 from gobby.terminals.sync_bridge import TerminalEffectBridge
 from gobby.terminals.write_coordinator import (
@@ -42,7 +43,11 @@ async def test_timeout_cancel_late_completion_and_loop_misuse() -> None:
     store = MemoryTerminalStore(terminal)
     hold = asyncio.Event()
     runtime = FakeRuntime(hold=hold)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     bridge = TerminalEffectBridge(
         loop,
         coordinator,
@@ -82,7 +87,11 @@ async def test_shutdown_drain_and_timeout_dispatch_race() -> None:
     store = MemoryTerminalStore(terminal)
     hold = asyncio.Event()
     runtime = FakeRuntime(hold=hold)
-    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     bridge = TerminalEffectBridge(
         loop,
         coordinator,
@@ -103,7 +112,11 @@ async def test_shutdown_drain_and_timeout_dispatch_race() -> None:
     assert row.automatic_write_quarantined_at is not None
     assert row.automatic_write_quarantine_action_key == "hook-write"
 
-    restored = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(FakeRuntime()))
+    restored = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(FakeRuntime()),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
     from gobby.terminals.runtime import AutomaticWriteQuarantined
 
     refused = await restored.write(

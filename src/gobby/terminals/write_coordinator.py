@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
     NativeBatchOperation,
@@ -42,6 +43,7 @@ class UnresolvedWriteStore(Protocol):
         action_key: str,
         origin: str,
         *,
+        daemon_epoch: str,
         at: datetime | None = None,
     ) -> Terminal: ...
 
@@ -90,20 +92,28 @@ class StaleTerminalLeaseError(RuntimeError):
     """Operator write/resize lost the lease between enqueue and dispatch."""
 
 
-@dataclass
-class _Lease:
-    attachment_id: str | None = None
-    generation: int = 0
+class RuntimeUnavailableError(TerminalWriteError):
+    """The terminal row names a backend with no registered runtime."""
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(stage="none")
+        self.backend = backend
 
 
 class WriteCoordinator:
     """Serializes writes, latches action_key, and revalidates leases."""
 
-    def __init__(self, store: UnresolvedWriteStore, registry: TerminalRuntimeRegistry) -> None:
+    def __init__(
+        self,
+        store: UnresolvedWriteStore,
+        registry: TerminalRuntimeRegistry,
+        *,
+        lease_registry: TerminalLeaseRegistry,
+    ) -> None:
         self._store = store
         self._registry = registry
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._leases: dict[str, _Lease] = {}
+        self.lease_registry = lease_registry
+        self._daemon_epoch = lease_registry.daemon_epoch
         self._attention_gate: Callable[[Terminal], Awaitable[None]] | None = None
 
     def runtime_for(self, terminal: Terminal) -> TerminalRuntime:
@@ -113,35 +123,7 @@ class WriteCoordinator:
         self._attention_gate = gate
 
     def lock_held(self, terminal_id: str) -> bool:
-        return self._lock(terminal_id).locked()
-
-    def _lock(self, terminal_id: str) -> asyncio.Lock:
-        lock = self._locks.get(terminal_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[terminal_id] = lock
-        return lock
-
-    def _lease(self, terminal_id: str) -> _Lease:
-        lease = self._leases.get(terminal_id)
-        if lease is None:
-            lease = _Lease()
-            self._leases[terminal_id] = lease
-        return lease
-
-    async def grant_lease(self, terminal_id: str, attachment_id: str) -> int:
-        async with self._lock(terminal_id):
-            return self._grant_locked(terminal_id, attachment_id)
-
-    async def takeover_lease(self, terminal_id: str, attachment_id: str) -> int:
-        async with self._lock(terminal_id):
-            return self._grant_locked(terminal_id, attachment_id)
-
-    def _grant_locked(self, terminal_id: str, attachment_id: str) -> int:
-        lease = self._lease(terminal_id)
-        lease.generation += 1
-        lease.attachment_id = attachment_id
-        return lease.generation
+        return self.lease_registry.lock_held(terminal_id)
 
     async def write(
         self,
@@ -149,7 +131,7 @@ class WriteCoordinator:
         *,
         on_dispatch: Callable[[], None] | None = None,
     ) -> WriteOutcome:
-        async with self._lock(request.terminal_id):
+        async with self.lease_registry.lock(request.terminal_id):
             blocked = self._blocked_automatic(
                 request.terminal_id, request.action_key, request.origin
             )
@@ -164,10 +146,11 @@ class WriteCoordinator:
         if terminal is not None and terminal.automatic_write_quarantine_action_key == action_key:
             self._store.clear_automatic_write_quarantine(terminal_id)
 
-    def clear_on_exit(self, terminal_id: str) -> None:
+    async def clear_on_exit(self, terminal_id: str) -> None:
         """Terminal exit clears every unresolved key and the quarantine pair."""
-        self._store.clear_all_unresolved_writes(terminal_id)
-        self._store.clear_automatic_write_quarantine(terminal_id)
+        async with self.lease_registry.lock(terminal_id):
+            self._store.clear_all_unresolved_writes(terminal_id)
+            self._store.clear_automatic_write_quarantine(terminal_id)
 
     def quarantine(self, terminal_id: str, action_key: str) -> None:
         self._store.set_automatic_write_quarantine(terminal_id, action_key)
@@ -195,8 +178,7 @@ class WriteCoordinator:
         because repeating the action cannot double-write anything. Quarantine
         still applies to unlatched automatic actions.
         """
-        lock = self._lock(terminal_id)
-        async with lock:
+        async with self.lease_registry.lock(terminal_id):
             blocked = self._blocked_automatic(terminal_id, action_key, origin)
             if blocked is not None:
                 return blocked
@@ -204,6 +186,12 @@ class WriteCoordinator:
             in_flight: asyncio.Task[WriteOutcome] | None = None
             try:
                 if latch:
+                    self._revalidate_lease(
+                        terminal_id,
+                        origin=origin,
+                        attachment_id=attachment_id,
+                        expected_generation=expected_lease_generation,
+                    )
                     self._persist(terminal_id, action_key, origin)
                 for step in steps:
                     if isinstance(step, SequenceDelay):
@@ -259,7 +247,7 @@ class WriteCoordinator:
         lock_ids = sorted({request.terminal_id for request in requests} - duplicate_terminals)
         async with AsyncExitStack() as stack:
             for terminal_id in lock_ids:
-                await stack.enter_async_context(self._lock(terminal_id))
+                await stack.enter_async_context(self.lease_registry.lock(terminal_id))
 
             runtime: NativeTerminalRuntime | None = None
             prepared: list[NativeBatchTarget] = []
@@ -388,14 +376,14 @@ class WriteCoordinator:
         terminal = self._require(request.terminal_id)
         if request.origin == "attention" and self._attention_gate is not None:
             await self._attention_gate(terminal)
-        if latch:
-            self._persist(request.terminal_id, request.action_key, request.origin)
         self._revalidate_lease(
             request.terminal_id,
             origin=request.origin,
             attachment_id=request.attachment_id,
             expected_generation=request.expected_lease_generation,
         )
+        if latch:
+            self._persist(request.terminal_id, request.action_key, request.origin)
         if on_dispatch is not None:
             on_dispatch()
         try:
@@ -440,17 +428,21 @@ class WriteCoordinator:
     ) -> None:
         if origin != "operator":
             return
-        lease = self._lease(terminal_id)
         if (
             attachment_id is None
             or expected_generation is None
-            or lease.attachment_id != attachment_id
-            or lease.generation != expected_generation
+            or self.lease_registry.holder(terminal_id) != attachment_id
+            or self.lease_registry.generation(terminal_id) != expected_generation
         ):
             raise StaleTerminalLeaseError("lease is no longer current")
 
     def _persist(self, terminal_id: str, action_key: str, origin: str) -> None:
-        self._store.persist_unresolved_write(terminal_id, action_key, origin)
+        self._store.persist_unresolved_write(
+            terminal_id,
+            action_key,
+            origin,
+            daemon_epoch=self._daemon_epoch,
+        )
 
     def _clear(self, terminal_id: str, action_key: str) -> None:
         self._store.clear_unresolved_write(terminal_id, action_key)
@@ -470,7 +462,7 @@ class WriteCoordinator:
             # stage="none", which _write_locked clears the latch for. Letting the
             # KeyError subclass propagate would leave the latch persisted and
             # suppress every later automatic write to this terminal.
-            raise TerminalWriteError(stage="none") from exc
+            raise RuntimeUnavailableError(terminal.backend) from exc
         if request.kind == "text":
             return await runtime.write_text(terminal, request.payload, request.submit)
         if request.kind == "key":

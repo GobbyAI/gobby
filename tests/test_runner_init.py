@@ -25,6 +25,7 @@ from gobby.runner_init.orchestration import (
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.telemetry.span_store import GobbySpanExporter
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.runner_helpers import (
     apply_safe_runner_config_defaults,
     create_base_patches,
@@ -363,7 +364,11 @@ class TestWakeTmuxSenders:
         terminal = make_memory_terminal(session_name="gobby-agent-abc")
         store = MemoryTerminalStore(terminal)
         runtime = FakeRuntime()
-        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+        coordinator = WriteCoordinator(
+            cast(UnresolvedWriteStore, store),
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        )
 
         async def fake_sleep(_seconds: float) -> None:
             return None
@@ -407,7 +412,11 @@ class TestWakeTmuxSenders:
         store = MemoryTerminalStore(terminal)
         runtime = FakeRuntime()
         runtime.outcomes = [Delivered(), IndeterminateWrite(detail="lost")]
-        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+        coordinator = WriteCoordinator(
+            cast(UnresolvedWriteStore, store),
+            runtime_registry(runtime),
+            lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        )
 
         async def fake_sleep(_seconds: float) -> None:
             return None

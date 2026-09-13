@@ -21,6 +21,7 @@ from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.kill import kill_agent as kill_agent  # Re-imported for tests
+from gobby.agents.lifecycle_monitor_terminals import build_terminal_services
 from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
@@ -111,20 +112,12 @@ class AgentLifecycleMonitor:
         self._tmux_config = tmux_config
         self._tmux = TmuxSessionManager(config=self._tmux_config)
         if terminal_services is None:
-            from gobby.storage.terminals import TerminalManager
-            from gobby.terminals import TerminalRuntimeRegistry
-            from gobby.terminals.services import TerminalServices
-            from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-            from gobby.terminals.write_coordinator import WriteCoordinator
+            from gobby.terminals.leases import TerminalLeaseRegistry
 
-            manager = TerminalManager(db)
-            runtime = TmuxTerminalRuntime(self._tmux)
-            registry = TerminalRuntimeRegistry()
-            registry.register(runtime)
-            terminal_services = TerminalServices(
-                manager=manager,
-                registry=registry,
-                coordinator=WriteCoordinator(manager, registry),
+            terminal_services = build_terminal_services(
+                db,
+                self._tmux,
+                TerminalLeaseRegistry(),
             )
         self._terminal_services = terminal_services
         self._idle_detector = IdleDetector(detection_registry)

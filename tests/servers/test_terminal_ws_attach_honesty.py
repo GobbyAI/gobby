@@ -11,6 +11,8 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.servers.test_terminal_ws_lease import _live_row, _send, _ws_server
 from tests.servers.test_tmux_mixin import MockWebSocket
 
@@ -113,7 +115,15 @@ def _configure(
         else:
             runtime = _LocatorRuntime(result=_valid_locator())
         registry.register(cast(TerminalRuntime, runtime))
-    server.configure_terminals(TerminalManager(temp_db), registry, MagicMock())
+    manager = TerminalManager(temp_db)
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
     if kind == "opener_raises":
         server.open_proxy_frame = _raising_opener
     elif kind == "frame_none":
@@ -263,7 +273,16 @@ async def test_proxy_attach_waits_for_terminal_host_startup(
     runtime = _AfterStartupRuntime(host)
     registry = TerminalRuntimeRegistry()
     registry.register(cast(TerminalRuntime, runtime))
-    server.configure_terminals(TerminalManager(temp_db), registry, MagicMock(), host_manager=host)
+    manager = TerminalManager(temp_db)
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        host_manager=host,
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
     server.open_proxy_frame = _raising_opener
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
