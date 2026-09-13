@@ -459,7 +459,7 @@ Targets:
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: validate the rebuilt schema CLI identity.
 - `tests/storage/test_managed_credentials.py::*` — scope-reason: verify requested overlay authority and requested primary precedence over session workspace.
 - `src/gobby/ask/runtime_controls.py::*` — scope-reason: preserve the shared policy normalization and sealed runtime controls.
-- `tests/ask/test_runtime_validation.py::*` — scope-reason: normalize only the exact private grant lock and preserve foreign-write detection.
+- `tests/ask/test_runtime_validation.py::*` — scope-reason: normalize bound grant locks and redundant owned prompt reads while preserving foreign grants, write access and denial precedence.
 - `tests/ask/native_probe_harness.py::*` — scope-reason: preserve fresh and resumed contained runtime preparation and receipts.
 - `tests/ask/test_native_probe_harness.py::*` — scope-reason: cover fresh-session transcript recovery and completed-agent process identity without relaxing ownership checks.
 - `src/gobby/storage/schema_divergence.py::binary_set_apply_refusal`
@@ -481,6 +481,12 @@ directory; resumed runs reuse the index. The actual managed SRT launch adds the
 private grant lock. Normalize only that exact bound lock alongside the existing
 grant-read normalization, rejecting duplicate lock entries and retaining every
 other read/write path in the digest.
+
+Long reviewer prompts use `GOBBY_PROMPT_FILE`, adding an explicit read for
+`<run>/assets/prompt.md` beneath the already-readable assets directory. Ignore
+that redundant read in the digest only when the directory grant exists and no
+read denial at or beneath assets can alter precedence. Resolve symlinks first;
+external prompt reads and all write grants remain significant.
 
 Completion clears the current agent PID, while the captured launch receipt retains
 its PID and OS start identity. Use that receipt only with matching terminal and
@@ -507,7 +513,7 @@ Consumers unchanged:
 
 - 4.8.1 - Canonical worktree registration agrees with native/database overlay identity. test: `tests/worktrees/test_creation.py::test_creation_registers_canonical_root_for_overlay_grants`.
 - 4.8.2 - A requested worktree receives overlay authority; an explicit primary root overrides a session overlay. test: `tests/storage/test_managed_credentials.py::test_issue_tool_request_accepts_registered_overlay_without_primary` and `tests/storage/test_managed_credentials.py::test_tool_request_primary_root_overrides_session_overlay`.
-- 4.8.3 - The private grant lock normalizes without concealing foreign writes or grant writes. test: `tests/ask/test_runtime_validation.py::test_policy_digest_normalizes_only_the_bound_grant_lock`.
+- 4.8.3 - Private grant locks and redundant owned prompt reads normalize without concealing foreign paths, write grants or denial precedence. test: `tests/ask/test_runtime_validation.py::test_policy_digest_normalizes_only_the_bound_grant_lock` and `tests/ask/test_runtime_validation.py::test_policy_digest_ignores_only_redundant_owned_prompt_reads`.
 - 4.8.4 - Real worktree Ask cites its checkout; fresh/resumed contained probe records actual boundary receipts after ordinary index preparation. Record every failed diagnostic and cleanup outcome before normal-loader admission. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
 
 ## P5: Record the frozen cohort and close acceptance
@@ -1023,3 +1029,44 @@ diagnostics and acceptance evidence, not frozen cohort primaries.
   1,036 tests passed in 45.794 seconds through nextest using the separate
   `gobby_gcode_test` database on the isolated hub, as required by `crates/AGENTS.md`.
   Three configured skips remain explicitly reported by nextest.
+
+## V12 Long-prompt policy identity and pending admission decision
+`kind: verification`
+
+- Epoch12 exited 1. Its investigator corrected the rewritten question after the
+  new submission guard rejected it, then submitted successfully. Reviewer launch
+  failed with `Ask SRT policy semantics changed after validation` before terminal
+  creation. No resumed phase ran and this is not accepted runtime evidence.
+- The reviewer prompt was 8,333 bytes versus the investigator's 1,923 bytes. Its
+  metadata recorded the managed prompt file. Replacing only the run/workspace/temp
+  identities in the captured investigator policy and adding that prompt read
+  reproduced the exact recorded reviewer policy SHA-256:
+  `eba8c1038d83ea6b432bbfa2eb63d7a751e05afb85cde7db325681578f65710e`.
+- `75624b2` fixes the redundant prompt-read normalization. The new regression
+  failed before the fix. With the fix, replay of both recorded policies gives
+  `6104de7fcfa2ffd892e5b799f5906279df4e0e4728ec4f5020eff7c25e333a44`.
+  This replay establishes the failure cause; it does not replace a native run.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
+  GOBBY_TEST_PROTECT=1 uv run pytest tests/ask/test_runtime_validation.py
+  tests/ask/test_permissions.py -q` passed 50 tests. Ruff check and format check
+  passed for both changed files; `uv run mypy src/` passed all 2,031 sources.
+  Test type/quality audits reported zero issues and the suppression ratchet passed.
+  Logs: `/tmp/ask-prompt-policy-epoch13-{red,green,mypy,suppressions}.log`.
+  Inline OCR review covered both staged files, with no remaining findings.
+- Epoch12 cleanup proved the investigator, worker and owned terminal host absent,
+  but could not establish launch authority for the rejected reviewer. It retained
+  `/private/tmp/gobby-ap-37nszup8` and private schema
+  `gobby_test_askprobe_3aa3b7c462d94bf1b3d9f2e2b7485aaa`. The incomplete raw export
+  contains three receipts and three explicit exclusions, SHA-256
+  `d9a7e511f558aab15b72fcbbfe465467f7c29b361ef1c13da70ad6f257c3d507`.
+  Original failure and cleanup records remain in
+  `/tmp/ask-native-probe-13038-epoch12`; nothing was fabricated or discarded.
+- Cohort admission is awaiting the user's decision. #22020's stored prerequisite
+  says "reviewed sealed native runtime admission through the normal loader";
+  production startup also supports live provider/SRT derivation without a sealed
+  artifact. The proposed amendment is to require that production admission plus
+  accepted #22018/#22019 and installed CLI evidence, and explicitly report the
+  unavailable native-tool denial receipts and safely ignored session override.
+  It would preserve all sandbox/identity controls, frozen prompts/commits,
+  fourteen serial primary invocations and scoring criteria. This proposal has
+  not been applied to task criteria or cohort admission. No cohort primary ran.
