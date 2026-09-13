@@ -86,7 +86,7 @@ pub struct AgentEntry {
     pub session_id: Option<String>,
     /// The session that spawned the entry, when the daemon knows one.
     pub parent_session_id: Option<String>,
-    /// A run's reasoning effort, shown after its model.
+    /// The resolved reasoning effort, shown after the model.
     pub effort: Option<String>,
     /// An agent run (the roster's `run:` entries), listed under agents;
     /// every other entry is an interactive session.
@@ -207,7 +207,12 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 parent_session_id: run
                     .and_then(|(_, run)| run.parent_session_id.clone())
                     .or_else(|| session.and_then(|(_, session)| session.parent_session_id.clone())),
-                effort: run.and_then(|(_, run)| run.reasoning_effort().map(str::to_owned)),
+                effort: run
+                    .and_then(|(_, run)| run.reasoning_effort().map(str::to_owned))
+                    .or_else(|| {
+                        session
+                            .and_then(|(_, session)| session.reasoning_effort().map(str::to_owned))
+                    }),
                 managed: entry.run_id.is_some() || entry.entry_id.starts_with("run:"),
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),

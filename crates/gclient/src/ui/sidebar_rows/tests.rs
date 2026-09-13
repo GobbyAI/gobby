@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::Workspace;
-use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
 use crate::ui::sidebar::session_rows;
 use serde_json::json;
 
@@ -123,6 +123,61 @@ fn session_rows_point_at_their_terminal() {
     assert_eq!(rows[1].label, "term-beta");
     assert_eq!(rows[1].tokens, ["native"]);
     assert!(!rows[1].nested);
+}
+
+#[test]
+fn session_rows_render_session_effort_without_a_stray_separator() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        sessions: [(
+            "proj-alpha".to_string(),
+            vec![
+                SessionRow {
+                    id: "sess-effort".to_string(),
+                    title: Some("effort session".to_string()),
+                    reasoning_effort: Some("high".to_string()),
+                    ..SessionRow::default()
+                },
+                SessionRow {
+                    id: "sess-bare".to_string(),
+                    title: Some("bare session".to_string()),
+                    ..SessionRow::default()
+                },
+            ],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "session:sess-effort",
+                "session_id": "sess-effort",
+                "provider": "codex",
+                "model": "gpt-5",
+                "terminal": {"terminal_id": "term-effort", "backend": "native"}
+            },
+            {
+                "entry_id": "session:sess-bare",
+                "session_id": "sess-bare",
+                "provider": "codex",
+                "model": "gpt-5",
+                "terminal": {"terminal_id": "term-bare", "backend": "native"}
+            }
+        ]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    ws.open_terminal("term-effort", "native", "epoch").unwrap();
+    ws.open_terminal("term-bare", "native", "epoch").unwrap();
+
+    let rows = session_rows(&ws, &Chrome::dark());
+
+    assert_eq!(rows[0].tokens, ["codex", "gpt-5-high"]);
+    assert_eq!(rows[1].tokens, ["codex", "gpt-5"]);
 }
 
 #[test]
