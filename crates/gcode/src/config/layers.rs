@@ -348,7 +348,7 @@ mod tests {
     #[serial_test::serial(serial_db)]
     fn scoped_hub_capture_degrades_once_for_best_effort_reads() {
         install_capture_logger();
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
         let mut connection = scoped_connection("best-effort scoped hub capture");
         let layers = ConfigLayers {
             daemon: None,
@@ -377,7 +377,7 @@ mod tests {
     #[serial_test::serial(serial_db)]
     fn arbitrary_hub_capture_failure_degrades_with_one_warning() {
         install_capture_logger();
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
 
         let (source, revision, status) = capture_failure(
             anyhow::anyhow!("connection refused"),
@@ -404,7 +404,7 @@ mod tests {
     #[serial_test::serial(serial_db)]
     fn scoped_daemon_capture_discards_served_services_for_best_effort_reads() {
         install_capture_logger();
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
         let mut connection = scoped_connection("best-effort scoped daemon capture");
         let layers = ConfigLayers {
             daemon: Some(served([(
@@ -436,7 +436,7 @@ mod tests {
     #[serial_test::serial(serial_db)]
     fn scoped_required_capture_names_daemon_route() {
         install_capture_logger();
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
         let mut connection = scoped_connection("required scoped hub capture");
         let layers = ConfigLayers {
             daemon: None,
@@ -588,44 +588,19 @@ mod tests {
         }
     }
 
-    static CAPTURED_WARNINGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-
-    struct CaptureLogger;
-
-    impl log::Log for CaptureLogger {
-        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            metadata.level() <= log::Level::Warn
-        }
-
-        fn log(&self, record: &log::Record<'_>) {
-            if record.level() == log::Level::Warn {
-                captured_warnings().push(record.args().to_string());
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    fn captured_warnings() -> std::sync::MutexGuard<'static, Vec<String>> {
-        CAPTURED_WARNINGS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn captured_warnings() -> Vec<String> {
+        crate::test_env::captured_logs(log::Level::Warn)
     }
 
     fn install_capture_logger() {
-        static INSTALL: std::sync::Once = std::sync::Once::new();
-        INSTALL.call_once(|| {
-            static LOGGER: CaptureLogger = CaptureLogger;
-            log::set_logger(&LOGGER).expect("this test binary installs no other logger");
-            log::set_max_level(log::LevelFilter::Warn);
-        });
+        crate::test_env::clear_captured_logs();
     }
 
     #[test]
     #[serial_test::serial(serial_db)]
     fn daemon_service_source_warns_for_served_keys_missing_from_the_compiled_contract() {
         install_capture_logger();
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
 
         let source = served([("contract.unknown.key", "served-value")]);
         warn_for_unregistered_served_keys(&source);
@@ -640,7 +615,7 @@ mod tests {
             "warning must not leak the served value"
         );
 
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
         warn_for_unregistered_served_keys(&served([]));
         assert!(
             captured_warnings()
@@ -654,7 +629,7 @@ mod tests {
     #[serial_test::serial(serial_db)]
     fn read_config_layers_warns_for_unregistered_served_keys() {
         install_capture_logger();
-        captured_warnings().clear();
+        crate::test_env::clear_captured_logs();
 
         let home = tempfile::tempdir().expect("temporary gobby home");
         fs::write(

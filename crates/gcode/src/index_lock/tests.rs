@@ -154,47 +154,10 @@ fn brief_index_flush_try_is_a_bounded_non_blocking_policy() {
     }
 }
 
-/// Records every `log` line so a test can prove which SQL a lock path sent:
-/// the postgres driver logs each prepared statement at debug level.
-struct RecordingLogger {
-    records: std::sync::Mutex<Vec<String>>,
-}
-
-impl RecordingLogger {
-    fn lock_records(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
-        self.records
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-impl log::Log for RecordingLogger {
-    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
-        true
-    }
-
-    fn log(&self, record: &log::Record<'_>) {
-        self.lock_records()
-            .push(format!("{}: {}", record.level(), record.args()));
-    }
-
-    fn flush(&self) {}
-}
-
-static RECORDING_LOGGER: RecordingLogger = RecordingLogger {
-    records: std::sync::Mutex::new(Vec::new()),
-};
-static RECORDING_LOGGER_INIT: std::sync::Once = std::sync::Once::new();
-
 fn capture_logs<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
-    RECORDING_LOGGER_INIT.call_once(|| {
-        log::set_logger(&RECORDING_LOGGER).expect("install recording logger");
-        log::set_max_level(log::LevelFilter::Debug);
-    });
-    RECORDING_LOGGER.lock_records().clear();
+    crate::test_env::clear_captured_logs();
     let result = f();
-    let records = RECORDING_LOGGER.lock_records().clone();
-    (result, records)
+    (result, crate::test_env::captured_logs(log::Level::Debug))
 }
 
 fn unlock_lines(records: &[String]) -> Vec<&String> {

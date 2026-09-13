@@ -415,3 +415,65 @@ mod tests {
         });
     }
 }
+
+// All library tests share log's single global logger. Capture per thread so
+// concurrently running tests cannot clear or assert on each other's records.
+#[cfg(test)]
+mod logs {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static RECORDS: RefCell<Vec<(log::Level, String)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct CaptureLogger;
+
+    impl log::Log for CaptureLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                let _ = RECORDS.try_with(|records| {
+                    records
+                        .borrow_mut()
+                        .push((record.level(), record.args().to_string()));
+                });
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    pub(super) fn clear() {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            static LOGGER: CaptureLogger = CaptureLogger;
+            log::set_logger(&LOGGER).expect("install shared library-test logger");
+            log::set_max_level(log::LevelFilter::Debug);
+        });
+        RECORDS.with(|records| records.borrow_mut().clear());
+    }
+
+    pub(super) fn captured(level: log::Level) -> Vec<String> {
+        RECORDS.with(|records| {
+            records
+                .borrow()
+                .iter()
+                .filter(|(record_level, _)| *record_level <= level)
+                .map(|(_, message)| message.clone())
+                .collect()
+        })
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn clear_captured_logs() {
+    logs::clear();
+}
+
+#[cfg(test)]
+pub(crate) fn captured_logs(level: log::Level) -> Vec<String> {
+    logs::captured(level)
+}

@@ -204,7 +204,7 @@ impl IndexedFixture {
             .map_err(anyhow::Error::msg)?;
         let ctx = Context {
             database_url: database_url.clone(),
-            project_root: root.path().to_path_buf(),
+            project_root: root.path().canonicalize()?,
             project_id: project_id.clone(),
             quiet: true,
             falkordb: None,
@@ -219,7 +219,7 @@ impl IndexedFixture {
         };
         api::index_files(
             IndexRequest {
-                project_root: root.path().to_path_buf(),
+                project_root: root.path().canonicalize()?,
                 path_filter: None,
                 explicit_files: Vec::new(),
                 full: true,
