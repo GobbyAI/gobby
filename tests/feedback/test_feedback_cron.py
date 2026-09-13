@@ -12,9 +12,11 @@ from gobby.config.sessions import FeedbackReviewConfig
 from gobby.feedback.cron import (
     FEEDBACK_REVIEW_CRON_HANDLER,
     FEEDBACK_REVIEW_CRON_JOB_NAME,
+    FEEDBACK_REVIEW_FINALIZE_GRACE_SECONDS,
+    FEEDBACK_REVIEW_TIMEOUT_SECONDS,
     register_feedback_review_cron,
 )
-from gobby.feedback.service import FeedbackReviewService
+from gobby.feedback.service import DISTILL_TOTAL_DEADLINE_SECONDS, FeedbackReviewService
 from gobby.storage.cron import CronJobStorage
 
 pytestmark = pytest.mark.unit
@@ -81,6 +83,13 @@ class _FakeReviewService:
 def _stub_service() -> FeedbackReviewService:
     """Registration-only service stand-in; the handler is never invoked."""
     return cast(FeedbackReviewService, MagicMock())
+
+
+def test_feedback_review_cron_timeout_reserves_finalization_grace() -> None:
+    assert DISTILL_TOTAL_DEADLINE_SECONDS == 7200.0
+    assert FEEDBACK_REVIEW_TIMEOUT_SECONDS == (
+        DISTILL_TOTAL_DEADLINE_SECONDS + FEEDBACK_REVIEW_FINALIZE_GRACE_SECONDS
+    )
 
 
 def test_register_feedback_review_cron_creates_single_system_job() -> None:

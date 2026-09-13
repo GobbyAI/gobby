@@ -22,9 +22,9 @@ from gobby.storage.hub.protocol import HubDatabase
 if TYPE_CHECKING:
     from gobby.config.sessions import FeedbackReviewConfig
 
-# Leave five minutes of the cron budget for completion delivery and deterministic
-# task/report finalization after the reviewer finishes.
-DISTILL_TOTAL_DEADLINE_SECONDS = 7200.0
+# Give the reviewer two hours, leaving the cron wrapper's separate grace period for
+# completion delivery and deterministic task/report finalization.
+DISTILL_TOTAL_DEADLINE_SECONDS = 2 * 60 * 60.0
 
 
 class FeedbackReviewService:
