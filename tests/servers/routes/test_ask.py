@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import socket
+import tarfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -523,12 +524,25 @@ async def real_ask_cli(
 
 
 async def test_installed_cli_lifecycle_against_authenticated_service(
-    real_ask_harness: _RealAskHarness, real_ask_cli: tuple[_AskCli, str]
+    real_ask_harness: _RealAskHarness, real_ask_cli: tuple[_AskCli, str], tmp_path: Path
 ) -> None:
+    from gobby.ask.artifacts import AskArtifactStore
+    from gobby.ask.publication import publish_answer, replay_publication
+    from gobby.ask.stages import AskStage
+    from gobby.ask.validation import validate_claims, validate_review
+    from tests.ask.test_validation import _valid_case
+
     harness = real_ask_harness
     cli, url = real_ask_cli
-    code, completed, stderr = await cli("Which service owns Ask?")
+    harness.executor.fail_next = True
+    code, interrupted, stderr = await cli("What does alpha return?")
+    assert code == 2
+    assert interrupted["status"] == "failed"
+    run_id = interrupted["run_id"]
+    code, completed, stderr = await cli("--resume", run_id)
     assert code == 0, stderr
+    assert completed["run_id"] == run_id
+    assert completed["binding"] == interrupted["binding"]
     assert completed["status"] == "completed"
     # The controlled executor completes without publishing an answer; the
     # lifecycle adapter must preserve the service's null outcome verbatim.
@@ -539,6 +553,50 @@ async def test_installed_cli_lifecycle_against_authenticated_service(
     assert fetched == harness.service.get(run_id, project_id=harness.project_id).model_dump(
         mode="json"
     )
+
+    # Seed a validated publication at the agent boundary; export still traverses
+    # the installed CLI, authenticated HTTP and real service verifier.
+    draft, evidence, blobs, review = _valid_case(run_id=run_id, project_id=harness.project_id)
+    deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
+    reviewed = validate_review(draft, evidence, deterministic, review)
+    published = publish_answer(
+        AskArtifactStore(tmp_path / "publication-state", harness.project_id, run_id),
+        draft,
+        evidence,
+        deterministic,
+        reviewed,
+        request={"question": draft.question},
+        binding=evidence.repository_binding.model_dump(mode="json"),
+        profiles={"investigator": "profile-a", "reviewer": "profile-b"},
+        tool_identities=("gobby-code@0.5.0",),
+        attempt_history=({"attempt": 1, "status": "reviewed"},),
+    )
+    harness.service.stages.checkpoint(
+        run_id,
+        stage=AskStage.PUBLISH,
+        boundary_id=f"publish:{published.manifest_sha256}",
+        publication={"root": str(published.root), "manifest_sha256": published.manifest_sha256},
+        answer_outcome=published.outcome,
+    )
+    destination = tmp_path / "requested-export"
+    code, exported, stderr = await cli("--export", run_id, "--output", str(destination))
+    assert code == 0, stderr
+    archive_path = destination / f"ask-{run_id}.tar"
+    assert exported == {"run_id": run_id, "status": "exported", "output": str(archive_path)}
+    assert archive_path.is_file()
+    unpacked = tmp_path / "unpacked-export"
+    with tarfile.open(archive_path) as archive:
+        archive.extractall(unpacked, filter="data")
+    replay = replay_publication(unpacked)
+    assert replay.manifest_sha256 == published.manifest_sha256
+    source_files = {
+        p.relative_to(published.root): p.read_bytes()
+        for p in published.root.rglob("*")
+        if p.is_file()
+    }
+    assert {
+        p.relative_to(unpacked): p.read_bytes() for p in unpacked.rglob("*") if p.is_file()
+    } == source_files
 
     release = asyncio.Event()
     harness.executor.gate(release)

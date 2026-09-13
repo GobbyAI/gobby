@@ -85,6 +85,7 @@ class CompletingPipelineExecutor:
         self.calls: list[tuple[str | None, str | None, dict[str, Any]]] = []
         self.running = asyncio.Event()
         self._release: asyncio.Event | None = None
+        self.fail_next = False
 
     def gate(self, release: asyncio.Event) -> None:
         """Hold execution until ``release`` is set."""
@@ -106,6 +107,9 @@ class CompletingPipelineExecutor:
         # sees the same status it would in production.
         self.manager.update_execution_status(execution_id, ExecutionStatus.RUNNING)
         self.running.set()
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("controlled executor interruption")
         if self._release is not None:
             await self._release.wait()
         execution = self.manager.update_execution_status(execution_id, ExecutionStatus.COMPLETED)
