@@ -20,7 +20,9 @@ def test_empty_custom_alias_directory_is_preserved(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("layout", ["commands", "skills"])
-@pytest.mark.parametrize("revision", ["e0eed4ddaf", "acf2634373", "ec5536f254-generated"])
+@pytest.mark.parametrize(
+    "revision", ["e0eed4ddaf", "acf2634373", "ec5536f254-generated", "dc1a751129-rendered"]
+)
 def test_verified_router_upgrade_is_repeatable(tmp_path: Path, layout: str, revision: str) -> None:
     target = tmp_path / ("gobby.md" if layout == "commands" else "gobby/SKILL.md")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +35,7 @@ def test_verified_router_upgrade_is_repeatable(tmp_path: Path, layout: str, revi
     assert install(tmp_path) == (["gobby.md"] if layout == "commands" else ["gobby/"])
     upgraded = target.read_bytes()
     assert b"## Available Capabilities" in upgraded
+    assert b"visibility and explicit skill exclusions" in upgraded
     assert install(tmp_path)
     assert target.read_bytes() == upgraded
 

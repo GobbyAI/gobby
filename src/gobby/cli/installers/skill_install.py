@@ -32,6 +32,7 @@ def _router_carrier(source: Path) -> str:
 _BUNDLED_GOBBY_HASHES = frozenset(
     {
         "619531082d1317fbc0b42e8b13ba92df4ae4ee21e88e786b12c9cf72039b7f4e",  # dc1a751129
+        "358c8f3e7201905e6a30521c50b2f355e498a466b8b74661b21939d386b8f32d",  # dc1a751129 rendered
         "12b5b4402ff2dc8b90bd1d3d6502b24587c9729e96472f046d2fc036985b4bc1",  # ec5536f254
         "774726c1b641648e4736e3bd0e706a32fdf025e1398e9ff8e4aedd907b8fedd2",  # ec5536f254 rendered
         "b9b1e66283cf5a0d80dec69c580a6151a7241398c9d021c7820604f7a57451d6",  # e0eed4ddaf
