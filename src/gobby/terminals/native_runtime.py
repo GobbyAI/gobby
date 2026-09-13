@@ -51,6 +51,14 @@ MAX_SPAWN_ERROR_CODE_LENGTH = 128
 type NativeSpawnSettlement = Literal["fail_pending", "fail_pending_kill", "pending"]
 
 
+@dataclass(frozen=True, slots=True)
+class HostEpochMismatch:
+    """A captured host resource belongs to an earlier host incarnation."""
+
+    expected_epoch: str | None
+    current_epoch: str | None
+
+
 def _bounded_spawn_code(code: str) -> str:
     return (code or "spawn_failed")[:MAX_SPAWN_ERROR_CODE_LENGTH]
 
@@ -217,7 +225,7 @@ class NativeTerminalRuntime:
             raise HostUnavailableError("gterm host unavailable")
 
     def _host_id(self, terminal: Terminal) -> str:
-        locator = terminal.locator or {}
+        locator = terminal.locator or terminal.process or {}
         host_id = locator.get("host_terminal_id")
         if isinstance(host_id, str) and host_id:
             return host_id
@@ -625,15 +633,36 @@ class NativeTerminalRuntime:
                 await self._client.resize(self._host_id(terminal), rows, cols)
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        host_terminal_id = self._host_id(terminal)
+        await self.terminate_host_id(host_terminal_id, terminal.host_epoch, grace_seconds)
+
+    async def kill(self, host_terminal_id: str, grace_seconds: float = 0.05) -> None:
+        """Kill one resource on the currently connected host."""
         grace_ms = max(0, int(grace_seconds * 1000))
         try:
             await self._ensure()
-            await self._client.kill(self._host_id(terminal), grace_ms=grace_ms or 50)
+            await self._client.kill(host_terminal_id, grace_ms=grace_ms or 50)
         except ConnectionError:
             reconnect = getattr(self._client, "reconnect", None)
             if callable(reconnect):
                 await reconnect()
-                await self._client.kill(self._host_id(terminal), grace_ms=grace_ms or 50)
+                await self._client.kill(host_terminal_id, grace_ms=grace_ms or 50)
+
+    async def terminate_host_id(
+        self,
+        host_terminal_id: str,
+        host_epoch: str | None,
+        grace_seconds: float = 0.05,
+    ) -> HostEpochMismatch | None:
+        """Kill a captured host id only while its captured epoch is still current."""
+        await self._ensure()
+        current_epoch = getattr(self._client, "host_epoch", None)
+        normalized_epoch = None if current_epoch is None else str(current_epoch)
+        if host_epoch != normalized_epoch:
+            return HostEpochMismatch(host_epoch, normalized_epoch)
+        grace_ms = max(0, int(grace_seconds * 1000))
+        await self._client.kill(host_terminal_id, grace_ms=grace_ms or 50)
+        return None
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         locator = terminal.locator or {}
@@ -654,10 +683,6 @@ class NativeTerminalRuntime:
             epoch = getattr(self._client, "host_epoch", self._frame_host_epoch)
         self._frame_host_epoch = str(epoch)
         if self._terminal_manager is not None:
-
-            async def kill(host_terminal_id: str) -> None:
-                await self._client.kill(host_terminal_id)
-
             rows = await self._client.list_terminals()
             await reconcile_host_inventory(
                 terminal_manager=self._terminal_manager,
@@ -666,7 +691,7 @@ class NativeTerminalRuntime:
                 host_rows=rows,
                 spawn_in_doubt_seconds=self._spawn_in_doubt_seconds,
                 run_manager=self._run_manager,
-                kill=kill,
+                kill=self.kill,
             )
         return self._frame_host_epoch
 

@@ -390,6 +390,20 @@ async def test_write_retry_is_exactly_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminate_host_id_requires_matching_epoch() -> None:
+    runtime, host = _runtime()
+    mismatch = await runtime.terminate_host_id("ht-1", "epoch-before-respawn")
+    assert mismatch is not None
+    assert mismatch.expected_epoch == "epoch-before-respawn"
+    assert mismatch.current_epoch == host.host_epoch
+    assert host.kills == []
+
+    terminated = await runtime.terminate_host_id("ht-1", host.host_epoch)
+    assert terminated is None
+    assert host.kills == ["ht-1"]
+
+
+@pytest.mark.asyncio
 async def test_snapshot_metadata_survives_the_adapter() -> None:
     runtime, host = _runtime()
     terminal = _native_terminal(host)

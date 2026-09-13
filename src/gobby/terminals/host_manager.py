@@ -389,9 +389,18 @@ class TerminalHostManager:
             return
         terminal_id = str(event["terminal_id"])
         spawn_key = str(event["spawn_key"])
+        pending = manager.get(terminal_id)
+        if pending is None:
+            return
         recorded = manager.record_process(
             terminal_id,
-            {"pgid": event["pgid"], "start_time": event["start_time"]},
+            {
+                "host_terminal_id": str(event["host_terminal_id"]),
+                "pgid": event["pgid"],
+                "start_time": event["start_time"],
+            },
+            attempt_generation=pending.attempt_generation,
+            attempt_started_at=pending.attempt_started_at,
         )
         if recorded is None:
             return

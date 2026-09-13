@@ -47,7 +47,13 @@ class SupportsIdentityLookup(Protocol):
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None: ...
 
-    def record_process(self, terminal_id: str, process: Any) -> Terminal | None: ...
+    def merge_process_reap_record(
+        self,
+        terminal_id: str,
+        *,
+        pgid: int,
+        start_time: object,
+    ) -> Terminal | None: ...
 
 
 def _age_seconds(started: datetime) -> float:
@@ -131,9 +137,10 @@ async def reconcile_host_inventory(
             pgid = getattr(row, "pgid", None)
             start_time = getattr(row, "start_time", None)
             if isinstance(pgid, int):
-                terminal_manager.record_process(
+                terminal_manager.merge_process_reap_record(
                     durable.id,
-                    {"pgid": pgid, "start_time": start_time},
+                    pgid=pgid,
+                    start_time=start_time,
                 )
 
     for durable in db_rows:

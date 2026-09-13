@@ -6,7 +6,12 @@ import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
-from gobby.agents.spawn_executor import derive_spawn_key, kill_spawn_key
+from gobby.agents.spawn_executor import (
+    _schedule_timeout_cleanup,
+    derive_spawn_key,
+    kill_spawn_key,
+    settle_promotion,
+)
 from gobby.storage.terminals import TerminalManager, mint_terminal_id
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.native_runtime import classify_native_spawn_failure
@@ -41,15 +46,19 @@ async def _settle_native_failure(
     spawn_key: str,
     exc: BaseException,
     host_terminal_id: str | None = None,
+    host_epoch: str | None = None,
 ) -> WebSpawnResult:
     code, detail, settlement = classify_native_spawn_failure(exc)
     if settlement == "fail_pending_kill":
-        await kill_spawn_key(
+        mismatch = await kill_spawn_key(
             runtime,
             spawn_key,
             pending=manager.get(terminal_id),
             host_terminal_id=host_terminal_id,
+            host_epoch=host_epoch,
         )
+        if mismatch is not None:
+            code, detail = "host_epoch_changed", str(mismatch)
     if settlement != "pending":
         manager.fail_pending(terminal_id)
     return WebSpawnResult(False, terminal_id, code, detail)
@@ -72,7 +81,7 @@ async def spawn_web_terminal(
     validated = validate_dimensions(rows, cols)
     terminal_id = mint_terminal_id()
     spawn_key = derive_spawn_key(runtime.backend, terminal_id)
-    manager.create_pending(
+    attempt = manager.create_pending(
         terminal_id,
         project_id,
         runtime.backend,
@@ -116,8 +125,16 @@ async def spawn_web_terminal(
         else:
             prepared = await asyncio.shield(prepare_task)
     except TimeoutError:
-        await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
-        manager.fail_pending(terminal_id)
+        _schedule_timeout_cleanup(
+            prepare_task,
+            manager=manager,
+            runtime=runtime,
+            backend=runtime.backend,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            attempt_generation=attempt.attempt_generation,
+            attempt_started_at=attempt.attempt_started_at,
+        )
         return WebSpawnResult(False, terminal_id, "spawn_timeout", "spawn timed out")
     except asyncio.CancelledError:
         manager.fail_pending(terminal_id)
@@ -147,6 +164,18 @@ async def spawn_web_terminal(
 
     stored = prepared.stored_locator or {}
     locator_key = prepared.locator_key or ""
+    if runtime.backend == "native" and prepared.host_terminal_id is not None:
+        process: dict[str, object] = {"host_terminal_id": prepared.host_terminal_id}
+        if prepared.process is not None:
+            process.update(
+                {"pgid": prepared.process.pgid, "start_time": prepared.process.start_time}
+            )
+        manager.record_process(
+            terminal_id,
+            process,
+            attempt_generation=attempt.attempt_generation,
+            attempt_started_at=attempt.attempt_started_at,
+        )
     prepared.acknowledge_persist()
     if runtime.backend == "native":
         bind = getattr(runtime, "bind_observer", None)
@@ -156,7 +185,13 @@ async def spawn_web_terminal(
             else:
                 prepared.acknowledge_observer()
         except Exception as exc:
-            await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=manager.get(terminal_id),
+                host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+            )
             manager.fail_pending(terminal_id)
             code, detail, _settlement = classify_native_spawn_failure(exc)
             return WebSpawnResult(False, terminal_id, code, detail)
@@ -171,6 +206,7 @@ async def spawn_web_terminal(
                 spawn_key=spawn_key,
                 exc=exc,
                 host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
         raise
     except CommitSpawnRefusedError as exc:
@@ -182,6 +218,7 @@ async def spawn_web_terminal(
                 spawn_key=spawn_key,
                 exc=exc,
                 host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
         manager.fail_pending(terminal_id)
         return WebSpawnResult(False, terminal_id, str(exc), str(exc))
@@ -195,8 +232,10 @@ async def spawn_web_terminal(
             spawn_key=spawn_key,
             exc=exc,
             host_terminal_id=prepared.host_terminal_id,
+            host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
         )
-    promoted = manager.promote_to_live(
+    promoted = await settle_promotion(
+        manager,
         terminal_id,
         locator=stored,
         locator_key=locator_key,
@@ -207,8 +246,18 @@ async def spawn_web_terminal(
     )
     if promoted is None:
         current = manager.get(terminal_id)
-        await kill_spawn_key(runtime, spawn_key, pending=current)
-        manager.fail_pending(terminal_id)
+        await kill_spawn_key(
+            runtime,
+            spawn_key,
+            pending=current,
+            host_terminal_id=prepared.host_terminal_id,
+            host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+        )
+        manager.fail_pending_attempt(
+            terminal_id,
+            attempt_generation=attempt.attempt_generation,
+            attempt_started_at=attempt.attempt_started_at,
+        )
         return WebSpawnResult(False, terminal_id, "lost_cas_conflict")
     if prepared.rows is not None and prepared.cols is not None:
         manager.set_dims(terminal_id, prepared.rows, prepared.cols)

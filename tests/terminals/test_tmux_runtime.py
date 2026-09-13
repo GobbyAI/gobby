@@ -105,7 +105,7 @@ async def test_spawn_geometry_matches_request_and_row() -> None:
     agent_terminal_uuid = uuid4()
     agent_terminal_id = str(agent_terminal_uuid)
     agent_spawn_key = f"gobby-{uuid4().hex}"
-    manager.create_pending(
+    attempt = manager.create_pending(
         agent_terminal_id,
         project_id,
         "tmux",
@@ -136,6 +136,8 @@ async def test_spawn_geometry_matches_request_and_row() -> None:
         terminal_id=agent_terminal_id,
         spawn_key=agent_spawn_key,
         prepared=prepared,
+        attempt_generation=attempt.attempt_generation,
+        attempt_started_at=attempt.attempt_started_at,
     )
     assert agent_result.success is True
     agent_row = manager.get(agent_terminal_id)

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -18,6 +19,7 @@ from gobby.storage.terminals import (
     Terminal,
     TerminalManager,
     UnresolvedWriteCapacityError,
+    native_locator_key,
     tmux_locator_key,
 )
 from gobby.terminals.runtime import (
@@ -86,6 +88,8 @@ class MemoryTerminalStore:
 
     def __init__(self, terminal: Terminal | None = None) -> None:
         self.rows: dict[str, Terminal] = {} if terminal is None else {terminal.id: terminal}
+        self._settlement_locks: dict[str, tuple[asyncio.Lock, int]] = {}
+        self.attempt_settled = asyncio.Event()
 
     def get(self, terminal_id: str) -> Terminal | None:
         return self.rows.get(terminal_id)
@@ -109,6 +113,7 @@ class MemoryTerminalStore:
             return None
         current.state = "exited"
         current.updated_at = datetime.now(UTC)
+        self.attempt_settled.set()
         return current
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None:
@@ -190,6 +195,7 @@ class MemoryTerminalStore:
             return None
         current.state = "exited"
         current.updated_at = datetime.now(UTC)
+        self.attempt_settled.set()
         return current
 
     def fail_pending_attempt(
@@ -209,6 +215,32 @@ class MemoryTerminalStore:
             return None
         current.state = "exited"
         current.updated_at = datetime.now(UTC)
+        self.attempt_settled.set()
+        return current
+
+    @asynccontextmanager
+    async def settle_lock(self, terminal_id: str) -> AsyncIterator[None]:
+        lock, references = self._settlement_locks.get(terminal_id, (asyncio.Lock(), 0))
+        self._settlement_locks[terminal_id] = (lock, references + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            _, references = self._settlement_locks[terminal_id]
+            if references == 1:
+                del self._settlement_locks[terminal_id]
+            else:
+                self._settlement_locks[terminal_id] = (lock, references - 1)
+
+    def settle_exit(self, terminal_id: str, host_terminal_id: str) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or current.state not in {"pending", "live"}:
+            return None
+        process = current.process or {}
+        if process.get("host_terminal_id") != host_terminal_id:
+            return None
+        current.state = "exited"
+        current.updated_at = datetime.now(UTC)
         return current
 
     def bump_attempt_generation(self, terminal_id: str) -> Terminal | None:
@@ -217,14 +249,55 @@ class MemoryTerminalStore:
             return None
         current.attempt_generation += 1
         current.attempt_started_at = datetime.now(UTC)
+        if current.process is not None:
+            current.process.pop("host_terminal_id", None)
         current.updated_at = datetime.now(UTC)
         return current
 
-    def record_process(self, terminal_id: str, process: Mapping[str, object]) -> Terminal | None:
+    def retry_attempt_unsettled(self, terminal_id: str, attempt_generation: int) -> Terminal | None:
         current = self.rows.get(terminal_id)
-        if current is None or current.state != "pending":
+        if (
+            current is None
+            or current.state != "pending"
+            or current.attempt_generation != attempt_generation
+            or "host_terminal_id" in (current.process or {})
+        ):
             return None
-        current.process = dict(process)
+        return self.bump_attempt_generation(terminal_id)
+
+    def record_process(
+        self,
+        terminal_id: str,
+        process: Mapping[str, object],
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        host_terminal_id = process.get("host_terminal_id")
+        if not isinstance(host_terminal_id, str) or not host_terminal_id:
+            raise ValueError("process.host_terminal_id is required")
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.state != "pending"
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        current.process = {**(current.process or {}), **process}
+        return current
+
+    def merge_process_reap_record(
+        self,
+        terminal_id: str,
+        *,
+        pgid: int,
+        start_time: object,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or current.state != "pending" or current.backend != "native":
+            return None
+        current.process = {**(current.process or {}), "pgid": pgid, "start_time": start_time}
         return current
 
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
@@ -347,6 +420,13 @@ class FakeRuntime:
     killed: list[str] = field(default_factory=list)
     killed_ids: set[str] = field(default_factory=set)
     writes_row: bool = False
+    host_epoch: str = "epoch"
+    terminated_host_ids: list[tuple[str, str | None]] = field(default_factory=list)
+    killed_host_ids: list[str] = field(default_factory=list)
+    terminate_host_failures: list[BaseException] = field(default_factory=list)
+    terminate_host_hold: asyncio.Event | None = None
+    terminate_host_started: asyncio.Event = field(default_factory=asyncio.Event)
+    terminate_started: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         self.create_calls += 1
@@ -362,40 +442,56 @@ class FakeRuntime:
         if self.fail_spawn:
             raise RuntimeError(self.spawn_error)
         self.live_keys.add(request.spawn_key)
-        pane_id = "%1"
-        stored = {
-            "socket_path": _SOCKET,
-            "server_pid": _FAKE_SERVER_PID,
-            "server_start_time": 1784592177,
-            "pane_id": pane_id,
-        }
+        pane_id = "ht-1" if self.backend == "native" else "%1"
+        stored: dict[str, object] = (
+            {"host_terminal_id": pane_id}
+            if self.backend == "native"
+            else {
+                "socket_path": _SOCKET,
+                "server_pid": _FAKE_SERVER_PID,
+                "server_start_time": 1784592177,
+                "pane_id": pane_id,
+            }
+        )
+        locator_key = (
+            native_locator_key(self.host_epoch, pane_id)
+            if self.backend == "native"
+            else tmux_locator_key(
+                socket_path=_SOCKET,
+                server_pid=_FAKE_SERVER_PID,
+                server_start_time=1784592177,
+                pane_id=pane_id,
+            )
+        )
         return PreparedSpawn(
             terminal_id=request.terminal_id,
             spawn_key=request.spawn_key,
             locator=AttachLocator(
                 backend=self.backend,
-                frame_host_epoch="epoch",
+                frame_host_epoch=self.host_epoch,
                 socket_path=_SOCKET,
                 pane_id=pane_id,
             ),
             process=None,
             host_terminal_id=pane_id,
             stored_locator=stored,
-            locator_key=tmux_locator_key(
-                socket_path=_SOCKET,
-                server_pid=_FAKE_SERVER_PID,
-                server_start_time=1784592177,
-                pane_id=pane_id,
-            ),
+            locator_key=locator_key,
             pid=_FAKE_PANE_PID,
         )
+
+    async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
+        return {"reservation_id": f"rsv-{terminal_id}", "reserve_key": "reserve-key"}
+
+    async def bind_observer(self, prepared: PreparedSpawn, reservation_id: str) -> None:
+        del reservation_id
+        prepared.acknowledge_observer()
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:
         if not prepared.persist_acknowledged:
             raise RuntimeError("persist not acknowledged")
         return TerminalHandle(
             terminal_id=prepared.terminal_id,
-            locator=AttachLocator(backend=self.backend, frame_host_epoch="epoch"),
+            locator=AttachLocator(backend=self.backend, frame_host_epoch=self.host_epoch),
         )
 
     async def is_live(self, terminal: Terminal) -> bool:
@@ -465,11 +561,34 @@ class FakeRuntime:
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds
+        self.terminate_started.set()
+        if self.backend == "native":
+            process = terminal.process or terminal.locator or {}
+            host_terminal_id = process.get("host_terminal_id")
+            if isinstance(host_terminal_id, str):
+                await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
+            return
         self.killed_ids.add(terminal.id)
         name = terminal.session_name or terminal.spawn_key
         if name is not None:
             self.killed.append(name)
             self.live_keys.discard(name)
+
+    async def terminate_host_id(
+        self, host_terminal_id: str, host_epoch: str | None
+    ) -> object | None:
+        self.terminated_host_ids.append((host_terminal_id, host_epoch))
+        self.terminate_host_started.set()
+        if self.terminate_host_hold is not None:
+            await self.terminate_host_hold.wait()
+        if self.terminate_host_failures:
+            raise self.terminate_host_failures.pop(0)
+        if host_epoch != self.host_epoch:
+            from gobby.terminals.native_runtime import HostEpochMismatch
+
+            return HostEpochMismatch(host_epoch, self.host_epoch)
+        self.killed_host_ids.append(host_terminal_id)
+        return None
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         return AttachLocator(backend=self.backend, frame_host_epoch="epoch")

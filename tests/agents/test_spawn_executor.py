@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -3122,7 +3123,7 @@ async def test_one_terminal_row_per_attempt_all_outcomes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_in_doubt_pending_is_not_reaped_or_exited() -> None:
+async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
     from gobby.agents.spawn_executor import reap_stale_pending_terminals
 
     request = SpawnRequest(
@@ -3140,21 +3141,24 @@ async def test_in_doubt_pending_is_not_reaped_or_exited() -> None:
         terminal_backend="tmux",
     )
     runtime = _runtime_of(request)
-    runtime.delay = 1.0
+    runtime.spawn_hold = asyncio.Event()
     result = await execute_spawn(request)
     assert result.success is False
     assert "timed out" in (result.error or "")
     manager = _manager_of(request)
     row = next(iter(manager.rows.values()))
     assert row.state == "pending"
-    assert runtime.killed  # spawn_key resolution killed the late effect
+    assert runtime.killed == []
+    runtime.spawn_hold.set()
+    await runtime.terminate_started.wait()
+    assert runtime.killed  # the done callback killed the late effect
     reaped = await reap_stale_pending_terminals(
-        cast(TerminalManager, manager), runtime, in_doubt_seconds=150.0
+        cast(TerminalManager, manager), runtime_registry(runtime), in_doubt_seconds=150.0
     )
     assert reaped == []
     pending = manager.get(row.id)
     assert pending is not None
-    assert pending.state == "pending"
+    assert pending.state == "exited"
 
     retry = SpawnRequest(
         prompt="Test",
@@ -3172,9 +3176,9 @@ async def test_in_doubt_pending_is_not_reaped_or_exited() -> None:
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
-    runtime.delay = 0.0
     retried = await execute_spawn(retry)
-    assert retried.success is True
+    assert retried.success is False
+    assert retried.error == "retry_terminal_not_pending"
     assert retried.terminal_id == row.id
     assert len(manager.rows) == 1
 
@@ -3404,9 +3408,263 @@ async def test_attempt_started_at_survives_unrelated_updates_and_restart() -> No
     from gobby.agents.spawn_executor import reap_stale_pending_terminals
 
     reaped = await reap_stale_pending_terminals(
-        cast(TerminalManager, manager), runtime, in_doubt_seconds=150.0
+        cast(TerminalManager, manager), runtime_registry(runtime), in_doubt_seconds=150.0
     )
     assert reaped == []
     assert row.attempt_started_at == original_started
     assert row.attempt_generation == original_gen
     assert row.state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_reaper_terminates_by_backend_identity() -> None:
+    from gobby.agents.spawn_executor import reap_stale_pending_terminals
+
+    manager = MemoryTerminalStore()
+    native = manager.create_pending("native-old", "proj", "native", "gobby", "native-old")
+    native.host_epoch = "epoch-a"
+    native.process = {"host_terminal_id": "ht-old", "pgid": 100}
+    tmux = manager.create_pending("tmux-old", "proj", "tmux", "gobby", "gobby-tmux-old")
+    missing = manager.create_pending("native-missing", "proj", "native", "gobby", "native-missing")
+    missing.host_epoch = "epoch-a"
+    native_runtime = FakeRuntime(backend="native")
+    tmux_runtime = FakeRuntime(backend="tmux")
+
+    reaped = await reap_stale_pending_terminals(
+        cast(TerminalManager, manager),
+        runtime_registry(native_runtime, tmux_runtime),
+        in_doubt_seconds=0,
+    )
+
+    assert set(reaped) == {native.id, tmux.id, missing.id}
+    assert native_runtime.terminated_host_ids == [("ht-old", "epoch-a")]
+    assert tmux_runtime.killed == [tmux.spawn_key]
+    assert missing.state == "exited"
+
+
+@pytest.mark.asyncio
+async def test_reaper_leaves_unreachable_native_row_pending() -> None:
+    from gobby.agents.spawn_executor import reap_stale_pending_terminals
+    from gobby.terminals.host_client import HostUnavailableError
+
+    manager = MemoryTerminalStore()
+    pending = manager.create_pending("native-old", "proj", "native", "gobby", "native-old")
+    pending.host_epoch = "epoch-a"
+    pending.process = {"host_terminal_id": "ht-old", "pgid": 100}
+    runtime = FakeRuntime(backend="native")
+    runtime.terminate_host_failures.append(HostUnavailableError("offline"))
+    registry = runtime_registry(runtime)
+
+    assert (
+        await reap_stale_pending_terminals(
+            cast(TerminalManager, manager), registry, in_doubt_seconds=0
+        )
+        == []
+    )
+    assert pending.state == "pending"
+    assert pending.process == {"host_terminal_id": "ht-old", "pgid": 100}
+
+    assert await reap_stale_pending_terminals(
+        cast(TerminalManager, manager), registry, in_doubt_seconds=0
+    ) == [pending.id]
+    assert pending.state == "exited"
+
+
+@pytest.mark.asyncio
+async def test_delayed_kill_refuses_reused_host_id_after_respawn() -> None:
+    from gobby.agents.spawn_executor import reap_stale_pending_terminals
+    from gobby.terminals.web_spawn import spawn_web_terminal
+
+    manager = MemoryTerminalStore()
+    old = manager.create_pending("native-old", "proj", "native", "gobby", "native-old")
+    old.host_epoch = "epoch-a"
+    old.process = {"host_terminal_id": "ht-1"}
+    runtime = FakeRuntime(backend="native", host_epoch="epoch-a")
+    runtime.terminate_host_hold = asyncio.Event()
+    task = asyncio.create_task(
+        reap_stale_pending_terminals(
+            cast(TerminalManager, manager), runtime_registry(runtime), in_doubt_seconds=0
+        )
+    )
+    await runtime.terminate_host_started.wait()
+
+    runtime.host_epoch = "epoch-b"
+    replacement = manager.create_pending("native-new", "proj", "native", "gobby", "native-new")
+    replacement.process = {"host_terminal_id": "ht-1"}
+    replacement.state = "live"
+    replacement.host_epoch = "epoch-b"
+    runtime.terminate_host_hold.set()
+
+    assert await task == [old.id]
+    assert runtime.killed_host_ids == []
+    assert old.state == "exited"
+    assert replacement.state == "live"
+
+    agent_runtime = FakeRuntime(
+        backend="native",
+        host_epoch="epoch-a",
+        spawn_hold=asyncio.Event(),
+        terminate_host_hold=asyncio.Event(),
+    )
+    agent_request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        timeout_seconds=0.001,
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="native",
+        terminal_runtime_registry=runtime_registry(agent_runtime),
+        terminal_manager=cast(TerminalManager, MemoryTerminalStore()),
+    )
+    agent_result = await execute_spawn(agent_request)
+    assert agent_result.success is False
+    agent_manager = _manager_of(agent_request)
+    agent_old = agent_manager.get(agent_result.terminal_id or "")
+    assert agent_old is not None
+    assert agent_runtime.spawn_hold is not None
+    agent_runtime.spawn_hold.set()
+    await agent_runtime.terminate_host_started.wait()
+    agent_runtime.host_epoch = "epoch-b"
+    agent_replacement = agent_manager.create_pending(
+        "agent-replacement", "proj", "native", "gobby", "agent-replacement"
+    )
+    agent_replacement.process = {"host_terminal_id": "ht-1"}
+    agent_replacement.host_epoch = "epoch-b"
+    agent_replacement.state = "live"
+    assert agent_runtime.terminate_host_hold is not None
+    agent_runtime.terminate_host_hold.set()
+    await agent_manager.attempt_settled.wait()
+    assert agent_runtime.killed_host_ids == []
+    assert agent_old.state == "exited"
+    assert agent_replacement.state == "live"
+
+    web_manager = MemoryTerminalStore()
+    web_runtime = FakeRuntime(
+        backend="native",
+        host_epoch="epoch-a",
+        spawn_hold=asyncio.Event(),
+        terminate_host_hold=asyncio.Event(),
+    )
+    web_result = await spawn_web_terminal(
+        manager=cast(TerminalManager, web_manager),
+        runtime=web_runtime,
+        project_id="proj",
+        session_id=None,
+        rows=24,
+        cols=80,
+        cwd="/path",
+        command=["echo", "hi"],
+        timeout_seconds=0.001,
+    )
+    web_old = web_manager.get(web_result.terminal_id)
+    assert web_old is not None
+    assert web_runtime.spawn_hold is not None
+    web_runtime.spawn_hold.set()
+    await web_runtime.terminate_host_started.wait()
+    web_runtime.host_epoch = "epoch-b"
+    web_replacement = web_manager.create_pending(
+        "web-replacement", "proj", "native", "gobby", "web-replacement"
+    )
+    web_replacement.process = {"host_terminal_id": "ht-1"}
+    web_replacement.host_epoch = "epoch-b"
+    web_replacement.state = "live"
+    assert web_runtime.terminate_host_hold is not None
+    web_runtime.terminate_host_hold.set()
+    await web_manager.attempt_settled.wait()
+    assert web_runtime.killed_host_ids == []
+    assert web_old.state == "exited"
+    assert web_replacement.state == "live"
+
+
+@pytest.mark.asyncio
+async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
+    from gobby.terminals.web_spawn import spawn_web_terminal
+
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        timeout_seconds=0.001,
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+    )
+    runtime = _runtime_of(request)
+    runtime.spawn_hold = asyncio.Event()
+    result = await execute_spawn(request)
+    assert result.success is False
+    manager = _manager_of(request)
+    row = manager.get(result.terminal_id or "")
+    assert row is not None
+    newer = manager.bump_attempt_generation(row.id)
+    assert newer is not None
+    runtime.spawn_hold.set()
+    await runtime.terminate_started.wait()
+    assert row.state == "pending"
+    assert row.attempt_generation == newer.attempt_generation
+
+    web_manager = MemoryTerminalStore()
+    web_runtime = FakeRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    web_result = await spawn_web_terminal(
+        manager=cast(TerminalManager, web_manager),
+        runtime=web_runtime,
+        project_id="proj",
+        session_id=None,
+        rows=24,
+        cols=80,
+        cwd="/path",
+        command=["echo", "hi"],
+        timeout_seconds=0.001,
+    )
+    web_row = web_manager.get(web_result.terminal_id)
+    assert web_row is not None
+    web_newer = web_manager.bump_attempt_generation(web_row.id)
+    assert web_newer is not None
+    assert web_runtime.spawn_hold is not None
+    web_runtime.spawn_hold.set()
+    await web_runtime.terminate_started.wait()
+    assert web_row.state == "pending"
+    assert web_row.attempt_generation == web_newer.attempt_generation
+
+
+@pytest.mark.asyncio
+async def test_tmux_retry_kills_duplicate_session_before_failing() -> None:
+    manager = MemoryTerminalStore()
+    terminal_id = str(uuid4())
+    row = manager.create_pending(terminal_id, "proj", "tmux", "gobby", f"gobby-{terminal_id}")
+    runtime = FakeRuntime(backend="tmux", typed_fail=True, spawn_error="duplicate session")
+    runtime.live_keys.add(row.spawn_key or "")
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        retry_terminal_id=row.id,
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+        terminal_manager=cast(TerminalManager, manager),
+        terminal_runtime_registry=runtime_registry(runtime),
+    )
+
+    result = await execute_spawn(request)
+
+    assert result.success is False
+    assert row.state == "exited"
+    assert row.spawn_key not in runtime.live_keys
+    assert runtime.killed == [row.spawn_key]
