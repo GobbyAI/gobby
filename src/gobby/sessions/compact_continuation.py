@@ -505,7 +505,9 @@ async def _continue_after_codex_compaction_ready(
 
 def _count_codex_compact_ready_status_lines(output: str) -> int:
     """Count complete Codex compaction status lines."""
-    return sum(line.strip() == _CODEX_COMPACT_READY_STATUS_LINE for line in output.splitlines())
+    return sum(
+        line.strip().startswith(_CODEX_COMPACT_READY_STATUS_LINE) for line in output.splitlines()
+    )
 
 
 def _fresh_terminal_output(before: str, after: str) -> str:

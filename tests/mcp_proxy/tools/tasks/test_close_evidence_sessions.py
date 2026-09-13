@@ -11,7 +11,8 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence,
 )
-from gobby.tasks.transcript_evidence import TranscriptEvidenceUnavailable
+from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptEvidenceUnavailable
+from tests.tasks.test_close_checklist import _run
 
 _SUPPORT = "gobby.mcp_proxy.tools.tasks._close_evaluation_support"
 QA = "qa-session"
@@ -67,6 +68,7 @@ async def _derive(
     with (
         patch(f"{_SUPPORT}.resolve_validation_detection_config"),
         patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
         patch(f"{_SUPPORT}.merge_transcript_evidence", side_effect=lambda *sets: list(sets)),
     ):
         merged = await derive_close_transcript_evidence(
@@ -150,6 +152,39 @@ async def test_single_session_close_derives_once_from_the_owner_window() -> None
 
 
 @pytest.mark.asyncio
+async def test_prelink_runs_are_attached_without_changing_credited_runs() -> None:
+    window = "2026-08-27T02:10:00+00:00"
+    ctx = _context(
+        [_link(QA, "claimed", window)],
+        {QA: _session(QA, "2026-08-27T02:00:00+00:00")},
+    )
+    credited = _run(2, command="uv run ruff check src/")
+    excluded = _run(1, command="uv run pytest tests/ -q")
+    original = TranscriptEvidence(validation_runs=(credited,))
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(return_value=original)),
+        patch(
+            f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=(excluded,))
+        ) as prelink,
+    ):
+        result = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start=window,
+            task_edited_files=set(),
+            repo_path="/repo",
+        )
+    assert [run.command for run in result.validation_runs] == [credited.command]
+    assert result.excluded_runs == (excluded,)
+    assert original.excluded_runs == ()
+    prelink.assert_awaited_once()
+    assert prelink.call_args.args[1] == window
+
+
+@pytest.mark.asyncio
 async def test_linked_session_that_no_longer_exists_or_has_no_transcript_is_skipped() -> None:
     gone = "deleted-session"
     links = [
@@ -189,7 +224,8 @@ async def test_missing_owner_or_closing_session_still_raises() -> None:
     with (
         patch(f"{_SUPPORT}.resolve_validation_detection_config"),
         patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock()),
-        pytest.raises(TranscriptEvidenceUnavailable, match="not found"),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())) as prelink,
+        pytest.raises(TranscriptEvidenceUnavailable, match="not found") as error,
     ):
         await derive_close_transcript_evidence(
             ctx,
@@ -200,6 +236,9 @@ async def test_missing_owner_or_closing_session_still_raises() -> None:
             task_edited_files=set(),
             repo_path="/repo",
         )
+    assert "vanished-closer" in str(error.value)
+    prelink.assert_awaited_once()
+    assert prelink.call_args.args[0].id == QA
 
 
 @pytest.mark.asyncio
@@ -217,6 +256,7 @@ async def test_optional_evidence_excludes_unrelated_closing_session(linked: bool
     with (
         patch(f"{_SUPPORT}.resolve_validation_detection_config"),
         patch(f"{_SUPPORT}.derive_transcript_evidence", derive),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
         patch(f"{_SUPPORT}.merge_transcript_evidence"),
     ):
         await derive_close_transcript_evidence(

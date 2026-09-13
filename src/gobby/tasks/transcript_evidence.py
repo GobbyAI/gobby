@@ -167,6 +167,8 @@ class TranscriptEvidence:
     attempted_paths: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
     degraded_capabilities: tuple[str, ...] = ()
+    # Observations outside the task link window never enter credit-bearing collections.
+    excluded_runs: tuple[TranscriptValidationRun, ...] = ()
 
     def summary(self) -> dict[str, Any]:
         """Return bounded deterministic facts for checklist diagnostics."""
@@ -508,6 +510,7 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
     return TranscriptEvidence(
         validation_runs=tuple(run for run in runs if run.categories),
         command_runs=tuple(run for run in runs if not run.categories),
+        excluded_runs=tuple(run for evidence in evidence_sets for run in evidence.excluded_runs),
         edits=tuple(edits),
         attempted_paths=tuple(
             dict.fromkeys(path for evidence in evidence_sets for path in evidence.attempted_paths)

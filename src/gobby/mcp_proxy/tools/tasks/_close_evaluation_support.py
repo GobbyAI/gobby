@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from typing import Any
 
@@ -17,6 +17,7 @@ from gobby.tasks.transcript_evidence import (
     derive_transcript_evidence,
     merge_transcript_evidence,
 )
+from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.workflows.task_dirty_state import committable_task_paths, has_committable_edits
 
 __all__ = [
@@ -175,15 +176,25 @@ async def derive_close_transcript_evidence(
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         try:
-            evidence.append(
-                await derive_transcript_evidence(
-                    session,
-                    effective_window,
-                    detection,
-                    task_edited_files,
-                    repo_path,
-                    archive_dir=archive_dir,
+            session_evidence = await derive_transcript_evidence(
+                session,
+                effective_window,
+                detection,
+                task_edited_files,
+                repo_path,
+                archive_dir=archive_dir,
+            )
+            try:
+                excluded = await derive_prelink_runs(
+                    session, effective_window, detection, repo_path, archive_dir=archive_dir
                 )
+            except TranscriptEvidenceUnavailable as exc:
+                logger.warning(
+                    "Pre-link diagnostics unavailable for session %s: %s", session_id, exc
+                )
+                excluded = ()
+            evidence.append(
+                replace(session_evidence, excluded_runs=excluded) if excluded else session_evidence
             )
         except TranscriptEvidenceUnavailable as exc:
             if session_id in required:

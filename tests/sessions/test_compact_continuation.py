@@ -20,6 +20,7 @@ from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
     _continue_after_codex_compaction_ready,
+    _count_codex_compact_ready_status_lines,
     _merge_session_variable,
     _pop_session_variable,
     clear_handoff_compact_continuation_pending,
@@ -230,9 +231,25 @@ async def test_shutdown_stops_readiness_watcher_and_preserves_pending_marker(
     assert consume_handoff_compact_continuation_pending(session_db, SESSION_ID) is not None
 
 
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        ("• Context compacted", 1),
+        ("  • Context compacted · 2m 03s  ", 1),
+        ("• Context compacted · additional status", 1),
+        ("Waiting until • Context compacted", 0),
+        ("› • Context compacted · 2m 03s", 0),
+    ],
+)
+def test_codex_compaction_status_line(status: str, expected: int) -> None:
+    assert _count_codex_compact_ready_status_lines(status) == expected
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["• Context compacted", "• Context compacted · 2m 03s"])
 async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     session_db: HubDatabase,
+    status: str,
 ) -> None:
     prompt = "Continue the claimed task."
     mark_handoff_compact_continuation_pending(
@@ -241,7 +258,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
         prompt=prompt,
         attempt_id="current-attempt",
     )
-    before_command = "Earlier output\n• Context compacted\n›"
+    before_command = f"Earlier output\n{status}\n›"
 
     class ReadinessTmux(_FakeTmux):
         def __init__(self) -> None:
@@ -250,7 +267,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
                 [
                     before_command,
                     f"{before_command}\nCompacting conversation",
-                    f"{before_command}\n• Context compacted\n›",
+                    f"{before_command}\n{status}\n›",
                 ]
             )
 

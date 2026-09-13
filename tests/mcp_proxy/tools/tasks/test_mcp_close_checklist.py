@@ -373,6 +373,23 @@ async def test_close_preview_surfaces_uncredited_validation_runs() -> None:
     assert response["validation_commands"]["uncredited_runs"] == [
         {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
     ]
+    observed = response["validation_commands"]["nearest_observed_run"]
+    assert observed["command"] == command
+    assert observed["completed_at"] == NOW.isoformat()
+    assert observed["reason_code"] == "wrapped"
+    assert "Remove pipes" in observed["remedy"]
+    assert observed in response["validation_commands"]["excluded_runs"]
+    concise = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        transcript=transcript,
+        response_detail="concise",
+    )
+    concise_response = concise.response(preview=True)
+    assert "validation_commands" not in concise_response
+    assert "checklist" not in concise_response
+    assert command in concise_response["message"]
+    assert "Remove pipes" in concise_response["message"]
 
 
 @pytest.mark.asyncio

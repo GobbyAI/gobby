@@ -111,6 +111,101 @@ def evaluate_validation_commands(
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
 ) -> CloseGateResult:
+    """Keep credit decisions separate from observed-run explanations."""
+    from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
+
+    paths = tuple(changed_paths)
+    gate = _evaluate_validation_commands(
+        task_category=task_category,
+        evidence=evidence,
+        has_attributed_edits=has_attributed_edits,
+        validation_criteria=validation_criteria,
+        changed_paths=paths,
+    )
+    changed_tests = _changed_python_test_paths(paths)
+
+    def uncovered(run: TranscriptValidationRun) -> tuple[str, ...] | None:
+        targets = _test_types_audit_targets(run)
+        return _uncovered_test_paths(changed_tests, targets) if targets is not None else None
+
+    records = excluded_validation_records(evidence, uncovered, tuple(changed_tests))
+    gaps = gate.details.get("criterion_command_gaps", [])
+    for gap in gaps:
+        for observation in gap.get("observed_forms", []):
+            if observation.get("reason") != "scope or semantic arguments differ":
+                continue
+            if any(
+                record["session_id"] == observation["session_id"]
+                and record["order"] == observation["order"]
+                for record in records
+            ):
+                continue
+            records.append(
+                {
+                    **observation,
+                    "reason_code": "partial",
+                    "remedy": f"Run `{gap['command']}` clean after the final task edit, with all required flags and targets.",
+                    "categories": [],
+                }
+            )
+    records.sort(
+        key=lambda record: (str(record["completed_at"]), int(record["order"])), reverse=True
+    )
+    relevant = records
+    if gaps:
+        from gobby.tasks.criterion_commands import _related_command
+
+        relevant = [
+            record
+            for record in records
+            if any(
+                _related_command(record["command"], str(gap.get("core_command") or gap["command"]))
+                for gap in gaps
+            )
+        ]
+    elif changed_tests and (
+        gate.details.get("latest_test_types_audit") is None
+        or gate.details["latest_test_types_audit"]["outcome"] != "success"
+    ):
+        relevant = [record for record in records if "gobby test-types audit" in record["command"]]
+    elif gate.details.get("unresolved_failure_categories"):
+        relevant = [
+            record
+            for record in records
+            if set(record["categories"]).intersection(gate.details["unresolved_failure_categories"])
+        ]
+    elif task_category in _TEST_REQUIRED_CATEGORIES:
+        relevant = [record for record in records if "test" in record["categories"]]
+    nearest = relevant[0] if relevant else None
+    details = {**gate.details, "excluded_runs": records[:16], "nearest_observed_run": nearest}
+    if len(records) > 16:
+        details["omitted_excluded_run_count"] = len(records) - 16
+    message = gate.message
+    if gate.status == "failed" and gaps:
+        messages = []
+        for gap in gaps:
+            required = str(gap.get("core_command") or gap["command"])
+            observation = next(
+                (record for record in relevant if _related_command(record["command"], required)),
+                None,
+            )
+            if observation is not None:
+                explanation = observed_message(observation)
+                messages.append(explanation.split("Run `", 1)[0].rstrip())
+        message = gate.message + " " + " ".join(messages)
+    elif gate.status == "failed" and nearest is not None:
+        message += " " + observed_message(nearest)
+    return replace(gate, message=message, details=details)
+
+
+def _evaluate_validation_commands(
+    *,
+    task_category: str | None,
+    evidence: TranscriptEvidence,
+    has_attributed_edits: bool,
+    validation_criteria: str = "",
+    changed_paths: Iterable[str] = (),
+) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
     Unknown outcomes and wrapped successes are diagnostic only. Failed command
@@ -278,7 +373,7 @@ def evaluate_validation_commands(
             name="validation_commands",
             status="failed",
             message=(
-                "The required Python test type audit is missing. "
+                "The required Python test type audit has no credited run. "
                 f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit."
             ),
             details=details,
