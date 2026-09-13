@@ -1175,14 +1175,39 @@ class ClientWire:
 
 
 def _short(terminal_id: str) -> str:
-    """The name every gclient chrome surface gives a terminal.
+    """The last-resort name gclient gives a terminal.
 
-    `Pane::display_name` falls back to `short_terminal_id` -- "never the raw
-    UUID, which says nothing and crowds out the state and backend tokens that
-    share the row" (crates/gclient/src/app/pane.rs). Sidebar rows and the
-    status line therefore carry the leading segment only.
+    `Pane::display_name` (crates/gclient/src/app/pane.rs) reaches
+    `short_terminal_id` only for a row with no label, no title and no backend
+    address -- "never the raw UUID, which says nothing and crowds out the state
+    and backend tokens that share the row". An untitled native shell is exactly
+    that row; an untitled tmux one has an address, so use `_row_name` for it.
     """
     return terminal_id[:8]
+
+
+def _row_name(http: httpx.Client, terminal_id: str) -> str:
+    """The name gclient renders for a terminal row.
+
+    `Pane::display_name` takes the user's label, then the daemon's title, then
+    "the backend address for a row that has not reported one", then the short
+    id. `row_address` (crates/gclient/src/app/live.rs) supplies that address for
+    a tmux row alone, from `attach.pane_id`, so an untitled tmux terminal shows
+    its pane id where an untitled native one shows the short id. Read it from
+    `GET /api/terminals`, the payload gclient itself consumes.
+    """
+    for item in _list_items(http):
+        if item.get("terminal_id") != terminal_id:
+            continue
+        title = item.get("title")
+        if isinstance(title, str) and title:
+            return title
+        attach = item.get("attach") or {}
+        pane_id = attach.get("pane_id")
+        if attach.get("backend") == "tmux" and isinstance(pane_id, str) and pane_id:
+            return pane_id
+        return _short(terminal_id)
+    raise AssertionError(f"No inventory row for terminal {terminal_id}")
 
 
 async def _screen(client: GclientDriver, text: str, *, timeout: float = 15.0) -> None:
@@ -1215,9 +1240,10 @@ async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInst
         terminal_id = await _shell(daemon_instance, marker="GCLIENT-ROW-OK")
         row = http.get(f"/api/terminals/{terminal_id}").json()
         assert row["backend"] == "tmux"
+        row_name = _row_name(http, terminal_id)
     async with ClientWire(daemon_instance).running() as wire:
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-            await _screen(client, _short(terminal_id))
+            await _screen(client, row_name)
             await asyncio.to_thread(client.chord, "\t")
             await _screen(client, "GCLIENT-ROW-OK")
             await _screen(client, "direct")
