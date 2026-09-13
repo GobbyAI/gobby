@@ -56,6 +56,13 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     let mut project_root = gobby_core::project::find_project_root(&cwd);
     let managed_by_environment = has_managed_environment();
 
+    if project_hooks_disabled(project_root.as_deref()) {
+        if statusline::is_statusline_hook(cli, hook_type) {
+            return ExitCode::SUCCESS;
+        }
+        return emit_exit(continue_action(cfg.source, hook_type));
+    }
+
     // Read stdin before detach too — detach closes the controlling TTY but
     // stdin pipes from the host CLI should still be intact; read now to
     // avoid late-read surprises if the host closes the pipe on exit.
@@ -89,6 +96,9 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     if project_root.is_none() {
         project_root = project_root_from_workspace_paths(&input_data);
+        if project_hooks_disabled(project_root.as_deref()) {
+            return emit_exit(continue_action(cfg.source, hook_type));
+        }
     }
 
     let context = managed_context(project_root.as_deref(), &input_data);
@@ -295,6 +305,14 @@ fn settle_delivered_inbox(
 
 fn hooks_disabled_by_env() -> bool {
     std::env::var_os("GOBBY_HOOKS_DISABLED").is_some_and(|v| v == "1")
+}
+
+fn project_hooks_disabled(project_root: Option<&Path>) -> bool {
+    project_root
+        .and_then(|root| fs::read(root.join(".gobby/project.json")).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|project| project.get("hooks_disabled").and_then(Value::as_bool))
+        == Some(true)
 }
 
 #[derive(Debug, PartialEq, Eq)]

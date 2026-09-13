@@ -215,6 +215,147 @@ fn hooks_disabled_short_circuits_before_dispatch_side_effects() -> TestResult {
 }
 
 #[test]
+fn project_hooks_disabled_skips_delivery_and_reenable_restores_it() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let project_root = tempfile::tempdir()?;
+    let nested = project_root.path().join("nested");
+    fs::create_dir_all(project_root.path().join(".gobby"))?;
+    fs::create_dir_all(&nested)?;
+    let marker = project_root.path().join(".gobby/project.json");
+    fs::write(
+        &marker,
+        r#"{"id":"disabled-project","hooks_disabled":true}"#,
+    )?;
+    let daemon_url = closed_local_url()?;
+
+    for (cli, hook_type, expected_stdout) in [
+        (
+            "codex",
+            "SessionStart",
+            Some(serde_json::json!({"continue": true})),
+        ),
+        ("codex", "Interrupt", None),
+        (
+            "agy",
+            "PreToolUse",
+            Some(serde_json::json!({"decision": "allow"})),
+        ),
+        ("claude", "statusline", None),
+    ] {
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some(cli),
+            Some(hook_type),
+            &daemon_url,
+            "not json",
+            RunGhookExtras {
+                env: &[],
+                args: &[],
+                cwd: Some(&nested),
+            },
+        )?;
+        assert!(output.status.success(), "{cli} {hook_type}");
+        if let Some(expected) = expected_stdout {
+            assert_json_stdout(&output, expected)?;
+        } else {
+            assert!(output.stdout.is_empty(), "{cli} {hook_type}");
+        }
+        assert_stderr_empty(&output, "project hooks disabled")?;
+        assert!(!gobby_home.path().join("hooks").exists());
+    }
+
+    fs::write(&marker, r#"{"id":"disabled-project"}"#)?;
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionStart"),
+        &daemon_url,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+            cwd: Some(&nested),
+        },
+    )?;
+    assert!(output.status.success());
+    let envelope = read_single_inbox_envelope(gobby_home.path())?;
+    assert_eq!(
+        envelope["headers"]["X-Gobby-Project-Id"],
+        "disabled-project"
+    );
+    Ok(())
+}
+
+#[test]
+fn project_hooks_disabled_requires_boolean_true() -> TestResult {
+    for flag in [
+        serde_json::json!(false),
+        serde_json::json!("true"),
+        serde_json::json!(1),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let project_root = tempfile::tempdir()?;
+        fs::create_dir_all(project_root.path().join(".gobby"))?;
+        fs::write(
+            project_root.path().join(".gobby/project.json"),
+            serde_json::json!({"id":"flag-project","hooks_disabled":flag}).to_string(),
+        )?;
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("SessionStart"),
+            &closed_local_url()?,
+            "not json",
+            RunGhookExtras {
+                env: &[],
+                args: &[],
+                cwd: Some(project_root.path()),
+            },
+        )?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(gobby_home.path().join("hooks/inbox/quarantine").exists());
+    }
+    Ok(())
+}
+
+#[test]
+fn project_hooks_disabled_applies_to_agy_workspace_paths() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let cwd = tempfile::tempdir()?;
+    let project_root = tempfile::tempdir()?;
+    fs::create_dir_all(project_root.path().join(".gobby"))?;
+    fs::write(
+        project_root.path().join(".gobby/project.json"),
+        r#"{"id":"agy-disabled-project","hooks_disabled":true}"#,
+    )?;
+    let stdin = serde_json::json!({"workspacePaths":[project_root.path()]}).to_string();
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("agy"),
+        Some("PreToolUse"),
+        &closed_local_url()?,
+        &stdin,
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+            cwd: Some(cwd.path()),
+        },
+    )?;
+    assert!(output.status.success());
+    assert_json_stdout(&output, serde_json::json!({"decision":"allow"}))?;
+    assert_stderr_empty(&output, "disabled AGY workspace")?;
+    assert!(!gobby_home.path().join("hooks").exists());
+    Ok(())
+}
+
+#[test]
 fn codex_interrupt_disabled_unmanaged_and_malformed_paths_emit_no_stdout() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
