@@ -628,8 +628,8 @@ def _seed_contained_state(
                     "terminal_host.socket_dir": str((tmux_socket.parent / "gterm-host").resolve()),
                     "terminals.stop_host_on_shutdown": True,
                     "memory.dream.enabled": False,
-                    "gobby_tasks.expansion.enabled": False,
-                    "gobby_tasks.validation.enabled": False,
+                    "gobby-tasks.expansion.enabled": False,
+                    "gobby-tasks.validation.enabled": False,
                     "code_index.enabled": False,
                     "websocket.enabled": False,
                 }

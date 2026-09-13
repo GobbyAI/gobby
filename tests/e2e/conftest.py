@@ -125,8 +125,8 @@ def configure_task_close_validation(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
-                "gobby_tasks.validation.enabled": True,
-                "gobby_tasks.validation.candidates": ["endpoint:e2e/e2e-validation"],
+                "gobby-tasks.validation.enabled": True,
+                "gobby-tasks.validation.candidates": ["endpoint:e2e/e2e-validation"],
                 "ai.generation.timeout_seconds": 15,
                 "ai.generation.candidate_timeout_seconds": 5,
                 "ai.generation.cli_candidate_timeout_seconds": 5,
@@ -140,7 +140,7 @@ def configure_task_close_validation(
     )
     config_path, _http_port, _ws_port = e2e_config
     config = cast(dict[str, Any], yaml.safe_load(config_path.read_text()))
-    validation = config["gobby_tasks"]["validation"]
+    validation = config["gobby-tasks"]["validation"]
     validation["enabled"] = True
     validation["candidates"] = ["endpoint:e2e/e2e-validation"]
     config["ai"] = {
@@ -393,8 +393,8 @@ def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
                 "test_mode": True,
                 "tmux.socket_path": str(tmux_socket),
                 "memory.dream.enabled": False,
-                "gobby_tasks.expansion.enabled": False,
-                "gobby_tasks.validation.enabled": False,
+                "gobby-tasks.expansion.enabled": False,
+                "gobby-tasks.validation.enabled": False,
                 "code_index.enabled": False,
             }
         ),
@@ -701,7 +701,7 @@ session_lifecycle:
   max_sessions_per_machine: 10
   cleanup_interval_minutes: 5
 
-gobby_tasks:
+gobby-tasks:
   expansion:
     enabled: false
   validation:
