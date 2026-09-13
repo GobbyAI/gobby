@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 import yaml
 
+from gobby.cli import install_setup_gterm
 from gobby.cli.install_setup import (
     _STAGE0_TARGETS,
     MANAGED_NATIVE_BINARY_NAMES,
@@ -21,7 +22,6 @@ from gobby.cli.install_setup import (
     _install_gterm_from_github,
     _install_gterm_from_submodule,
 )
-from gobby.cli import install_setup_gterm
 from gobby.cli.install_setup_gterm import GTERM_NO_ZIG_SKIP_REASON
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
@@ -313,7 +313,7 @@ def test_unpublished_absent_binary_builds_or_raises(
         present=False,
         installed_version=None,
     )
-    error_type = getattr(install_setup_gterm, "ManagedBinaryReleaseMissing")
+    error_type = install_setup_gterm.ManagedBinaryReleaseMissing
     with pytest.raises(error_type, match="gterm"):
         install_setup_gterm.install_gterm(missing_module)
     assert missing_fetches.mock_calls == []
@@ -434,7 +434,7 @@ def test_force_rebuilds_unpublished_present_binary(
         present=True,
         installed_version=GTERM_PIN,
     )
-    error_type = getattr(install_setup_gterm, "ManagedBinaryReleaseMissing")
+    error_type = install_setup_gterm.ManagedBinaryReleaseMissing
     with pytest.raises(error_type, match="gterm"):
         install_setup_gterm.install_gterm(missing_module, force=True)
 

@@ -28,8 +28,8 @@ def test_managed_bin_pins_match_crate_versions(bin_name: str, crate_dir: str) ->
 
 
 def test_published_state_is_explicit_for_managed_binaries() -> None:
-    unpublished = getattr(version_pins, "UNPUBLISHED_MANAGED_BINS")
-    is_published = getattr(version_pins, "is_published")
+    unpublished = version_pins.UNPUBLISHED_MANAGED_BINS
+    is_published = version_pins.is_published
 
     assert unpublished == frozenset({"gterm", "gclient"})
     assert is_published("gterm") is False

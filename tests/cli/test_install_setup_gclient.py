@@ -110,7 +110,7 @@ def test_unpublished_absent_binary_builds_or_raises(
         present=False,
         installed_version=None,
     )
-    error_type = getattr(install_setup_gterm, "ManagedBinaryReleaseMissing")
+    error_type = install_setup_gterm.ManagedBinaryReleaseMissing
     with pytest.raises(error_type, match="gclient"):
         install_setup_gclient.install_gclient(missing_module)
     assert missing_fetches.mock_calls == []
@@ -231,7 +231,7 @@ def test_force_rebuilds_unpublished_present_binary(
         present=True,
         installed_version=GCLIENT_PIN,
     )
-    error_type = getattr(install_setup_gterm, "ManagedBinaryReleaseMissing")
+    error_type = install_setup_gterm.ManagedBinaryReleaseMissing
     with pytest.raises(error_type, match="gclient"):
         install_setup_gclient.install_gclient(missing_module, force=True)
 
