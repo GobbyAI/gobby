@@ -25,6 +25,7 @@ from gobby.utils.datetime import parse_stored_datetime, to_aware_utc, utc_now
 
 logger = logging.getLogger(__name__)
 MAX_SUPERSEDES_IDS = 20
+GOBBY_PROJECT_NAME = "gobby"
 
 
 class DuplicateMemoryContentError(ValueError):
@@ -915,11 +916,24 @@ class MemoryCrudMixin(MemoryStoreBase):
         return True
 
     def delete_memory_scoped(self, memory_id: str, project_id: str) -> bool:
-        """Delete a memory only when it is owned by the requested project."""
+        """Delete an owned memory, or let the Gobby project delete a global one."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM memories WHERE id = %s AND project_id = %s",
-                (memory_id, project_id),
+                """
+                DELETE FROM memories
+                WHERE id = %s
+                  AND (
+                    project_id = %s
+                    OR (
+                      is_global IS TRUE
+                      AND EXISTS (
+                        SELECT 1 FROM projects
+                        WHERE id = %s AND name = %s AND deleted_at IS NULL
+                      )
+                    )
+                  )
+                """,
+                (memory_id, project_id, project_id, GOBBY_PROJECT_NAME),
             )
             if cursor.rowcount == 0:
                 return False
