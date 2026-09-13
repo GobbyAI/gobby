@@ -12,18 +12,18 @@ AI work is routed per capability. The shared capability names are stable wire va
 | Audio translation | `audio_translate` | Speech to translated text | `/api/voice/*` |
 | Vision extraction | `vision_extract` | Image description and optional OCR text | `/api/llm/vision/*` |
 | Text generation | `text_generate` | Prompted text generation | `/api/llm/*` |
-| Embeddings | `embed` | Semantic vectors | No daemon status route in this contract |
+| Embeddings | `embed` | Semantic vectors | `/api/embeddings` and `/api/embeddings/status` |
 
 Routing is selected per capability as `daemon` or `off`.
 
 - `daemon` sends requests to the daemon URL resolved from `~/.gobby/bootstrap.yaml` and includes the local CLI token and presented grant.
 - `off` reports the capability unavailable.
 
-CLI AI capability config resolves from daemon-served grant-backed keys. There is no client credential file and no `GOBBY_*` environment layer for AI capability config. There is no Auto or Direct route and no probe of daemon status endpoints to decide availability. Use `--no-ai` to force every capability off for one invocation.
+CLI AI capability config resolves from daemon-served grant-backed keys. There is no client credential file and no `GOBBY_*` environment layer for AI capability config. There is no Auto or Direct route and no probe of daemon status endpoints to decide availability. Consumer flags are command-specific; gcode has no global `--no-ai` option.
 
-The daemon does not accept `ai.text_generate.*` writes in `config_store`; daemon text generation resolves providers from the daemon runtime config instead. Named local daemon endpoints live under `ai.generation.local.endpoints.<name>` and are selected with providers such as `local:lm-studio`.
+The daemon does not accept `ai.text_generate.*` writes in `config_store`; daemon text generation resolves providers from the daemon runtime config instead. Named endpoints live under `ai.generation.endpoints.<name>` and are selected with providers such as `endpoint:lm-studio`. The removed `ai.generation.local.*` namespace and `local:` selectors are rejected.
 
-Daemon-side transports are implementation details behind a capability binding. `openai_compatible_http` means the daemon proxies to an OpenAI-compatible endpoint. `daemon_native` is reserved for daemon-native implementations. For audio, the daemon binding is `voice.openai_compatible_audio` with `provider`, `url`, `model`, optional `api_key`, `timeout_seconds`, `transcription_enabled`, and `translation_enabled`.
+Daemon-side transports are implementation details behind a capability binding. `openai_compatible_http` means the daemon proxies to an OpenAI-compatible endpoint. `daemon_native` is reserved for daemon-native implementations. For audio, `voice.openai_compatible_audio` is a list of bindings with unique provider IDs. Each binding has `provider`, `url`, `model`, optional `api_key`, `timeout_seconds`, `transcription_enabled`, and `translation_enabled`; see `OpenAICompatibleAudioBindingConfig` in `src/gobby/config/voice.py`.
 
 ## Capability Status Routes
 
@@ -35,18 +35,20 @@ The daemon advertises capability support on these status routes:
 |---|---:|---|---|
 | `audio_transcribe` | `GET` | `/api/voice/status` | `transcription_enabled: true` |
 | `audio_translate` | `GET` | `/api/voice/status` | `translation_enabled: true` |
-| `vision_extract` | `GET` | `/api/llm/vision/status` | `vision_extract: true` or equivalent capability flag |
-| `text_generate` | `GET` | `/api/llm/status` | `text_generate: true` or equivalent capability flag |
-| `embed` | none | none | unavailable for daemon routing |
+| `vision_extract` | `GET` | `/api/llm/vision/status` | `available: true` in the returned capability status object |
+| `text_generate` | `GET` | `/api/llm/status` | `capabilities.text_generate.available: true` |
+| `embed` | `GET` | `/api/embeddings/status` | Diagnostic status; the grant remains the availability authority |
 
-The daemon should return the canonical fields above. Status bodies may advertise these field names:
+Registry capability status objects contain `capability`, `available`, `state`,
+`reason`, and `bindings`. `/api/llm/status` nests them under `capabilities`;
+the vision status route returns one directly. These shapes are defined by
+`AICapabilityRegistry` in `src/gobby/ai/registry.py` and the LLM route handlers.
+The voice route supplies its two top-level audio availability booleans.
+Do not treat loosely named boolean aliases as the wire contract.
 
-- Audio transcription: `transcription_enabled`, `openai_compatible_audio.transcription_enabled`, or `voice.openai_compatible_audio.transcription_enabled`.
-- Audio translation: `translation_enabled`, `openai_compatible_audio.translation_enabled`, or `voice.openai_compatible_audio.translation_enabled`.
-- Vision extraction: `vision_extract`, `vision_extract_enabled`, `extraction_enabled`, `capabilities.vision_extract`, or `enabled`.
-- Text generation: `text_generate`, `text_generate_enabled`, `generation_enabled`, `capabilities.text_generate`, or `enabled`.
-
-A reachable status route whose body does not advertise the requested capability degrades that capability. For audio, `transcription_enabled=false` degrades only `audio_transcribe`, and `translation_enabled=false` degrades only `audio_translate`.
+Status bodies support diagnostics. They do not make a CLI capability routable or
+replace its grant binding. Audio transcription and translation remain separate
+capabilities; failure of one must not disable the other.
 
 ## Consumed Routes
 
@@ -58,13 +60,8 @@ The status body advertises voice capability support independently:
 
 ```json
 {
-  "openai_compatible_audio": {
-    "provider": "local-audio",
-    "url": "http://127.0.0.1:8000/v1",
-    "model": "whisper-large-v3",
-    "transcription_enabled": true,
-    "translation_enabled": false
-  }
+  "transcription_enabled": true,
+  "translation_enabled": false
 }
 ```
 
@@ -80,7 +77,6 @@ Request is multipart form data:
 | `model` | no | Per-request model override. |
 | `language` | no | Source language hint. |
 | `prompt` | no | Recognition prompt or vocabulary hint. |
-| `project_id` | no | CLI project UUID when available; scopes the request to the current project. |
 
 Response:
 
@@ -113,7 +109,7 @@ Request is multipart form data:
 | `file` | yes | Image file bytes. |
 | `provider` | no | Per-request provider override. |
 | `model` | no | Per-request model override. |
-| `project_id` | no | CLI project UUID when available; scopes the request to the current project. |
+| `context` | no | Additional image-description context. |
 
 Response:
 
@@ -142,28 +138,30 @@ Request body:
 {
   "prompt": "Write a concise title.",
   "system_prompt": "Use project terminology.",
-  "provider": "local:lm-studio",
+  "provider": "endpoint:lm-studio",
   "model": "Qwen3-Coder-30B-A3B-Instruct",
   "profile": "feature_low",
-  "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct", "claude/haiku"],
+  "candidates": ["endpoint:lm-studio/Qwen3-Coder-30B-A3B-Instruct", "claude/haiku"],
   "max_tokens": 128,
-  "cwd": "/repo",
-  "project_id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01"
+  "cwd": "/repo"
 }
 ```
 
 Supported request fields are `prompt`, `system_prompt` or legacy `system`,
-`provider`, `model`, `profile`, `candidates`, `max_tokens`, `project_id`, and
-`cwd`. When `provider`, `model`, `profile`, and `candidates` are all omitted,
+`provider`, `model`, `profile`, `candidates`, `max_tokens`, `reasoning_effort`,
+`cwd`, `images`, `candidate_timeout_seconds`, `cli_candidate_timeout_seconds`
+and `total_timeout_seconds`. `project_id` is not a supported request field and
+must not be relied on for scoping. When `provider`, `model`, `profile`, and `candidates` are all omitted,
 the daemon resolves `/api/llm/generate` through the `feature_low` default
 candidates. Explicit `candidates` take precedence over `provider` and `model`;
 explicit `provider` or `model` takes precedence over profile defaults.
 
-Named local daemon generation endpoints use `local:<endpoint>` as the provider.
-Candidate strings use `local:<endpoint>/<model>`. Bare `local` is reserved for
-the daemon-owned local provider family and is unavailable for text generation.
+Named daemon generation endpoints use `endpoint:<name>` as the provider.
+Candidate strings require the explicit `endpoint:<name>/<model>` form.
+Bare `endpoint` is invalid; a selector must name its endpoint.
 Endpoint config is daemon-owned and shaped as
-`ai.generation.local.endpoints.<name> = { api_base, model, api_key? }`. CLIs
+`ai.generation.endpoints.<name>`, including protocol, wire API, URL, model and
+optional authentication. Activation owns the probed capability evidence. CLIs
 pass `provider`, `model`, `profile`, or `candidates` to daemon requests.
 
 Response:
@@ -172,7 +170,7 @@ Response:
 {
   "text": "Index Pipeline Overview",
   "model": "Qwen3-Coder-30B-A3B-Instruct",
-  "provider": "local:lm-studio"
+  "provider": "endpoint:lm-studio"
 }
 ```
 
@@ -232,7 +230,7 @@ Each request resolves capability, provider, and model in this order:
 2. Daemon feature default for that capability.
 3. Off, with a capability-unavailable degradation.
 
-When `routing=daemon`, the CLI forwards the requested capability where the route requires it, any resolved provider/model values, and `project_id` when available. The daemon owns final provider selection for daemon-routed work.
+When `routing=daemon`, the CLI forwards the requested capability where the route requires it and any resolved provider/model values. The daemon owns final provider selection for daemon-routed work. Voice and vision form endpoints do not accept a project selector.
 
 Provider-model execution requests carry no speed parameter. Speed is model
 selection: see [Providers And Models](providers-and-models.md#speed-is-model-selection-not-a-mode).
@@ -241,17 +239,16 @@ selection: see [Providers And Models](providers-and-models.md#speed-is-model-sel
 
 Capability errors are typed. If a provider exists but does not support the requested capability, the daemon returns a capability error, not an unknown-provider error.
 
-Minimum error payload:
+For generation and vision, HTTP 400 carries the following shape, defined by
+`_capability_error_detail` in `src/gobby/servers/routes/llm.py`:
 
 ```json
 {
-  "error": {
-    "type": "capability_unavailable",
-    "capability": "vision_extract",
-    "provider": "ollama",
-    "model": "qwen2.5-coder",
-    "message": "provider exists but does not support vision_extract"
-  }
+  "code": "capability_unavailable",
+  "capability": "vision_extract",
+  "provider": "ollama",
+  "model": "qwen2.5-coder",
+  "reason": "provider exists but does not support vision_extract"
 }
 ```
 
@@ -271,33 +268,29 @@ Embedding config uses the canonical `ai.embeddings.*` namespace:
 
 Dimension is configured only with `ai.embeddings.dim`.
 
-Daemon-side writer:
+`EmbeddingsConfig` in `src/gobby/config/persistence.py` defines the model.
+`src/gobby/config/registry.py` maps its Python source fields to the external
+`ai.embeddings.*` keys. Consumers receive the resolved runtime configuration;
+they must not implement alternate persistent namespaces or direct database writes.
 
-- `cli/installers/embedding.py::_persist_embedding_config`
+Embedding identity changes use the managed embedding-switch operation. Consult
+the public configuration schema for each key's activation policy and
+[AI Configuration](ai-configuration.md) for the switch workflow. Ordinary
+configuration patches cannot bypass a managed operation.
 
-Daemon-side readers that must prefer `ai.embeddings.*`:
-
-- `EmbeddingsConfig` in `config/persistence.py`
-- `servers/http.py`
-- `code_index/sync_worker.py`
-- `ai/registry.py`
-- `memory/vectorstore.py`
-- `memory/.../knowledge_graph/code_linker.py`
-- `cli/memory/indices.py`
-- `utils/deps.py`
-- `runner_init/storage.py`
-- `search/models.py`
-- `mcp_proxy/semantic_search.py`
-- `configuration_values.py`
-
-`configuration_ui_settings.py` writes only `ui_settings.*` and is outside the embedding writer scope.
-
-The one-time `config_store` migration is daemon-owned and runs in the hub install or upgrade flow described in `hub-install-contract.md`. It renames existing `embeddings.*` rows to `ai.embeddings.*`, preserves values, and preserves `is_secret`. The CLIs must not rewrite daemon-owned `config_store` rows.
-
-The embedding-config migration removes the same-window co-release requirement. Its dual-write and dual-read phases populate and prefer `ai.embeddings.*` before the 0.5.0 contract cut, so daemon D6 and gcode's matching cut can ship independently without a permanent shim.
+Schema changes run through the hub migration owner described in
+[Hub Install Contract](hub-install-contract.md). Upgrade the native binaries and
+schema identity pin as a coherent set. There is no ongoing dual-read or
+dual-write embedding namespace transition.
 
 ## Memory And Residency
 
 The daemon should serialize model loads or honor keep-alive settings so Whisper, multimodal generation, and embeddings are not all resident at once unless explicitly configured.
 
-_Last verified: 2026-08-17_
+This is an unfulfilled coordination requirement, not a current runtime guarantee.
+The Ollama generation adapter currently sends `keep_alive: -1`, and there is no
+shared residency coordinator across voice, generation, and embeddings. Operators
+must budget these services independently; the configuration library does not
+introduce a new model-lifecycle operation to close this gap.
+
+_Last verified: 2026-09-12_

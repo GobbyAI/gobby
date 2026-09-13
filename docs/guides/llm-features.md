@@ -7,7 +7,7 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 
 | Profile | Default candidates |
 | --- | --- |
-| `feature_low` | `claude/haiku`, `codex/gpt-5.6-luna` |
+| `feature_low` | `codex/gpt-5.6-luna`, `claude/haiku` |
 | `feature_mid` | `codex/gpt-5.6-terra`, `claude/sonnet` |
 | `feature_high` | `codex/gpt-5.6-sol` (`xhigh` reasoning), `claude/opus` (`high` reasoning) |
 
@@ -45,14 +45,19 @@ ai:
         - claude/haiku
         - codex/gpt-5.6-luna
         - endpoint:lm-studio/google/gemma-4-26b-a4b-qat
-        - endpoint:vllm
+        - endpoint:vllm/Qwen/Qwen3-8B
 ```
 
-Feature candidates use `endpoint:<name>` for the endpoint default or
-`endpoint:<name>/<model>` to pin a served id (slashes in the model id are
-preserved). Selection skips to the next candidate when the endpoint is
+Feature candidates require `endpoint:<name>/<model>` to pin a served id
+(slashes in the model id are preserved). Replace the example IDs with models
+your endpoints actually serve. Selection skips to the next candidate when the endpoint is
 unavailable or does not serve the model. Direct HTTP text generation uses
 `provider="endpoint:<name>"` with `model="<model>"`.
+
+The general endpoint model-selector parser also accepts `endpoint:<name>` for
+an endpoint default. That shorthand is not accepted in feature candidate lists:
+`FeatureCandidateConfig` requires a provider/model pair, as shown in the example
+above.
 
 Bare `endpoint` is invalid; selectors and providers must name an endpoint.
 Vision extraction (`vision_extract`) is a capability-registry route, not an
@@ -88,12 +93,15 @@ resolved secret only in the child environment as `GOBBY_CODEX_ENDPOINT_API_KEY`
 
 ### Tool calling (required for Codex web chat and agent spawn)
 
-Start vLLM with `--enable-auto-tool-choice --tool-call-parser <parser>`
-(`hermes` for Qwen models). The parser must match the model family — LM Studio
-and Ollama infer this from the model template, vLLM does not. A server started
-without these flags returns HTTP 400 on every request that carries `tools`.
+For automatic tool choice, start vLLM with
+`--enable-auto-tool-choice --tool-call-parser <parser>`. Select the parser and
+any required chat template for the exact model and installed vLLM release;
+Qwen variants do not all use the same parser. These flags concern automatic
+tool choice: named and required function calling have separate support rules.
+See the upstream [vLLM tool-calling guide](https://docs.vllm.ai/en/latest/features/tool_calling/).
 
-Activate the endpoint with `tool_chat: true` (the default) so the activation
+Activate the endpoint with `tool_chat: true` (the activation request default;
+ordinary endpoint configuration defaults to false) so the activation
 probe exercises a real tool call. A failed probe persists
 `probed_tools: false`, logs a WARNING, returns the server error in the
 activate response's `probe_diagnostics.tools`, and hides the endpoint from the
@@ -104,14 +112,14 @@ server on its own port; see the embeddings guidance in
 [configuration.md](./configuration.md) for `--embedding-provider vllm` and
 `gobby embeddings switch --provider vllm`.
 
-Paired selectors for the same endpoint. Auto becomes the picker/candidate value
+Paired selectors for the same endpoint. Auto becomes the picker selector
 `endpoint:vllm` after the single served id is resolved:
 
 ```yaml
 model: auto
 ```
 
-Pin a served id (`endpoint:vllm/Qwen/Qwen2.5-7B-Instruct` as the candidate):
+Pin a served id (`endpoint:vllm/Qwen/Qwen2.5-7B-Instruct` as a feature candidate):
 
 ```yaml
 model: Qwen/Qwen2.5-7B-Instruct
@@ -180,4 +188,4 @@ endpoints the binding exists only when probed or advertised `input_modalities` i
 - [system-requirements.md](system-requirements.md) — local generation runtime table
 - [configuration.md](configuration.md) — daemon and project configuration
 
-_Last verified: 2026-08-20_
+_Last verified: 2026-09-12_

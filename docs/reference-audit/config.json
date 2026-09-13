@@ -1,0 +1,858 @@
+{
+  "version": 1,
+  "capability": "config",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/configuration.md",
+      "anchors": [
+        "reactive-runtime-configuration-contract",
+        "configuration-sources",
+        "runtime-configuration",
+        "bootstrap",
+        "runtime-overrides",
+        "http-configuration-api",
+        "environment-and-secret-expansion",
+        "core-runtime-sections",
+        "daemon-and-network",
+        "logging-and-telemetry",
+        "mcp-proxy",
+        "llm-feature-routing",
+        "storage-embeddings-and-memory",
+        "sessions",
+        "tasks-and-workflows",
+        "code-index",
+        "hooks-and-webhooks",
+        "tool-approval-and-chat",
+        "downstream-mcp-servers",
+        "project-configuration",
+        "build-defaults",
+        "packaging-diagnostics",
+        "validation-rules",
+        "troubleshooting",
+        "daemon-uses-the-wrong-port",
+        "runtime-setting-does-not-stick",
+        "secret-is-masked-or-missing",
+        "mcp-server-does-not-connect",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final-alias",
+        "config-package",
+        "docs-review",
+        "docs-final-review"
+      ]
+    },
+    {
+      "path": "docs/guides/ai-configuration.md",
+      "anchors": [
+        "search-and-embedding-behavior",
+        "changing-the-embedding-model",
+        "daemon-profiles"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final-alias",
+        "config-package",
+        "docs-review",
+        "docs-final-review"
+      ]
+    },
+    {
+      "path": "docs/guides/ai-daemon-contract.md",
+      "anchors": [
+        "capabilitytransport-model-a2",
+        "capability-status-routes",
+        "consumed-routes",
+        "d1-voice-transcription-and-translation",
+        "d2-vision-extraction",
+        "d3-text-generation",
+        "d4-provider-and-model-discovery",
+        "per-request-resolution",
+        "capability-error-semantics",
+        "d6-embedding-config-namespace",
+        "memory-and-residency"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final-alias",
+        "config-package",
+        "docs-review",
+        "docs-final-review"
+      ]
+    },
+    {
+      "path": "docs/guides/llm-features.md",
+      "anchors": [
+        "profile-candidates",
+        "vllm-endpoints",
+        "copy-pasteable-config",
+        "tool-calling-required-for-codex-web-chat-and-agent-spawn",
+        "model-auto",
+        "vllm-metal-apple-silicon",
+        "feature-routes",
+        "outside-feature-helpers",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final-alias",
+        "config-package",
+        "docs-review",
+        "docs-final-review"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "global-form",
+        "top-level-commands"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final-alias",
+        "config-package",
+        "docs-review",
+        "docs-final-review"
+      ],
+      "scope": "Global --config bootstrap selection and embeddings summary only; shared guide footer unchanged."
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "source-control-files-projects-and-config"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final-alias",
+        "config-package",
+        "docs-review",
+        "docs-final-review"
+      ],
+      "scope": "Configuration routes and revision semantics only; shared guide footer unchanged."
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-config",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/schema.md",
+      "implementation": {
+        "symbol": "create_config_registry",
+        "path": "src/gobby/mcp_proxy/tools/config.py"
+      },
+      "tool": "get_config_schema",
+      "verification": [
+        "schemas",
+        "focused-final-alias"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-config",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/values.md",
+      "implementation": {
+        "symbol": "create_config_registry",
+        "path": "src/gobby/mcp_proxy/tools/config.py"
+      },
+      "tool": "get_config_values",
+      "verification": [
+        "schemas",
+        "focused-final-alias"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-config",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "symbol": "create_config_registry",
+        "path": "src/gobby/mcp_proxy/tools/config.py"
+      },
+      "tool": "patch_config_values",
+      "verification": [
+        "schemas",
+        "focused-final-alias"
+      ]
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/effective",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/values.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_effective.py",
+        "symbol": "register_effective_routes.get_effective_config"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/generation-endpoints/{endpoint_name}/activate",
+      "method": "PUT",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_generation_endpoints.py",
+        "symbol": "register_generation_endpoint_routes.activate_generation_endpoint"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/export",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_import_export.py",
+        "symbol": "register_import_export_routes.export_config"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/import",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_import_export.py",
+        "symbol": "register_import_export_routes.import_config"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/prompts",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_prompts.py",
+        "symbol": "register_prompt_routes.list_prompts"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/prompts/{path:path}",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_prompts.py",
+        "symbol": "register_prompt_routes.get_prompt_detail"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/prompts/{path:path}",
+      "method": "PUT",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_prompts.py",
+        "symbol": "register_prompt_routes.save_prompt_override"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/prompts/{path:path}",
+      "method": "DELETE",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_prompts.py",
+        "symbol": "register_prompt_routes.delete_prompt_override"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/secrets",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_secrets.py",
+        "symbol": "register_secret_routes.list_secrets"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/secrets",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_secrets.py",
+        "symbol": "register_secret_routes.save_secret"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/secrets/{name}",
+      "method": "DELETE",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_secrets.py",
+        "symbol": "register_secret_routes.delete_secret"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/template",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_templates.py",
+        "symbol": "register_template_routes.get_config_template"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/template",
+      "method": "PUT",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_templates.py",
+        "symbol": "register_template_routes.save_config_template"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/tool-approvals/global",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/values.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_tool_approvals.py",
+        "symbol": "register_tool_approval_routes.get_global_tool_approval_rules"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/ui-settings",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/values.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_ui_settings.py",
+        "symbol": "register_ui_setting_routes.get_ui_settings"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/validation-detection/preview",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_validation_detection.py",
+        "symbol": "register_validation_detection_routes.preview_validation_detection"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/schema",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/schema.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_values.py",
+        "symbol": "register_value_routes.get_config_schema"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/values",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/values.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_values.py",
+        "symbol": "register_value_routes.get_config_values"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/config/values",
+      "method": "PATCH",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/updates.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/configuration_values.py",
+        "symbol": "register_value_routes.patch_config_values"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby embeddings catalog",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/embeddings.py",
+        "symbol": "catalog"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby embeddings doctor",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/embeddings.py",
+        "symbol": "doctor"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby embeddings switch",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/embeddings.py",
+        "symbol": "switch"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby embeddings switch --status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/embeddings.py",
+        "symbol": "switch"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby embeddings switch --resume",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/embeddings.py",
+        "symbol": "switch"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby embeddings switch --abort",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/embeddings.py",
+        "symbol": "switch"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings/status",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.embedding_status"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.generate_embedding_batch"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings/doctor",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.embeddings_doctor"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings/switch/status",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.embedding_switch_status"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings/switch/start",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.embedding_switch_start"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings/switch/resume",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.embedding_switch_resume"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/embeddings/switch/abort",
+      "method": "POST",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/embeddings.py",
+        "symbol": "create_embeddings_router.embedding_switch_abort"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/runtime/config",
+      "method": "GET",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/values.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/runtime_config.py",
+        "symbol": "create_runtime_config_router.get_runtime_config"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby --config PATH <command>",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/restarts.md",
+      "implementation": {
+        "path": "src/gobby/cli/__init__.py",
+        "symbol": "cli"
+      },
+      "verification": [
+        "source-audit",
+        "config-package"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby install embedding",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/cli/installers/embedding.py",
+        "symbol": "install_embedding"
+      },
+      "verification": [
+        "source-audit",
+        "embedding-cli-help"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Documented gobby-tasks external alias is missing from the registry; keys instead expose gobby_tasks.",
+      "implementation": [
+        "src/gobby/config/app.py::DaemonConfig",
+        "src/gobby/config/registry.py::_canonical_key",
+        "src/gobby/config/registry.py::_pattern_from_mapping",
+        "src/gobby/runner_init/config_subscribers.py::live_consumer_matrix"
+      ],
+      "resolution": "Fixed and live in a69cc5a8e4574e6db28a66a3176b3bfc8765afdd: canonical registry/source mapping, migration434, subscribers, schema identity and isolated upgrade tests. Follow-ups6fa8b75 migrate isolated fixture keys; d814494 regenerates Rust contract. Regenerated native contract rebuilt, promoted and verified after coordinated restart."
+    },
+    {
+      "finding": "Configuration troubleshooting uses removed list_config_keys and set_config; HTTP guide lists removed PUT values, validate/reset and specialized UI/approval writers.",
+      "resolution": "Corrected to schema/values/PATCH CAS, desired/active failure diagnostics and current HTTP routes. Final audit maps 38 operations; 72 local links across six references and six guides resolve to existing files and anchors."
+    },
+    {
+      "finding": "AI contract uses removed local: selectors, ai.generation.local.*, global gcode --no-ai, project_id on unsupported forms, and no embedding status route.",
+      "resolution": "Corrected removed selectors, unsupported fields, audio-list shape, status objects and embedding namespace prose. Typed error semantics retained with actual flat payload. Shared model-residency requirement preserved and marked unfulfilled rather than invented as implemented."
+    },
+    {
+      "finding": "Configuration examples include bootstrap keys in runtime YAML, old embedding namespace, removed digest/research/validation fields, malformed code-index indentation and obsolete hook timeouts.",
+      "resolution": "Corrected keys, indentation and timeout ladder. Eleven complete runtime YAML fragments pass typed field and full candidate validation. Bootstrap, project/build and illustrative nested fragments are separately scoped and not claimed as full daemon documents."
+    },
+    {
+      "finding": "LLM guide has reversed feature_low default order and conflates ordinary endpoint defaults with activation request defaults.",
+      "resolution": "Corrected low order and activation defaults; corrected feature-candidate default-shorthand claim after tracing mandatory provider/model validator and consumer parser. Both complete LLM YAML fragments now validate. Upstream vLLM parser/tool-choice instructions corrected."
+    },
+    {
+      "finding": "Broader test_voice_and_route_consumers_use_runtime expects obsolete terminal payload.",
+      "resolution": "Owner #12967 fixed terminal payload expectation and stale migrator fixtures; all212 focused main checks passed with no deselection after434."
+    },
+    {
+      "finding": "Guide claimed public runtime values generally expand environment variables; bootstrap example initially used a tilde path rejected by its parser.",
+      "resolution": "Documented literal public values, plaintext scalar secret updates versus resolvable named references in YAML, and absolute non-root files_home. Verified temporary bootstrap parsing."
+    },
+    {
+      "finding": "Canonical task-key migration exposed old underscore keys in isolated terminal fixtures and the generated native runtime contract.",
+      "resolution": "Fixed fixtures in 6fa8b754 and regenerated contract in d81449415b; isolated terminal/native probe tests and contract tests passed."
+    },
+    {
+      "finding": "HTTP text-generation guide still allowed bare endpoint names in candidates after feature candidate correction.",
+      "resolution": "D3 now requires endpoint:<name>/<model>; provider field alone accepts endpoint:<name>. Verified shared candidate_runtime_entries/validate_feature_candidates path; sibling reference forms already distinguish the interfaces."
+    }
+  ],
+  "notes": [
+    "Migration 434 and regenerated native contract are live after coordinated promotion and restart. No live model/configuration examples executed.",
+    "Catalog registers configuration as its seventeenth capability; six operation references and scoped guide corrections complete.",
+    "Three implementation commits are linked to #22262; both isolated build worktrees are removed.",
+    "No full pytest suite; mutating examples verified using isolated test hub and temporary state."
+  ],
+  "operational_notes": [
+    "Tailscale reported NeedsLogin during434 startup. Node key expired2026-09-12T23:02:40Z before cutover; user informed reauthentication requires their login. Core daemon/local access healthy.",
+    "gcode index file-lock path failure is owned by active #12858. His FTS and schema-runner changes are now committed ancestors of d81449415b and included in the clean native refresh build."
+  ],
+  "evidence": [
+    {
+      "id": "schemas",
+      "command": "get_tool_schema(gobby-config, get_config_schema/get_config_values/patch_config_values)",
+      "result": "All three registered schemas fetched 2026-09-12. Read tools have no arguments. Patch requires expected_revision integer 0..9007199254740991; values object and unset string list default empty."
+    },
+    {
+      "id": "focused-initial",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_config_values.py tests/servers/routes/test_config_values_api.py tests/servers/routes/test_config_yaml_replace.py tests/config/test_config_registry.py tests/config/test_config_runtime.py tests/storage/test_revisioned_config_store.py tests/cli/test_config_writes.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "181 passed in 17.60s before implementation; not final verification."
+    },
+    {
+      "id": "alias-red",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/config/test_config_cross_seam.py -k task_external_alias -q --tb=short",
+      "result": "1 failed: public schema lacks gobby-tasks.validation.max_iterations."
+    },
+    {
+      "id": "alias-green-before-withdrawal",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/config/test_config_registry.py tests/config/test_stateful_config_subscribers.py tests/config/test_live_policy_consumers.py -k \"not test_voice_and_route_consumers_use_runtime\" -q --tb=short",
+      "result": "42 passed, 1 deselected in 2.77s with alias patch applied. Production patch subsequently withdrawn pending coordinated migration; this is not a passing claim about the current working tree."
+    },
+    {
+      "id": "source-audit",
+      "command": "Targeted gcode outline/symbol-at/grep plus bounded reads; registry-only YAML key probe",
+      "result": "Audited four capability guides and scoped CLI/HTTP sections against config registry/service/repository/documents, endpoint activation, voice/generation payloads, bootstrap parsing, CLI startup, embedding switch and registered route factories. Thirty-eight operations mapped. Preserved normative residency requirement and identified missing shared coordinator; no new operation introduced."
+    },
+    {
+      "id": "isolated-schema-434",
+      "command": "GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-core --features postgres -E 'test(embedded_assets_publish_a_complete_schema_identity) | test(fresh_baseline_creates_config_revision_state) | test(config_revision_baseline_is_nondestructive) | test(migrations_directory_exists)'",
+      "result": "4 passed, 307 filtered out; registered 434 and matching identity pins. Executed in managed worktree /tmp/gobby-config-22262; main checkout and installed binaries were still schema 433 during this pre-cutover check."
+    },
+    {
+      "id": "isolated-schema-upgrade-434",
+      "command": "GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-core --features postgres -E 'test(task_config_alias_upgrade)'",
+      "result": "1 passed, 311 filtered out; real runner preserves override, stamps receipt and advances revision once. Executed in managed worktree /tmp/gobby-config-22262; main checkout and installed binaries were still schema 433 during this pre-cutover check."
+    },
+    {
+      "id": "isolated-alias-green-434",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/config/test_config_registry.py tests/config/test_stateful_config_subscribers.py -q --tb=short",
+      "result": "38 passed in 2.95s with alias patch and freshly built checkout gdaemon (cargo build -p gobby-daemon --bin gdaemon). Executed in managed worktree /tmp/gobby-config-22262; main checkout and installed binaries were still schema 433 during this pre-cutover check."
+    },
+    {
+      "id": "isolated-rust-clippy",
+      "command": "cargo clippy -p gobby-core --features postgres --tests -- -D warnings",
+      "result": "Passed. Initial format check requested wrapping one assertion; cargo fmt applied correction. Executed in managed worktree /tmp/gobby-config-22262; main checkout and installed binaries were still schema 433 during this pre-cutover check."
+    },
+    {
+      "id": "live-cutover-434",
+      "command": "Coordinated old uv run gobby stop; promote_workspace_binary_set from tested worktree; copy reviewed source/pin; fresh uv run gobby start --verbose; uv run gobby status",
+      "result": "Passed. Main checkout, installed gdaemon and live hub434; daemon PID26867 healthy. All three native set members checked against candidate pin before promotion via new inode. Commit a69cc5a8e4574e6db28a66a3176b3bfc8765afdd."
+    },
+    {
+      "id": "focused-final-alias",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_config_values.py tests/servers/routes/test_config_values_api.py tests/servers/routes/test_config_yaml_replace.py tests/config/test_config_registry.py tests/config/test_config_runtime.py tests/storage/test_revisioned_config_store.py tests/cli/test_config_writes.py tests/skills/test_capability_catalog.py tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/config/test_stateful_config_subscribers.py tests/config/test_live_policy_consumers.py -q --tb=short",
+      "result": "212 passed in19.43s on main after434 cutover. Terminal-owner fixture correction included; no deselection."
+    },
+    {
+      "id": "migration-review",
+      "command": "OCR independent worktree review and staged precommit self-review",
+      "result": "10/10 files reviewed, zero skipped, no material findings. Reviewed migration preservation/collision/revision limits, identity integrity, alias/source paths, subscribers and upgrade/API/YAML tests."
+    },
+    {
+      "id": "rust-test-quality",
+      "command": "uv run gobby test-quality audit crates/gcore/src/schema/runner_tests.rs --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "Worktree-relative run:1 file,28 tests,0issues. First absolute-path invocation from main was unresolved and credited no coverage; corrected invocation passed."
+    },
+    {
+      "id": "external-vllm-docs",
+      "command": "Read https://docs.vllm.ai/en/latest/features/tool_calling/",
+      "result": "Corrected blanket all-tools HTTP400 claim and universal Qwen hermes recommendation. Upstream distinguishes automatic, named, required and none; parser depends on exact model/release."
+    },
+    {
+      "id": "fixture-alias-followup",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_POSTGRES_TEST_DSN=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_runtime_contract.py tests/ask/test_native_probe_harness.py -k 'daemon_restart_continuity or contained_machine_identity_reaches_actual_ask_prepare_and_seed' -q --tb=short",
+      "result": "3 passed,53 deselected in19.58s; isolated tmux/native daemon restarts and native seed. Commit6fa8b754f32ee6945237cad0536b232adfaea672 fixes six stale fixture writes plus YAML/reader. Ruff/format and test-types0errors; test-quality0issues; suppression4284files217baseline0new0stale."
+    },
+    {
+      "id": "generated-contract",
+      "command": "uv run python scripts/generate_runtime_config_contract.py; focused tests/config/test_runtime_config_contract.py and tests/config/test_feature_base.py; cargo nextest run -p gobby-core -E test(runtime_contract)",
+      "result": "53 Python tests and 3 Rust tests passed. Generated asset committed d81449415b1a98e55dae98e67195c6c3b628727f. Clean worktree release build of gcode/gdaemon/ghook passed; promoted through new-inode helper after coordinated quiet window. All installed schema identities equal checkout 434; installed gcode embeds exact contract SHA256 8fa7b10b3803dc0d07330a173135d36f590b7712829b6ba578b2afa09bd9e674. Other two binaries are from the same build and omit the unused contract asset. Restart health passed, daemon PID 30328. Build worktree marked merged and deleted."
+    },
+    {
+      "id": "typed-yaml",
+      "command": "uv run python /tmp/gobby-config-guide-check.py",
+      "result": "11 runtime configuration and 2 LLM fragments pass typed field and full candidate validation without database I/O. Bootstrap example passes load_bootstrap in a temporary owner-only file; build example passes its dedicated parser. Two nested model excerpts checked against endpoint source; MCP instance syntax checked against sync_servers/templates and prior mcp-servers audit. No live configuration examples executed."
+    },
+    {
+      "id": "live-values",
+      "command": "get_config_values with intent; get_config_schema plus search_tool_result",
+      "result": "Live values revision122; gobby-tasks tree present, preserved refactoring pattern; pending_restart_keys[] and failed_live_keys{}. Schema exposes canonical gobby-tasks.validation.max_iterations. Oversized result retrieval exercised."
+    },
+    {
+      "id": "docs-review",
+      "command": "Independent tech-writer/code-review source audit of six references, catalog and four capability guides",
+      "result": "11/11 paths reviewed, no skips. Corrected status-object shape and stale embedding-route denial. Preserved model-residency requirement while identifying missing shared coordinator/current keep_alive=-1 behavior. Parent separately corrected feature-candidate shorthand conflict."
+    },
+    {
+      "id": "embedding-cli-help",
+      "command": "uv run gobby embeddings --help; uv run gobby embeddings switch --help; uv run gobby install embedding --help",
+      "result": "Read-only help confirms catalog/doctor/switch actions, provider/API-base options and installer embedding overrides. Mutating operations checked against source and isolated tests, not executed against live models."
+    },
+    {
+      "id": "fixture-followup-review",
+      "command": "OCR staged preview/rules/diff for tests/e2e/conftest.py and tests/ask/native_probe_harness.py",
+      "result": "2/2 paths reviewed,0skipped,no material findings. Retired-key negative tests and Python source-path declarations intentionally retain underscores."
+    },
+    {
+      "id": "reference-links",
+      "command": "Resolve local Markdown files and heading anchors from six references and six scoped guides",
+      "result": "12 documents, 72 local links, 0 missing files or anchors."
+    },
+    {
+      "id": "config-package",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config -q --tb=short",
+      "result": "926 passed in 12.39s. Focused configuration package; not the full pytest suite."
+    },
+    {
+      "id": "catalog-final",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "14 passed in 0.07s."
+    },
+    {
+      "id": "docs-final-review",
+      "command": "OCR delegate preview/rule with independent code-review review of 14 owned documentation paths",
+      "result": "14/14 paths reviewed, 0 skipped; shared guides scoped to configuration changes. Corrected remaining HTTP generation candidate shorthand: candidate_runtime_entries/validate_feature_candidates requires explicit provider/model. No remaining material findings."
+    },
+    {
+      "id": "focused-integrated-final",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config tests/skills/test_capability_catalog.py tests/mcp_proxy/tools/test_config_values.py tests/servers/routes/test_config_values_api.py tests/servers/routes/test_config_yaml_replace.py tests/storage/test_revisioned_config_store.py tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/cli/test_config_writes.py -q --tb=short",
+      "result": "1079 passed in 29.58s after final guide/reference edits; subsequent changes update this evidence record only."
+    }
+  ],
+  "verified_at": "2026-09-12"
+}

@@ -62,7 +62,9 @@ excluded paths.
 available:
 
 ```yaml
+datastore_mode: local
 database_url: "postgresql://gobby:<generated-on-first-install>@localhost:60891/gobby"
+files_home: "/absolute/path/to/gobby-files"
 postgres_pool:
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0
@@ -75,8 +77,14 @@ ui_port: 60889
 
 `database_url` is the sole PostgreSQL selector and the required connection
 string for Gobby's Docker-managed container. PostgreSQL is the only runtime
-hub. The host must be a local or loopback address; external PostgreSQL servers
-are not supported.
+hub. In `datastore_mode: local`, the host must be local or loopback. Remote mode
+requires the datastore hub's non-loopback hostname and explicit database
+credentials; it must not target localhost.
+Local mode requires `files_home`, the owner directory for file storage: replace
+the example with an absolute non-root path; `~` is rejected. Remote
+mode instead requires `hub_daemon_url`, the owning hub's HTTP origin, and rejects
+`files_home`. Local mode rejects `hub_daemon_url`. These checks are defined by
+`_parse_mode_owner_fields` in `src/gobby/config/bootstrap.py`.
 Startup fails when the DSN or managed service configuration is missing.
 
 `postgres_pool` configures the daemon's PostgreSQL client pool. All three values
@@ -162,7 +170,8 @@ The daemon exposes configuration routes under `/api/config`:
 | `POST /api/config/export` | Alias the YAML export operation |
 | `POST /api/config/import` | Alias the revisioned YAML replacement operation |
 | `PUT /api/config/generation-endpoints/{name}/activate` | Probe and activate a named endpoint |
-| `GET`, `POST`, `DELETE /api/config/secrets` | Manage named secret metadata and payloads |
+| `GET`, `POST /api/config/secrets` | List secret metadata or save a named secret |
+| `DELETE /api/config/secrets/{name}` | Delete an unreferenced named secret |
 
 `GET /api/config/effective` is an authenticated machine route. It requires the
 local runtime bearer token, sets `Cache-Control: no-store`, reads one active
@@ -178,17 +187,19 @@ route instead of YAML replacement.
 
 ### Environment And Secret Expansion
 
-Configuration strings support secret and environment references:
+Revisioned public values and YAML replacement do not perform general environment
+substitution. A string such as `${OPENAI_API_KEY}` is a literal input, not a request
+to read the daemon's environment. Supply public scalar secret fields through the
+secret-aware values API; it encrypts plaintext and rejects a literal `$secret:NAME`
+as plaintext. Structured reference fields have their own schema-specific rules.
 
-```yaml
-api_key: $secret:OPENAI_API_KEY
-fallback_key: ${OPENAI_API_KEY}
-local_key: ${OPENAI_API_KEY:-development-key}
-```
-
-`$secret:NAME` resolves only from the encrypted secrets store. `${VAR}` checks
-the secrets resolver first when one is available, then falls back to the process
-environment. `${VAR:-default}` uses the default when the value is unset or empty.
+Persisted `$secret:NAME` references resolve through the encrypted secrets store.
+YAML replacement accepts an explicit reference only when that named secret
+already resolves; a masked export preserves the existing binding. This differs
+from the scalar values API's plaintext-input contract.
+The file-loading helper `expand_env_vars` in `src/gobby/config/_loading.py` supports
+`${VAR}` and `${VAR:-default}` for its callers, but the revisioned values and
+document services do not call that helper. Do not transfer its syntax to these APIs.
 Public reads and YAML exports preserve secrecy through masks and `secret_set`
 metadata. The authenticated effective route resolves only the active reference.
 
@@ -200,8 +211,6 @@ shape is the `DaemonConfig` schema from `GET /api/config/schema`.
 ### Daemon And Network
 
 ```yaml
-daemon_port: 60887
-bind_host: localhost
 daemon_health_check_interval: 10.0
 test_mode: false
 cors_origins:
@@ -210,19 +219,19 @@ cors_origins:
 
 websocket:
   enabled: true
-  port: 60888
   ping_interval: 30
   ping_timeout: 10
 
 ui:
   enabled: false
   mode: auto
-  port: 60889
   host: localhost
 ```
 
 Ports must be between `1024` and `65535`. Timeouts and intervals must be
 positive unless the field explicitly documents `0` as a special value.
+Daemon bind host and HTTP/WebSocket/UI ports belong to bootstrap, not this
+runtime fragment. Do not submit bootstrap keys to the values API.
 
 ### Logging And Telemetry
 
@@ -293,8 +302,10 @@ search.
 chat:
   profile: feature_high
   candidates:
-    - codex/gpt-5.6-sol@xhigh
-    - claude/opus@high
+    - candidate: codex/gpt-5.6-sol
+      reasoning_effort: xhigh
+    - candidate: claude/opus
+      reasoning_effort: high
 gobby-tasks:
   validation:
     profile: feature_mid
@@ -323,11 +334,12 @@ databases:
     graph_min_score: 0.5
     rrf_k: 60
 
-embeddings:
-  model: nomic-embed-text
-  dim: 768
-  api_base: null
-  api_key: null
+ai:
+  embeddings:
+    model: nomic-embed-text
+    dim: 768
+    api_base: null
+    api_key: null
 
 memory:
   enabled: true
@@ -361,11 +373,11 @@ generation atomically; generation leases keep collection names pinned during
 projection replay. `ai.embeddings.api_key` follows the normal live secret policy
 and can be updated through the revisioned values surface.
 
-The default is `nomic-embed-text-v1.5@f16` (768-dim, ~137M params) — a safe
-choice for any local hardware. For users with capable local hardware,
-`Qwen3-Embedding-4B` (2560-dim, 4B params) is recommended: it is significantly
-stronger on MTEB and instruction-aware. Tradeoffs: roughly 3.3× the vector
-storage and a slower embed step. Example install:
+The configuration model defaults to `nomic-embed-text` and 768 dimensions;
+the installer selects provider-specific model IDs. Inspect
+`gobby embeddings catalog` and the endpoint's served models before choosing a
+replacement. For example, a server already exposing
+`text-embedding-qwen3-embedding-4b` can be selected during installation:
 
 ```bash
 gobby install embedding --embedding-url http://localhost:1234/v1 \
@@ -395,11 +407,6 @@ managed Qdrant URL and FalkorDB credentials to be configured and healthy.
 session_summary:
   enabled: true
   profile: feature_low
-
-digest:
-  enabled: true
-  profile: feature_low
-  timeout: 30
 
 message_tracking:
   enabled: true
@@ -447,22 +454,18 @@ gobby-tasks:
     profile: feature_high
     default_strategy: auto
     timeout: 300.0
-    research_timeout: 60.0
   validation:
     enabled: true
     profile: feature_mid
-    max_retries: 3
     max_iterations: 10
-    run_build_first: true
-    build_command: null
 
 workflow:
   enabled: true
-  timeout: 90.0
+  timeout: 24.0
   debug_echo_context: false
 
 hooks:
-  adapter_timeout: 105.0
+  adapter_timeout: 26.0
   provider_timeout: 120
 ```
 
@@ -477,9 +480,11 @@ details below that authoring API. See [rules.md](./rules.md) for the complete
 rule model.
 
 Hook deadlines must stay strictly ordered:
-`workflow.timeout < hooks.adapter_timeout < hooks.provider_timeout`. All three
-values must be positive. Changes require a
-daemon restart. A `hooks.provider_timeout` change also requires `gobby install`
+`20 < workflow.timeout < hooks.adapter_timeout < 30 < hooks.provider_timeout`.
+The fixed 20-second blocking-effect budget and 30-second ghook transport window
+are part of the validation ladder. These runtime fields have live activation
+policy; inspect the write response and active snapshot for application failures.
+A `hooks.provider_timeout` change also requires `gobby install`
 to rewrite provider settings. Qwen stores the provider value in milliseconds;
 Claude caps `SessionEnd` at 60 seconds; Codex keeps its enqueue-only `SessionEnd`
 hook at 3 seconds. AGY stores a `timeout` on every action in
@@ -516,7 +521,7 @@ code_index:
   sync_worker_batch_size: 50
   sync_worker_breaker_failure_threshold: 5
   sync_worker_breaker_backoff_seconds: 30.0
-sync_worker_breaker_max_backoff_seconds: 900.0
+  sync_worker_breaker_max_backoff_seconds: 900.0
 ```
 
 `nightly_repair_*` schedules `gcode repair`. A changed indexer version uses the
@@ -701,7 +706,7 @@ constraints include:
 | Port | `1024` through `65535` |
 | Positive timeout | Greater than `0` |
 | Workflow timeout | Greater than `0` |
-| Hook timeout policy | `workflow < adapter < provider` |
+| Hook timeout policy | `20 < workflow < adapter < 30 < provider` (seconds) |
 | Weight or threshold | `0.0` through `1.0` |
 | MCP search mode | `llm`, `semantic`, or `hybrid` |
 | Provider auth mode | `subscription`, `api_key`, or `adc` |
@@ -718,21 +723,32 @@ loaded.
 
 ### Runtime Setting Does Not Stick
 
-List DB overrides with `gobby-config:list_config_keys`. If a key is absent, the
-daemon is using the Pydantic default. If a key is present but behavior did not
-change, restart the daemon; the HTTP config save route reports
-`requires_restart: true` for config updates.
+Read `gobby-config:get_config_schema` and `get_config_values`. Compare the key's
+`desired` and `active` values with its schema activation policy. The public
+snapshot includes defaults; it is not a list of stored override rows.
+`pending_restart_keys` identifies values waiting for restart, while
+`failed_live_keys` identifies committed values whose local activation failed.
+Use `patch_config_values` with the snapshot's `revision` to change a value, or
+put the canonical dotted key in `unset` to restore its registry default.
 
-Hook timeout changes report this restart requirement explicitly. When
-`hooks.provider_timeout` changes, rerun `gobby install` after restarting so the
+A `revision_conflict` requires a fresh read and a newly composed patch. A
+`reconcile_failed` response still reports `committed: true`; inspect the next
+snapshot and daemon diagnostics before taking recovery action. Do not replay a
+committed mutation as though persistence failed.
+
+When `hooks.provider_timeout` changes, rerun `gobby install` so the
 Claude, Codex, Qwen, Droid, and Grok client configurations receive the new
 outer deadline.
 
 ### Secret Is Masked Or Missing
 
-Masked secret values are intentionally skipped on save. Re-enter the secret
-value through the web UI or call `set_config` with `is_secret=true` for a
-secret-like key.
+Masked secret values are intentionally skipped on save. Check `secret_set` to
+distinguish a configured secret from an unset value without exposing its payload.
+For a schema-designated secret field, the revisioned public values API accepts
+a plaintext string and stores it through the encrypted secret service; it rejects
+a literal `$secret:NAME` as plaintext. Do not print or log the submitted secret.
+Use `unset` for removal. Named secrets and YAML reference preservation have
+separate semantics; see [Environment And Secret Expansion](#environment-and-secret-expansion).
 
 ### MCP Server Does Not Connect
 
@@ -753,4 +769,4 @@ or global scope, `enabled: true`, and that secret parameters resolve
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-09-04_
+_Last verified: 2026-09-12_

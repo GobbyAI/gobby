@@ -14,7 +14,7 @@ gobby [--config PATH] COMMAND [ARGS]...
 
 | Option | Purpose |
 | --- | --- |
-| `--config PATH` | Load a custom configuration file before dispatching the command. |
+| `--config PATH` | Select the bootstrap file for commands that open the local hub; daemon runtime settings still come from the revisioned configuration service. Managed executions use their grant instead of operator connection material. |
 | `--version` | Print the Gobby version and exit. |
 
 Most commands that inspect daemon-backed state expect the daemon to be running.
@@ -31,7 +31,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
 | `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
 | `datastores` | Manage hub-side shared datastores: `expose`, `rotate-password`. | `src/gobby/cli/datastores.py` |
-| `embeddings` | Manage the embedding service and indices. | `src/gobby/cli/embeddings.py` |
+| `embeddings` | Inspect the model catalog and health; start, inspect, resume, or abort a staged model switch. See [AI configuration](ai-configuration.md#changing-the-embedding-model). | `src/gobby/cli/embeddings.py` |
 | `github` | Manage GitHub integration. | `src/gobby/cli/github.py` |
 | `health` | Check daemon health. | `src/gobby/cli/daemon.py` |
 | `hooks` | Manage hook endpoints and configuration. | `src/gobby/cli/extensions.py` |

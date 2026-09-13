@@ -746,6 +746,44 @@
           "when": "Resetting user settings or diagnosing reserved and stale state"
         }
       ]
+    },
+    {
+      "name": "config",
+      "description": "Inspect and update revisioned daemon configuration",
+      "overview": "references/config/overview.md",
+      "when": "Inspecting or changing daemon settings, model routing or activation",
+      "topics": [
+        {
+          "name": "schema",
+          "description": "Discover keys, types, visibility and activation metadata",
+          "path": "references/config/schema.md",
+          "when": "Choosing configuration keys or diagnosing rejected values"
+        },
+        {
+          "name": "values",
+          "description": "Read defaults, desired and active settings",
+          "path": "references/config/values.md",
+          "when": "Inspecting effective behavior, scope or secret presence"
+        },
+        {
+          "name": "updates",
+          "description": "Apply revision-checked changes and recover failures",
+          "path": "references/config/updates.md",
+          "when": "Setting or unsetting runtime overrides and importing configuration"
+        },
+        {
+          "name": "models",
+          "description": "Configure feature profiles, endpoints and embeddings",
+          "path": "references/config/models.md",
+          "when": "Changing model candidates, endpoint capability evidence or embedding settings"
+        },
+        {
+          "name": "restarts",
+          "description": "Resolve activation and restart requirements",
+          "path": "references/config/restarts.md",
+          "when": "Diagnosing desired/active differences or refreshing daemon and client settings"
+        }
+      ]
     }
   ]
 }

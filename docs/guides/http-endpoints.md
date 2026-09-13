@@ -651,9 +651,10 @@ the MCP cleanup tool's Git-deletion options.
 | `PUT` | `/api/projects/{project_id}/github-triage` | Update GitHub triage config. |
 | `GET` | `/api/config/schema` | Read config schema. |
 | `GET` | `/api/config/values` | Read config values. |
-| `PUT` | `/api/config/values` | Save config values. |
-| `POST` | `/api/config/values/validate` | Validate config values. |
-| `POST` | `/api/config/values/reset` | Reset config values. |
+| `PATCH` | `/api/config/values` | Validate and atomically set/unset public values with `expected_revision`. |
+| `GET` | `/api/config/effective` | Active machine projection; requires local runtime token. |
+| `GET` | `/api/runtime/config` | Active machine projection for an authenticated, valid runtime grant. |
+| `PUT` | `/api/config/generation-endpoints/{endpoint_name}/activate` | Probe endpoint capabilities and commit with `expected_revision`. |
 | `GET` | `/api/config/template` | Read config template. |
 | `PUT` | `/api/config/template` | Save config template. |
 | `GET` | `/api/config/secrets` | List secret names. |
@@ -666,10 +667,14 @@ the MCP cleanup tool's Git-deletion options.
 | `POST` | `/api/config/export` | Export config. |
 | `POST` | `/api/config/import` | Import config. |
 | `GET` | `/api/config/ui-settings` | Read UI settings. |
-| `PUT` | `/api/config/ui-settings` | Save UI settings. |
-| `DELETE` | `/api/config/ui-settings/{key}` | Delete a UI setting. |
 | `GET` | `/api/config/tool-approvals/global` | Read global tool approval rules. |
-| `PUT` | `/api/config/tool-approvals/global` | Save global tool approval rules. |
+| `POST` | `/api/config/validation-detection/preview` | Preview merged validation-command matchers without persisting. |
+
+These are operator/client HTTP surfaces; agents use the three `gobby-config`
+tools for public configuration. UI-setting and global tool-approval writes use
+the revisioned values surface. There are no separate values validate/reset or
+UI-setting/global-approval save routes. YAML replacement also requires
+`expected_revision`; see [configuration](configuration.md#http-configuration-api).
 
 ## Code Index, Metrics, Pipelines, And Other Feature APIs
 
