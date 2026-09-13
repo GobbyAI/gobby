@@ -6,6 +6,8 @@ context across messages. Sessions are keyed by conversation_id (stable across
 WebSocket reconnections) rather than ephemeral client_id.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -13,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -40,6 +42,10 @@ from gobby.servers.chat_session_helpers import (
 from gobby.servers.chat_session_hooks import ChatSessionHooksMixin
 from gobby.servers.chat_session_messages import ChatSessionMessagesMixin
 from gobby.servers.chat_session_permissions import ChatSessionPermissionsMixin
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
 ClaudeReasoningEffort = Literal["low", "medium", "high", "max"]
@@ -103,6 +109,15 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _max_history_message_chars: int = field(default=2000, repr=False)
     _max_history_total_chars: int = field(default=30_000, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
+    _local_context_route: LocalContextRoute | None = field(default=None, repr=False)
+    _local_context_observation: LocalContextObservation | None = field(default=None, repr=False)
+    _local_context_refresher: (
+        Callable[
+            [str],
+            Awaitable[tuple[LocalContextRoute | None, LocalContextObservation | None]],
+        ]
+        | None
+    ) = field(default=None, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)
@@ -431,6 +446,9 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         """Switch to a different Claude model mid-conversation."""
         if not self._client or not self._connected:
             raise RuntimeError("ChatSession not connected")
+        refreshed_context = None
+        if self._local_context_refresher is not None:
+            refreshed_context = await self._local_context_refresher(new_model)
         resolved_model = new_model
         if new_model == "local":
             raise RuntimeError("Model 'local' has been removed; replace it with 'endpoint:<name>'")
@@ -450,6 +468,9 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 raise RuntimeError(f"Local model pre-flight failed: {e}") from e
         await self._client.set_model(resolved_model)
         self._model = new_model
+        self._last_model = resolved_model
+        if refreshed_context is not None:
+            self._local_context_route, self._local_context_observation = refreshed_context
 
     def add_output_tokens(self, tokens: int) -> int:
         """Accumulate output token usage and return the new total."""

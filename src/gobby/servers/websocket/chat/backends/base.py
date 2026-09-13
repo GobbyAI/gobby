@@ -15,6 +15,8 @@ from gobby.llm.context_windows import resolve_context_window
 
 if TYPE_CHECKING:
     from gobby.config.values import ConfigRuntimeReader
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,15 @@ class ManagedChatSessionBase:
     _pending_agent_name: str | None = field(default=None, repr=False)
     _plan_approval_completed: bool = field(default=False, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
+    _local_context_route: LocalContextRoute | None = field(default=None, repr=False)
+    _local_context_observation: LocalContextObservation | None = field(default=None, repr=False)
+    _local_context_refresher: (
+        Callable[
+            [str],
+            Awaitable[tuple[LocalContextRoute | None, LocalContextObservation | None]],
+        ]
+        | None
+    ) = field(default=None, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _needs_history_injection: bool = field(default=False, repr=False)
@@ -231,7 +242,12 @@ class ManagedChatSessionBase:
         return True
 
     async def switch_model(self, new_model: str) -> None:
+        refreshed_context = None
+        if self._local_context_refresher is not None:
+            refreshed_context = await self._local_context_refresher(new_model)
         await self._backend.switch_model(self, new_model)
+        if refreshed_context is not None:
+            self._local_context_route, self._local_context_observation = refreshed_context
 
     def add_output_tokens(self, tokens: int) -> int:
         self._accumulated_output_tokens += max(0, tokens)
@@ -311,6 +327,8 @@ class ManagedChatSessionBase:
             None,
             overrides=self._context_window_overrides or None,
             provider=self.provider,
+            local_route=self._local_context_route,
+            local_observation=self._local_context_observation,
         )
 
     async def _apply_pre_tool_lifecycle(

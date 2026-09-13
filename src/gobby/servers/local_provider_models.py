@@ -17,6 +17,10 @@ from gobby.agents.local_model import (
 )
 from gobby.ai.endpoints import ENDPOINT_PROVIDER_PREFIX
 from gobby.config.ai import GenerationEndpointConfig, GenerationEndpointProtocol
+from gobby.providers.capabilities.local_context import (
+    LocalContextObservation,
+    effective_local_limit,
+)
 
 LOCAL_PROVIDER_LABELS: dict[str, str] = {
     "lmstudio": "LM Studio",
@@ -66,7 +70,14 @@ async def discover_local_endpoint_model_group(
         else:
             async with httpx.AsyncClient() as client:
                 discovered = await _openai_compatible_models(client, endpoint_name, endpoint)
+        default_model_id = _default_alias_canonical_id(endpoint, discovered)
         models = _merge_default_model(endpoint_name, endpoint, discovered)
+        models = await _project_context_observations(
+            endpoint_name,
+            endpoint,
+            models,
+            default_model_id=default_model_id,
+        )
         capability_checked = endpoint.protocol in {"lmstudio", "ollama", "vllm"}
         source = "live" if discovered or capability_checked else "config"
         return LocalEndpointModelGroup(
@@ -80,11 +91,19 @@ async def discover_local_endpoint_model_group(
         )
     except Exception as exc:
         _log_discovery_failure(endpoint_name, exc)
+        discovered = []
+        models = _merge_default_model(endpoint_name, endpoint, discovered)
+        models = await _project_context_observations(
+            endpoint_name,
+            endpoint,
+            models,
+            default_model_id=_default_alias_canonical_id(endpoint, discovered),
+        )
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
             provider_type=endpoint.protocol,
             provider_label=provider_label,
-            models=_merge_default_model(endpoint_name, endpoint, []),
+            models=models,
             source="config",
             error=_short_error(exc),
             probed_tools=endpoint.probed_tools,
@@ -168,6 +187,95 @@ def _merge_default_model(
         if value and value not in deduped:
             deduped[value] = entry
     return list(deduped.values())
+
+
+async def _project_context_observations(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    models: list[dict[str, Any]],
+    *,
+    default_model_id: str | None,
+) -> list[dict[str, Any]]:
+    """Replace local reported context with fresh endpoint-scoped evidence."""
+    from gobby.servers.provider_model_discovery import is_loopback_model_endpoint
+
+    if not is_loopback_model_endpoint(endpoint.api_base):
+        return models
+
+    projected = [dict(model) for model in models]
+    for entry in projected:
+        entry.pop("context_length", None)
+        entry.pop("context_length_source", None)
+        entry.pop("context_observation", None)
+
+    from gobby.app_context import get_app_context
+
+    context = get_app_context()
+    service = getattr(context, "local_context_service", None)
+    if service is None:
+        return projected
+
+    from gobby.providers.capabilities.local_context_config import endpoint_route
+    from gobby.utils.machine_id import require_machine_id
+
+    try:
+        machine_id = require_machine_id()
+    except Exception:
+        logger.warning(
+            "Local context projection setup failed (endpoint=%s)",
+            endpoint_name,
+            exc_info=True,
+        )
+        return projected
+
+    observations: dict[object, LocalContextObservation | None] = {}
+    for entry in projected:
+        model_id = default_model_id if entry.get("is_default") else entry.get("canonical_id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        try:
+            route = endpoint_route(
+                machine_id=machine_id,
+                endpoint_name=endpoint_name,
+                endpoint=endpoint,
+                provider=f"{ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
+                model_id=model_id,
+            )
+        except Exception:
+            logger.warning(
+                "Local context route projection failed (endpoint=%s, model=%s)",
+                endpoint_name,
+                model_id,
+                exc_info=True,
+            )
+            continue
+
+        if route.refresh_key not in observations:
+            try:
+                observations[route.refresh_key] = await service.get_observation(route)
+            except Exception:
+                logger.warning(
+                    "Local context observation projection failed (endpoint=%s, model=%s)",
+                    endpoint_name,
+                    model_id,
+                    exc_info=True,
+                )
+                observations[route.refresh_key] = None
+        observation = observations[route.refresh_key]
+        try:
+            if observation is not None and route.matches_observation(observation):
+                entry["context_observation"] = observation.to_dict()
+                if (context_length := effective_local_limit(observation)) is not None:
+                    entry["context_length"] = context_length
+                    entry["context_length_source"] = "local_observation"
+        except Exception:
+            logger.warning(
+                "Local context observation is invalid (endpoint=%s, model=%s)",
+                endpoint_name,
+                model_id,
+                exc_info=True,
+            )
+    return projected
 
 
 async def _discover_lmstudio_models(
