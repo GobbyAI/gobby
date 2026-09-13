@@ -18,6 +18,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = pytest.mark.unit
 
@@ -48,9 +49,8 @@ class TestAgentDefinitionBodyModel:
 
     def test_minimal_creation(self) -> None:
         """Create with a name and the required default-surface prompt."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody(name="developer", prompts={"agent": "Develop the task."})
+        body = make_agent_definition(name="developer", prompts={"agent": "Develop the task."})
         assert body.name == "developer"
         assert body.description is None
         assert body.surfaces == ["spawn"]
@@ -71,9 +71,8 @@ class TestAgentDefinitionBodyModel:
 
     def test_full_creation(self) -> None:
         """Create with all fields specified."""
-        from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="qa",
             description="QA agent for testing",
             surfaces=["spawn", "persona"],
@@ -86,7 +85,7 @@ class TestAgentDefinitionBodyModel:
             isolation="worktree",
             base_branch="develop",
             timeout=300.0,
-            workflows=AgentWorkflows(rules=["no-code-writing", "require-tests"]),
+            workflows=make_agent_workflows(rules=["no-code-writing", "require-tests"]),
             enabled=False,
         )
         assert body.name == "qa"
@@ -125,16 +124,15 @@ class TestAgentDefinitionBodyModel:
 
     def test_surfaces_normalize_and_deduplicate(self) -> None:
         """Persona/spawn usage surfaces normalize from YAML-ish inputs."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="planner",
             surfaces=["persona", "spawn", "persona"],
             prompts={"persona": "Plan interactively.", "agent": "Plan the assigned work."},
         )
         assert body.surfaces == ["persona", "spawn"]
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="planner",
             surfaces="persona",
             prompts={"persona": "Plan interactively."},
@@ -142,9 +140,7 @@ class TestAgentDefinitionBodyModel:
         assert body.surfaces == ["persona"]
 
     def test_prompt_for_rejects_unsupported_surface(self) -> None:
-        from gobby.workflows.definitions import AgentDefinitionBody
-
-        persona = AgentDefinitionBody(
+        persona = make_agent_definition(
             name="comms",
             surfaces=["persona"],
             prompts={"persona": "Coordinate interactively."},
@@ -168,10 +164,8 @@ class TestAgentDefinitionBodyModel:
         prompts: dict[str, str],
         missing_block: str,
     ) -> None:
-        from gobby.workflows.definitions import AgentDefinitionBody
-
         with pytest.raises(ValidationError, match=missing_block):
-            AgentDefinitionBody(name="invalid", surfaces=surfaces, prompts=prompts)
+            make_agent_definition(name="invalid", surfaces=surfaces, prompts=prompts)
 
     @pytest.mark.parametrize("legacy_field", ["role", "goal", "personality", "instructions"])
     def test_legacy_prompt_fields_are_rejected_with_migration_hint(
@@ -191,9 +185,8 @@ class TestAgentDefinitionBodyModel:
 
     def test_workflows_default_empty(self) -> None:
         """Workflows defaults to empty AgentWorkflows."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody(name="test", prompts={"agent": "Run the task."})
+        body = make_agent_definition(name="test", prompts={"agent": "Run the task."})
         assert body.workflows.rules == []
         assert body.workflows.pipeline is None
         assert body.workflows.variables == {}
@@ -201,19 +194,17 @@ class TestAgentDefinitionBodyModel:
 
     def test_isolation_values(self) -> None:
         """Isolation accepts none, worktree, clone, or None."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
         for iso in ("none", "worktree", "clone"):
-            body = AgentDefinitionBody(
+            body = make_agent_definition(
                 name="test", prompts={"agent": "Run the task."}, isolation=iso
             )
             assert body.isolation == iso
 
     def test_api_base_and_token(self) -> None:
         """api_base and api_token configure local model endpoints."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="local-dev",
             prompts={"agent": "Run the task."},
             model="qwen3-8b",
@@ -225,40 +216,36 @@ class TestAgentDefinitionBodyModel:
 
     def test_api_token_env_var_pattern(self) -> None:
         """api_token accepts ${ENV_VAR} pattern for env var expansion."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="local-dev",
             prompts={"agent": "Run the task."},
             api_token="${MY_API_KEY}",
         )
         assert body.api_token == "${MY_API_KEY}"
 
-        body = AgentDefinitionBody(name="test", prompts={"agent": "Run the task."})
+        body = make_agent_definition(name="test", prompts={"agent": "Run the task."})
         assert body.isolation == "inherit"
 
     def test_reasoning_effort_normalizes_string_values(self) -> None:
         """reasoning_effort keeps string normalization while rejecting coercion."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="planner", prompts={"agent": "Run the task."}, reasoning_effort=" High "
         )
         assert body.reasoning_effort == "high"
 
     def test_reasoning_effort_rejects_non_string_values(self) -> None:
         """reasoning_effort should fail early on malformed YAML types."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
         with pytest.raises(ValidationError, match="reasoning_effort"):
-            AgentDefinitionBody(name="planner", reasoning_effort=1)
+            make_agent_definition(name="planner", reasoning_effort=1)
 
     def test_reasoning_required_rejects_non_bool_values(self) -> None:
         """reasoning_required should stay strict instead of coercing strings."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
         with pytest.raises(ValidationError, match="reasoning_required"):
-            AgentDefinitionBody(name="planner", reasoning_required="true")
+            make_agent_definition(name="planner", reasoning_required="true")
 
     @pytest.mark.parametrize(
         ("field_name", "value"),
@@ -275,10 +262,9 @@ class TestAgentDefinitionBodyModel:
         value: int,
     ) -> None:
         """Execution config string fields should not stringify malformed values."""
-        from gobby.workflows.definitions import AgentDefinitionBody
 
         with pytest.raises(ValidationError, match=field_name):
-            AgentDefinitionBody(name="planner", **{field_name: value})
+            make_agent_definition(name="planner", **{field_name: value})
 
 
 class TestAgentDefinitionBodySerialization:
@@ -286,9 +272,9 @@ class TestAgentDefinitionBodySerialization:
 
     def test_json_round_trip(self) -> None:
         """Serialize to JSON and back preserves all fields."""
-        from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+        from gobby.workflows.definitions import AgentDefinitionBody
 
-        original = AgentDefinitionBody(
+        original = make_agent_definition(
             name="developer",
             description="Writes code",
             prompts={"agent": "Write clean code."},
@@ -297,7 +283,7 @@ class TestAgentDefinitionBodySerialization:
             isolation="worktree",
             base_branch="main",
             timeout=120.0,
-            workflows=AgentWorkflows(rules=["require-task-before-edit", "require-commit"]),
+            workflows=make_agent_workflows(rules=["require-task-before-edit", "require-commit"]),
             enabled=True,
         )
 
@@ -319,7 +305,7 @@ class TestAgentDefinitionBodySerialization:
         """Minimal spawn agent serializes and deserializes."""
         from gobby.workflows.definitions import AgentDefinitionBody
 
-        original = AgentDefinitionBody(name="simple", prompts={"agent": "Run the task."})
+        original = make_agent_definition(name="simple", prompts={"agent": "Run the task."})
         json_str = original.model_dump_json()
         restored = AgentDefinitionBody.model_validate_json(json_str)
         assert restored.name == "simple"
@@ -395,14 +381,12 @@ class TestAgentDefinitionStorage:
     """Agent definitions stored in agent_definitions."""
 
     def _make_agent_json(self, **overrides: Any) -> str:
-        from gobby.workflows.definitions import AgentDefinitionBody
-
         defaults: dict[str, Any] = {
             "name": "developer",
             "prompts": {"agent": "Run the task."},
         }
         defaults.update(overrides)
-        body = AgentDefinitionBody(**defaults)
+        body = make_agent_definition(**defaults)
         return body.model_dump_json()
 
     def test_create_agent_definition(self, manager: AgentDefinitionManager) -> None:
@@ -420,9 +404,9 @@ class TestAgentDefinitionStorage:
 
     def test_round_trip_through_storage(self, manager: AgentDefinitionManager) -> None:
         """Store and retrieve agent definition, deserialize definition_json."""
-        from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+        from gobby.workflows.definitions import AgentDefinitionBody
 
-        original = AgentDefinitionBody(
+        original = make_agent_definition(
             name="qa",
             description="QA agent",
             prompts={"agent": "Test everything."},
@@ -431,7 +415,7 @@ class TestAgentDefinitionStorage:
             isolation="worktree",
             base_branch="develop",
             timeout=300.0,
-            workflows=AgentWorkflows(rules=["no-code-writing"]),
+            workflows=make_agent_workflows(rules=["no-code-writing"]),
             enabled=True,
         )
 
@@ -547,3 +531,11 @@ class TestAgentScopeStorage:
         fetched = rule_manager.get(row.id)
         restored = RuleDefinitionBody.model_validate(fetched.definition_json)
         assert restored.agent_scope is None
+
+
+@pytest.mark.parametrize("payload", [{}, {"rule_selectors": None}])
+def test_agent_workflows_requires_rule_selectors(payload: dict[str, object]) -> None:
+    from gobby.workflows.definitions import AgentWorkflows
+
+    with pytest.raises(ValidationError, match="rule_selectors"):
+        AgentWorkflows.model_validate(payload)

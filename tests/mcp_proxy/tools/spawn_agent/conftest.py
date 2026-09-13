@@ -14,6 +14,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.agent_definitions import make_agent_definition
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +73,7 @@ def mock_runner() -> MagicMock:
 
 @pytest.fixture
 def agent_body() -> AgentDefinitionBody:
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="default",
         provider="claude",
@@ -92,7 +93,7 @@ def build_agent_body() -> Callable[..., AgentDefinitionBody]:
             "provider": "claude",
         }
         defaults.update(overrides)
-        return AgentDefinitionBody(
+        return make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             **defaults,
         )

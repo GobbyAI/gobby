@@ -13,7 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
-from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -39,7 +39,7 @@ def _parent(
 
 
 def _store_agent(service: ExpansionService, name: str, description: str) -> None:
-    body = AgentDefinitionBody(
+    body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         description=description,

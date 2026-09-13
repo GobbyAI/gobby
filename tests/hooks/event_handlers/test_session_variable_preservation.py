@@ -11,6 +11,7 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,7 +64,7 @@ def _make_agent_body(
     body.workflows.variables = variables
     body.workflows.rules = []
     body.workflows.skills = []
-    body.workflows.rule_selectors = None
+    body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
     body.rules = []
     body.skills = []
     body.variables = None

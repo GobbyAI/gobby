@@ -54,3 +54,8 @@ blocked_tools:
 
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"

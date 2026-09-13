@@ -24,6 +24,7 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.servers.conftest import create_http_server
 
@@ -59,7 +60,7 @@ def _create_agent_row(
     enabled: bool = True,
 ) -> Any:
     """Create an agent definition row in the DB."""
-    body = AgentDefinitionBody(
+    body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         description=description or f"Agent {name}",
@@ -534,6 +535,7 @@ class TestUpdateDefinition:
                     "description": "Old row",
                     "prompts": {"agent": "Run the assigned task."},
                     "max_turns": 20,
+                    "workflows": {"rule_selectors": {"include": []}},
                 }
             ),
             description="Old row",
@@ -590,6 +592,8 @@ class TestImportDefinition:
             "mode: autonomous\n"
             "prompts:\n"
             "  agent: Run the assigned task.\n"
+            "workflows:\n"
+            "  rule_selectors: {include: []}\n"
         )
 
         with patch(
@@ -612,6 +616,8 @@ class TestImportDefinition:
             "mode: autonomous\n"
             "prompts:\n"
             "  agent: Run the assigned task.\n"
+            "workflows:\n"
+            "  rule_selectors: {include: []}\n"
             "step_workflow:\n"
             "  exit_condition: done\n"
             "  steps:\n"
@@ -670,6 +676,8 @@ class TestImportDefinition:
             "mode: autonomous\n"
             "prompts:\n"
             "  agent: Run the assigned task.\n"
+            "workflows:\n"
+            "  rule_selectors: {include: []}\n"
         )
 
         with patch(
@@ -1033,7 +1041,7 @@ class TestPatchVariables:
 class TestListDefinitionsSourceFilter:
     def test_source_filter(self, client: TestClient, agent_manager: AgentDefinitionManager) -> None:
         """Listing with source_filter only returns matching sources."""
-        body1 = AgentDefinitionBody(
+        body1 = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="src-a",
             sources=["claude"],
@@ -1046,7 +1054,7 @@ class TestListDefinitionsSourceFilter:
             source="installed",
             enabled=True,
         )
-        body2 = AgentDefinitionBody(
+        body2 = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="src-b",
             sources=["codex"],
@@ -1080,7 +1088,7 @@ class TestUpdateDefinitionNestedFields:
         ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
-            json={"workflows": {"rules": ["rule-a"]}},
+            json={"workflows": {"rules": ["rule-a"], "rule_selectors": {"include": []}}},
         )
         assert response.status_code == 200
 
@@ -1214,7 +1222,7 @@ class TestCreateDefinitionExtended:
             json={
                 "name": "wf-agent",
                 "prompts": {"agent": "Run the assigned task."},
-                "workflows": {"rules": ["rule-1"]},
+                "workflows": {"rules": ["rule-1"], "rule_selectors": {"include": []}},
             },
         )
         assert response.status_code == 200
@@ -1363,3 +1371,15 @@ class TestCleanupAgentRuns:
             running_timeout_minutes=45,
             pending_timeout_minutes=60,
         )
+
+
+@pytest.mark.parametrize("workflows", [{}, {"rule_selectors": None}])
+def test_create_rejects_missing_rule_selectors(
+    client: TestClient, workflows: dict[str, object]
+) -> None:
+    response = client.post(
+        "/api/agents/definitions",
+        json={"name": "invalid-selectors", "prompts": {"agent": "Work."}, "workflows": workflows},
+    )
+    assert response.status_code == 400
+    assert "rule_selectors" in response.json()["detail"]

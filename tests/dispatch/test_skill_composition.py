@@ -21,6 +21,7 @@ from gobby.workflows.definitions import (
     AgentStepWorkflowBody,
     WorkflowStep,
 )
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
@@ -45,7 +46,7 @@ def _skill(
 
 
 def _agent(name: str = "composition-agent") -> AgentDefinitionBody:
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         step_workflow=AgentStepWorkflowBody(
@@ -165,7 +166,7 @@ def test_skill_composition_clean_pass_through_reports_allowed_tools_union(
 
 
 def test_composed_skill_tools_extend_restricted_steps_without_mutating_definition() -> None:
-    agent = AgentDefinitionBody(
+    agent = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="restricted-agent",
         step_workflow=AgentStepWorkflowBody(

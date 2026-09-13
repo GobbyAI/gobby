@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.storage.definitions.agents import AgentDefinitionRow
-from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -32,7 +32,7 @@ def _agent_row(
     surfaces: list[str] | None = None,
     step_workflow: dict[str, Any] | None = None,
 ) -> AgentDefinitionRow:
-    body = AgentDefinitionBody(
+    body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         description=description,

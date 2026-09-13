@@ -30,6 +30,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
 from tests.workflows.step_instance_fixtures import make_step_instance
 
@@ -184,12 +185,12 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         enabled=True,
     )
     instance_manager = AgentStepInstanceManager(db)
-    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.step_instances import build_step_instance
 
     instance_manager.save(
         build_step_instance(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="plan-adversary",
                 surfaces=["spawn"],

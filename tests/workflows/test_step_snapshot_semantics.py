@@ -26,6 +26,7 @@ from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.integration
 
@@ -189,7 +190,7 @@ def _agent(
     resolved = [
         step if isinstance(step, WorkflowStep) else WorkflowStep(name=step) for step in steps
     ]
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         surfaces=["persona", "spawn"],
@@ -202,7 +203,7 @@ def _agent(
 
 
 def _stepless(name: str) -> AgentDefinitionBody:
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         surfaces=["persona"],
@@ -706,6 +707,7 @@ def test_definition_delete_set_null_keeps_snapshot_enforcement(
         {
             "name": "coder",
             "surfaces": ["spawn"],
+            "workflows": {"rule_selectors": {"include": []}},
             "prompts": {"agent": "Run the assigned task."},
         },
         {
@@ -789,6 +791,7 @@ def test_project_scoped_override_is_snapshotted(typed_snap_db: PostgresHubDataba
         {
             "name": "coder",
             "surfaces": ["spawn"],
+            "workflows": {"rule_selectors": {"include": []}},
             "prompts": {"agent": "Run the assigned task."},
         },
         {
@@ -802,6 +805,7 @@ def test_project_scoped_override_is_snapshotted(typed_snap_db: PostgresHubDataba
         {
             "name": "coder",
             "surfaces": ["spawn"],
+            "workflows": {"rule_selectors": {"include": []}},
             "prompts": {"agent": "Project-scoped task guidance."},
         },
         {
@@ -1321,7 +1325,7 @@ async def _run_post_launch_failure_case(
             result = await spawn_agent_impl(
                 prompt="Test prompt",
                 runner=runner,
-                agent_body=AgentDefinitionBody(
+                agent_body=make_agent_definition(
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                     name="default",
                     provider="claude",

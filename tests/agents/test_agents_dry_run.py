@@ -12,13 +12,12 @@ from gobby.agents.dry_run import SpawnEvaluation, evaluate_spawn
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.definitions import (
-    AgentDefinitionBody,
-    AgentWorkflows,
     WorkflowDefinition,
     WorkflowStep,
     WorkflowTransition,
 )
 from gobby.workflows.dry_run import WorkflowEvaluation
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 
 def _create_agent(
@@ -31,13 +30,13 @@ def _create_agent(
     project_id: str | None = None,
 ) -> None:
     """Create an agent definition in the typed table."""
-    body = AgentDefinitionBody(
+    body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         provider=provider,
         isolation=isolation,
         base_branch=base_branch,
-        workflows=AgentWorkflows(pipeline=pipeline),
+        workflows=make_agent_workflows(pipeline=pipeline),
     )
     AgentDefinitionManager(db).create(
         name=name,

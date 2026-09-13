@@ -27,6 +27,7 @@ from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -130,7 +131,7 @@ def _register_agent_workflow(
 
     instance_manager.save(
         build_step_instance(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name=workflow_name,
                 step_workflow=AgentStepWorkflowBody.model_validate(
@@ -173,7 +174,7 @@ def _register_qa_reviewer_workflow(
     )
     instance_manager.save(
         build_step_instance(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name=workflow_name,
                 step_workflow=AgentStepWorkflowBody.model_validate(agent["step_workflow"]),

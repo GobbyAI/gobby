@@ -30,6 +30,7 @@ from gobby.workflows.dry_run import (
     evaluate_agent_definition,
 )
 from gobby.workflows.native_tools import is_known_native_tool
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -139,7 +140,7 @@ class TestStepToolGates:
 
 class TestAgentToolGates:
     def test_agent_level_typo_in_blocked_tools_is_error(self) -> None:
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             blocked_tools=["Wokflow", "Task"],
@@ -151,7 +152,7 @@ class TestAgentToolGates:
         assert "Agent 'merge-worker'" in errors[0].message
 
     def test_agent_inline_steps_are_linted(self) -> None:
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="worker",
             step_workflow=AgentStepWorkflowBody(
@@ -164,7 +165,7 @@ class TestAgentToolGates:
 
     @pytest.mark.asyncio
     async def test_agent_blocked_mcp_unknown_tool_is_error(self) -> None:
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="worker",
             blocked_mcp_tools=["gobby-agents:kill_agentt"],
@@ -179,7 +180,7 @@ class TestAgentToolGates:
 
     @pytest.mark.asyncio
     async def test_clean_agent_is_valid(self) -> None:
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="worker",
             blocked_tools=["Workflow", "Task"],
@@ -206,7 +207,7 @@ class TestBlockedMcpSemanticSeverity:
         mcp_manager.get_available_servers.return_value = ["gobby-agents"]
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-agents": [{"name": "kill_agent"}]})
         result = await evaluate_agent_definition(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="wf",
                 provider="claude",
@@ -229,7 +230,7 @@ class TestBlockedMcpSemanticSeverity:
         mcp_manager.get_available_servers.return_value = ["gobby-agents"]
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-agents": [{"name": "kill_agent"}]})
         result = await evaluate_agent_definition(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="wf",
                 provider="claude",

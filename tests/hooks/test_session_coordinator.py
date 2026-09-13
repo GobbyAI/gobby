@@ -36,6 +36,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -93,10 +94,9 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
 def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
     from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.workflows.agent_models import AgentStepWorkflowBody
-    from gobby.workflows.definitions import AgentDefinitionBody
     from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
-    definition = AgentDefinitionBody(
+    definition = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="merge-worker",
         step_workflow=AgentStepWorkflowBody.model_validate(

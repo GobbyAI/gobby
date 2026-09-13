@@ -68,3 +68,11 @@ step_workflow:
       transitions:
         - to: review
           when: "not vars.run_ended"
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:task-skill-gates"

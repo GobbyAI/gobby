@@ -12,8 +12,8 @@ from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.pipeline_loader import PipelineLoader
+from tests.fixtures.agent_definitions import make_agent_definition
 
 DELETED_TOOLS = frozenset(
     {
@@ -109,7 +109,7 @@ async def test_evaluate_tools_cover_pipeline_and_agent(temp_db: HubDatabase) -> 
     )
     AgentDefinitionManager(temp_db).create(
         name="eval-agent",
-        definition_json=AgentDefinitionBody(
+        definition_json=make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="eval-agent",
         ).model_dump(mode="json"),

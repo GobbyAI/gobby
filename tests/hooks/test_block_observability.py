@@ -19,6 +19,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitio
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -132,12 +133,12 @@ def _setup_step_workflow(
         enabled=True,
     )
 
-    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.step_instances import build_step_instance
 
     instance_mgr.save(
         build_step_instance(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="step-observability",
                 surfaces=["spawn"],

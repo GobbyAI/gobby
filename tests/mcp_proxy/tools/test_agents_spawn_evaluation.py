@@ -9,7 +9,7 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalTool
 from gobby.mcp_proxy.tools.workflows import workflow_mcp_inventory
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = pytest.mark.unit
 
@@ -48,11 +48,11 @@ async def test_evaluate_spawn_tool_forwards_resolved_target_project(
 async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_inventory(
     temp_db: HubDatabase,
 ) -> None:
-    agent = AgentDefinitionBody(
+    agent = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="test-agent",
         provider="claude",
-        workflows=AgentWorkflows(pipeline="test-workflow"),
+        workflows=make_agent_workflows(pipeline="test-workflow"),
     )
     AgentDefinitionManager(temp_db).create(
         name=agent.name,

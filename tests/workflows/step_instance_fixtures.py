@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_instances import AgentStepInstance, build_step_instance
+from tests.fixtures.agent_definitions import make_agent_definition
 
 
 def make_step_instance(
@@ -24,7 +25,7 @@ def make_step_instance(
     if current_step not in names:
         names = [current_step, *names]
     return build_step_instance(
-        AgentDefinitionBody(
+        make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name=agent_name,
             surfaces=["spawn", "persona"],

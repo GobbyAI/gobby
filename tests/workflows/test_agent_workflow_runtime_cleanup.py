@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.fixtures.agent_definitions import make_agent_definition
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -191,7 +193,7 @@ def _local_machine_identity() -> Iterator[None]:
 async def test_persisted_exit_step_retries_failed_completion(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.definitions import WorkflowStep
     from gobby.workflows.step_instances import build_step_instance
 
@@ -204,7 +206,7 @@ async def test_persisted_exit_step_retries_failed_completion(
     instance_manager = AgentStepInstanceManager(temp_db)
     instance_manager.save(
         build_step_instance(
-            AgentDefinitionBody(
+            make_agent_definition(
                 name="retry-exit",
                 prompts={"persona": "Test", "agent": "Test"},
                 surfaces=["spawn"],
@@ -450,13 +452,13 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         definition_json=json.dumps(workflow_data),
         enabled=True,
     )
-    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.step_instances import build_step_instance
 
     instance_manager = AgentStepInstanceManager(temp_db)
     instance_manager.save(
         build_step_instance(
-            AgentDefinitionBody(
+            make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="worker-submit",
                 surfaces=["spawn"],

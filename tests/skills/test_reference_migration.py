@@ -12,6 +12,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.agent_definitions import make_agent_definition
 
 
 def test_reference_contract_5_1_1(temp_db: HubDatabase) -> None:
@@ -220,7 +221,7 @@ def test_runtime_requirements_are_reported_without_rewriting_history(
 ) -> None:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.utils.machine_id import require_machine_id
-    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.definitions import WorkflowStep
     from gobby.workflows.state_manager import SessionVariableManager
     from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
@@ -240,7 +241,7 @@ def test_runtime_requirements_are_reported_without_rewriting_history(
         additional_skills=["tasks"],
         validation_criteria="Migration preserves this task and reports the retired requirement",
     )
-    agent = AgentDefinitionBody(
+    agent = make_agent_definition(
         name="runtime-fixture",
         prompts={"agent": "Task instructions"},
         step_workflow=AgentStepWorkflowBody(

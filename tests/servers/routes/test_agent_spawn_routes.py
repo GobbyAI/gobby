@@ -26,7 +26,7 @@ from gobby.storage.sessions._title_defaults import format_provisional_session_ti
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
@@ -697,7 +697,7 @@ class TestPromptPreview:
         test_project: Any,
     ) -> None:
         task = _create_task(task_manager, test_project.id, "Coordinate release")
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             name="comms-agent",
             surfaces=["persona"],
             prompts={"persona": "Coordinate interactively."},

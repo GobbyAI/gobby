@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -134,7 +135,7 @@ def test_match_rule_unknown_dim() -> None:
 def test_resolve_rules_explicit_only() -> None:
     agent = MagicMock()
     agent.workflows.rules = ["rule-a", "rule-b"]
-    agent.workflows.rule_selectors = None
+    agent.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
 
     result = resolve_rules_for_agent(agent, [])
     assert result == {"rule-a", "rule-b"}

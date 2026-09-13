@@ -17,8 +17,8 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
-from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -90,7 +90,7 @@ class TestProviderResolution:
         result = await spawn_agent_impl(
             prompt="Run work",
             runner=_make_runner(),
-            agent_body=AgentDefinitionBody(
+            agent_body=make_agent_definition(
                 name="comms-agent",
                 surfaces=["persona"],
                 prompts={"persona": "Coordinate interactively."},
@@ -107,7 +107,7 @@ class TestProviderResolution:
         """When provider=None, agent_body.provider should be used."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
@@ -161,7 +161,7 @@ class TestProviderResolution:
         """When provider is explicitly set, it overrides agent_body.provider."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
@@ -214,7 +214,7 @@ class TestProviderResolution:
         """A rotated spawn names a model rather than inheriting the target CLI's default."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
@@ -266,7 +266,7 @@ class TestProviderResolution:
         """No same-tier model for the target provider fails instead of spawning unpinned."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
@@ -303,7 +303,7 @@ class TestProviderResolution:
         """`provider: inherit` plus a model means a tier, not that provider's model."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="expansion-qa",
             provider="inherit",
@@ -356,7 +356,7 @@ class TestProviderResolution:
         """A caller-supplied model is never second-guessed by the tier substitution."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",

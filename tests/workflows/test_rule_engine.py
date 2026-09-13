@@ -22,15 +22,14 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 from gobby.workflows.definitions import (
-    AgentDefinitionBody,
     AgentSelector,
-    AgentWorkflows,
     RuleDefinitionBody,
     RuleEffect,
     RuleTriggerEvent,
     split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -97,10 +96,10 @@ def _insert_agent(
     rules: list[str] | None = None,
     project_id: str | None = None,
 ) -> str:
-    body = AgentDefinitionBody(
+    body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
-        workflows=AgentWorkflows(
+        workflows=make_agent_workflows(
             rules=rules or [],
             rule_selectors=AgentSelector(include=include, exclude=exclude or []),
         ),
@@ -3345,10 +3344,10 @@ class TestLiveActiveRuleSelection:
         assert first_variables.get("old_matched") is True
         assert first_variables.get("new_matched") is None
 
-        updated_agent = AgentDefinitionBody(
+        updated_agent = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
-            workflows=AgentWorkflows(
+            workflows=make_agent_workflows(
                 rules=[],
                 rule_selectors=AgentSelector(include=["tag:new"], exclude=[]),
             ),
@@ -3421,10 +3420,10 @@ class TestLiveActiveRuleSelection:
         assert variables.get("blocked") is None
 
     @pytest.mark.asyncio
-    async def test_active_rule_names_remain_fallback_when_agent_json_is_invalid(
+    async def test_invalid_agent_definition_fails_loudly(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """Fall back to stored active rule names when the live agent definition is invalid."""
+        """Invalid definitions cannot silently fall back to a stored active-rule set."""
         AgentDefinitionManager(db).create(
             name="default",
             definition_json={"name": "default", "surfaces": ["invalid"]},
@@ -3454,10 +3453,10 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert variables.get("allowed") is True
-        assert variables.get("blocked") is None
+        with pytest.raises(ValueError, match="Invalid active agent definition"):
+            await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert "allowed" not in variables
+        assert "blocked" not in variables
 
 
 class TestAgentScope:

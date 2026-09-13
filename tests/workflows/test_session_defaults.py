@@ -10,6 +10,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.sync_variables import sync_bundled_variables
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -292,7 +293,6 @@ def _expected_for(project_id: str | None) -> dict[str, object]:
 def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
     """Alternating project A / B / none sees own overrides plus globals."""
     from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
-    from gobby.workflows.definitions import AgentDefinitionBody
     from gobby.workflows.state_manager import SessionVariableManager
     from gobby.workflows.variable_defaults import (
         load_variable_defaults,
@@ -301,7 +301,7 @@ def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
     )
 
     _seed_project_scoped_defaults(db)
-    agent = AgentDefinitionBody(
+    agent = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="default",
     )

@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.definitions import AgentDefinitionBody, AgentSelector, AgentWorkflows
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ def resolve_agent(
         return _resolve_inherit(
             AgentDefinitionBody(
                 name="default",
+                workflows=AgentWorkflows(rule_selectors=AgentSelector(include=["tag:default"])),
                 prompts={"agent": "Work from the supplied task prompt."},
             ),
             cli_source,

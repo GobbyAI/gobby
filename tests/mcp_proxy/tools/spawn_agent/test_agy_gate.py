@@ -20,6 +20,7 @@ from gobby.providers.version_gate import (
 )
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -65,7 +66,7 @@ _PROVISIONAL_IDS = ["revalidating", "unpublished"]
 
 
 def _agent_body(provider: str) -> AgentDefinitionBody:
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="default",
         provider=provider,

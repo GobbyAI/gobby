@@ -20,7 +20,7 @@ from gobby.mcp_proxy.tools.workflows._agents import (
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions._shared import DefinitionSource
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytest_plugins = ["tests.storage.definitions.conftest"]
 pytestmark = pytest.mark.unit
@@ -45,7 +45,7 @@ def _insert_agent(
         }
     }
     fields.update(overrides)
-    body = AgentDefinitionBody(name=name, enabled=enabled, **fields)
+    body = make_agent_definition(name=name, enabled=enabled, **fields)
     dumped = body.model_dump(mode="json")
     mgr.upsert_with_steps(
         name,
@@ -216,7 +216,11 @@ class TestCreateAgentDefinition:
         result = create_agent_definition(
             mgr,
             "new-agent",
-            {"provider": "claude", "prompts": {"agent": "Run the assigned task."}},
+            {
+                "provider": "claude",
+                "prompts": {"agent": "Run the assigned task."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
         )
         assert result["success"] is True
         assert result["agent"]["name"] == "new-agent"
@@ -228,6 +232,7 @@ class TestCreateAgentDefinition:
             "full-agent",
             {
                 "description": "Full agent",
+                "workflows": {"rule_selectors": {"include": []}},
                 "prompts": {"agent": "Build things."},
                 "provider": "codex",
                 "model": "gpt-5.4",
@@ -246,6 +251,7 @@ class TestCreateAgentDefinition:
             "stale-limit-agent",
             {
                 "description": "Old payload",
+                "workflows": {"rule_selectors": {"include": []}},
                 "prompts": {"agent": "Run the assigned task."},
                 "max_turns": 20,
             },
@@ -262,7 +268,10 @@ class TestCreateAgentDefinition:
 
     def test_duplicate_fails(self, definition_db: PostgresHubDatabase) -> None:
         mgr = _setup(definition_db)
-        definition = {"prompts": {"agent": "Run the assigned task."}}
+        definition = {
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
+        }
         create_agent_definition(mgr, "dup", definition.copy())
         result = create_agent_definition(mgr, "dup", definition.copy())
         assert result["success"] is False
@@ -281,6 +290,7 @@ class TestCreateAgentDefinition:
             "persistent",
             {
                 "description": "Stays in DB",
+                "workflows": {"rule_selectors": {"include": []}},
                 "prompts": {"agent": "Run the assigned task."},
             },
         )

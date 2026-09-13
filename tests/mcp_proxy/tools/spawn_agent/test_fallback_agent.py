@@ -13,6 +13,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.fixtures.agent_definitions import make_agent_definition
 
 DETECTION_REGISTRY = cast(DetectionManifestRegistry, BundledDetectionRegistry())
 
@@ -30,7 +31,7 @@ class TestFallbackAgent:
         model: str | None = None,
         fallback_agent: str | None = None,
     ) -> AgentDefinitionBody:
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name=name,
             provider=provider,
@@ -333,7 +334,7 @@ class TestFallbackAgent:
 
     def test_fallback_agent_field_roundtrip(self) -> None:
         """AgentDefinitionBody with fallback_agent serializes/deserializes."""
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="test-fb",
             provider="codex",
@@ -344,10 +345,10 @@ class TestFallbackAgent:
         assert loaded.fallback_agent == "test-fb-claude"
 
     def test_fallback_agent_defaults_to_none(self) -> None:
-        """Old JSON without fallback_agent deserializes to None."""
-        old_json = (
+        """A definition without fallback_agent deserializes to None."""
+        definition_json = (
             '{"name": "legacy-agent", "provider": "claude", '
-            '"prompts": {"agent": "Run the assigned task."}}'
+            '"prompts": {"agent": "Run the assigned task."}, "workflows": {"rule_selectors": {"include": []}}}'
         )
-        loaded = AgentDefinitionBody.model_validate_json(old_json)
+        loaded = AgentDefinitionBody.model_validate_json(definition_json)
         assert loaded.fallback_agent is None

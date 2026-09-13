@@ -15,6 +15,7 @@ from gobby.workflows.dry_run import (
     evaluate_agent_definition,
     evaluate_pipeline_definition,
 )
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -74,7 +75,7 @@ def _make_definition(
 
 
 def _as_agent(definition: WorkflowDefinition) -> AgentDefinitionBody:
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=definition.name,
         provider="claude",
