@@ -80,13 +80,16 @@ class TestSharedEnhancerContract:
         )
         assert load_step is not None
         assert load_step.status_message is not None
-        assert "plan-enhance" in load_step.status_message
+        assert (
+            'get_skill_file(name="gobby", path="references/plan/enhancement.md")'
+            in load_step.status_message
+        )
         assert "proportionality" in load_step.status_message
         mcp_success = getattr(load_step, "on_mcp_success", []) or []
         triples = [
             (_field(e, "server"), _field(e, "tool"), _field(e, "variable")) for e in mcp_success
         ]
-        assert ("gobby-skills", "get_skill", "skill_loaded") in triples
+        assert ("gobby-skills", "get_skill_file", "skill_loaded") in triples
         assert ("gobby-skills", "get_skill", "proportionality_loaded") in triples
         assert ("gobby-skills", "get_skill", "restraint_loaded") in triples
 
@@ -102,7 +105,7 @@ class TestSharedEnhancerContract:
         transitions = getattr(load_step, "transitions", []) or []
         gate = [_field(t, "when") for t in transitions if _field(t, "to") == "enhance"]
         assert gate
-        assert "vars.skill_loaded and vars.proportionality_loaded and vars.restraint_loaded" in gate
+        assert "all(skill_loaded(skill) for skill in vars.required_skills)" in gate
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
     def test_instructions_reference_methodology_skills(
@@ -110,7 +113,7 @@ class TestSharedEnhancerContract:
     ) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
         assert agent.prompts.agent is not None
-        assert "plan-enhance" in agent.prompts.agent
+        assert "gobby:references/plan/enhancement.md" in agent.prompts.agent
         assert "proportionality" in agent.prompts.agent
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
@@ -239,7 +242,7 @@ class TestStageNativeEnhancer:
             for e in mcp_error
             if _field(e, "server") == "gobby-tasks" and _field(e, "tool") == "claim_task"
         ]
-        assert any("TASK_CLOSED" in (w or "") for w in closed)
+        assert any(isinstance(w, str) and "TASK_CLOSED" in w for w in closed)
 
     def test_enhance_completes_on_record_plan_enhancement(
         self, stage_native: AgentDefinitionBody

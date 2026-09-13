@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -12,12 +13,12 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 pytestmark = pytest.mark.unit
 
 
-def _agent() -> dict:
+def _agent() -> dict[str, Any]:
     path = (
         Path(__file__).resolve().parents[2]
         / "src/gobby/install/shared/workflows/agents/qa-reviewer.yaml"
     )
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 def test_no_write_permissions() -> None:
@@ -131,9 +132,9 @@ def test_loads_required_skills_before_review() -> None:
 
     assert "tech-writer" not in instructions
     assert agent["step_workflow"]["variables"]["required_skills"] == [
-        "code-index",
-        "tasks",
-        "review-learning",
+        "gobby:references/code-index/overview.md",
+        "gobby:references/tasks/overview.md",
+        "gobby:references/memory/review-lessons.md",
         "proportionality",
     ]
     assert claim_step["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
@@ -141,25 +142,36 @@ def test_loads_required_skills_before_review() -> None:
         "gobby-skills:get_skill",
         "gobby-skills:get_skill_file",
     ]
-    assert "code-index" in load_step["status_message"]
-    assert "tasks" in load_step["status_message"]
+    assert (
+        'get_skill_file(name="gobby", path="references/code-index/overview.md")'
+        in load_step["status_message"]
+    )
+    assert (
+        'get_skill_file(name="gobby", path="references/tasks/overview.md")'
+        in load_step["status_message"]
+    )
     assert "tech-writer" not in load_step["status_message"]
     assert "Do not call claim_task" in load_step["status_message"]
     # Every required skill must be named in the load step prompt; the prior
     # mismatch (review-learning gated but never instructed) deadlocked the
     # transition that requires all required_skills in loaded_skills.
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
-        assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
+        if ":references/" in skill_name:
+            name, path = skill_name.split(":", 1)
+            directive = f'get_skill_file(name="{name}", path="{path}")'
+        else:
+            directive = f'get_skill(name="{skill_name}")'
+        assert directive in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "review",
-            "when": "all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)",
+            "when": "all(skill_loaded(skill) for skill in vars.required_skills)",
         }
     ]
 
     success = load_step["on_mcp_success"][0]
     assert success["server"] == "gobby-skills"
-    assert success["tool"] == "get_skill"
+    assert success["tool"] in {"get_skill", "get_skill_file"}
     assert success["variable"] == "required_skills_loaded"
 
 

@@ -428,7 +428,7 @@ def _flush_plan(
     # Passive prompts can wait across a mode change or queue before the first
     # receipt. Deliver the canonical directive once for the current period,
     # preserving the other text and receipt effects in each mixed component.
-    directive = skill_fetch_directive("plan")
+    directive = skill_fetch_directive("gobby:references/plan/overview.md")
     needs_plan = bool(variables.get("plan_mode")) and not variables.get(
         "plan_skill_directive_delivered"
     )

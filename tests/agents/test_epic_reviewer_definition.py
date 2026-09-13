@@ -117,11 +117,11 @@ def test_loads_required_skills_before_review() -> None:
     load_step = steps["load_skill"]
 
     assert agent["step_workflow"]["variables"]["required_skills"] == [
-        "code-index",
-        "epic-review",
-        "review-learning",
+        "gobby:references/code-index/overview.md",
+        "gobby:references/review/epic.md",
+        "gobby:references/memory/review-lessons.md",
         "tech-writer",
-        "tasks",
+        "gobby:references/tasks/overview.md",
         "proportionality",
     ]
     assert load_step["allowed_mcp_tools"] == [
@@ -129,19 +129,23 @@ def test_loads_required_skills_before_review() -> None:
         "gobby-skills:get_skill_file",
     ]
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
-        assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
+        if ":references/" in skill_name:
+            name, path = skill_name.split(":", 1)
+            directive = f'get_skill_file(name="{name}", path="{path}")'
+        else:
+            directive = f'get_skill(name="{skill_name}")'
+        assert directive in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "closed_review",
             "when": (
-                "vars.closed_epic and all(skill in vars.get('loaded_skills', []) "
-                "for skill in vars.required_skills)"
+                "vars.closed_epic and all(skill_loaded(skill) for skill in vars.required_skills)"
             ),
         },
         {
             "to": "review",
             "when": (
-                "not vars.closed_epic and all(skill in vars.get('loaded_skills', []) "
+                "not vars.closed_epic and all(skill_loaded(skill) "
                 "for skill in vars.required_skills)"
             ),
         },
@@ -149,7 +153,7 @@ def test_loads_required_skills_before_review() -> None:
 
     success = load_step["on_mcp_success"][0]
     assert success["server"] == "gobby-skills"
-    assert success["tool"] == "get_skill"
+    assert success["tool"] in {"get_skill", "get_skill_file"}
     assert success["variable"] == "required_skills_loaded"
 
 

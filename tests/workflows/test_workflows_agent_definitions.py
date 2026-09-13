@@ -9,7 +9,9 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.skills.sync import get_bundled_skills_path
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
 pytestmark = pytest.mark.unit
 
@@ -123,7 +125,9 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
             label = f"{path.name}:{step.get('name')}"
             assert "mcp__gobby__call_tool" in status, label
             assert "list_tools" not in status, label
-            assert "get_tool_schema" not in status, label
+            if "get_skill_file" in status:
+                assert "get_tool_schema" in status, label
+                assert "page.next_cursor" in status, label
             assert 'call_tool("gobby-skills", "get_skill"' in status, label
             assert "native Skill" in status, label
             assert "GitHub/app connector" in status, label
@@ -205,13 +209,18 @@ def test_epic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
 
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
     assert {
-        "code-index",
-        "epic-review",
+        "gobby:references/code-index/overview.md",
+        "gobby:references/review/epic.md",
         "tech-writer",
-        "tasks",
+        "gobby:references/tasks/overview.md",
     }.issubset(set(agent["step_workflow"]["variables"]["required_skills"]))
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
-        assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
+        if ":references/" in skill_name:
+            name, path = skill_name.split(":", 1)
+            directive = f'get_skill_file(name="{name}", path="{path}")'
+        else:
+            directive = f'get_skill(name="{skill_name}")'
+        assert directive in load_skill["status_message"]
     assert "Discovery Brief" in agent["prompts"]["agent"]
     assert "descendant task set" in agent["prompts"]["agent"]
     assert review["allowed_tools"] == "all"
@@ -296,20 +305,25 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
     assert agent["step_workflow"]["variables"]["required_skills"] == [
-        "development-discipline",
+        "gobby:references/development/obligations.md",
         "restraint",
-        "tasks",
+        "gobby:references/tasks/overview.md",
     ]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
-        assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
-    assert "development-discipline" in agent["prompts"]["agent"]
+        if ":references/" in skill_name:
+            name, path = skill_name.split(":", 1)
+            directive = f'get_skill_file(name="{name}", path="{path}")'
+        else:
+            directive = f'get_skill(name="{skill_name}")'
+        assert directive in load_required["status_message"]
+    assert "references/development/obligations.md" in agent["prompts"]["agent"]
     assert "tasks" in agent["prompts"]["agent"]
     assert "test-driven-development" in agent["prompts"]["agent"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
     assert "additional_skills_loaded" in agent["step_workflow"]["variables"]
-    assert "loaded_skills" in str(load_skills["transitions"])
+    assert "skill_loaded(skill)" in str(load_skills["transitions"])
     assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
     assert "_skipped_stages" not in implement["status_message"]
     assert "manifest" in implement["status_message"]
@@ -445,7 +459,7 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
     assert claim["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"tech-writer", "tasks"}.issubset(
+    assert {"tech-writer", "gobby:references/tasks/overview.md"}.issubset(
         set(agent["step_workflow"]["variables"]["required_skills"])
     )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
@@ -460,3 +474,54 @@ def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> N
     assert "`planning-current-verdict:rejected` label atomically with the resubmission" in (
         instructions
     )
+
+
+def test_reference_contract_4_2_1() -> None:
+    """Bundled requirements resolve, and real step expressions use the correct ledger."""
+    retired = set(
+        "tasks live-session plan plan-draft plan-enhance plan-mechanic plan-review expand "
+        "expansion-agent-selection build build-coordinator handoff-discipline persona memory "
+        "review-learning code-index loading-skills writing-skills build-rule mcp-servers "
+        "pipelines-and-cron source-control clones merge merge-expert review epic-review intro "
+        "development-discipline channel-parity".split()
+    )
+    checked_steps = 0
+    for path in sorted(AGENTS_DIR.glob("*.yaml")):
+        agent = _load_yaml(path)
+        workflow = agent.get("step_workflow") or {}
+        variables = dict(workflow.get("variables") or {})
+        requirements = variables.get("required_skills", [])
+        for identity in requirements + variables.get("additional_skills", []):
+            requirement = parse_instruction_requirement(identity)
+            assert requirement.skill not in retired, (path.name, identity)
+            target = SKILLS_DIR / requirement.skill / (requirement.path or "SKILL.md")
+            assert target.is_file(), (path.name, identity)
+        if not any(":references/" in identity for identity in requirements):
+            continue
+        for step in workflow.get("steps") or []:
+            conditions = [
+                transition["when"]
+                for transition in step.get("transitions") or []
+                if "skill_loaded(" in transition.get("when", "")
+                and "required_skills" in transition["when"]
+            ]
+            if not conditions:
+                continue
+            checked_steps += 1
+            assert "gobby-skills:get_skill_file" in step["allowed_mcp_tools"]
+            assert "mcp__gobby__get_tool_schema" in step["allowed_tools"]
+            assert any(h["tool"] == "get_skill_file" for h in step["on_mcp_success"])
+            context = {"vars": variables}
+            evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+            variables["loaded_skills"] = ["gobby", *requirements]
+            variables["loaded_skill_references"] = []
+            assert not any(evaluator.evaluate(condition) for condition in conditions), path.name
+            references = [identity for identity in requirements if ":references/" in identity]
+            # Partial or menu-only loads never enter the completed reference ledger.
+            variables["loaded_skill_references"] = references[:-1]
+            assert not any(evaluator.evaluate(condition) for condition in conditions), path.name
+            variables["loaded_skill_references"] = references
+            assert any(evaluator.evaluate(condition) for condition in conditions), path.name
+            variables["loaded_skill_references"] = []
+            assert not any(evaluator.evaluate(condition) for condition in conditions), path.name
+    assert checked_steps >= 10

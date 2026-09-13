@@ -14,6 +14,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.observer_mcp import detect_mcp_call
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
 pytestmark = pytest.mark.unit
@@ -394,12 +395,16 @@ def test_merge_orchestrator_loads_build_coordinator_skill_before_agent_queries()
     instructions = agent["prompts"]["agent"]
     load_skill = _step(agent, "load_skill")
 
-    assert 'get_skill(name="merge-expert")' in instructions
-    assert 'get_skill(name="build-coordinator")' in instructions
+    assert (
+        'get_skill_file(name="gobby", path="references/source-control/merge-campaigns.md")'
+        in instructions
+    )
+    assert 'get_skill_file(name="gobby", path="references/build/coordination.md")' in instructions
     assert "gobby-skills:get_skill" in load_skill["allowed_mcp_tools"]
-    assert "vars.skill_loaded and vars.build_coordinator_skill_loaded" in {
-        transition["when"] for transition in load_skill["transitions"]
-    }
+    assert (
+        "skill_loaded('gobby:references/source-control/merge-campaigns.md') "
+        "and skill_loaded('gobby:references/build/coordination.md')"
+    ) in {transition["when"] for transition in load_skill["transitions"]}
     assert agent["step_workflow"]["variables"]["build_coordinator_skill_loaded"] is False
 
 
@@ -580,32 +585,44 @@ async def test_load_skill_step_waits_for_merge_and_build_coordinator_skills(
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
 
+    session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001"
+    # A router load cannot satisfy either operation requirement.
+    variables["loaded_skills"] = ["gobby"]
     await engine.evaluate(
-        _after_mcp_tool(
-            "gobby-skills:get_skill",
-            arguments={"name": "merge-expert"},
-        ),
-        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
+        _after_mcp_tool("gobby-skills:get_skill", arguments={"name": "gobby"}),
+        session_id=session_id,
         variables=variables,
     )
-    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
+    instance = manager.get_for_session(session_id)
     assert instance is not None
     assert instance.current_step == "load_skill"
-    assert instance.variables["skill_loaded"] is True
-    assert instance.variables["build_coordinator_skill_loaded"] is False
+    assert instance.variables["skill_loaded"] is False
 
-    await engine.evaluate(
-        _after_mcp_tool(
-            "gobby-skills:get_skill",
-            arguments={"name": "build-coordinator"},
-        ),
-        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
-        variables=variables,
-    )
-    instance = manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001")
-    assert instance is not None
-    assert instance.current_step == "survey"
-    assert instance.variables["build_coordinator_skill_loaded"] is True
+    for path, expected_step, complete in [
+        ("references/source-control/merge-campaigns.md", "load_skill", True),
+        ("references/build/coordination.md", "load_skill", False),
+        ("references/build/coordination.md", "survey", True),
+    ]:
+        event = _after_mcp_tool(
+            "gobby-skills:get_skill_file",
+            arguments={"name": "gobby", "path": path},
+            tool_output={
+                "success": True,
+                "result": {
+                    "file": {"skill_name": "gobby", "path": path, "content": "Guidance"},
+                    "page": {"complete": complete, "next_cursor": None if complete else "next"},
+                },
+            },
+        )
+        event.data["mcp_server"] = "gobby-skills"
+        event.data["mcp_tool"] = "get_skill_file"
+        detect_mcp_call(event, variables, session_id)
+        await engine.evaluate(event, session_id=session_id, variables=variables)
+        instance = manager.get_for_session(session_id)
+        assert instance is not None
+        assert instance.current_step == expected_step
+        assert instance.variables["skill_loaded"] is True
+        assert instance.variables["build_coordinator_skill_loaded"] is (expected_step == "survey")
 
 
 @pytest.mark.asyncio

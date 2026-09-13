@@ -414,7 +414,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
 
 def _get_variables(context: dict[str, Any]) -> dict[str, Any]:
     """Extract variables dict from context, handling both dict and SimpleNamespace."""
-    variables = context.get("variables", {})
+    variables = context.get("variables", context.get("vars", {}))
     if isinstance(variables, dict):
         return variables
     # SimpleNamespace from workflow engine

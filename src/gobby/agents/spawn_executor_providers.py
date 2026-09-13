@@ -225,7 +225,7 @@ async def _prepare_managed_code_index(
             skills = request.initial_variables.get("additional_skills", [])
             if isinstance(skills, list):
                 request.initial_variables["additional_skills"] = [
-                    skill for skill in skills if skill != "code-index"
+                    skill for skill in skills if skill != "gobby:references/code-index/overview.md"
                 ]
             request.initial_variables["code_index_preflight_warning"] = warning
             request.initial_variables["prompt"] = request.prompt

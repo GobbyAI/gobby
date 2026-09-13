@@ -622,7 +622,7 @@ def test_queued_plan_directives_follow_current_mode_without_losing_other_receipt
         grok_session_id,
         {"plan_mode": plan_mode, "plan_skill_directive_delivered": delivered},
     )
-    directive = skill_fetch_directive("plan")
+    directive = skill_fetch_directive("gobby:references/plan/overview.md")
     for index in range(2):
         staged = {
             "session_id": grok_session_id,

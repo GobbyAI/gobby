@@ -247,7 +247,9 @@ async def test_best_effort_preflight_records_warning_without_operator_credential
         parent_session_id="parent",
         project_id="project",
         session_manager=session_manager,
-        initial_variables={"additional_skills": ["code-index", "python"]},
+        initial_variables={
+            "additional_skills": ["gobby:references/code-index/overview.md", "python"]
+        },
         code_index_preflight_mode="best_effort",
         prepared_spawn=prepared_spawn(),
         terminal_backend="tmux",

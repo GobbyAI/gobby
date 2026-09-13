@@ -74,7 +74,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 10. Do not create separate `[TEST]`, `[IMPL]`, or `[REF]` tasks yourself.
 11. Do not invent optional scope or extra features.
 12. Assign every `config`, `docs`, `refactor`, or `test` leaf to an available agent using
-    the expansion-agent-selection heuristics. Use `backend-developer` as the default
+    the agent-selection heuristics in `gobby:references/plan/expansion.md`. Use `backend-developer` as the default
     fallback and include `additional_skills` as an array.
 13. Do not emit discovery-stage leaves from an approved plan.
 14. When repository context includes `Related existing test files`, use those exact
@@ -82,3 +82,8 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
     the implementation leaf's validation require updating and running the named tests.
     Suggest a new test file only for new behavior absent from the related existing tests;
     identify that file as new in the test intent and validation criteria.
+
+Instruction requirements in `additional_skills` must be installed standalone names or exact
+`gobby:references/<capability>/<topic>.md` identifiers; do not emit retired bundled skill names.
+Load references with get_skill_file(name="gobby", path="references/<capability>/<topic>.md")
+after separate get_tool_schema discovery, and follow every page.next_cursor until null.

@@ -49,11 +49,11 @@ class TestPlannerSkillLoading:
         )
         assert load_step is not None
         assert load_step.status_message is not None
-        assert "plan-draft" in load_step.status_message
+        assert "gobby:references/plan/drafting.md" in load_step.status_message
         assert "list_tools" not in load_step.status_message
-        assert "get_tool_schema" not in load_step.status_message
+        assert "get_tool_schema" in load_step.status_message
         assert (
-            'call_tool("gobby-skills", "get_skill", {"name": "plan-draft"})'
+            'call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/drafting.md"})'
             in load_step.status_message
         )
         assert "mcp__gobby__call_tool" in load_step.status_message
@@ -92,7 +92,7 @@ class TestPlannerSkillLoading:
             (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
             for entry in mcp_success
         ]
-        assert ("gobby-skills", "get_skill", "skill_loaded") in triples
+        assert ("gobby-skills", "get_skill_file", "skill_loaded") in triples
 
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
         load_step = find_step(
@@ -108,12 +108,12 @@ class TestPlannerInstructionsPreserveContracts:
         """Inline instructions must explicitly direct the agent to load
         plan-draft via get_skill — not generically 'follow the methodology'."""
         instructions = flat(agent.prompts.agent)
-        assert "plan-draft" in instructions
+        assert "gobby:references/plan/drafting.md" in instructions
         assert "get_skill" in instructions
         assert "native Skill" in instructions
         assert "GitHub/app connector" in instructions
         assert "Computer Use tools" in instructions
-        assert "After `plan-draft` is loaded" in instructions
+        assert "After `gobby:references/plan/drafting.md` is loaded" in instructions
 
     def test_insufficient_requirements_escalation_preserved(
         self, agent: AgentDefinitionBody

@@ -46,7 +46,7 @@ prompts:
     evidence and outcomes section; omit that generated section from summary_md.
     This saves the report outside handoff and queues verified findings for task
     creation with awaiting-human-review. Do not put JSON or the report into handoff.
-    After submission succeeds, load handoff-discipline and call end_agent_run with
+    After submission succeeds, load gobby:references/sessions/handoffs.md and call end_agent_run with
     a brief completion status, the report path in references, and one next_steps
     item for human review. This call only ends the agent lifecycle.
 
@@ -77,10 +77,15 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load restraint and proportionality before reviewing feedback"
       status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
         Load both required methodology skills through the Gobby proxy:
         1. get_skill(name="restraint") on gobby-skills
         2. get_skill(name="proportionality") on gobby-skills
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
         call_tool("gobby-skills", "get_skill", {"name": "restraint"}) and
         call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
         native Skill, GitHub/app connector, and Computer Use tools bypass
@@ -120,9 +125,12 @@ step_workflow:
         completion status, the report path in references, and one next_steps
         entry naming the coordinator's next action — never the report body.
         Use Bash only for read-only inspection; do not edit source or run fixes.
+        For reference files, fetch the get_skill_file schema with get_tool_schema
+        first. Follow each page.next_cursor with only cursor until null.
         Any further skill this review needs loads through the Gobby proxy with
-        mcp__gobby__call_tool. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        mcp__gobby__call_tool. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's observable skill tracking.
       allowed_tools:

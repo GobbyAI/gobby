@@ -52,11 +52,11 @@ class TestAdversarySkillLoading:
         )
         assert load_step is not None
         assert load_step.status_message is not None
-        assert "plan-review" in load_step.status_message
+        assert "gobby:references/plan/review.md" in load_step.status_message
         assert "list_tools" not in load_step.status_message
-        assert "get_tool_schema" not in load_step.status_message
+        assert "get_tool_schema" in load_step.status_message
         assert (
-            'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})'
+            'call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/review.md"})'
             in load_step.status_message
         )
         assert "mcp__gobby__call_tool" in load_step.status_message
@@ -92,7 +92,7 @@ class TestAdversarySkillLoading:
             (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
             for entry in mcp_success
         ]
-        assert ("gobby-skills", "get_skill", "skill_loaded") in triples
+        assert ("gobby-skills", "get_skill_file", "skill_loaded") in triples
 
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
         load_step = find_step(
@@ -131,7 +131,8 @@ class TestAdversarySkillLoading:
         get_skill_variables = {
             _field(entry, "variable")
             for entry in mcp_success
-            if _field(entry, "server") == "gobby-skills" and _field(entry, "tool") == "get_skill"
+            if _field(entry, "server") == "gobby-skills"
+            and _field(entry, "tool") in {"get_skill", "get_skill_file"}
         }
         assert "proportionality_loaded" in get_skill_variables
         assert "skill_loaded" in get_skill_variables
@@ -146,7 +147,7 @@ class TestAdversarySkillLoading:
             t.to == "review"
             and t.when
             and "skill_loaded" in t.when
-            and "proportionality_loaded" in t.when
+            and "vars.required_skills" in t.when
             for t in transitions
         )
 
@@ -183,12 +184,12 @@ class TestAdversarySkillLoading:
 class TestAdversaryInstructionsPreserveContracts:
     def test_instructions_reference_plan_review(self, agent: AgentDefinitionBody) -> None:
         instructions = flat(agent.prompts.agent)
-        assert "plan-review" in instructions
+        assert "gobby:references/plan/review.md" in instructions
         assert "get_skill" in instructions
         assert "native Skill" in instructions
         assert "GitHub/app connector" in instructions
         assert "Computer Use tools" in instructions
-        assert "After `plan-review` is loaded" in instructions
+        assert "After `gobby:references/plan/review.md` is loaded" in instructions
 
     def test_instructions_reference_proportionality(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.prompts.agent or ""

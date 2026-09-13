@@ -51,7 +51,7 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
         "gobby-plans:get_plan_review_snapshot",
     ]
     status = flat(steps["load_skill"]["status_message"])
-    assert "plan-review" in status
+    assert 'get_skill_file(name="gobby", path="references/plan/review.md")' in status
     assert any(
         tool_name in status
         for tool_name in ("get_skill", "list_tools", "get_tool_schema", "call_tool")
@@ -91,7 +91,7 @@ def test_taskless_adversary_loads_proportionality() -> None:
     transition_whens = " ".join(
         t.get("when", "") for t in steps["load_skill"].get("transitions", [])
     )
-    assert "proportionality_loaded" in transition_whens
+    assert "all(skill_loaded(skill) for skill in vars.required_skills)" in transition_whens
 
     instructions = agent["prompts"]["agent"]
     assert "proportionality" in instructions

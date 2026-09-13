@@ -453,6 +453,16 @@ class TestMcpResultHas:
 
 
 class TestSkillLoaded:
+    def test_step_vars_fallback_preserves_explicit_variables_precedence(self) -> None:
+        reference = "gobby:references/tasks/closing.md"
+        context: dict[str, Any] = {
+            "vars": SimpleNamespace(loaded_skill_references=[reference]),
+        }
+        evaluator = _build_evaluator(context)
+        assert evaluator.evaluate(f"skill_loaded('{reference}')") is True
+        context["variables"] = {}
+        assert evaluator.evaluate(f"skill_loaded('{reference}')") is False
+
     def test_reference_load_is_independent_of_router(self) -> None:
         reference = "gobby:references/tasks/closing.md"
         variables: dict[str, Any] = {"loaded_skills": ["gobby", reference]}

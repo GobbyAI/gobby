@@ -23,7 +23,7 @@ prompts:
     1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details.
        Past that step the claim already exists and a second claim_task errors.
     2. LOAD_SKILLS: Before calling task/review tools, load these exact docs review
-      skills: code-index, tech-writer, and tasks.
+      skills: gobby:references/code-index/overview.md, tech-writer, and gobby:references/tasks/overview.md.
     3. REVIEW: Perform ordered documentation review:
        a. docs_spec_compliance: compare task description, validation criteria,
           required docs files, audience, scope, and diff. Reject immediately on
@@ -89,9 +89,9 @@ step_workflow:
   variables:
     task_claimed: false
     required_skills:
-      - code-index
+      - gobby:references/code-index/overview.md
       - tech-writer
-      - tasks
+      - gobby:references/tasks/overview.md
     required_skills_loaded: false
     review_approved: false
     review_complete: false
@@ -126,15 +126,21 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required documentation review skills"
       status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
         Load skills now. Do not call claim_task, get_task, get_step_status, or
         get_agent_definition in this step.
 
         Call these exact tools before reviewing:
-        1. get_skill(name="code-index") on gobby-skills
+        1. get_skill_file(name="gobby", path="references/code-index/overview.md") on gobby-skills
         2. get_skill(name="tech-writer") on gobby-skills
-        3. get_skill(name="tasks") on gobby-skills
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        3. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
@@ -151,11 +157,17 @@ step_workflow:
           action: set_variable
           variable: required_skills_loaded
           value: >-
-            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
       transitions:
         - to: review
           when: >-
-            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+            all(skill_loaded(skill) for skill in vars.required_skills)
 
     - name: review
       mcp_error_policy: stay

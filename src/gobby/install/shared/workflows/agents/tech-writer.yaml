@@ -40,7 +40,7 @@ prompts:
     Your task ID is in assigned_task_id.
 
     Methodology:
-    Load the required session skills `tech-writer` and `tasks` with get_skill on
+    Load `tech-writer` with get_skill and `gobby:references/tasks/overview.md` with get_skill_file on
     gobby-skills before editing docs. Follow the
     tech-writer documentation workflow before editing docs.
 
@@ -77,7 +77,7 @@ step_workflow:
     task_claimed: false
     required_skills:
       - tech-writer
-      - tasks
+      - gobby:references/tasks/overview.md
     required_skills_loaded: false
     implementation_complete: false
     blocker_handed_off: false
@@ -113,11 +113,17 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required docs implementation session skills"
       status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
         Load skills now before implementation:
         1. get_skill(name="tech-writer") on gobby-skills
-        2. get_skill(name="tasks") on gobby-skills
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        2. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
@@ -134,11 +140,17 @@ step_workflow:
           action: set_variable
           variable: required_skills_loaded
           value: >-
-            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
       transitions:
         - to: implement
           when: >-
-            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+            all(skill_loaded(skill) for skill in vars.required_skills)
 
     - name: implement
       mcp_error_policy: stay

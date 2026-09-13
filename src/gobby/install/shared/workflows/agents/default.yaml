@@ -71,7 +71,7 @@ workflows:
       - "tag:default"
   skill_selectors:
     include: []
-    # Every context epoch requests loading-skills, memory, brevity, then restraint. Other
+    # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other
     # guidance stays on-demand through file, task, and tool-specific rules.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   variables: {}

@@ -20,7 +20,7 @@ blocked_mcp_tools:
 
 skills:
   methodology:
-    - memory
+    - gobby:references/memory/overview.md
 
 prompts:
   agent: |

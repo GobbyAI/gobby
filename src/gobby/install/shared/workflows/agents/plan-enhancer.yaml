@@ -47,16 +47,16 @@ prompts:
 
     Methodology:
     After claiming your task, load all three methodology skills before anything
-    else: `restraint`, `plan-enhance`, and `proportionality`. Use only the Gobby
+    else: `restraint`, `gobby:references/plan/enhancement.md`, and `proportionality`. Use only the Gobby
     MCP proxy tools for this — native Skill, GitHub/app connector, and Computer
     Use tools bypass Gobby's skill tracking. Call get_skill(name="restraint"),
-    get_skill(name="plan-enhance"), and get_skill(name="proportionality") on
+    get_skill_file(name="gobby", path="references/plan/enhancement.md"), and get_skill(name="proportionality") on
     gobby-skills, then continue. Every suggestion walks `restraint`'s decision
     ladder before it is recorded — rung 1 asks whether it needs to exist at all,
     each recorded suggestion names the rung it stopped at, and a suggestion
     that stops at a lower rung than the mechanism it proposes is not recorded.
     Follow
-    `plan-enhance`'s methodology — the two lenses (Better = strengthen
+    `gobby:references/plan/enhancement.md`'s methodology — the two lenses (Better = strengthen
     in-scope work; Bigger = net-new scope the parent intent justifies), the
     no-quota honesty rule, the impact-vs-effort ranking, and the advisory output
     schema. `proportionality` is the shared anti-Rube-Goldberg criterion you run
@@ -70,7 +70,7 @@ prompts:
     - Read the plan artifact referenced in your prompt against the parent task and
       any supporting context (the parent description is the canonical source).
     - Walk the plan once through both lenses across every phase. Produce the
-      structured `plan-enhance` result: top-level `converged` plus a ranked
+      structured `gobby:references/plan/enhancement.md` result: top-level `converged` plus a ranked
       `suggestions` list, every item carrying `severity: opportunity` (you have no
       blocking severity — blocking belongs to the adversary alone).
     - A tight, well-scoped plan that surfaces nothing worth folding in is
@@ -126,7 +126,7 @@ step_workflow:
     task_claimed: false
     required_skills:
       - restraint
-      - plan-enhance
+      - gobby:references/plan/enhancement.md
       - proportionality
     restraint_loaded: false
     skill_loaded: false
@@ -169,19 +169,24 @@ step_workflow:
 
     - name: load_skill
       mcp_error_policy: stay
-      description: "Load the restraint, plan-enhance, and proportionality methodology skills"
+      description: "Load the restraint, gobby:references/plan/enhancement.md, and proportionality methodology skills"
       status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
         Load all three methodology skills before enhancing: call
-        get_skill(name="restraint"), get_skill(name="plan-enhance"), and
+        get_skill(name="restraint"), get_skill_file(name="gobby", path="references/plan/enhancement.md"), and
         get_skill(name="proportionality") on gobby-skills, then continue.
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
         call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}), and
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/enhancement.md"}), and
         call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
         All three returned skills are authoritative: `restraint` is the decision
-        ladder every suggestion walks before it is recorded, `plan-enhance` is
+        ladder every suggestion walks before it is recorded, `gobby:references/plan/enhancement.md` is
         the constructive methodology, `proportionality` is the shared
         anti-Rube-Goldberg criterion you run on your own suggestions.
       allowed_tools:
@@ -194,8 +199,8 @@ step_workflow:
         - "gobby-skills:get_skill_file"
       on_mcp_success:
         - server: gobby-skills
-          tool: get_skill
-          when: "tool_input.name == 'plan-enhance'"
+          tool: get_skill_file
+          when: "skill_loaded('gobby:references/plan/enhancement.md')"
           action: set_variable
           variable: skill_loaded
           value: true
@@ -213,14 +218,14 @@ step_workflow:
           value: true
       transitions:
         - to: enhance
-          when: "vars.skill_loaded and vars.proportionality_loaded and vars.restraint_loaded"
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
 
     - name: enhance
       description: "Read the plan and record ranked enhancement suggestions"
       status_message: |
         Read the plan artifact. Walk both lenses (Better, Bigger), run the
         proportionality test on each suggestion, then record the structured
-        `plan-enhance` result with record_plan_enhancement(stage routing is owned
+        `gobby:references/plan/enhancement.md` result with record_plan_enhancement(stage routing is owned
         by the verb). Never approve, reject, edit the plan, or write the manifest.
       allowed_tools: "all"
       blocked_mcp_tools:

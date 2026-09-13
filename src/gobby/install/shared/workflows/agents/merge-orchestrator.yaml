@@ -5,7 +5,7 @@ description: |
   and submits the stage verdict. In the merge stage it either lands the PR
   through GitHub or runs the existing direct merge-worker campaign.
   Operates within a single coordinating task — does not spawn cross-task
-  campaigns. Loads merge-expert and build-coordinator skills on start.
+  campaigns. Loads gobby:references/source-control/merge-campaigns.md and gobby:references/build/coordination.md skills on start.
 
 version: "1.1"
 enabled: true
@@ -34,14 +34,14 @@ prompts:
     target branch.
 
     Methodology:
-    Load the `merge-expert` and `build-coordinator` skills before anything else.
+    Load the `gobby:references/source-control/merge-campaigns.md` and `gobby:references/build/coordination.md` skills before anything else.
     Call
-    get_skill(name="merge-expert") and get_skill(name="build-coordinator") on
-    gobby-skills, then continue. Follow merge-expert exactly:
+    get_skill_file(name="gobby", path="references/source-control/merge-campaigns.md") and get_skill_file(name="gobby", path="references/build/coordination.md") on
+    gobby-skills, then continue. Follow gobby:references/source-control/merge-campaigns.md exactly:
     Survey -> Plan -> Execute -> Recover -> Verify -> Output (campaign report).
 
     PR stage workflow:
-    - Read the assigned task and load merge-expert plus build-coordinator.
+    - Read the assigned task and load gobby:references/source-control/merge-campaigns.md plus gobby:references/build/coordination.md.
     - Survey the relevant worktrees and target branch.
     - For each delivery unit, call gobby-merge:probe_branch_protection and
       record the result with gobby-tasks-ops:record_pr_state.
@@ -67,7 +67,7 @@ prompts:
 
     Merge stage workflow:
     - Claim the assigned campaign task and read its description.
-    - Load merge-expert and build-coordinator before doing anything else.
+    - Load gobby:references/source-control/merge-campaigns.md and gobby:references/build/coordination.md before doing anything else.
     - Read gobby-tasks-ops:get_delivery_state. If PR URLs are present and
       ready, land them with github:merge_pull_request using the recorded
       merge_strategy (default squash), then call record_merge_result.
@@ -246,10 +246,16 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required merge and build coordinator skills"
       status_message: |
-        Call get_skill(name="merge-expert") and
-        get_skill(name="build-coordinator") on gobby-skills, then continue.
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
+        Call get_skill_file(name="gobby", path="references/source-control/merge-campaigns.md") and
+        get_skill_file(name="gobby", path="references/build/coordination.md") on gobby-skills, then continue.
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
@@ -262,20 +268,20 @@ step_workflow:
         - "gobby-skills:get_skill_file"
       on_mcp_success:
         - server: gobby-skills
-          tool: get_skill
-          when: "tool_input.name == 'merge-expert'"
+          tool: get_skill_file
+          when: "skill_loaded('gobby:references/source-control/merge-campaigns.md')"
           action: set_variable
           variable: skill_loaded
           value: true
         - server: gobby-skills
-          tool: get_skill
-          when: "tool_input.name == 'build-coordinator'"
+          tool: get_skill_file
+          when: "skill_loaded('gobby:references/build/coordination.md')"
           action: set_variable
           variable: build_coordinator_skill_loaded
           value: true
       transitions:
         - to: survey
-          when: "vars.skill_loaded and vars.build_coordinator_skill_loaded"
+          when: "skill_loaded('gobby:references/source-control/merge-campaigns.md') and skill_loaded('gobby:references/build/coordination.md')"
 
     - name: survey
       mcp_error_policy: stay
@@ -331,7 +337,7 @@ step_workflow:
       mcp_error_policy: stay
       description: "Emit an ordered merge_plan based on the survey"
       status_message: |
-        Apply the merge-expert ordering rubric (recover orphans -> toposort by
+        Apply the gobby:references/source-control/merge-campaigns.md ordering rubric (recover orphans -> toposort by
         task deps -> fewest predicted conflicts -> smallest diff -> freshness).
         Pick an action per step (merge | cherry-pick | merge_subset | abort).
         Store the plan as session variable merge_plan, then transition. If a

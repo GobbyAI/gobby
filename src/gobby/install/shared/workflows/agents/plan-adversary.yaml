@@ -38,15 +38,15 @@ prompts:
 
     Methodology:
     After claiming your task, load all three methodology skills before anything
-    else: `restraint`, `plan-review`, and `proportionality`. Use only the Gobby
+    else: `restraint`, `gobby:references/plan/review.md`, and `proportionality`. Use only the Gobby
     MCP proxy tools for this — native Skill, GitHub/app connector, and
     Computer Use tools bypass Gobby's skill tracking. Call get_skill(name="restraint"),
-    get_skill(name="plan-review"), and get_skill(name="proportionality") on
+    get_skill_file(name="gobby", path="references/plan/review.md"), and get_skill(name="proportionality") on
     gobby-skills, then continue. Every finding's `fix` walks `restraint`'s
     decision ladder and proposes the lowest rung that fully repairs the defect;
     a fix that adds mechanism around an already-sufficient design is itself an
     `over-engineering` finding, never a repair. Follow
-    `plan-review`'s heuristics — attitude, method, traceability,
+    `gobby:references/plan/review.md`'s heuristics — attitude, method, traceability,
     gobby-specific checks, the over-engineering (proportionality) check,
     severity-based escalation policy, round-scoped findings heading, and halt
     conditions. `proportionality` is the shared anti-Rube-Goldberg criterion you
@@ -80,7 +80,7 @@ prompts:
     pass still enforces the table-row decomposition rule for ambiguous tables
     the conservative validator cannot hard-block: any deliverable table
     enumerating work items needs one acceptance item per data row with stable IDs.
-    Use the rejection-message vocabulary documented in plan-review when surfacing
+    Use the rejection-message vocabulary documented in gobby:references/plan/review.md when surfacing
     any contract violation the planner gate missed.
     PLAN IDENTITY PRECONDITION: before any manifest handoff or
     `approve_review`, verify the plan text outside fenced code blocks contains a
@@ -98,7 +98,7 @@ prompts:
     `reject_review(stage_name="planning", rejection_notes=...)` only.
 
     Plan review evidence contract:
-    Follow `plan-review`'s recalled-lesson pass and full attestation schema. Recall
+    Follow `gobby:references/plan/review.md`'s recalled-lesson pass and full attestation schema. Recall
     `reviewer-miss` lessons before findings. Every finding carries stable
     `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
     one of `principle` or `root_cause`, and each field required by its claimed
@@ -112,7 +112,7 @@ prompts:
     task directly for governing requirements and current contracts. The lane
     scopes, candidate schema, parent verification/disposition rules, cross-lane
     interaction pass, adjacent-variant closure, fallback rules, and
-    shadow-manifest gate are authoritative in `plan-review`.
+    shadow-manifest gate are authoritative in `gobby:references/plan/review.md`.
 
     Launch one read-only provider-native internal subagent per lane through the
     current CLI/runtime's internal collaboration facility. Run
@@ -156,7 +156,7 @@ prompts:
     server is a fabrication.
 
     Workflow:
-    - After `plan-review` is loaded and the workflow has advanced to `review`,
+    - After `gobby:references/plan/review.md` is loaded and the workflow has advanced to `review`,
     review the plan artifact referenced in your prompt against requirements
     context read directly from the repository and the parent planning task
     (`gobby-tasks:get_task`). Cite repository evidence by `path` and `sha256`.
@@ -269,7 +269,7 @@ step_workflow:
     task_claimed: false
     required_skills:
       - restraint
-      - plan-review
+      - gobby:references/plan/review.md
       - proportionality
     restraint_loaded: false
     skill_loaded: false
@@ -312,19 +312,24 @@ step_workflow:
 
     - name: load_skill
       mcp_error_policy: stay
-      description: "Load the restraint, plan-review, and proportionality methodology skills"
+      description: "Load the restraint, gobby:references/plan/review.md, and proportionality methodology skills"
       status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
         Load all three methodology skills before reviewing: call
-        get_skill(name="restraint"), get_skill(name="plan-review"), and
+        get_skill(name="restraint"), get_skill_file(name="gobby", path="references/plan/review.md"), and
         get_skill(name="proportionality") on gobby-skills, then continue.
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
         call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill", {"name": "plan-review"}), and
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/review.md"}), and
         call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
         All three returned skills are authoritative: `restraint` is the decision
-        ladder every proposed fix walks, `plan-review` is the review
+        ladder every proposed fix walks, `gobby:references/plan/review.md` is the review
         methodology, `proportionality` is the shared anti-Rube-Goldberg criterion
         backing the over-engineering finding category.
       allowed_tools:
@@ -342,8 +347,8 @@ step_workflow:
         - "gobby-plans:get_plan_review_snapshot"
       on_mcp_success:
         - server: gobby-skills
-          tool: get_skill
-          when: "tool_input.name == 'plan-review'"
+          tool: get_skill_file
+          when: "skill_loaded('gobby:references/plan/review.md')"
           action: set_variable
           variable: skill_loaded
           value: true
@@ -361,7 +366,7 @@ step_workflow:
           value: true
       transitions:
         - to: review
-          when: "vars.skill_loaded and vars.proportionality_loaded and vars.restraint_loaded"
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
 
     - name: review
       description: "Review the implementation plan and decide"

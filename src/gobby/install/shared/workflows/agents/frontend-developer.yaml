@@ -48,9 +48,9 @@ prompts:
     project commands when the repository requires it.
 
     Additional skills:
-    Load development-discipline, restraint, and tasks with gobby-skills before
+    Load gobby:references/development/obligations.md, restraint, and gobby:references/tasks/overview.md with gobby-skills before
     implementing. Then inspect the prompt's additional_skills list and call
-    get_skill(name=<skill>) on gobby-skills for each entry before implementing.
+    the appropriate get_skill or get_skill_file call for each entry before implementing.
     TDD-required leaves include test-driven-development in additional_skills.
 
     Handoff:
@@ -77,9 +77,9 @@ step_workflow:
   variables:
     task_claimed: false
     required_skills:
-      - development-discipline
+      - gobby:references/development/obligations.md
       - restraint
-      - tasks
+      - gobby:references/tasks/overview.md
     required_skills_loaded: false
     additional_skills: []
     additional_skills_loaded: false
@@ -117,13 +117,19 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required developer discipline skills"
       status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
         Load required developer skills before loading optional task skills or
         implementing:
-        1. get_skill(name="development-discipline") on gobby-skills
+        1. get_skill_file(name="gobby", path="references/development/obligations.md") on gobby-skills
         2. get_skill(name="restraint") on gobby-skills
-        3. get_skill(name="tasks") on gobby-skills
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        3. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
@@ -140,20 +146,32 @@ step_workflow:
           action: set_variable
           variable: required_skills_loaded
           value: >-
-            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
       transitions:
         - to: load_additional_skills
           when: >-
-            all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+            all(skill_loaded(skill) for skill in vars.required_skills)
 
     - name: load_additional_skills
       mcp_error_policy: stay
       description: "Load optional task-specific skills"
       status_message: |
-        For each prompt additional_skills entry, call get_skill(name=<skill>) on
-        gobby-skills. If the list is empty, proceed to implementation.
-        Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": <skill>});
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
+        Load each prompt additional_skills entry using the plain-name or exact-reference
+        loading contract above. If the list is empty, proceed to implementation.
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
@@ -171,12 +189,19 @@ step_workflow:
           variable: additional_skills_loaded
           value: >-
             not vars.additional_skills
-            or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
+            or all(skill_loaded(skill) for skill in vars.additional_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: additional_skills_loaded
+          value: >-
+            not vars.additional_skills
+            or all(skill_loaded(skill) for skill in vars.additional_skills)
       transitions:
         - to: implement
           when: >-
             not vars.additional_skills
-            or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
+            or all(skill_loaded(skill) for skill in vars.additional_skills)
 
     - name: implement
       mcp_error_policy: stay
