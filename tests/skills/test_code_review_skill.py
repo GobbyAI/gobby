@@ -25,9 +25,12 @@ def _content() -> str:
 def test_code_review_skill_declares_required_skills() -> None:
     content = _content()
 
-    assert "REQUIRED SKILL: review-learning." in content
-    assert "REQUIRED SKILL: code-index." in content
-    assert "Load `code-index` before the first `gcode` or file read" in content
+    assert "REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`." in content
+    assert "REQUIRED REFERENCE: `gobby:references/code-index/overview.md`." in content
+    assert (
+        "Load `gobby:references/code-index/overview.md` before the first `gcode` or file read"
+        in content
+    )
     assert '`get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file")`' in content
     assert "Pass `language` (and `repo` when known)" in content
 

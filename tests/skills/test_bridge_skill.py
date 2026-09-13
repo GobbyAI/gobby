@@ -26,21 +26,21 @@ def test_bridge_skill_parses_and_is_discoverable() -> None:
     skills = SkillLoader().load_directory(SKILLS_ROOT)
 
     assert parsed.name == "bridge"
+    assert parsed.metadata is not None
     assert parsed.metadata["gobby"]["audience"] == "all"
     assert "bridge" in {skill.name for skill in skills}
 
 
 def test_bridge_skill_live_mode_contract() -> None:
-    """Live mode keeps one umbrella task inside one turn until a sentinel ends it."""
+    """Live mode preserves one umbrella task and uses the verified wait contract."""
     body = _body()
 
     assert "## Invocation" in body
     assert "## Live Mode" in body
-    assert "Never end the turn to wait" in body
+    assert "A live label does not waive turn-end gates" in body
+    assert "applicable durable wait" in body
     assert "Monitor" in body
-    # a46e947fe moved the umbrella-task lifecycle into the `live-session` skill;
-    # bridge delegates rather than calling create_task itself.
-    assert "`live-session` skill owns the umbrella task" in body
+    assert "`gobby:references/tasks/live-work.md` reference owns the umbrella task" in body
     assert "task creation, and claiming" in body
     assert "close_task" in body
     # Sentinel matcher tokens
@@ -78,6 +78,6 @@ def test_bridge_skill_live_mode_single_commit_wrapup() -> None:
 
     normalized = " ".join(body.split())
 
-    assert "Execute `live done`" in body
+    assert "Follow `gobby:references/tasks/live-work.md` to finish the live scope" in body
     assert "the final task-linked commit when changes exist, and `close_task`" in normalized
     assert "never close the task mid-session" in normalized

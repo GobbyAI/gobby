@@ -24,7 +24,10 @@ metadata:
 Apply this language-neutral workflow to any hand-maintained production source
 indexed by `gcode`. Preserve observable behavior throughout the decomposition.
 
-REQUIRED SKILL: code-index.
+REQUIRED REFERENCE: `gobby:references/code-index/overview.md`.
+Fetch the `gobby-skills:get_skill_file` schema with `get_tool_schema`, then load
+`get_skill_file(name="gobby", path="references/code-index/overview.md")`.
+Follow each `page.next_cursor` with only `cursor` until null before navigating.
 
 Threshold decomposition belongs to the current claimed feature or fix task and
 must finish in the current session. Loading this skill permits the structural

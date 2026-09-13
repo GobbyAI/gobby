@@ -102,7 +102,10 @@ pressure during planning, review, or ongoing task work, use
 closing the current task, when a root or coordinator moves to another task or epic
 child. A spawned worker ending cooperatively or handing off a blocker supplies the
 same structured fields to `gobby-agents:end_agent_run`.
-Load `handoff-discipline` before authoring a handoff. Derive concise, readable
+Load `gobby:references/sessions/handoffs.md` before authoring a handoff. Fetch
+`gobby-skills:get_skill_file` with `get_tool_schema`, then call
+`get_skill_file(name="gobby", path="references/sessions/handoffs.md")` and follow
+each `page.next_cursor` with only `cursor` until null. Derive concise, readable
 handoffs from the native tracker. Canonical usage lives in
 `docs/guides/sessions.md` (§Creating And Reading Handoffs), with compaction, `/clear`,
 and provider-handoff semantics in `docs/contracts/session-boundary.md`.
@@ -210,4 +213,7 @@ not freehand edits.
 ## Plans
 
 Read `docs/contracts/plan-coverage.md` before authoring, reviewing, or expanding any
-plan. The authoring surface is `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
+plan. The authoring surface is
+`src/gobby/install/shared/skills/gobby/references/plan/drafting.md`. Load it through
+`get_skill_file(name="gobby", path="references/plan/drafting.md")` after fetching
+the schema, and follow each cursor to completion.

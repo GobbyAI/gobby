@@ -19,10 +19,18 @@ deterministic work: which files are reviewable and which checklist applies to ea
 of them. You do the reviewing. OCR calls no LLM in this mode, so nothing is
 configured on its side.
 
-REQUIRED SKILL: review-learning.
-REQUIRED SKILL: code-index.
+REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`.
+REQUIRED REFERENCE: `gobby:references/code-index/overview.md`.
 
-Load `code-index` before the first `gcode` or file read; the code-index rules block
+Before using these Gobby procedures, fetch the `gobby-skills:get_skill_file` schema
+with `get_tool_schema` in its own tool result. Then load each required reference:
+- `get_skill_file(name="gobby", path="references/memory/review-lessons.md")`
+- `get_skill_file(name="gobby", path="references/code-index/overview.md")`
+
+Follow each `page.next_cursor` with only `cursor` until null before continuing.
+
+Load `gobby:references/code-index/overview.md` before the first `gcode` or file read;
+the code-index rules block
 raw reads until it is loaded.
 
 ## Preflight

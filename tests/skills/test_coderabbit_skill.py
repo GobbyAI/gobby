@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -104,8 +105,8 @@ def test_coderabbit_skill_requires_validation_commit_and_task_close() -> None:
     """Verify the skill requires validation, a task-referenced commit, and task closure."""
     body = _body()
 
-    assert "REQUIRED SKILL: tasks" in body
-    assert "REQUIRED SKILL: review-learning" in body
+    assert "REQUIRED REFERENCE: `gobby:references/tasks/overview.md`" in body
+    assert "REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`" in body
     assert "Run focused validation" in body
     assert "Commit with the task ref" in body
     assert "close the task with `commit_sha`" in body
@@ -124,3 +125,45 @@ def test_coderabbit_skill_requires_review_learning_hooks() -> None:
     assert "confirmed reusable" in body
     assert "no-fix-policy" in body
     assert "Do not record\n    stale, invalid, or raw CLI-failure findings" in body
+
+
+def test_reference_contract_4_3_1() -> None:
+    """Every retained method resolves operational loads without retired entrypoints."""
+    retained = set(
+        "brevity restraint proportionality elicit ideate research architecture prd code-review "
+        "decompose-monolith repository-maintenance test-driven-development triage-judgment "
+        "impeccable tech-writer bridge browser-testing coderabbit context7 gusto bash c cpp "
+        "csharp dart elixir go java javascript json kotlin lua objc php python ruby rust scala "
+        "swift typescript yaml".split()
+    )
+    retired = set(
+        "tasks live-session plan plan-draft plan-enhance plan-mechanic plan-review expand "
+        "expansion-agent-selection build build-coordinator handoff-discipline persona memory "
+        "review-learning code-index loading-skills writing-skills build-rule mcp-servers "
+        "pipelines-and-cron source-control clones merge merge-expert review epic-review intro "
+        "development-discipline channel-parity".split()
+    )
+    reference_count = 0
+    # Gusto is an installed user-owned skill, not a bundled entrypoint.
+    # Upgrade preservation of user rows belongs to the isolated migration tests.
+    for name in sorted(retained - {"gusto"}):
+        parsed = parse_skill_file(SKILLS_ROOT / name / "SKILL.md")
+        assert parsed.name == name
+        for path in (SKILLS_ROOT / name).rglob("*.md"):
+            content = path.read_text(encoding="utf-8")
+            for requirement in re.findall(r"REQUIRED SKILL: ([\w-]+)", content):
+                assert requirement not in retired, (path, requirement)
+            for skill in re.findall(r'get_skill\(name="([\w-]+)"', content):
+                assert skill not in retired, (path, skill)
+            for reference in re.findall(r"gobby:(references/[a-z-]+/[a-z-]+\.md)", content):
+                reference_count += 1
+                assert (SKILLS_ROOT / "gobby" / reference).is_file(), (path, reference)
+    assert len(retained) == 41
+    assert reference_count >= 8
+    # Methodology stays reusable; only the host-specific procedures moved.
+    assert "Plan Mode Gate" in _body()
+    assert "gobby-review-learning.recall_review_context" in _body()
+    review = (SKILLS_ROOT / "code-review/SKILL.md").read_text(encoding="utf-8")
+    assert "ocr delegate preview" in review and "Review Each File" in review
+    proportionality = parse_skill_file(SKILLS_ROOT / "proportionality/SKILL.md")
+    assert proportionality.is_internal() is True

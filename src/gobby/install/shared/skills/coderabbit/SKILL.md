@@ -19,8 +19,15 @@ metadata:
 Use this skill for `$gobby coderabbit [findings]`, pasted CodeRabbit comments,
 and files matching `./reports/coderabbit-*.md`.
 
-REQUIRED SKILL: tasks.
-REQUIRED SKILL: review-learning.
+REQUIRED REFERENCE: `gobby:references/tasks/overview.md`.
+REQUIRED REFERENCE: `gobby:references/memory/review-lessons.md`.
+
+Before using these Gobby procedures, fetch the `gobby-skills:get_skill_file` schema
+with `get_tool_schema` in its own tool result. Then load each required reference:
+- `get_skill_file(name="gobby", path="references/tasks/overview.md")`
+- `get_skill_file(name="gobby", path="references/memory/review-lessons.md")`
+
+Follow each `page.next_cursor` with only `cursor` until null before continuing.
 
 ## Plan Mode Gate
 

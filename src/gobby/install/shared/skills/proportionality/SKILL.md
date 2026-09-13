@@ -134,7 +134,7 @@ The criterion is identical at every altitude; the unit under review changes.
 - **Plan altitude (`plan-adversary`).** Unit = a deliverable section. Flag a
   deliverable that builds a subsystem/registry/framework/abstraction with no
   consumer named anywhere in the plan, or config/flags/profile fields with a
-  single value. Feeds the `over-engineering` finding category in `plan-review`.
+  single value. Feeds the `over-engineering` finding category in `gobby:references/plan/review.md`.
   Ambitious-but-justified epics produce zero proportionality findings.
 - **Epic altitude (`epic-reviewer`).** Unit = the whole epic across its
   leaves. Watch for cross-leaf duplication that should have been one shared
@@ -153,7 +153,7 @@ The criterion is identical at every altitude; the unit under review changes.
   per-surface copy — that fork is the drift this skill prevents.
 - This skill judges *mechanism vs. goal*. It never judges ambition, size, or
   net-new scope, and it never weakens correctness, security, or required
-  testing — those gates belong to the host review (`plan-review`,
-  `epic-review`, the QA spec-compliance tier) and always win.
+  testing — those gates belong to the host review (`gobby:references/plan/review.md`,
+  `gobby:references/review/epic.md`, the QA spec-compliance tier) and always win.
 - Default to *not* flagging when justification is plausible. Under-flagging
   protects creativity; over-flagging punishes it.

@@ -5,14 +5,16 @@
 This page is the canonical reading order for the plan-coverage contract:
 
 1. `CLAUDE.md` for repo-wide agent requirements.
-2. `src/gobby/install/shared/skills/plan/SKILL.md` for interactive authoring.
-3. `src/gobby/install/shared/skills/plan-draft/SKILL.md` for the typed grammar.
-4. `src/gobby/install/shared/skills/plan-review/SKILL.md` for adversarial review.
-5. `src/gobby/install/shared/skills/plan-enhance/SKILL.md` for the constructive
+2. `src/gobby/install/shared/skills/gobby/references/plan/overview.md` for interactive authoring.
+3. `src/gobby/install/shared/skills/gobby/references/plan/drafting.md` for narrative
+   authoring and `src/gobby/install/shared/skills/gobby/references/plan/coverage.md`
+   for the typed grammar.
+4. `src/gobby/install/shared/skills/gobby/references/plan/review.md` for adversarial review.
+5. `src/gobby/install/shared/skills/gobby/references/plan/enhancement.md` for the constructive
    pre-adversary enhancement pass.
 6. `src/gobby/install/shared/skills/proportionality/SKILL.md` for the shared
    over-engineering / right-sizing criterion used by plan, epic, and leaf review.
-7. `src/gobby/install/shared/skills/expand/SKILL.md` for expansion obligations.
+7. `src/gobby/install/shared/skills/gobby/references/plan/expansion.md` for expansion obligations.
 8. `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` for QA gating.
 
 Parser and coverage implementation surfaces live under `gobby.plans.parser`,
@@ -146,7 +148,7 @@ The single-entry form
 target on the header line itself; both forms may appear in one section, and their
 entries merge.
 
-The `plan-draft` Verification Checklist also requires consumer-sweep evidence
+The Authoring constraints in `gobby:references/plan/coverage.md` require consumer-sweep evidence
 for every exact symbol Target. Record `gcode usages <symbol-id>` or
 `gcode blast-radius <name>` results. Place owned production and test consumers that need edits, excluding
 vendor and generated files, in deliverable Targets. Record verified no-edit
@@ -230,7 +232,7 @@ deliverable's unchanged inventory still produce coverage findings.
 Known consumer blind spots: a consumer that reaches the symbol through a
 re-export from another module (the importer names the re-exporting module, not
 the defining one), and dynamic access by string that does not spell the bare
-name. The `plan-draft` consumer sweep covers these with literal `gcode grep`
+name. The `gobby:references/plan/coverage.md` consumer sweep covers these with literal `gcode grep`
 evidence.
 
 ## Research Context
@@ -417,8 +419,8 @@ is a contract violation and must fail pre-flight validation.
 ### Leaf Granularity
 
 The plan author owns leaf sizing. Each deliverable must have one independently
-verifiable outcome; the decomposition pass in `plan-draft`'s
-`references/task-structure.md` applies before review and after scope revisions.
+verifiable outcome. Apply the Author and Constraints sections of
+`gobby:references/plan/drafting.md` before review and after scope revisions.
 More than 6 acceptance items, more than 6 distinct hand-maintained production
 Target files, or 2 independently testable state machines/lifecycle owners
 trigger a recorded **Granularity:** decision. These are qualitative inspection

@@ -98,15 +98,17 @@ an edit fails, re-read and verify the checkbox state before retrying.
 
 A continuous annotate → implement → verify loop: the user stays in the browser
 annotating while you process each round as it arrives. The generic
-`live-session` skill owns the umbrella task, turn-end exemption, validation,
+`gobby:references/tasks/live-work.md` reference owns the umbrella task, wait discipline, validation,
 commit, and close lifecycle. Bridge owns annotation processing.
 
 ### Setup
 
 1. Locate the `.moat` files (same search order as `## Task Files`); if
    missing, follow `## When Files Are Missing` and stop.
-2. Load `live-session` with `gobby-skills:get_skill`, then execute
-   `live start "Drawbridge annotations — <scope or date>"`. It handles
+2. Fetch the `gobby-skills:get_skill_file` schema with `get_tool_schema`, then
+   load `get_skill_file(name="gobby", path="references/tasks/live-work.md")`.
+   Follow each `page.next_cursor` with only `cursor` until null. Follow that
+   reference to start "Drawbridge annotations — <scope or date>"; it owns
    re-entry, mixed-claim refusal, authorization, task creation, and claiming.
 3. Reconcile `.moat` statuses: finish or reset every pre-existing `doing`
    entry before accepting new annotations.
@@ -136,8 +138,9 @@ commit, and close lifecycle. Bridge owns annotation processing.
 
 ### Waiting for Annotations
 
-**Never end the turn to wait** — while the umbrella task is claimed, ending
-the turn is blocked, and every wait must be a tool call.
+A live label does not waive turn-end gates. Use the applicable durable wait
+and yield when supported; otherwise use the bounded file-change monitor below.
+Do not manufacture a wait merely to end the turn.
 
 - **Claude Code**: use the `Monitor` tool with an until-condition on
   `.moat/moat-tasks-detail.json` changing (content hash or mtime), polling
@@ -171,6 +174,7 @@ the turn is blocked, and every wait must be a tool call.
 ### Wrap-Up
 
 1. Reconcile: no entries may remain `"doing"`.
-2. Execute `live done`. The live-session skill owns validation, the final
-   task-linked commit when changes exist, and `close_task`.
+2. Follow `gobby:references/tasks/live-work.md` to finish the live scope,
+   including validation, the final task-linked commit when changes exist, and
+   `close_task`. Load the closing topic when that reference directs it.
 3. Report: rounds processed, annotations implemented, files changed.

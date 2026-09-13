@@ -83,7 +83,7 @@ def test_skill_attributes_the_three_refactoring_sources() -> None:
 def test_skill_requires_code_index_and_uses_language_neutral_graph_analysis() -> None:
     guidance = _guidance()
 
-    assert "REQUIRED SKILL: code-index." in guidance
+    assert "REQUIRED REFERENCE: `gobby:references/code-index/overview.md`." in guidance
     for command in (
         "gcode outline <file>",
         "gcode imports <file>",

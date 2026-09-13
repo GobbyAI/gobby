@@ -100,7 +100,7 @@ def test_agents_md_points_to_plan_coverage_contract() -> None:
     section = _section()
 
     assert "docs/contracts/plan-coverage.md" in section
-    assert "src/gobby/install/shared/skills/plan-draft/SKILL.md" in section
+    assert "src/gobby/install/shared/skills/gobby/references/plan/drafting.md" in section
 
 
 def test_canonical_regex_pinned_in_contract() -> None:
@@ -130,3 +130,24 @@ def test_no_retired_plan_storage_terms() -> None:
         body = path.read_text(encoding="utf-8")
         for term in stale_terms:
             assert term not in body
+
+
+def test_normative_instruction_reference_links_resolve() -> None:
+    sources = [AGENTS, CONTRACT, Path("docs/contracts/session-boundary.md")]
+    for source in sources:
+        content = source.read_text(encoding="utf-8")
+        for path in re.findall(r"`(src/gobby/install/shared/skills/[^`]+\.md)`", content):
+            assert Path(path).is_file(), (source, path)
+        for path in re.findall(r"gobby:(references/[a-z-]+/[a-z-]+\.md)", content):
+            assert (Path("src/gobby/install/shared/skills/gobby") / path).is_file(), (source, path)
+    root = AGENTS.read_text(encoding="utf-8")
+    assert 'get_skill_file(name="gobby", path="references/sessions/handoffs.md")' in root
+    assert "page.next_cursor" in root
+    contract = CONTRACT.read_text(encoding="utf-8")
+    assert "references/task-structure.md" not in contract
+    assert "consumer-sweep evidence" in contract
+    assert "before review and after scope revisions" in contract
+    boundary = sources[2].read_text(encoding="utf-8")
+    assert "loaded-skills and completed-reference ledgers" in boundary
+    assert "gobby:references/skills/loading.md" in boundary
+    assert "gobby:references/memory/overview.md" in boundary
