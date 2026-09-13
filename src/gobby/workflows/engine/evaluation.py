@@ -304,6 +304,10 @@ class EvaluationMixin:
                 response.reason = _repeat_block_reason(resolved_rule_name, response.reason)
             else:
                 shown.append(block_signature)
+            if evaluation.is_before_tool:
+                from gobby.skills.formatting import format_skill_block_reason
+
+                response.reason = format_skill_block_reason(response.reason)
         if span.is_recording():
             span.set_attribute("final_decision", response.decision)
             if response.reason:

@@ -14,6 +14,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
+from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE, skill_fetch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -149,6 +150,7 @@ class TestAggregateBlocks:
 
         assert response.reason == (
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
+            f"{SKILL_BLOCK_ATOMICITY_NOTICE}\n"
             "Multiple gates blocked while retrying Edit.\n"
             f"1. [require-claimed-task-required-skills] {python_directive}\n"
             f"2. [require-restraint-skill] {restraint_directive}"
@@ -163,6 +165,53 @@ class TestAggregateBlocks:
             "1. [first-gate] First gate\n"
             "2. [second-gate] Second gate"
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("command", ["git commit", "git add . && git commit"])
+    async def test_skill_block_notice_covers_entire_call_and_repeated_block(
+        self, db: HubDatabase, manager: RuleDefinitionManager, command: str
+    ) -> None:
+        _insert_rule(
+            manager,
+            "require-code-review-skill",
+            [
+                RuleEffect(
+                    type="block",
+                    reason=skill_fetch_directive("code-review") + " Review staged changes.",
+                )
+            ],
+            priority=10,
+        )
+        event = _make_event()
+        event.data = {"tool_name": "Bash", "tool_input": {"command": command}}
+        variables: dict[str, Any] = {}
+        engine = RuleEngine(db)
+        for _ in range(2):
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+            assert response.decision == "block"
+            assert response.reason is not None
+            assert response.reason.count(SKILL_BLOCK_ATOMICITY_NOTICE) == 1
+            assert response.reason.index(SKILL_BLOCK_ATOMICITY_NOTICE) < response.reason.index(
+                "call_tool"
+            )
+            assert response.modified_input is None
+
+    @pytest.mark.asyncio
+    async def test_nonblocking_skill_context_has_no_atomicity_notice(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        directive = skill_fetch_directive("python")
+        _insert_rule(
+            manager,
+            "suggest-python",
+            [RuleEffect(type="inject_context", template=directive)],
+            priority=10,
+        )
+        response = await RuleEngine(db).evaluate(_make_event(), session_id=SESSION_ID, variables={})
+        assert response.decision != "block"
+        assert response.context is not None
+        assert directive in response.context
+        assert SKILL_BLOCK_ATOMICITY_NOTICE not in response.context
 
     @pytest.mark.asyncio
     async def test_single_block_output_is_unchanged(

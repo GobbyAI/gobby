@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.skills.formatting import (
+    SKILL_BLOCK_ATOMICITY_NOTICE,
+    format_skill_block_reason,
     format_skill_fetch_context,
     recommend_skills_for_task,
     skill_fetch_batch_directive,
@@ -15,6 +17,22 @@ from gobby.skills.formatting import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("name", ["python", "gobby:references/tasks/closing.md"])
+def test_block_notice_precedes_specialized_guidance_once(name: str) -> None:
+    directive = skill_fetch_directive(name)
+    reason = f"{directive}\nThen inspect the staged changes."
+    formatted = format_skill_block_reason(reason)
+    assert formatted == f"{SKILL_BLOCK_ATOMICITY_NOTICE}\n{reason}"
+    assert format_skill_block_reason(formatted) == formatted
+    assert SKILL_BLOCK_ATOMICITY_NOTICE not in directive
+    assert SKILL_BLOCK_ATOMICITY_NOTICE not in format_skill_fetch_context(name)
+    assert SKILL_BLOCK_ATOMICITY_NOTICE not in skill_fetch_batch_directive([name, "restraint"])
+
+
+def test_non_skill_block_keeps_its_reason() -> None:
+    assert format_skill_block_reason("Claim a task first.") == "Claim a task first."
 
 
 def test_reference_contract_1_1_3() -> None:

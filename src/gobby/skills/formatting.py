@@ -32,6 +32,23 @@ def skill_fetch_call_path(name: str) -> str:
     return instruction_fetch_call(name)
 
 
+SKILL_BLOCK_ATOMICITY_NOTICE = (
+    "The blocked tool call never executed. No compound-shell segment ran. "
+    "After loading the required instructions, rerun the entire tool call."
+)
+
+
+def format_skill_block_reason(reason: str) -> str:
+    """Add atomicity once to a finalized block containing a shared fetch directive."""
+    if 'call_tool("gobby-skills", "get_skill' not in reason:
+        return reason
+    guidance = reason.replace(SKILL_BLOCK_ATOMICITY_NOTICE, "").strip()
+    if guidance.startswith("Rule enforced by Gobby: ["):
+        header, _, guidance = guidance.partition("\n")
+        return f"{header}\n{SKILL_BLOCK_ATOMICITY_NOTICE}\n{guidance}"
+    return f"{SKILL_BLOCK_ATOMICITY_NOTICE}\n{guidance}"
+
+
 def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
     return instruction_fetch_directive(name)
