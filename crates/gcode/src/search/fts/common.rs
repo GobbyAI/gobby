@@ -119,6 +119,15 @@ pub(super) fn query_count(
     Ok(row.try_get::<_, i64>("count")? as usize)
 }
 
+/// Whether the query must name its own project ids.
+///
+/// A managed agent connection is bound to one project by RLS, which is
+/// authoritative; anything else (an owner DSN, local `gcode`) sees every
+/// project's rows and has to filter for itself.
+pub(super) fn requires_explicit_project_filter(database_url: &str) -> bool {
+    !gobby_core::postgres::is_managed_agent_connection(database_url)
+}
+
 pub(super) fn push_visible_project_file_filter(
     conditions: &mut Vec<String>,
     params: &mut Vec<PgParam>,

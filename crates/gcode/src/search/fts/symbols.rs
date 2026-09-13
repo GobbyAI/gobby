@@ -9,7 +9,7 @@ use crate::visibility;
 use super::common::{
     FILTERED_FETCH_CAP, PgParam, SymbolFilters, SymbolOrder, append_unique_symbols, escape_like,
     push_id_list_param, push_id_param, push_param, query_symbols_by_conditions,
-    sanitize_pg_search_query,
+    requires_explicit_project_filter, sanitize_pg_search_query,
 };
 use super::errors::{SYMBOL_INDEX, bm25_query_error, database_query_error};
 
@@ -269,10 +269,6 @@ fn query_visible_symbols_by_conditions(
         .map_err(|error| anyhow::anyhow!("visible symbol filtering failed: {error}"))?;
     symbols.truncate(limit);
     Ok(symbols)
-}
-
-fn requires_explicit_project_filter(database_url: &str) -> bool {
-    !gobby_core::postgres::is_managed_agent_connection(database_url)
 }
 
 pub fn search_text_visible(

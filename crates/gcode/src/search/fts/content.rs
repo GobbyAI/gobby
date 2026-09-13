@@ -7,19 +7,62 @@ use crate::visibility;
 use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
-    PgParam, bm25_score_expr, param_refs, push_id_param, push_param, push_path_filter,
-    sanitize_pg_search_query, trusted_row_id,
+    PgParam, bm25_score_expr, param_refs, push_id_list_param, push_id_param, push_param,
+    push_path_filter, requires_explicit_project_filter, sanitize_pg_search_query, trusted_row_id,
 };
 use super::errors::{CONTENT_INDEX, bm25_query_error};
 
-fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
-    let row_id = trusted_row_id("c.id");
-    let mut order_by = format!("{} DESC", bm25_score_expr(&row_id));
-    for tiebreaker in tiebreakers {
-        order_by.push_str(", ");
-        order_by.push_str(tiebreaker);
-    }
-    order_by
+/// Build the visible-content query with the BM25 scan pinned to one execution.
+///
+/// The match set lives in a MATERIALIZED CTE because PostgreSQL evaluates such a
+/// CTE exactly once. Left as a plain join, the planner is free to put the
+/// ParadeDB scan on the inner side of a nested loop over the visible files, and
+/// it has nothing to tell it apart: the RLS quals are opaque to the selectivity
+/// estimator, so both sides estimate one row and the join order is effectively
+/// arbitrary. On a project where it guesses wrong the scan re-runs once per
+/// indexed file -- 173 executions and 19s on a 173-file repository (#22279).
+///
+/// Scoring changes with the shape. ParadeDB scores each heap-filter group it
+/// pushes down and sums them, so today's plan -- which pushes the query once
+/// with the RLS qual and again with the project equality the join derives --
+/// returns roughly twice the single-evaluation BM25 score. The CTE has no join
+/// to derive an equality from, so the score is evaluated once. Ranking is
+/// unchanged except where the two legs' differing statistics reordered ties.
+fn visible_content_sql(
+    match_conditions: &[String],
+    visible_files_sql: &str,
+    limit_placeholder: &str,
+) -> String {
+    let score = bm25_score_expr(&trusted_row_id("c.id"));
+    format!(
+        "WITH matches AS MATERIALIZED (
+             SELECT c.id,
+                    c.project_id,
+                    c.file_path,
+                    c.content_hash,
+                    c.line_start,
+                    c.line_end,
+                    c.language,
+                    c.content,
+                    {score} AS bm25_score
+             FROM code_content_chunks c
+             WHERE {}
+         ),
+         visible_files AS ({visible_files_sql})
+         SELECT m.file_path,
+                m.line_start::BIGINT AS line_start,
+                m.line_end::BIGINT AS line_end,
+                m.language,
+                m.content
+         FROM matches m
+         JOIN visible_files vf
+           ON vf.project_id = m.project_id
+          AND vf.file_path = m.file_path
+          AND vf.content_hash = m.content_hash
+         ORDER BY m.bm25_score DESC, m.project_id ASC, m.id ASC
+         LIMIT {limit_placeholder}",
+        match_conditions.join(" AND ")
+    )
 }
 
 pub fn search_content_visible(
@@ -51,26 +94,17 @@ pub fn search_content_visible(
         conditions.push(format!("c.language = {placeholder}"));
     }
     push_path_filter(&mut conditions, &mut params, "c", paths);
+    // The join to visible_files still scopes the result, but it no longer bounds
+    // the materialized match set. On a managed connection RLS already does that;
+    // anywhere else the query has to name the projects itself.
+    if requires_explicit_project_filter(&ctx.database_url) {
+        let project_ids = visibility::visible_project_ids(ctx);
+        let placeholder = push_id_list_param(&mut params, &project_ids);
+        conditions.push(format!("c.project_id = ANY({placeholder})"));
+    }
     let limit_placeholder = push_param(&mut params, limit as i64);
-    let order_by = content_bm25_order_by_sql(&["c.project_id ASC", "c.id ASC"]);
     let refs = param_refs(&params);
-    let sql = format!(
-        "WITH visible_files AS ({visible_files_sql})
-         SELECT c.file_path,
-                c.line_start::BIGINT AS line_start,
-                c.line_end::BIGINT AS line_end,
-                c.language,
-                c.content
-         FROM code_content_chunks c
-         JOIN visible_files vf
-           ON vf.project_id = c.project_id
-          AND vf.file_path = c.file_path
-          AND vf.content_hash = c.content_hash
-         WHERE {}
-         ORDER BY {order_by}
-         LIMIT {limit_placeholder}",
-        conditions.join(" AND ")
-    );
+    let sql = visible_content_sql(&conditions, &visible_files_sql, &limit_placeholder);
 
     let rows = conn
         .query(&sql, &refs)
@@ -217,18 +251,30 @@ mod tests {
     }
 
     #[test]
-    fn content_bm25_order_by_uses_pdb_score() {
-        let sql = content_bm25_order_by_sql(&["c.id ASC"]);
+    fn visible_content_scores_once_in_a_materialized_match_set() {
+        let sql = visible_content_sql(
+            &["c.content @@@ $1".to_string()],
+            "SELECT f.project_id, f.file_path, f.content_hash FROM code_indexed_files f",
+            "$2",
+        );
 
-        assert_eq!(sql, "pdb.score(c.id) DESC, c.id ASC");
+        // MATERIALIZED is what makes the ParadeDB scan run exactly once instead
+        // of once per visible file; a plain CTE leaves that to the planner.
+        assert!(sql.contains("WITH matches AS MATERIALIZED ("), "{sql}");
+        assert!(sql.contains("pdb.score(c.id) AS bm25_score"), "{sql}");
+        assert_eq!(sql.matches("c.content @@@ $1").count(), 1, "{sql}");
         assert_uses_pdb_score(&sql);
     }
 
     #[test]
-    fn visible_content_bm25_order_by_uses_pdb_score() {
-        let sql = content_bm25_order_by_sql(&["c.project_id ASC", "c.id ASC"]);
+    fn visible_content_orders_by_the_materialized_score_with_stable_tiebreakers() {
+        let sql = visible_content_sql(&["c.content @@@ $1".to_string()], "SELECT 1", "$2");
 
-        assert_eq!(sql, "pdb.score(c.id) DESC, c.project_id ASC, c.id ASC");
-        assert_uses_pdb_score(&sql);
+        assert!(
+            sql.contains("ORDER BY m.bm25_score DESC, m.project_id ASC, m.id ASC"),
+            "{sql}"
+        );
+        // Scoring the outer join rows again would re-introduce the per-file rescan.
+        assert!(!sql.contains("ORDER BY pdb.score"), "{sql}");
     }
 }
