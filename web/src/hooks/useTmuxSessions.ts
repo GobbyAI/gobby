@@ -257,6 +257,25 @@ export function useTmuxSessions(
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const viewport = readinessRef.current.take();
     if (viewport === null) return;
+    // The daemon opens an attachment's output bridge on its first
+    // `terminal_resize`; `terminal_set_viewport` only positions a bridge that
+    // already exists. The renderer sends a resize when its grid changes, which
+    // covers the first attachment and nothing after it: a replacement
+    // attachment arrives at unchanged geometry, so nothing remeasures and that
+    // attachment never streams. This rendezvous is the one place that knows a
+    // new attachment has both an id and a measured grid, so it opens the
+    // bridge here before positioning it. A "refresh" redraws an attachment
+    // that is already bridged and must not reopen one.
+    if (kind === "viewport") {
+      ws.send(
+        terminalResizeMessage(
+          viewport.terminalId,
+          viewport.attachmentId,
+          viewport.rows,
+          viewport.cols,
+        ),
+      );
+    }
     ws.send(
       terminalSetViewportMessage(
         `${kind}-${connectionGenerationRef.current}-${++requestCounterRef.current}`,

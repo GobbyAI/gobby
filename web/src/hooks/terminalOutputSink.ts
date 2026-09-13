@@ -6,6 +6,8 @@
  * registration replaces whatever was registered before.
  */
 
+import { boundAttachHistory } from "./terminalHistoryBounds";
+
 /** A bounded scrollback window delivered once, just before streaming starts. */
 export interface TerminalAttachHistory {
   streamingId: string;
@@ -42,7 +44,12 @@ export function createTerminalOutputSink(): TerminalOutputSink {
       });
       return;
     }
-    const text = typeof message.text === "string" ? message.text : "";
+    // Bounded here, at the one point the window is built, so every consumer
+    // below — the scrollback view and the fallback append alike — is handed a
+    // window the renderer can afford.
+    const { text, droppedLines } = boundAttachHistory(
+      typeof message.text === "string" ? message.text : "",
+    );
     if (history === null) {
       // No scrollback consumer: the window is still output, so it is better
       // appended to the stream than dropped.
@@ -52,7 +59,9 @@ export function createTerminalOutputSink(): TerminalOutputSink {
     history({
       streamingId: attachmentId,
       text,
-      truncated: message.truncated === true,
+      // The daemon's own cut and this client's cut mean the same thing to the
+      // reader: output existed above this window and is not shown.
+      truncated: message.truncated === true || droppedLines > 0,
       unavailable: message.unavailable === true,
       droppedBytes:
         typeof message.dropped_bytes === "number" ? message.dropped_bytes : 0,

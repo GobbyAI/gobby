@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalView, type TerminalViewHandle } from "../TerminalView";
 
+/**
+ * RIS followed by ED 3. Spelled out here rather than imported so that changing
+ * the sequence in production has to be restated as a deliberate contract
+ * change; neither renderer core offers a reset API to assert against instead.
+ */
+const RESET_BUFFER = "c[3J";
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -620,20 +627,36 @@ describe("lifecycle destroy", () => {
     act(() => vi.advanceTimersByTime(200));
     expect(onSizeChange).not.toHaveBeenCalled();
   });
-  it("applies attach history as one write with a marker and a screen pad", async () => {
+  it("clears and rebuilds the buffer before writing attach history", async () => {
     const terminalRef = createRef<TerminalViewHandle>();
     const onReady = vi.fn();
     render(<TerminalView ref={terminalRef} onReady={onReady} />);
     await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
 
     const instance = latestInstance();
+    vi.mocked(instance.write).mockClear();
+    vi.mocked(instance.resize).mockClear();
     act(() =>
       terminalRef.current?.applyAttachHistory("one\r\ntwo", true, false),
     );
 
-    // One write keeps wterm to a single syncScrollback pass.
-    expect(instance.write).toHaveBeenCalledTimes(1);
-    const payload = vi.mocked(instance.write).mock.calls[0]?.[0] ?? "";
+    // Clear the core, re-apply the grid, then write. The order carries the
+    // whole fix: wterm's DOM scrollback is a count-driven mirror, so clearing
+    // the core alone leaves the previous attachment's rows on screen and
+    // renders none of this window. Only resize rebuilds that mirror.
+    const writes = vi.mocked(instance.write).mock;
+    const resizes = vi.mocked(instance.resize).mock;
+    expect(writes.calls).toHaveLength(2);
+    expect(writes.calls[0]?.[0]).toBe(RESET_BUFFER);
+    expect(instance.resize).toHaveBeenCalledWith(211, 57);
+    expect(writes.invocationCallOrder[0]).toBeLessThan(
+      resizes.invocationCallOrder[0] ?? 0,
+    );
+    expect(resizes.invocationCallOrder[0]).toBeLessThan(
+      writes.invocationCallOrder[1] ?? 0,
+    );
+
+    const payload = writes.calls[1]?.[0] ?? "";
     const [marker, ...rest] = payload.split("\r\n");
     expect(marker).toContain("earlier output not shown");
     expect(marker).toMatch(/^─+ earlier output not shown ─+$/u);
@@ -652,11 +675,13 @@ describe("lifecycle destroy", () => {
     await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
 
     const instance = latestInstance();
+    vi.mocked(instance.write).mockClear();
     act(() => terminalRef.current?.applyAttachHistory("only", false, false));
 
-    const payload = vi.mocked(instance.write).mock.calls[0]?.[0] ?? "";
-    expect(payload.startsWith("only\r\n")).toBe(true);
-    expect(payload).not.toContain("earlier output not shown");
+    const calls = vi.mocked(instance.write).mock.calls;
+    expect(calls[0]?.[0]).toBe(RESET_BUFFER);
+    expect(calls[1]?.[0]?.startsWith("only\r\n")).toBe(true);
+    expect(calls[1]?.[0]).not.toContain("earlier output not shown");
   });
 
   it("renders its own marker when history is unavailable", async () => {
@@ -666,9 +691,10 @@ describe("lifecycle destroy", () => {
     await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
 
     const instance = latestInstance();
+    vi.mocked(instance.write).mockClear();
     act(() => terminalRef.current?.applyAttachHistory("", false, true));
 
-    const payload = vi.mocked(instance.write).mock.calls[0]?.[0] ?? "";
+    const payload = vi.mocked(instance.write).mock.calls[1]?.[0] ?? "";
     expect(payload).toContain("history unavailable");
     expect(payload).not.toContain("earlier output not shown");
   });

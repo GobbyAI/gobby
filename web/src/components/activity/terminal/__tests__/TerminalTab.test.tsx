@@ -557,17 +557,26 @@ describe("attach lifecycle", () => {
 });
 
 describe("ready handshake repaint", () => {
-  it("keeps attaching until view readiness and repaints each keyed replacement", async () => {
+  it("keeps one renderer across replacements and retires the scrim on history", async () => {
     const user = userEvent.setup();
     const tmux = makeTmuxSession({ name: "wide" });
-    hookState = makeHookState({ sessionsLoaded: true, sessions: [tmux] });
+    const mountId = () =>
+      screen
+        .getByRole("log", { name: "Terminal output (read-only)" })
+        .getAttribute("data-mount-id");
+    hookState = makeHookState({
+      sessionsLoaded: true,
+      sessions: [tmux],
+      onAttachHistory: vi.fn((listener) => {
+        historyListener = listener;
+      }),
+    });
     const rendered = render(<TerminalTab />);
 
     expect(await screen.findByText("Attaching terminal…")).toBeInTheDocument();
-    const pendingMountId = screen
-      .getByRole("log", { name: "Terminal output (read-only)" })
-      .getAttribute("data-mount-id");
+    const firstMountId = mountId();
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
+    // Nothing is attached, so there is no attachment to address a frame to.
     expect(hookState.resizeTerminal).not.toHaveBeenCalled();
     expect(hookState.refreshTerminal).not.toHaveBeenCalled();
 
@@ -578,10 +587,7 @@ describe("ready handshake repaint", () => {
       requestPending: false,
     };
     rendered.rerender(<TerminalTab />);
-    const attachedMountId = screen
-      .getByRole("log", { name: "Terminal output (read-only)" })
-      .getAttribute("data-mount-id");
-    expect(attachedMountId).not.toBe(pendingMountId);
+    expect(mountId()).toBe(firstMountId);
     expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
@@ -594,19 +600,29 @@ describe("ready handshake repaint", () => {
       expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
     });
 
-    hookState = {
-      ...hookState,
-      streamingId: "stream-replacement",
-    };
+    // A reconnect installs a replacement attachment. The renderer is not
+    // remounted for it, so `onReady` will not fire again and cannot be what
+    // retires the scrim. The scrim covers the pane and swallows scroll, so
+    // leaving it up is a real defect rather than a cosmetic one.
+    hookState = { ...hookState, streamingId: "stream-replacement" };
     rendered.rerender(<TerminalTab />);
-    const replacementMountId = screen
-      .getByRole("log", { name: "Terminal output (read-only)" })
-      .getAttribute("data-mount-id");
-    expect(replacementMountId).not.toBe(attachedMountId);
+    expect(mountId()).toBe(firstMountId);
     expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
-    expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
-    expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
+
+    act(() =>
+      historyListener?.({
+        streamingId: "stream-replacement",
+        text: "restored",
+        truncated: false,
+        unavailable: false,
+        droppedBytes: 0,
+        totalBytes: 8,
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
+    });
+    expect(mountId()).toBe(firstMountId);
     expect(hookState.refreshTerminal).not.toHaveBeenCalled();
   });
 

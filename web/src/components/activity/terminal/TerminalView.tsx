@@ -27,6 +27,16 @@ const RESIZE_DEBOUNCE_MS = 200;
 const HISTORY_TRUNCATED_LABEL = "earlier output not shown";
 const HISTORY_UNAVAILABLE_LABEL = "history unavailable";
 
+// RIS, then ED 3. Exactly one history frame arrives per attachment, so this
+// fires against an empty buffer on the first attach — a no-op — and against
+// the previous attachment's tail on every replacement, which is the case that
+// matters: a reconnect's window overlaps what is already rendered, and
+// appending it paints those lines a second time. ED 3 rides along with RIS
+// because a core that reads RIS as screen-only would keep precisely the
+// scrollback that has to go, and neither core exposes a reset API to call
+// instead.
+const RESET_BUFFER = "c[3J";
+
 type GhosttyCore = Awaited<ReturnType<typeof loadGhosttyCore>>;
 
 type RendererResolution =
@@ -537,7 +547,25 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           // scrollback. Padding by `rows` scrolls all of it into scrollback and
           // hands the repaint a blank screen.
           //
-          // One write, so wterm makes exactly one syncScrollback pass.
+          //
+          // The three calls below have to stay in this order.
+          //
+          // RESET_BUFFER clears the core: screen, then scrollback. That alone
+          // is not enough, because the renderer's DOM scrollback is a mirror
+          // driven by a *count* delta — Renderer.syncScrollback appends the
+          // rows the count grew by and shifts off the front the rows it shrank
+          // by. It has no notion of the scrollback being replaced. Clearing
+          // and refilling nets out to roughly no change, so the previous
+          // attachment's rows stay on screen and not one line of the new
+          // window is ever rendered.
+          //
+          // WTerm.resize is what repairs that: it calls Renderer.setup
+          // unconditionally, which empties the container and zeroes the
+          // rendered count, even when the geometry is unchanged. Re-applying
+          // the grid a replacement attachment was just given is the only
+          // public call that rebuilds the mirror; neither core exposes a reset.
+          terminal.write(RESET_BUFFER);
+          terminal.resize(cols, rows);
           terminal.write(`${marker}${text}${"\r\n".repeat(rows)}`);
         },
       }),

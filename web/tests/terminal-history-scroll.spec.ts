@@ -34,6 +34,15 @@ interface SocketOptions {
   truncated?: boolean;
   unavailable?: boolean;
   historyLines?: number;
+  /**
+   * One history window per attach, as inclusive `history-line-N` bounds. The
+   * last entry serves every further attach. Windows may overlap, which is the
+   * real daemon's behaviour on reconnect: it captures what the pane holds now,
+   * not what this client has already painted.
+   */
+  historyWindows?: readonly (readonly [number, number])[];
+  /** Drop the socket once the first stream is live, forcing a reconnect. */
+  dropAfterFirstStream?: boolean;
 }
 
 const SESSION_NAME = "history-session";
@@ -62,10 +71,15 @@ const LIVE_OUTPUT =
   ["live-line-1", "live-line-2", "live-line-3"].join("\r\n") + "\r\n";
 
 function historyText(lines: number): string {
+  return historyWindowText(1, lines);
+}
+
+/** Inclusive window of numbered history lines, in the daemon's wire shape. */
+function historyWindowText(from: number, to: number): string {
   return (
     Array.from(
-      { length: lines },
-      (_, index) => `history-line-${index + 1}`,
+      { length: to - from + 1 },
+      (_, index) => `history-line-${from + index}`,
     ).join("\r\n") + "\x1b[0m"
   );
 }
@@ -164,8 +178,25 @@ async function installTerminalSocket(
     truncated = false,
     unavailable = false,
     historyLines = 400,
+    historyWindows,
+    dropAfterFirstStream = false,
   } = options;
   const activated = new Set<string>();
+  // Outer state: `routeWebSocket` runs its callback per connection, and a
+  // reconnect has to mint an attachment id the client has not seen before.
+  let attachCount = 0;
+  let dropped = false;
+  const attachIndexById = new Map<string, number>();
+
+  const windowFor = (attachIndex: number): string => {
+    if (unavailable) return "";
+    if (historyWindows === undefined) return historyText(historyLines);
+    const bounds =
+      historyWindows[Math.min(attachIndex, historyWindows.length - 1)];
+    return bounds === undefined
+      ? historyText(historyLines)
+      : historyWindowText(bounds[0], bounds[1]);
+  };
 
   await page.routeWebSocket("**/ws", (ws) => {
     let ticker: ReturnType<typeof setInterval> | null = null;
@@ -211,12 +242,19 @@ async function installTerminalSocket(
 
       // Attach only reserves; nothing is built and nothing is streamed yet.
       if (message.type === "terminal_attach") {
+        // The first attachment keeps the plain id so the landed cases read the
+        // same as before; a replacement gets one the client has never seen,
+        // which is what makes it a replacement rather than a resume.
+        const attachmentId =
+          attachCount === 0 ? STREAM_ID : `${STREAM_ID}-${attachCount}`;
+        attachIndexById.set(attachmentId, attachCount);
+        attachCount += 1;
         ws.send(
           JSON.stringify({
             type: "terminal_attach_result",
             request_id: message.request_id,
             success: true,
-            attachment_id: STREAM_ID,
+            attachment_id: attachmentId,
             terminal_id: message.terminal_id,
           }),
         );
@@ -239,7 +277,7 @@ async function installTerminalSocket(
         const streamingId = String(message.attachment_id);
         if (activated.has(streamingId)) return;
         activated.add(streamingId);
-        const text = unavailable ? "" : historyText(historyLines);
+        const text = windowFor(attachIndexById.get(streamingId) ?? 0);
         ws.send(
           JSON.stringify({
             type: "terminal_attach_history",
@@ -273,6 +311,19 @@ async function installTerminalSocket(
             }),
           );
         }, 250);
+
+        if (dropAfterFirstStream && !dropped) {
+          dropped = true;
+          // Let the first window paint, then take the socket away. The client
+          // reconnects and attaches again with no memory of what it painted,
+          // and the daemon answers with whatever the pane holds now — which
+          // overlaps. That overlap is the whole point of the case.
+          setTimeout(() => {
+            if (ticker !== null) clearInterval(ticker);
+            ticker = null;
+            ws.close({ code: 1012, reason: "service restart" });
+          }, 750);
+        }
         return;
       }
     });
@@ -339,11 +390,62 @@ async function settledScrollback(page: Page): Promise<number> {
   );
 }
 
+/** Numbered history lines in DOM order, which is render order. */
+async function historyLineNumbers(page: Page): Promise<number[]> {
+  return scrollContainer(page).evaluate((element) =>
+    Array.from(element.querySelectorAll(".term-scrollback-row"))
+      .map((row) => /^history-line-(\d+)$/u.exec((row.textContent ?? "").trim()))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .map((match) => Number(match[1])),
+  );
+}
+
+/** Highest `tick-N` the fixture has streamed so far, 0 before any. */
+async function latestTick(page: Page): Promise<number> {
+  return scrollContainer(page).evaluate((element) =>
+    Array.from(element.querySelectorAll(".term-row")).reduce((highest, row) => {
+      const match = /^tick-(\d+)$/u.exec((row.textContent ?? "").trim());
+      return match === null ? highest : Math.max(highest, Number(match[1]));
+    }, 0),
+  );
+}
+
+/** Row texts intersecting the scroll viewport right now. */
+async function visibleScrollbackTexts(page: Page): Promise<string[]> {
+  return scrollContainer(page).evaluate((element) => {
+    const view = element.getBoundingClientRect();
+    return Array.from(element.querySelectorAll(".term-scrollback-row"))
+      .filter((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.bottom > view.top && rect.top < view.bottom;
+      })
+      .map((row) => (row.textContent ?? "").trim())
+      .filter((text) => text.length > 0);
+  });
+}
+
+/**
+ * Scroll the pane up with a real input gesture rather than assigning
+ * scrollTop. The distinction matters: `.wterm` is a native overflow container,
+ * so an assignment proves only that the property is writable, while a wheel
+ * goes through the compositor the way a touch drag does and fails the same way
+ * a CSS-scaled or overflow-locked container would.
+ */
+async function scrollUpByInput(page: Page, distance: number): Promise<void> {
+  const box = await scrollContainer(page).boundingBox();
+  if (box === null) throw new Error("terminal scroll container has no box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -distance);
+}
+
 const TIERS = [
   { label: "440x956", width: 440, height: 956 },
   { label: "932x430", width: 932, height: 430 },
   { label: "1440x900", width: 1440, height: 900 },
 ];
+
+/** The tiers where the pane is driven by touch rather than a pointer. */
+const MOBILE_TIER_LABELS = new Set(["440x956", "932x430"]);
 
 for (const tier of TIERS) {
   test.describe(`terminal history at ${tier.label}`, () => {
@@ -415,6 +517,142 @@ for (const tier of TIERS) {
     });
   });
 }
+
+test("bounds history per attachment across tiers", async ({ page }) => {
+  // 500 lines over the client's own ceiling, and the daemon reports no
+  // truncation of its own — so anything cut here was cut by this client.
+  await installApiMocks(page, "dark");
+  await installTerminalSocket(page, { historyLines: 2_500 });
+
+  for (const tier of TIERS) {
+    await page.setViewportSize({ width: tier.width, height: tier.height });
+    await openTerminalTab(page);
+
+    const container = scrollContainer(page);
+    await expect(page.getByTestId("terminal-view")).toContainText(
+      "live-line-3",
+      { timeout: 20_000 },
+    );
+    await settledScrollback(page);
+
+    // The ceiling, stated as the criterion states it. Counting what is
+    // rendered rather than asserting a specific first line keeps this honest
+    // about the renderer's own scrollback capacity, which is not ours to set.
+    const rendered = await historyLineNumbers(page);
+    expect(rendered.length).toBeGreaterThan(0);
+    expect(rendered.length).toBeLessThanOrEqual(2_000);
+
+    // The newest survives and the oldest is gone: the cut takes the front.
+    expect(await countExactScrollbackRows(page, "history-line-2500")).toBe(1);
+    expect(await countExactScrollbackRows(page, "history-line-1")).toBe(0);
+    expect(await countExactScrollbackRows(page, "history-line-500")).toBe(0);
+
+    // No marker assertion here, deliberately. The client's cut does write one,
+    // but the renderer's own scrollback is smaller than the 2 000-line ceiling,
+    // so a window large enough to trip the ceiling always evicts the marker
+    // that sits above it. The marker itself is covered where it is observable:
+    // "renders the truncation marker above restored history", on a window the
+    // renderer keeps whole.
+
+    if (!MOBILE_TIER_LABELS.has(tier.label)) continue;
+
+    // Mobile tiers: history above the initial viewport has to be reachable by
+    // dragging the pane, and live output must not yank the view back down.
+    const before = await visibleScrollbackTexts(page);
+    const settledTop = await container.evaluate((element) => element.scrollTop);
+    await scrollUpByInput(page, 4_000);
+
+    await expect
+      .poll(() => container.evaluate((element) => element.scrollTop), {
+        timeout: 10_000,
+      })
+      .toBeLessThan(settledTop);
+    const after = await visibleScrollbackTexts(page);
+    expect(after.some((text) => !before.includes(text))).toBe(true);
+
+    // Growth is not the signal at this size: the renderer is already at its
+    // scrollback capacity, so every new row evicts one and scrollHeight sits
+    // still. Advancing ticks are the signal that output is arriving, and the
+    // claim is that it arrives without dragging the viewport to the bottom.
+    const tickBefore = await latestTick(page);
+    await expect
+      .poll(() => latestTick(page), { timeout: 20_000 })
+      .toBeGreaterThan(tickBefore);
+
+    const streaming = await container.evaluate((element) => ({
+      scrollTop: element.scrollTop,
+      maxScroll: element.scrollHeight - element.clientHeight,
+    }));
+    expect(streaming.scrollTop).toBeLessThan(streaming.maxScroll - 200);
+  }
+});
+
+test("replacement attachment resets history without remount", async ({
+  page,
+}) => {
+  await installApiMocks(page, "dark");
+  await installTerminalSocket(page, {
+    // The replacement window overlaps the first by a hundred lines, which is
+    // what a real reconnect hands back: the daemon captures what the pane
+    // holds now and knows nothing about what this client already painted.
+    historyWindows: [
+      [1, 400],
+      [300, 700],
+    ],
+    dropAfterFirstStream: true,
+  });
+  await openTerminalTab(page);
+
+  const container = scrollContainer(page);
+  await expect(page.getByTestId("terminal-view")).toContainText("live-line-3", {
+    timeout: 20_000,
+  });
+  await settledScrollback(page);
+  expect(await countExactScrollbackRows(page, "history-line-400")).toBe(1);
+
+  // Stamp React's own node, not the renderer's. React replaces its node on
+  // remount, so the stamp surviving is the proof that the same component
+  // instance took the replacement — nothing else distinguishes a reset from a
+  // remount. Stamping `.wterm` would prove something weaker and different:
+  // that element belongs to the renderer, which can rebuild it without React
+  // remounting anything.
+  const view = page.getByTestId("terminal-view");
+  await view.evaluate((element) => {
+    element.setAttribute("data-remount-probe", "first");
+  });
+
+  await expect
+    .poll(() => countExactScrollbackRows(page, "history-line-700"), {
+      timeout: 30_000,
+    })
+    .toBe(1);
+
+  expect(await view.getAttribute("data-remount-probe")).toBe("first");
+
+  // Each line once, and nothing from the window that was replaced.
+  expect(await countExactScrollbackRows(page, "history-line-350")).toBe(1);
+  expect(await countExactScrollbackRows(page, "history-line-400")).toBe(1);
+  expect(await countExactScrollbackRows(page, "history-line-1")).toBe(0);
+  expect(await countExactScrollbackRows(page, "history-line-299")).toBe(0);
+
+  // In order, starting at the replacement's first line. An append would leave
+  // 300..400 twice and the sequence would step backwards at the seam.
+  const rendered = await historyLineNumbers(page);
+  expect(rendered[0]).toBe(300);
+  expect(rendered).toEqual([...rendered].sort((left, right) => left - right));
+  expect(new Set(rendered).size).toBe(rendered.length);
+
+  // Scroll position comes from the new window: the live edge of what is on
+  // screen now, not a remembered offset into a buffer that no longer exists.
+  const geometry = await container.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }));
+  expect(geometry.scrollTop).toBeGreaterThan(
+    geometry.scrollHeight - geometry.clientHeight - 40,
+  );
+});
 
 test("renders the truncation marker above restored history", async ({
   page,

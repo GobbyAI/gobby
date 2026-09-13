@@ -688,6 +688,67 @@ describe("useTmuxSessions", () => {
     unmount();
   });
 
+  it("opens a bridge for every attachment, not just the first", () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    ws.send.mockClear();
+
+    act(() => result.current.attachSession("term-a", "a"));
+    respondToAttach(ws, requestId(ws, "terminal_attach"), "term-a", "a", "stream-a");
+    act(() => result.current.reportViewport(24, 80));
+
+    // The daemon opens the output bridge on an attachment's first resize, so
+    // the rendezvous has to send one before the viewport it positions.
+    expect(sentMessages(ws, "terminal_resize")).toEqual([
+      {
+        type: "terminal_resize",
+        terminal_id: "term-a",
+        attachment_id: "stream-a",
+        rows: 24,
+        cols: 80,
+      },
+    ]);
+
+    // Swap terminals without touching the renderer. A replacement attachment
+    // arrives at unchanged geometry, so nothing remeasures and no resize
+    // reaches the wire from that side — the pane would stay silent forever.
+    ws.send.mockClear();
+    act(() => result.current.attachSession("term-b", "b"));
+    act(() =>
+      ws.simulateMessage({
+        type: "terminal_detach_result",
+        request_id: requestId(ws, "terminal_detach"),
+        success: true,
+      }),
+    );
+    respondToAttach(ws, requestId(ws, "terminal_attach"), "term-b", "b", "stream-b");
+
+    expect(sentMessages(ws, "terminal_resize")).toEqual([
+      {
+        type: "terminal_resize",
+        terminal_id: "term-b",
+        attachment_id: "stream-b",
+        rows: 24,
+        cols: 80,
+      },
+    ]);
+    // Ordering is the whole point: a viewport frame for a bridge that does not
+    // exist yet is dropped.
+    const wire = sentMessages(ws).map((message) => message.type);
+    expect(wire.indexOf("terminal_resize")).toBeLessThan(
+      wire.indexOf("terminal_set_viewport"),
+    );
+
+    // A refresh redraws a bridge that already exists; reopening one would cost
+    // the daemon a rebuild for a frame that only had to be repainted.
+    ws.send.mockClear();
+    act(() => result.current.refreshTerminal("term-b", "b"));
+    expect(sentMessages(ws, "terminal_set_viewport")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_resize")).toEqual([]);
+    unmount();
+  });
+
   it("wire payloads", () => {
     const { result, unmount } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
