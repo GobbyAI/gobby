@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm import local as local_module
 from gobby.llm.base import LLMTextResult
@@ -135,10 +136,21 @@ def _install_context(
     monkeypatch: pytest.MonkeyPatch,
     service: _ContextService,
 ) -> None:
+    async def ensure_local_model(
+        endpoint: GenerationEndpointConfig,
+        run_manager: Any = None,
+    ) -> str:
+        del run_manager
+        return endpoint.model
+
     context = SimpleNamespace(local_context_service=service)
     monkeypatch.setattr("gobby.app_context.get_app_context", lambda: context)
     monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine")
     monkeypatch.setattr(runtime_manager_module, "CodexAppServerClient", MagicMock)
+    monkeypatch.setattr(
+        "gobby.servers.websocket.chat.backends.codex.ensure_local_model",
+        ensure_local_model,
+    )
 
 
 @pytest.mark.asyncio

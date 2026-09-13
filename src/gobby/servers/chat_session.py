@@ -208,10 +208,12 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             resolved_model = await ensure_local_model(endpoint, run_manager=None)
         except LocalModelError as e:
             raise RuntimeError(f"Local model pre-flight failed: {e}") from e
-        await self._refresh_local_context_after_setup(
-            endpoint_name=selection.name,
-            endpoint=endpoint,
-            resolved_model=resolved_model,
+        await self._set_local_context(
+            *await self._refresh_local_context_after_setup(
+                endpoint_name=selection.name,
+                endpoint=endpoint,
+                resolved_model=resolved_model,
+            )
         )
 
         logger.info(
@@ -228,7 +230,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         endpoint_name: str,
         endpoint: GenerationEndpointConfig,
         resolved_model: str,
-    ) -> None:
+    ) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
         selected = f"endpoint:{endpoint_name}/{resolved_model}"
         if self._local_context_refresher is not None:
             route, observation = await self._local_context_refresher(selected)
@@ -240,7 +242,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 endpoint_name=endpoint_name,
                 model=resolved_model,
             )
-        await self._set_local_context(route, observation)
+        return route, observation
 
     async def _set_local_context(
         self,
@@ -521,6 +523,10 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         if current_endpoint != new_endpoint:
             await self._reconnect_for_model_change(new_model)
             return
+        local_context: tuple[LocalContextRoute | None, LocalContextObservation | None] = (
+            None,
+            None,
+        )
         if selection is not None:
             endpoint = selection.endpoint_with_selected_model()
             if endpoint.wire_api == "responses":
@@ -532,16 +538,15 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 resolved_model = await ensure_local_model(endpoint, run_manager=None)
             except LocalModelError as e:
                 raise RuntimeError(f"Local model pre-flight failed: {e}") from e
-            await self._refresh_local_context_after_setup(
+            local_context = await self._refresh_local_context_after_setup(
                 endpoint_name=selection.name,
                 endpoint=endpoint,
                 resolved_model=resolved_model,
             )
-        else:
-            await self._set_local_context(None, None)
         await self._client.set_model(resolved_model)
         self._model = new_model
         self._last_model = resolved_model
+        await self._set_local_context(*local_context)
 
     def add_output_tokens(self, tokens: int) -> int:
         """Accumulate output token usage and return the new total."""

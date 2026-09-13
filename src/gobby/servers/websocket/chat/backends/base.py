@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.ai.endpoints import parse_endpoint_model_selector
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.context_windows import resolve_context_window
 
@@ -244,7 +245,11 @@ class ManagedChatSessionBase:
     async def switch_model(self, new_model: str) -> None:
         await self._backend.switch_model(self, new_model)
         if self._local_context_refresher is not None:
-            route, observation = await self._local_context_refresher(new_model)
+            context_model = new_model
+            selector = parse_endpoint_model_selector(new_model)
+            if selector is not None and self._model:
+                context_model = f"endpoint:{selector.endpoint_name}/{self._model}"
+            route, observation = await self._local_context_refresher(context_model)
             await self._set_local_context(route, observation)
 
     async def _set_local_context(
