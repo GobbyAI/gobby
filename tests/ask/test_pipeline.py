@@ -492,6 +492,15 @@ async def test_native_investigation_review_and_single_repair(
     assert [agents.specs[run_id].attempt for run_id in agents.launches] == [0, 0, 1, 1]
     assert result.attempt_count == 4
     assert result.repair_count == 1
+    repair_spec = agents.specs[agents.launches[2]]
+    assert repair_spec.draft == agents.specs[agents.launches[1]].draft
+    assert repair_spec.repair_feedback["review_validation"]["results"][0]["accepted"] is False
+    from gobby.ask.agents import ManagedAskAgents
+
+    repair_prompt = ManagedAskAgents._prompt(repair_spec)
+    assert "repair required" in repair_prompt
+    assert "Prior draft:" in repair_prompt
+    assert str(repair_spec.draft["claims"][0]["id"]) in repair_prompt
     admission = admissions[-1]
     assert admission.queries
     reviewer_specs = [

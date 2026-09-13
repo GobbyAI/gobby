@@ -556,6 +556,28 @@ class AskStageRuntime:
         self.fault(f"{stage.value}:{attempt}:reserved")
         if checkpoint.submission_artifact is not None:
             return checkpoint
+        repair_feedback = None
+        if stage is AskAgentStage.REPAIR:
+            initial = self._attempt(record.run_id, AskAgentStage.INVESTIGATOR, 0)
+            if initial.submission_artifact is None:
+                raise RuntimeError("Ask repair requires the initial submitted draft")
+            prior = AnswerDraft.model_validate(
+                await asyncio.to_thread(artifacts.read_body, initial.submission_artifact)
+            )
+            if prior.content_hash != initial.submission_hash:
+                raise RuntimeError("Ask initial answer hash changed before repair")
+            deterministic = await self.claim_validation(record)
+            review = await self.review_validation(record)
+            if (
+                deterministic.draft_hash != prior.content_hash
+                or review.draft_hash != prior.content_hash
+            ):
+                raise RuntimeError("Ask repair feedback does not bind the initial draft")
+            draft = prior.model_dump(mode="json")
+            repair_feedback = {
+                "claim_validation": deterministic.model_dump(mode="json"),
+                "review_validation": review.model_dump(mode="json"),
+            }
         profile = record.reviewer if stage is AskAgentStage.REVIEWER else record.investigator
         scratch_root = artifacts.run_root / "scratch" / f"{stage.value}-{attempt}"
         spec = AskAgentSpec(
@@ -571,6 +593,7 @@ class AskStageRuntime:
             evidence_manifest_hash=evidence.content_hash,
             deadline_at=self.agent_deadline(record.binding.deadline_at, stage),
             draft=draft,
+            repair_feedback=repair_feedback,
         )
         agent_run_id = checkpoint.agent_run_id
         if agent_run_id is None:
