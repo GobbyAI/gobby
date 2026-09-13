@@ -1287,16 +1287,18 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_backend", ["native", "tmux"], indirect=True)
 async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
-    terminal_id = await _shell(daemon_instance)
+        terminal_id = await _shell(daemon_instance)
+        row_name = _row_name(http, terminal_id)
     wire = ClientWire(daemon_instance)
     # Model a remote filesystem: the daemon's Unix socket is not reachable by this client.
     wire.frame_socket = str(daemon_instance.gobby_home / "remote-host.sock")
     async with wire.running():
         async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
-            await _activate_terminal(client, _short(terminal_id))
+            await _activate_terminal(client, row_name)
             await _screen(client, "GCLIENT-SHELL-READY")
             await _screen(client, "proxy")
             await _take_and_echo(client, "GCLIENT-PROXY-OK")

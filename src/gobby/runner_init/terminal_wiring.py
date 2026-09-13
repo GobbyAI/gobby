@@ -62,7 +62,9 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     )
 
     terminal_runtime_registry = TerminalRuntimeRegistry()
-    terminal_runtime_registry.register(configured_tmux_runtime())
+    terminal_runtime_registry.register(
+        configured_tmux_runtime(HostManagerControl(runner.terminal_host_manager))
+    )
     terminal_runtime_registry.register(
         NativeTerminalRuntime(
             HostManagerControl(runner.terminal_host_manager),
