@@ -44,6 +44,16 @@ platform availability.
 
 ## Availability And Targets
 
+- For Apple-app feature decisions with policy implications, load
+  `get_skill(name="app-store-development")` through `gobby-skills` early.
+- For Safari extensions load `get_skill(name="safari-extension-development")`;
+  for requested release audits or rejections load `get_skill(name="app-store-review")`.
+  Ordinary Swift edits need only the relevant feature checks.
+- For native iOS/iPadOS UI load `get_skill(name="impeccable")` with project design
+  context, then `get_skill_file(name="impeccable", path="references/ios.md")`
+  (schema first when unleased; follow every cursor). Keep UI recommendations
+  distinct from explicit App Store requirements.
+
 - Use `@available`, conditional compilation, and target checks deliberately.
 - Keep platform-specific code behind adapters, extensions, or target-specific
   source files.

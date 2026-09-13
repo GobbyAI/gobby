@@ -14,6 +14,12 @@ Keep reusable language, design, testing and review methodology in standalone
 skills. Load their complete entrypoints through `gobby-skills`; references use
 `get_skill_file` after its schema gate and require every cursor page.
 
+For Apple-app feature decisions with policy implications load
+`get_skill(name="app-store-development")` early. For Safari extension work load
+`get_skill(name="safari-extension-development")`. For a requested release audit or
+rejection load `get_skill(name="app-store-review")`; ordinary edits need only
+applicable development checks. These remain dynamically discovered standalone skills.
+
 This capability supplies contributor procedures. It has no dedicated internal
 MCP service: `mcp_proxy/tools/internal.py` implements registry infrastructure.
 Public operations remain with their owning capability. Tool schemas determine
