@@ -15,6 +15,54 @@ pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
 pub const PID_FILE: &str = "gterm.pid";
 pub const TOKEN_FILE: &str = "gterm-control.token";
 
+pub struct HostProc {
+    child: Child,
+    socket_dir: PathBuf,
+    owned_socket_dir: Option<tempfile::TempDir>,
+    pgids: Vec<i32>,
+}
+
+impl HostProc {
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    pub fn kill(&mut self) -> std::io::Result<()> {
+        self.child.kill()
+    }
+
+    pub fn track_pgid(&mut self, pgid: i32) {
+        self.pgids.push(pgid);
+    }
+
+    pub fn socket_dir(&self) -> &Path {
+        &self.socket_dir
+    }
+
+    pub fn own_socket_dir(&mut self, dir: tempfile::TempDir) {
+        assert_eq!(dir.path(), self.socket_dir);
+        self.owned_socket_dir = Some(dir);
+    }
+}
+
+impl Drop for HostProc {
+    fn drop(&mut self) {
+        for pgid in self.pgids.drain(..) {
+            if pgid > 0 {
+                unsafe {
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 pub fn gterm_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_gterm"))
 }
@@ -31,11 +79,11 @@ pub fn write_token(dir: &Path, token: &str) {
     }
 }
 
-pub fn spawn_host(socket_dir: &Path) -> Child {
+pub fn spawn_host(socket_dir: &Path) -> HostProc {
     spawn_host_with_args(socket_dir, &[])
 }
 
-pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> Child {
+pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
     let log_path = socket_dir.join("gterm.log");
     let token_path = socket_dir.join("local_cli_token");
     if !token_path.exists() {
@@ -51,7 +99,13 @@ pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> Child {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    cmd.spawn().expect("spawn gterm host")
+    let child = cmd.spawn().expect("spawn gterm host");
+    HostProc {
+        child,
+        socket_dir: socket_dir.to_path_buf(),
+        owned_socket_dir: None,
+        pgids: Vec::new(),
+    }
 }
 
 pub fn hello_control(stream: &mut UnixStream, token: &str) -> Value {
@@ -134,10 +188,10 @@ pub fn socket_mode(path: &Path) -> u32 {
         & 0o777
 }
 
-pub fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+pub fn wait_exit(host: &mut HostProc, timeout: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + timeout;
     loop {
-        match child.try_wait() {
+        match host.try_wait() {
             Ok(Some(status)) => return Some(status),
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(20));

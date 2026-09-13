@@ -156,6 +156,7 @@ async def test_explicit_opt_in_drains_host(
     tmp_path: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     terminals = TerminalManager(temp_db)
     epoch = str(uuid.uuid4())
@@ -165,6 +166,7 @@ async def test_explicit_opt_in_drains_host(
     client = FakeControlClient(host_epoch=epoch, host_pid=HOST_PID)
     host = _adopted_host(tmp_path, terminals, client)
     await host.start()
+    monkeypatch.setattr(host, "_await_host_exit", AsyncMock(return_value=True))
     runner = SimpleNamespace(
         terminal_manager=terminals,
         terminal_host_manager=host,
@@ -172,8 +174,10 @@ async def test_explicit_opt_in_drains_host(
         db_executor=None,
         _drain_terminals_on_shutdown=True,
     )
-    reap_calls = await _run_shutdown_cleanup(runner, intent=ShutdownIntent.STOP)
+    with patch("gobby.terminals.host_manager.os.kill") as kill:
+        reap_calls = await _run_shutdown_cleanup(runner, intent=ShutdownIntent.STOP)
     assert client.shutdown_calls == [200]
+    kill.assert_not_called()
     assert host.preserved_host_pid() is None
     assert reap_calls == [set()], "a drained host is not held back from the reaper"
 
@@ -186,8 +190,11 @@ async def test_explicit_opt_in_drains_host(
         terminal_config=TerminalConfig(stop_host_on_shutdown=True),
     )
     await host2.start()
-    await host2.stop()
+    monkeypatch.setattr(host2, "_await_host_exit", AsyncMock(return_value=True))
+    with patch("gobby.terminals.host_manager.os.kill") as kill:
+        await host2.stop()
     assert configured.shutdown_calls == [200]
+    kill.assert_not_called()
     assert host2.host_pid is None
 
     # Direct opt-in on the supervisor API.
@@ -196,8 +203,11 @@ async def test_explicit_opt_in_drains_host(
     await host3.start()
     await host3.stop()
     assert direct.shutdown_calls == []
-    await host3.stop(drain_host=True)
+    monkeypatch.setattr(host3, "_await_host_exit", AsyncMock(return_value=True))
+    with patch("gobby.terminals.host_manager.os.kill") as kill:
+        await host3.stop(drain_host=True)
     assert direct.shutdown_calls == [200]
+    kill.assert_not_called()
 
 
 def test_shutdown_marker_carries_drain_opt_in(tmp_path: Path) -> None:

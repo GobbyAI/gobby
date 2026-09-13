@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 mod embed_support;
+mod host_support;
 
 use embed_support::{
     attach, connect_frames, crate_src, gclient_views, list_terminals, read_msg, read_msg_timeout,
@@ -111,7 +112,7 @@ fn tmux_capture_poll_round_trip() {
     assert!(msgs
         .iter()
         .any(|m| frame_text(m).is_some_and(|t| t.contains("GOBBY-SECOND"))));
-    let log = std::fs::read_to_string(host.dir.path().join("gterm.log")).unwrap_or_default();
+    let log = std::fs::read_to_string(host.socket_dir().join("gterm.log")).unwrap_or_default();
     assert!(!log.contains("send-keys"), "host must not write to tmux");
 }
 
@@ -277,7 +278,7 @@ fn attach_creates_and_reaps_atomically() {
     let loc = pane.locator();
     let loc_a = loc.clone();
     let loc_b = loc.clone();
-    let path = host.dir.path().join(embed_support::FRAMES_SOCKET);
+    let path = host.socket_dir().join(embed_support::FRAMES_SOCKET);
     let handle_a = std::thread::spawn({
         let path = path.clone();
         move || {

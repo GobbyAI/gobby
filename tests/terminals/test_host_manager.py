@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import stat
 import tomllib
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -129,6 +130,49 @@ class _ControlledSleep:
         self.calls.append(delay)
         self.started.set()
         await self.release.wait()
+
+
+@pytest.mark.asyncio
+async def test_fake_host_has_no_attach_verb() -> None:
+    client = FakeControlClient()
+    await client.hello(client.protocol_version, client.token)
+
+    response = await client.dispatch("attach")
+
+    assert response == {"ok": False, "error": "unknown_verb"}
+    assert not hasattr(client, "attach")
+
+
+@pytest.mark.asyncio
+async def test_host_shutdown_escalates(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminals = TerminalManager(temp_db)
+    cases = [
+        ([True], [], "host_shutdown"),
+        ([False, True], [signal.SIGTERM], "SIGTERM"),
+        ([False, False, True], [signal.SIGTERM, signal.SIGKILL], "SIGKILL"),
+    ]
+
+    for index, (exit_results, expected_signals, rung) in enumerate(cases):
+        pid = 7_400 + index
+        client = FakeControlClient(host_pid=pid, authed=True)
+        host = _host(tmp_path, terminals, client)
+        host._client = client
+        host.host_pid = pid
+        wait_for_exit = AsyncMock(side_effect=exit_results)
+        monkeypatch.setattr(host, "_await_host_exit", wait_for_exit)
+
+        with patch("gobby.terminals.host_manager.os.kill") as kill:
+            await host._host_shutdown()
+
+        assert client.shutdown_calls == [200]
+        assert wait_for_exit.await_args_list == [call(pid)] * len(exit_results)
+        assert [args.args[1] for args in kill.call_args_list] == expected_signals
+        assert host.last_error == f"gterm host {pid} exited after {rung}"
+        assert host._host_exit_deadline_seconds() == pytest.approx(0.2)
 
 
 @pytest.mark.asyncio
@@ -413,10 +457,16 @@ async def test_drain_reports_a_host_that_outlived_the_rpc(
     assert host.adopted is True
 
     monkeypatch.setattr(host, "_process_alive", lambda _pid: True)
+    signals: list[int] = []
+    monkeypatch.setattr(
+        "gobby.terminals.host_manager.os.kill",
+        lambda _pid, host_signal: signals.append(host_signal),
+    )
     await host.stop(drain_host=True)
 
     assert client.shutdown_calls == [200]
-    assert host.last_error == "gterm host 7312 is still running after host_shutdown"
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert host.last_error == "gterm host 7312 is still running after SIGKILL"
 
 
 @pytest.mark.asyncio

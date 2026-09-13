@@ -44,7 +44,7 @@ fn read_msg(stream: &mut UnixStream) -> ServerMessage {
     read_message(stream, MAX_FRAME_SIZE).expect("frame message")
 }
 
-fn start_host(token: &str) -> (tempfile::TempDir, std::process::Child) {
+fn start_host(token: &str) -> (tempfile::TempDir, host_support::HostProc) {
     let dir = tempfile::tempdir().expect("tempdir");
     write_token(dir.path(), token);
     std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();

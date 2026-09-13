@@ -12,7 +12,6 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixListener;
 use std::path::Path;
-use std::process::Child;
 use std::time::{Duration, Instant};
 
 fn hello(stream: &mut std::os::unix::net::UnixStream, token: &str) -> serde_json::Value {
@@ -27,39 +26,16 @@ fn hello(stream: &mut std::os::unix::net::UnixStream, token: &str) -> serde_json
     recv_json(stream)
 }
 
-struct TestHost {
-    child: Child,
-    pgids: Vec<i32>,
-}
-
-impl TestHost {
-    fn track(&mut self, pgid: i32) {
-        self.pgids.push(pgid);
-    }
-}
-
-impl Drop for TestHost {
-    fn drop(&mut self) {
-        for pgid in self.pgids.drain(..) {
-            if pgid > 0 {
-                unsafe {
-                    libc::killpg(pgid, libc::SIGKILL);
-                }
-            }
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn test_host(token: &str) -> (tempfile::TempDir, TestHost, std::os::unix::net::UnixStream) {
+fn test_host(
+    token: &str,
+) -> (
+    tempfile::TempDir,
+    host_support::HostProc,
+    std::os::unix::net::UnixStream,
+) {
     let dir = tempfile::tempdir().expect("tempdir");
     write_token(dir.path(), token);
-    let child = spawn_host(dir.path());
-    let host = TestHost {
-        child,
-        pgids: Vec::new(),
-    };
+    let host = spawn_host(dir.path());
     let control = dir.path().join(CONTROL_SOCKET);
     wait_socket(&control);
     let mut stream = connect(&control);
@@ -70,7 +46,7 @@ fn test_host(token: &str) -> (tempfile::TempDir, TestHost, std::os::unix::net::U
 
 fn prepare_terminal(
     stream: &mut std::os::unix::net::UnixStream,
-    host: &mut TestHost,
+    host: &mut host_support::HostProc,
     operation_seq: u64,
     suffix: &str,
     argv: &[&str],
@@ -109,7 +85,7 @@ fn prepare_terminal(
     let prepared = recv_json(stream);
     assert_eq!(prepared["ok"], true, "{prepared}");
     let pgid = prepared["pgid"].as_i64().expect("prepared pgid") as i32;
-    host.track(pgid);
+    host.track_pgid(pgid);
     (
         terminal_id,
         spawn_key,
@@ -184,6 +160,116 @@ fn process_exits_within(pid: u32, timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(20));
     }
     (unsafe { libc::kill(pid as i32, 0) }) != 0
+}
+
+#[test]
+fn host_exits_when_socket_dir_vanishes() {
+    let parent = tempfile::tempdir().expect("parent tempdir");
+    let socket_dir = parent.path().join("host");
+    let removed_dir = parent.path().join("removed-host");
+    std::fs::create_dir(&socket_dir).expect("create socket dir");
+    write_token(&socket_dir, "control-token-socket-dir");
+    let mut host = spawn_host(&socket_dir);
+    wait_socket(&socket_dir.join(CONTROL_SOCKET));
+
+    let started = Instant::now();
+    std::fs::rename(&socket_dir, &removed_dir).expect("remove live socket dir");
+    assert!(
+        wait_exit(&mut host, Duration::from_millis(250)).is_some(),
+        "host must exit within two health ticks after its socket directory vanishes"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(250),
+        "socket-directory shutdown took {:?}",
+        started.elapsed()
+    );
+    let log = std::fs::read_to_string(removed_dir.join("gterm.log")).expect("host log");
+    assert!(log.contains("socket_dir_removed"), "{log}");
+}
+
+#[test]
+fn drain_honours_grace_then_kills() {
+    let (dir, mut host, mut stream) = test_host("control-token-real-drain");
+    let polite_marker = dir.path().join("polite-hup");
+    let stubborn_marker = dir.path().join("stubborn-hup");
+    let polite_ready = dir.path().join("polite-ready");
+    let stubborn_ready = dir.path().join("stubborn-ready");
+    let polite_script = "trap 'printf hup > \"$HUP_MARKER\"; exit 0' HUP; printf ready > \"$READY_MARKER\"; while :; do sleep 1; done";
+    let stubborn_script = "trap 'printf hup > \"$HUP_MARKER\"' HUP; printf ready > \"$READY_MARKER\"; while :; do sleep 1; done";
+
+    let (polite_terminal, polite_spawn, _, polite_pid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "polite-drain",
+        &["/bin/sh", "-c", polite_script],
+        BTreeMap::from([
+            (
+                "HUP_MARKER",
+                polite_marker.to_str().expect("polite marker path"),
+            ),
+            (
+                "READY_MARKER",
+                polite_ready.to_str().expect("polite ready path"),
+            ),
+        ]),
+    );
+    assert_eq!(
+        commit_terminal(&mut stream, &polite_terminal, &polite_spawn, 1_000)["ok"],
+        true
+    );
+    let (stubborn_terminal, stubborn_spawn, _, stubborn_pid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        2,
+        "stubborn-drain",
+        &["/bin/sh", "-c", stubborn_script],
+        BTreeMap::from([
+            (
+                "HUP_MARKER",
+                stubborn_marker.to_str().expect("stubborn marker path"),
+            ),
+            (
+                "READY_MARKER",
+                stubborn_ready.to_str().expect("stubborn ready path"),
+            ),
+        ]),
+    );
+    assert_eq!(
+        commit_terminal(&mut stream, &stubborn_terminal, &stubborn_spawn, 1_000,)["ok"],
+        true
+    );
+    wait_until("drain children to install SIGHUP traps", || {
+        polite_ready.exists() && stubborn_ready.exists()
+    });
+
+    let started = Instant::now();
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "grace_ms": 500}),
+    );
+    let shutdown = recv_json(&mut stream);
+    assert_eq!(shutdown["ok"], true, "{shutdown}");
+    assert!(
+        wait_exit(&mut host, Duration::from_secs(3)).is_some(),
+        "host must exit after draining"
+    );
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(400),
+        "host skipped the requested drain grace: {elapsed:?}"
+    );
+    assert!(elapsed < Duration::from_secs(2), "drain took {elapsed:?}");
+    assert!(polite_marker.exists(), "polite child never received SIGHUP");
+    assert!(
+        stubborn_marker.exists(),
+        "stubborn child never received SIGHUP"
+    );
+    assert!(process_exits_within(polite_pid, Duration::from_millis(200)));
+    assert!(process_exits_within(
+        stubborn_pid,
+        Duration::from_millis(200)
+    ));
 }
 
 #[test]
@@ -386,10 +472,10 @@ fn host_death_releases_prepared_child() {
         BTreeMap::new(),
     );
     unsafe {
-        libc::kill(host.child.id() as i32, libc::SIGKILL);
+        libc::kill(host.id() as i32, libc::SIGKILL);
     }
     assert!(
-        wait_exit(&mut host.child, Duration::from_secs(1)).is_some(),
+        wait_exit(&mut host, Duration::from_secs(1)).is_some(),
         "host must die after SIGKILL"
     );
     assert!(
@@ -514,7 +600,7 @@ fn host_shutdown_drains_and_is_idempotent() {
     send_json(&mut stream, &json!({"method": "attach"}));
     let attach = recv_json(&mut stream);
     assert_eq!(attach["ok"], false);
-    assert_eq!(attach["error"], "host_draining");
+    assert_eq!(attach["error"], "unknown_method:attach");
 
     // Lost response plus verified host death is success for the caller.
     drop(stream);

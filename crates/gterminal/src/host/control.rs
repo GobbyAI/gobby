@@ -167,7 +167,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     continue;
                 }
 
-                if matches!(request.method.as_str(), "spawn" | "attach")
+                if request.method == "spawn"
                     && state.draining.load(std::sync::atomic::Ordering::SeqCst)
                 {
                     let _ = write_json(
@@ -262,14 +262,10 @@ async fn dispatch(
             state.list_json().await
         }
         "host_shutdown" => {
-            let _grace = request.grace_ms.unwrap_or(0);
-            state
-                .draining
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            let _ = state.shutdown.send(true);
+            state.begin_shutdown(request.grace_ms.unwrap_or(0));
             json!({"ok": true, "accepted": true, "draining": true})
         }
-        "spawn" | "attach" if state.draining.load(std::sync::atomic::Ordering::SeqCst) => {
+        "spawn" if state.draining.load(std::sync::atomic::Ordering::SeqCst) => {
             json!({"ok": false, "error": "host_draining"})
         }
         "reserve_observer" => state.reserve_observer(conn_id, &request.extra).await,

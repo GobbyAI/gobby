@@ -10,8 +10,10 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
+
+pub use crate::host_support::HostProc;
 
 pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
@@ -141,18 +143,6 @@ fn tmux_out(socket: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-pub struct HostProc {
-    pub dir: tempfile::TempDir,
-    child: Child,
-}
-
-impl Drop for HostProc {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 pub fn spawn_host(extra: &[&str]) -> HostProc {
     let dir = tempfile::tempdir().expect("tempdir");
     let token_path = dir.path().join("gterm-control.token");
@@ -165,26 +155,12 @@ pub fn spawn_host(extra: &[&str]) -> HostProc {
         std::fs::set_permissions(&token_path, perms).unwrap();
     }
     std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();
-    let log_path = dir.path().join("gterm.log");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_gterm"));
-    cmd.arg("host")
-        .arg("--socket-dir")
-        .arg(dir.path())
-        .arg("--tmux-poll-interval-ms")
-        .arg("50")
-        .args(extra)
-        .env("GTERM_LOG_FILE", &log_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let child = cmd.spawn().expect("spawn gterm");
-    // Hand the child to HostProc before waiting on the sockets. `wait_socket` panics on
-    // timeout, and a bare `std::process::Child` does not kill on drop, so building the guard
-    // afterwards leaks a live `gterm host` for every startup that never binds -- the leak the
-    // guard-set PID check reports, long after the run that caused it.
-    let host = HostProc { dir, child };
-    wait_socket(&host.dir.path().join(CONTROL_SOCKET));
-    wait_socket(&host.dir.path().join(FRAMES_SOCKET));
+    let mut args = vec!["--tmux-poll-interval-ms", "50"];
+    args.extend_from_slice(extra);
+    let mut host = crate::host_support::spawn_host_with_args(dir.path(), &args);
+    host.own_socket_dir(dir);
+    wait_socket(&host.socket_dir().join(CONTROL_SOCKET));
+    wait_socket(&host.socket_dir().join(FRAMES_SOCKET));
     host
 }
 
@@ -227,7 +203,7 @@ pub fn read_msg(stream: &mut UnixStream) -> ServerMessage {
 }
 
 pub fn connect_frames(host: &HostProc, identity: Option<TmuxClientIdentity>) -> UnixStream {
-    let mut stream = UnixStream::connect(host.dir.path().join(FRAMES_SOCKET)).unwrap();
+    let mut stream = UnixStream::connect(host.socket_dir().join(FRAMES_SOCKET)).unwrap();
     write_msg(&mut stream, &hello_msg(identity));
     match read_msg(&mut stream) {
         ServerMessage::Welcome { .. } => stream,
@@ -248,7 +224,7 @@ pub fn attach(stream: &mut UnixStream, locator: PaneLocator) -> ServerMessage {
 }
 
 pub fn control(host: &HostProc) -> UnixStream {
-    let mut stream = UnixStream::connect(host.dir.path().join(CONTROL_SOCKET)).unwrap();
+    let mut stream = UnixStream::connect(host.socket_dir().join(CONTROL_SOCKET)).unwrap();
     send_json(
         &mut stream,
         &serde_json::json!({
