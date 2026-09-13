@@ -28,6 +28,7 @@ async def test_reference_contract_3_2_1() -> None:
         internal_tool_inventory() | await proxy_tool_inventory(),
         cli_inventory() | native_cli_inventory(),
     )
+    errors.extend(documentation_errors(audits))
     assert errors == [], "\n".join(errors)
 
 
