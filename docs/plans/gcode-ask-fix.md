@@ -352,6 +352,8 @@ propagating failures instead of marking only the database row.
 
 Targets:
 - `src/gobby/ask/claims.py::*` — scope-reason: make the MCP adapter schema match trusted shared-service submissions.
+- `src/gobby/ask/service.py::*` — scope-reason: enforce the original request question at shared-service submission before persistence.
+- `tests/ask/test_pipeline.py::*` — scope-reason: reject rewritten questions before persistence and verify corrected submission, review, repair, recovery and publication.
 - `src/gobby/ask/agents.py::*` — scope-reason: make the MCP adapter schema match trusted shared-service submissions.
 - `src/gobby/mcp_proxy/tools/ask.py::*` — scope-reason: make the MCP adapter schema match trusted shared-service submissions.
 - `tests/mcp_proxy/tools/test_ask.py::*` — scope-reason: make the MCP adapter schema match trusted shared-service submissions.
@@ -362,6 +364,8 @@ failed to submit answers because provenance and canonical hashes were required
 inside otherwise opaque objects. `AnswerContent` and `ReviewContent` own the
 content schema; the MCP adapter derives trusted caller identity and computes hashes.
 The shared service retains strict `AnswerDraft` and `ReviewerResult` admission.
+Reject a draft whose question differs from the recorded request at submission,
+before writing an artifact, so the agent can correct it in the same attempt.
 Document each query lane and exact flat selectors. Unknown identity fields fail
 validation; they never override the authenticated principal.
 
@@ -457,6 +461,7 @@ Targets:
 - `src/gobby/ask/runtime_controls.py::*` — scope-reason: preserve the shared policy normalization and sealed runtime controls.
 - `tests/ask/test_runtime_validation.py::*` — scope-reason: normalize only the exact private grant lock and preserve foreign-write detection.
 - `tests/ask/native_probe_harness.py::*` — scope-reason: preserve fresh and resumed contained runtime preparation and receipts.
+- `tests/ask/test_native_probe_harness.py::*` — scope-reason: cover fresh-session transcript recovery and completed-agent process identity without relaxing ownership checks.
 - `src/gobby/storage/schema_divergence.py::binary_set_apply_refusal`
 - `tests/cli/test_install_setup_gdaemon.py::*` — scope-reason: keep the refusal remedy aligned with the three schema-bearing binary members.
 - `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`
@@ -476,6 +481,13 @@ directory; resumed runs reuse the index. The actual managed SRT launch adds the
 private grant lock. Normalize only that exact bound lock alongside the existing
 grant-read normalization, rejecting duplicate lock entries and retaining every
 other read/write path in the digest.
+
+Completion clears the current agent PID, while the captured launch receipt retains
+its PID and OS start identity. Use that receipt only with matching terminal and
+child-session identity; normalize PostgreSQL UUID values before comparing with
+JSON strings. Fresh Claude launches use their child session as native session ID;
+resume metadata is optional on that path. Resolve missing transcript paths through
+the existing machine-bound transcript resolver, retaining all export file checks.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/worktrees/_create.py` — no-edit-reason: delegates creation to the shared function and receives its canonical path.
@@ -960,3 +972,54 @@ times were 61.860/32.191 and 52.140/30.763 ms respectively. Each role saw only i
 own project rows. Raw plans and measurements are in `/tmp/ask-22279-*`.
 The named scoped-content RLS regression passed in 0.63 seconds. These checks are
 diagnostics and acceptance evidence, not frozen cohort primaries.
+
+## V11 Acceptance and contained-probe recovery — 2026-09-13, session #13038
+`kind: verification`
+
+- #22279 passed background criteria review and closed with implementation commit
+  `8cfb3ac0ec`. V10's four installed hit/miss timings, one-scan plans and scoped RLS
+  evidence met the unchanged acceptance criteria. Post-close memory review is complete.
+- `ea60889` updates stale native test identity pins to migration 435. The final
+  nextest checks passed six gcore schema-contract and eight gdaemon CLI-contract tests;
+  scoped formatting and Clippy passed. This was a test-only correction.
+- Epoch9's contained probe failed before Ask because shared-checkout status changed
+  during indexing. This is source drift, not evidence that indexing mutated source.
+  Its owned schema/runtime were removed with no cleanup errors. Epoch10 failed
+  preflight because the captured binaries were outside the stable source clone.
+  Both failed attempts remain preserved under `/tmp/ask-native-probe-13038-epoch9`
+  and the epoch10 driver log.
+- Epoch11 used the stable managed clone. The quiet window had no unexplained backend
+  termination. Ask prepared, investigated and reviewed, then publication correctly
+  rejected a draft that rewrote the request question. `e025d4a` moves that rejection
+  to submission, before artifacts/checkpoints, allowing correction in the same attempt.
+  The regression failed before the fix; all four pipeline integration tests passed
+  afterward (`/tmp/ask-question-epoch12-{red,green}.log`).
+- Epoch11 export/cleanup also exposed assumptions about resume-only metadata, uncleared
+  PIDs and UUID string representation. `1702dd1` fixes those assumptions using captured
+  launch authority and the production transcript resolver. Independent review covered
+  both files without findings; 115 harness/cleanup/provenance tests passed. Type and
+  quality audits reported zero issues; Ruff and the suppression ratchet passed.
+- The original failed epoch11 output is unchanged. Diagnostic re-export recovered all
+  six raw receipts. Normal harness finalization then reported `errors=[]`, removed
+  the owned runtime and dropped only its private schema. Evidence is in
+  `/tmp/ask-native-probe-13038-epoch11-cleanup-epoch12`; raw export SHA-256 is
+  `aa897bf4806ef3fae9c7d0e58d83552b48a448a642f5a551baebc12e804d7a6b`.
+  This remains a failed attempt, not native admission evidence.
+- HTTP/MCP acceptance: `DATABASE_URL=<isolated test hub> GOBBY_TEST_PROTECT=1
+  GOBBY_GCODE_BIN=/Users/josh/.gobby/bin/gcode uv run pytest
+  tests/servers/routes/test_ask.py tests/mcp_proxy/tools/test_ask.py -q` passed
+  88 tests, including real authenticated boundaries. The same environment with
+  `cargo nextest run -p gobby-code --test contract --test ask` passed all 18 tests,
+  including the installed CLI lifecycle against the authenticated service.
+- `338a063` commits the worktree-based frozen cohort runner. All 47 cohort contract
+  tests passed; type/quality audits and Ruff passed. No primary cohort invocation
+  has run. Frozen prompts, source commits, baseline scoring and answer-key exclusion
+  remain unchanged.
+- Epoch12 starts a new contained fresh/resumed probe from the stable clone with both
+  fixes cherry-picked. It requests no exclusive test-hub window and makes no global
+  installation or daemon restart. Output: `/tmp/ask-native-probe-13038-epoch12`.
+  Native admission, the fourteen primaries and remaining task closures are pending.
+- Final Python Ask package: 270 tests passed in 31.80 seconds. Native library:
+  1,036 tests passed in 45.794 seconds through nextest using the separate
+  `gobby_gcode_test` database on the isolated hub, as required by `crates/AGENTS.md`.
+  Three configured skips remain explicitly reported by nextest.
