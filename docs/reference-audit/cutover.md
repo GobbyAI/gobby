@@ -81,13 +81,85 @@ schema v435. The cutover does not change schema or datastore topology.
 Project coordination broadcasts `2398a709-6b03-4fa3-aca7-a2e3b807e929` and
 `376df98f-c4fb-41ec-ac7a-b50407e27cd3` announce the retirement and request a quiet
 restart window. Sessions #13086, #13088, #13107, and #13114 report no competing
-restart/template operation. Session #13038 is running one bounded Q01 diagnostic;
-restart waits for its completion or an explicit interruption-ready notice.
+restart/template operation. Session #13038 completed its bounded Q01 diagnostic
+and committed its Ask fix before giving the restart-ready notice.
 The preserved native artifact allows other sessions to use the shared Cargo
 target without changing the binary selected for this cutover.
 
 ## Live execution and postconditions
 
-Pending coordinated execution. Record the commit, native new-inode installation,
-daemon readiness, provider-carrier refresh, synchronization results, and installed
-row/reference/custom-requirement comparisons here before closing #22275.
+Completed on 2026-09-13. Main cutover commit: `9acef616df`; provider preservation
+fix: `1a5bd37600`; sync diagnostic reporting fix: `2e6885d`.
+
+Session #12967 explicitly cleared the window after the two-minute heads-up.
+Broadcast `2f640ba2-7429-4eec-b971-e034342c3ad2` announced its start. The normal
+`promote_workspace_binary_set` helper verified the candidates' embedded identities,
+acquired all three binary locks, signed staged files, promoted through new inodes,
+and wrote the coherent identity stamp. Installed signed SHA-256 values:
+
+| Binary | SHA-256 | New inode |
+| --- | --- | --- |
+| gcode | `4174abf7f6f65b88cb91bf3a1617edd23f5f78479450f2852cdd61dfa8c9824d` | 404951332 |
+| gdaemon | `f01d0c8eb2c21ba367a150d0756bc91c239ba9a09f0de5786b85980b2bd5a6ba` | 404951339 |
+| ghook | `a991612190e94b05bfae793e992b36dfa77fe418570dcb30d152f1302a29c3b4` | 404951342 |
+
+Signing explains the difference from the preserved build hashes. `gterm` was
+excluded at its active owner's request: its hash, inode 402421574, and host PID
+49820 remained unchanged. Session #12967 independently verified all hashes,
+inodes, and schema identity, and announced that its workers reconnected normally.
+
+`uv run gobby restart` exited zero: service-managed daemon PID 32845 passed
+health checks, with MCP, code index, embeddings, vectors, communications, sessions,
+agents, cron, and pipeline recovery initialized. `uv run gobby status` confirmed
+healthy datastores and checkout/installed/live schema v435. The exact assets root
+remains `fc40c70e4a6b2349bbcfc961333f5defb99f7f1394a9c4e3d549da62dfc0fe14`.
+Session #13038 received its keyed runtime-ready release for direct Ask validation.
+
+The checked Python carrier installers refreshed seven existing carrier files:
+global Claude commands/skills, Codex skills, shared agent skills, Qwen skills,
+and project Claude/shared agent skills. All seven were verified historical bundled
+versions; each now hashes to
+`358c8f3e7201905e6a30521c50b2f355e498a466b8b74661b21939d386b8f32d`.
+No custom carrier was overwritten. Exact historical generated carriers are also
+recognized; alias removal follows successful replacement. Custom files, symlinks,
+extra files, empty directories, and prior backups are covered by isolated tests.
+The obsolete prefix-based backup sweep was removed.
+
+Post-cutover `list_skills(include_internal=true, limit=500)` returned 43 rows.
+The complete 22,308-character oversized result was consumed through all four
+`get_tool_result` slices using returned offsets. Exactly the 30 catalog-folded
+names disappeared; 42 bundled entries and private Gusto remain. Gusto retains its
+ID, project ownership, enabled state, and content SHA-256
+`686ae42bd1bffa96b5bf86d20dc60251a83ebc03081b21bf7cb02c8b983e381c`.
+Read-only storage comparison verified all 165 router files against source,
+including the catalog and 164 references, without missing or extra files.
+
+Installed `bootstrap-default-agent-core-skills` remains enabled and now loads
+`gobby:references/skills/loading.md`, `gobby:references/memory/overview.md`,
+`brevity`, and `restraint`. Enabled `require-code-index-skill` requires the exact
+code-index overview. Sixteen Gobby-owned persisted requirement fields contain
+24 exact references and zero retired names. A real edit after loading only the
+router was blocked by the development gate; loading
+`gobby:references/development/obligations.md` allowed the same edit. A complete
+task-closing reference load appeared independently in `loaded_skill_references`.
+
+`uv run gobby sync --verbose` exited zero with no changes after startup sync.
+The reporting fix exposes returned warnings in the CLI and logs, and returned
+failures produce a nonzero CLI exit. Final sync reported 86 preserved user/runtime
+requirements: 18 fields in enabled agent workflow instances and 68 task fields.
+These are not template-owned and were not rewritten. Exact locations and
+replacements are in the machine-local report
+`~/.gobby/reports/gobby-reference-library-12910.txt`; rerunning normal sync
+regenerates the diagnostics. Broadcast `ffe5bc41-d92f-4ea9-9ca7-1531ebe31bd8`
+notified active owners. Historical records need not be rewritten.
+
+Follow-up verification: 80 focused carrier/Claude/Qwen/routing/installation tests
+passed; 40 focused sync fan-out/CLI/reinstall tests and 78 shared-installer tests
+passed. Ruff, production mypy,
+touched-test type/quality audits, and the suppression ratchet passed. Delegated
+reviews covered all nine preservation paths and all four diagnostic paths with
+no open findings. No full repository pytest run was used.
+
+Final acceptance rerun after both follow-up fixes:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_reference_installation.py tests/skills/test_reference_library.py -q --no-cov`
+passed all 24 tests in 50.61 seconds.
