@@ -7,8 +7,10 @@ candidate, giving lightweight, zero-cost inference while preserving profile
 fallback to the next configured candidate when the local server is down.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.ai.endpoints import (
     endpoint_provider,
@@ -16,6 +18,10 @@ from gobby.ai.endpoints import (
 )
 from gobby.llm.base import AuthMode, LLMTextResult
 from gobby.llm.local_provider_adapters import create_local_provider_adapter
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +79,7 @@ class LocalLLMProvider:
             raise ValueError("Local LLM provider requires a named local generation endpoint")
         local_cfg = resolve_generation_endpoint(config, endpoint_name)
         self._provider_name = endpoint_provider(endpoint_name)
+        self._endpoint_name = endpoint_name
 
         url = local_cfg.api_base
         model = local_cfg.model
@@ -83,12 +90,48 @@ class LocalLLMProvider:
         self._endpoint = local_cfg
         self._adapter = create_local_provider_adapter(local_cfg)
         self._client: Any | None = self._adapter.client
+        self._local_context_route: LocalContextRoute | None = None
+        self._local_context_observation: LocalContextObservation | None = None
         logger.debug(
             "Local LLM provider initialised (provider=%s, url=%s, model=%s)",
             local_cfg.protocol,
             self._url,
             self._default_model,
         )
+
+    async def _refresh_local_context(self, model: str) -> None:
+        """Refresh exact local evidence without making it an execution prerequisite."""
+        self._local_context_route = None
+        self._local_context_observation = None
+
+        from gobby.providers.capabilities.local_context_config import endpoint_route
+        from gobby.utils.machine_id import require_machine_id
+
+        route = endpoint_route(
+            machine_id=require_machine_id(),
+            endpoint_name=self._endpoint_name,
+            endpoint=self._endpoint,
+            provider=self._provider_name,
+            model_id=model,
+        )
+        if not route.is_local:
+            return
+        self._local_context_route = route
+        from gobby.app_context import get_app_context
+
+        context = get_app_context()
+        service = getattr(context, "local_context_service", None)
+        if service is None:
+            return
+        try:
+            self._local_context_observation = await service.refresh(route)
+        except Exception:
+            logger.warning(
+                "Local context refresh failed (endpoint=%s, model=%s)",
+                self._endpoint_name,
+                model,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Model resolution
@@ -163,6 +206,7 @@ class LocalLLMProvider:
         if caller:
             logger.debug("Local LLM text request from %s", caller)
         resolved = await self._resolve_wire_model(model)
+        await self._refresh_local_context(resolved)
         return await self._adapter.generate_text_result(
             prompt,
             system_prompt=system_prompt,
@@ -185,6 +229,7 @@ class LocalLLMProvider:
         if caller:
             logger.debug("Local LLM JSON request from %s", caller)
         resolved = await self._resolve_wire_model(model)
+        await self._refresh_local_context(resolved)
         return await self._adapter.generate_json(
             prompt,
             system_prompt=system_prompt,

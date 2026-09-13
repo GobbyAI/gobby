@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -14,6 +15,11 @@ from gobby.ai._text_generation_builder import build_local_modality_resolver
 from gobby.ai.registry_builder import _generation_endpoint_text_bindings
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
+from gobby.providers.capabilities.local_context import (
+    LocalContextInstance,
+    LocalContextObservation,
+)
+from gobby.providers.capabilities.local_context_config import LocalContextRoute
 from gobby.servers.local_provider_models import (
     LocalEndpointModelGroup,
     discover_local_endpoint_model_group,
@@ -174,8 +180,6 @@ async def test_discovers_lmstudio_llm_models(monkeypatch: pytest.MonkeyPatch) ->
             "value": "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
             "label": "Gemma 4",
             "canonical_id": "google/gemma-4-26b-a4b-qat",
-            "context_length": 131072,
-            "context_length_source": "provider_reported",
             "input_modalities": ["text"],
         },
     ]
@@ -410,8 +414,6 @@ async def test_discovers_openai_compatible_models(monkeypatch: pytest.MonkeyPatc
             "value": "endpoint:local-openai/qwen/qwen3-coder",
             "label": "Qwen Coder",
             "canonical_id": "qwen/qwen3-coder",
-            "context_length": 32768,
-            "context_length_source": "provider_reported",
             "capabilities": ["chat"],
         },
     ]
@@ -567,6 +569,130 @@ def _two_vllm_models_payload() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+async def test_context_observation_preserves_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    model_id = _VLLM_PROBED_ID
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model=model_id,
+        probed_model=model_id,
+        input_modalities=["text", "image"],
+    )
+    _patch_discovery_client(
+        monkeypatch,
+        _vllm_client(
+            {
+                "data": [
+                    {
+                        "id": model_id,
+                        "label": "Qwen VL",
+                        "max_model_len": 131_072,
+                        "capabilities": {"chat": True},
+                    }
+                ]
+            }
+        ),
+    )
+
+    async def get_observation(route: LocalContextRoute) -> LocalContextObservation:
+        return LocalContextObservation(
+            machine_id=route.machine_id,
+            endpoint_id=route.endpoint_id,
+            configuration_fingerprint=route.configuration_fingerprint,
+            provider=route.provider,
+            model_id=route.model_id,
+            canonical_limit=262_144,
+            provenance={"runtime_limit": "vllm:engine"},
+            instances=(LocalContextInstance(model_id=route.model_id, runtime_limit=32_768),),
+        )
+
+    service = SimpleNamespace(get_observation=AsyncMock(side_effect=get_observation))
+    monkeypatch.setattr(
+        "gobby.app_context.get_app_context",
+        lambda: SimpleNamespace(local_context_service=service),
+    )
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine")
+
+    group = await discover_local_endpoint_model_group("metal", endpoint)
+    remote_endpoint = endpoint.model_copy(update={"api_base": "https://models.example.test/v1"})
+    _patch_discovery_client(
+        monkeypatch,
+        _FakeAsyncClient(
+            {
+                "https://models.example.test/health": _FakeResponse(
+                    "https://models.example.test/health",
+                    {},
+                ),
+                "https://models.example.test/v1/models": _FakeResponse(
+                    "https://models.example.test/v1/models",
+                    {
+                        "data": [
+                            {
+                                "id": model_id,
+                                "max_model_len": 131_072,
+                            }
+                        ]
+                    },
+                ),
+            }
+        ),
+    )
+    remote_group = await discover_local_endpoint_model_group("remote", remote_endpoint)
+    models = _catalog_payload_models(group)
+    default = _default_entry(models)
+    served = _entry_by_canonical(models, model_id)
+    remote_served = _entry_by_canonical(_catalog_payload_models(remote_group), model_id)
+
+    monkeypatch.setattr(
+        "gobby.app_context.get_app_context",
+        lambda: SimpleNamespace(local_context_service=None),
+    )
+    _patch_discovery_client(
+        monkeypatch,
+        _vllm_client(
+            {
+                "data": [
+                    {
+                        "id": model_id,
+                        "max_model_len": 131_072,
+                    }
+                ]
+            }
+        ),
+    )
+    unknown_group = await discover_local_endpoint_model_group("metal", endpoint)
+    unknown_served = _entry_by_canonical(_catalog_payload_models(unknown_group), model_id)
+
+    assert group.provider == "endpoint:metal"
+    assert group.provider_label == "vLLM"
+    assert group.source == "live"
+    assert [model["value"] for model in models] == [
+        "endpoint:metal",
+        f"endpoint:metal/{model_id}",
+    ]
+    assert default is not None
+    assert default["label"] == f"Default ({model_id})"
+    assert default["is_default"] is True
+    assert default["input_modalities"] == ["text", "image"]
+    assert served["label"] == "Qwen VL"
+    assert served["capabilities"] == {"chat": True}
+    assert served["input_modalities"] == ["text", "image"]
+    assert served["context_length"] == 32_768
+    assert served["context_length_source"] == "local_observation"
+    assert served["context_observation"]["effective_limit"] == 32_768
+    assert served["context_observation"]["provenance"] == {"runtime_limit": "vllm:engine"}
+    assert default["context_length"] == 32_768
+    assert default["context_observation"] == served["context_observation"]
+    assert remote_served["context_length"] == 131_072
+    assert remote_served["context_length_source"] == "provider_reported"
+    assert "context_observation" not in remote_served
+    assert "context_length" not in unknown_served
+    assert "context_length_source" not in unknown_served
+    assert "context_observation" not in unknown_served
+    service.get_observation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_vllm_discovery_error_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     endpoint = GenerationEndpointConfig(
         protocol="vllm",
@@ -611,10 +737,11 @@ async def test_vllm_modalities_probed_model_only(monkeypatch: pytest.MonkeyPatch
     default_entry = _default_entry(probed_default.models)
     assert default_entry is not None
     assert default_entry["value"] == "endpoint:vllm-local"
-    assert probed_entry["context_length"] == 32768
-    assert probed_entry["context_length_source"] == "provider_reported"
+    assert "context_length" not in probed_entry
+    assert "context_length_source" not in probed_entry
     assert probed_entry["input_modalities"] == vision_modalities
-    assert other_entry["context_length"] == 8192
+    assert "context_length" not in other_entry
+    assert "context_length_source" not in other_entry
     assert other_entry.get("input_modalities") is None
     assert default_entry["input_modalities"] == vision_modalities
 

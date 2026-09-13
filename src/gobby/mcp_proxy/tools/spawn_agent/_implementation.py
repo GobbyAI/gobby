@@ -294,6 +294,7 @@ async def spawn_agent_impl(
             return {"success": False, "error": str(selection_error)}
 
     requested_model_selector = effective_model
+    machine_id = await asyncio.to_thread(get_machine_id)
     from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
         resolve_spawn_generation_endpoint,
     )
@@ -306,6 +307,7 @@ async def spawn_agent_impl(
             daemon_config=daemon_config,
             run_manager=runner.run_storage,
             runtime_provider=effective_provider,
+            machine_id=machine_id,
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -597,7 +599,6 @@ async def spawn_agent_impl(
     run_id = str(uuid.uuid4())
     prepared_spawn = None
     spawn_request = None
-    machine_id = await asyncio.to_thread(get_machine_id)
 
     agent_display_name = requested_agent_name
     base_commit_sha = isolation_ctx.extra.get("base_commit_sha")
@@ -607,6 +608,8 @@ async def spawn_agent_impl(
         effective_isolation=effective_isolation,
         reasoning=reasoning,
         initial_variables=initial_variables,
+        local_context_route=endpoint_resolution.local_context_route,
+        local_context_observation=endpoint_resolution.local_context_observation,
         session_manager=session_manager,
         task_additional_skills=task_additional_skills,
         enhanced_prompt=enhanced_prompt,

@@ -8,7 +8,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.llm.context_windows import normalize_model_lookup_id, resolve_context_window
+from gobby.ai.endpoints import parse_endpoint_model_selector
+from gobby.llm.context_windows import (
+    normalize_model_lookup_id,
+    resolve_context_window,
+    resolve_context_window_with_source,
+)
+from gobby.providers.capabilities.local_context import LocalContextObservation
+from gobby.providers.capabilities.local_context_config import LocalContextRoute
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot, ContextUsageSource
 
 if TYPE_CHECKING:
@@ -21,6 +28,22 @@ _SOURCES: frozenset[str] = frozenset(
 logger = logging.getLogger(__name__)
 _AGY_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 _GPT_OSS_CONTEXT_WINDOW = 131_072
+LOCAL_CONTEXT_ROUTE_VARIABLE = "_local_context_route"
+LOCAL_CONTEXT_OBSERVATION_VARIABLE = "_local_context_observation"
+_LOCAL_CONTEXT_ROUTE_FIELDS = frozenset(
+    {
+        "machine_id",
+        "endpoint_id",
+        "configuration_fingerprint",
+        "provider",
+        "protocol",
+        "model_id",
+        "instance_id",
+        "api_base",
+        "is_local",
+    }
+)
+_LOCAL_CONTEXT_PROTOCOLS = frozenset({"openai-compatible", "lmstudio", "ollama", "vllm"})
 
 
 def normalize_context_usage_source(source: str | None) -> ContextUsageSource | None:
@@ -200,7 +223,16 @@ def effective_context_window_for_session(
     overrides: dict[str, int] | None = None,
 ) -> int | None:
     """Return the best context window for session hydration payloads."""
-    live_window = _context_window_from_variables(variables or {})
+    session_variables = variables or {}
+    if getattr(session, "is_local", False) is True:
+        return _local_context_window_for_session(
+            session,
+            session_variables,
+            db=db,
+            overrides=overrides,
+        )
+
+    live_window = _context_window_from_variables(session_variables)
     if live_window is not None:
         return live_window
 
@@ -212,7 +244,7 @@ def effective_context_window_for_session(
     if reported_session_window is not None:
         return reported_session_window
 
-    model = _effective_session_model(session, variables or {})
+    model = _effective_session_model(session, session_variables)
     source = getattr(session, "source", None)
     snapshot_source = normalize_context_usage_source(source if isinstance(source, str) else None)
     resolved = _resolve_context_window_for_source_model(
@@ -225,6 +257,118 @@ def effective_context_window_for_session(
         return resolved
 
     return _coerce_positive_int(getattr(session, "context_window", None))
+
+
+def local_context_variable_updates(
+    route: LocalContextRoute | None,
+    observation: LocalContextObservation | None,
+) -> dict[str, Any]:
+    """Serialize exact local setup evidence into existing session variables."""
+    return {
+        LOCAL_CONTEXT_ROUTE_VARIABLE: route.to_dict() if route is not None else None,
+        LOCAL_CONTEXT_OBSERVATION_VARIABLE: (
+            observation.to_dict() if observation is not None else None
+        ),
+    }
+
+
+def persist_local_context_variables(
+    session_manager: Any,
+    session_id: str,
+    route: LocalContextRoute | None,
+    observation: LocalContextObservation | None,
+) -> None:
+    """Persist local setup evidence for synchronous session consumers."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    SessionVariableManager(session_manager.db).merge_variables(
+        session_id,
+        local_context_variable_updates(route, observation),
+    )
+
+
+def _local_context_window_for_session(
+    session: Any,
+    variables: dict[str, Any],
+    *,
+    db: HubDatabase | None,
+    overrides: dict[str, int] | None,
+) -> int | None:
+    route, observation = _local_context_from_variables(variables)
+    if (
+        route is None
+        or observation is None
+        or observation.effective_limit is None
+        or not route.matches_observation(observation)
+        or not _local_route_matches_session(session, variables, route)
+    ):
+        return None
+
+    caps = [
+        cap
+        for cap in (
+            _context_window_from_variables(variables),
+            _reported_session_context_window(session, db),
+        )
+        if cap is not None
+    ]
+    resolved = resolve_context_window_with_source(
+        route.model_id,
+        overrides=overrides,
+        provider=_provider_for_session(session),
+        provider_reported_context_window=min(caps) if caps else None,
+        local_route=route,
+        local_observation=observation,
+        db=db,
+    )
+    return resolved.value if resolved is not None else None
+
+
+def _local_context_from_variables(
+    variables: dict[str, Any],
+) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+    route_data = variables.get(LOCAL_CONTEXT_ROUTE_VARIABLE)
+    observation_data = variables.get(LOCAL_CONTEXT_OBSERVATION_VARIABLE)
+    if not isinstance(route_data, Mapping):
+        return None, None
+    try:
+        if set(route_data) != _LOCAL_CONTEXT_ROUTE_FIELDS:
+            raise ValueError("invalid local context route fields")
+        if type(route_data["is_local"]) is not bool:
+            raise ValueError("local context route is_local must be a boolean")
+        if route_data["protocol"] not in _LOCAL_CONTEXT_PROTOCOLS:
+            raise ValueError("invalid local context route protocol")
+        route = LocalContextRoute(**dict(route_data))
+        observation = (
+            LocalContextObservation.from_dict(observation_data)
+            if isinstance(observation_data, Mapping)
+            else None
+        )
+    except (TypeError, ValueError):
+        logger.warning("Ignoring malformed session-local context evidence")
+        return None, None
+    return route, observation
+
+
+def _local_route_matches_session(
+    session: Any,
+    variables: dict[str, Any],
+    route: LocalContextRoute,
+) -> bool:
+    machine_id = getattr(session, "machine_id", None)
+    if not isinstance(machine_id, str) or machine_id != route.machine_id or not route.is_local:
+        return False
+
+    model = _effective_session_model(session, variables)
+    try:
+        selector = parse_endpoint_model_selector(model)
+    except ValueError:
+        return False
+    if selector is not None:
+        return route.endpoint_id == f"endpoint:{selector.endpoint_name}" and (
+            selector.model is None or selector.model == route.model_id
+        )
+    return model == route.model_id
 
 
 def _context_window_from_variables(variables: dict[str, Any]) -> int | None:

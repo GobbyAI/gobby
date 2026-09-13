@@ -12,14 +12,23 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from gobby.utils.machine_id import require_machine_id
+from gobby.providers.capabilities.local_context_vllm import (
+    parse_vllm_served_records,
+    vllm_api_base,
+    vllm_health_url,
+    vllm_models_url,
+)
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 
 if TYPE_CHECKING:
     from gobby.config.ai import GenerationEndpointConfig
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
     from gobby.storage.agents import LocalAgentRunManager
 
 __all__ = [
     "ensure_local_model",
+    "refresh_local_model_context",
     "LocalModelError",
     "resolve_vllm_served_model",
     "select_vllm_served_model",
@@ -42,6 +51,14 @@ class LocalModelError(Exception):
     """Raised when local model pre-flight fails."""
 
 
+def _origin(api_base: str) -> str:
+    """Return a local endpoint base without a trailing ``/v1`` or slash."""
+    base = api_base.strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")].rstrip("/")
+    return base
+
+
 def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     """Count running agents that were spawned against a local endpoint.
 
@@ -54,39 +71,6 @@ def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     return sum(
         1 for run in run_manager.list_active_for_machine(require_machine_id()) if run.is_local
     )
-
-
-def _origin(api_base: str) -> str:
-    """Return ``api_base`` without a trailing ``/v1`` segment or slash.
-
-    The path prefix is preserved so endpoints served behind an ingress
-    (``https://gw/models/vllm/v1``) keep their mount point.
-    """
-    base = api_base.strip().rstrip("/")
-    if base.endswith("/v1"):
-        base = base[: -len("/v1")].rstrip("/")
-    return base
-
-
-def vllm_api_base(api_base: str) -> str:
-    """Return the canonical ``{origin}/v1`` base for every vLLM wire request.
-
-    ``api_base`` configured with or without a trailing ``/v1`` (or slash)
-    yields exactly one base, so the resolver, discovery, the generation
-    client, and the Codex override block never build ``/v1/v1/...`` nor a
-    bare-origin ``/chat/completions``.
-    """
-    return f"{_origin(api_base)}/v1"
-
-
-def vllm_models_url(api_base: str) -> str:
-    """Return the single ``{origin}/v1/models`` discovery URL for ``api_base``."""
-    return f"{vllm_api_base(api_base)}/models"
-
-
-def vllm_health_url(api_base: str) -> str:
-    """Return the ``{origin}/health`` probe URL for ``api_base``."""
-    return f"{_origin(api_base)}/health"
 
 
 def _headers(api_key: str | None) -> dict[str, str]:
@@ -283,6 +267,49 @@ async def ensure_local_model(
     raise LocalModelError(f"Unsupported generation endpoint protocol: {config.protocol}")
 
 
+async def refresh_local_model_context(
+    config: GenerationEndpointConfig,
+    *,
+    endpoint_name: str,
+    model: str,
+    machine_id: str | None = None,
+) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+    """Refresh context for the resolved local route without changing model lifecycle."""
+    from gobby.ai.endpoints import endpoint_provider
+    from gobby.app_context import get_app_context
+    from gobby.providers.capabilities.local_context_config import endpoint_route
+
+    selected_machine = machine_id or get_machine_id()
+    if selected_machine is None:
+        logger.warning(
+            "Local context refresh skipped because machine identity is unavailable",
+            extra={"endpoint": endpoint_name, "model": model},
+        )
+        return None, None
+    route = endpoint_route(
+        machine_id=selected_machine,
+        endpoint_name=endpoint_name,
+        endpoint=config,
+        provider=endpoint_provider(endpoint_name),
+        model_id=model,
+    )
+    if not route.is_local:
+        return None, None
+
+    try:
+        service = getattr(get_app_context(), "local_context_service", None)
+        if service is None:
+            return route, None
+        return route, await service.refresh(route)
+    except Exception:
+        logger.warning(
+            "Local context refresh failed",
+            extra={"endpoint": endpoint_name, "model": model},
+            exc_info=True,
+        )
+        return route, None
+
+
 async def _ensure_lmstudio_model(
     client: httpx.AsyncClient,
     config: GenerationEndpointConfig,
@@ -380,23 +407,7 @@ async def _ensure_ollama_model(
 
 
 def _vllm_served_model_ids(payload: Any) -> list[str]:
-    if not isinstance(payload, dict):
-        return []
-    models = payload.get("data")
-    if not isinstance(models, list):
-        models = payload.get("models")
-    if not isinstance(models, list):
-        return []
-    ids: list[str] = []
-    for model in models:
-        if not isinstance(model, dict):
-            continue
-        for key in ("id", "model", "name"):
-            value = model.get(key)
-            if isinstance(value, str) and value.strip():
-                ids.append(value.strip())
-                break
-    return ids
+    return parse_vllm_served_records(payload).model_ids()
 
 
 def _format_served_models(served: list[str]) -> str:

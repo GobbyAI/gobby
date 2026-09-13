@@ -307,6 +307,7 @@ class TestChatSessionSendMessage:
         class Selection:
             def __init__(self) -> None:
                 self.calls = 0
+                self.name = "lmstudio"
 
             def endpoint_with_selected_model(self) -> GenerationEndpointConfig:
                 self.calls += 1
@@ -314,6 +315,9 @@ class TestChatSessionSendMessage:
 
         selection = Selection()
         ensure_local_model = AsyncMock(return_value="qwen3-coder:latest")
+        refresh_context = AsyncMock(return_value=(None, None))
+        session._model = "endpoint:lmstudio/old-model"
+        session._local_context_refresher = refresh_context
 
         with (
             patch(
@@ -326,6 +330,7 @@ class TestChatSessionSendMessage:
 
         assert selection.calls == 1
         ensure_local_model.assert_awaited_once_with(endpoint, run_manager=None)
+        refresh_context.assert_awaited_once_with("endpoint:lmstudio/qwen3-coder:latest")
         session._client.set_model.assert_awaited_once_with("qwen3-coder:latest")
         assert session.model == "endpoint:lmstudio"
 

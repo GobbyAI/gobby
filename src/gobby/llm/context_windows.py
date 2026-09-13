@@ -15,10 +15,13 @@ from gobby.llm.context_window_values import positive_context_window
 from gobby.providers.capabilities.resolve import (
     CapabilityResolver,
     ContextSource,
+    LocalContextRoute,
+    resolve_local_context,
 )
 
 if TYPE_CHECKING:
     from gobby.config.ai import ModelMetadataAlias
+    from gobby.providers.capabilities.local_context import LocalContextObservation
     from gobby.storage.hub.protocol import HubDatabase
 
 ContextLengthSource = Literal[
@@ -30,6 +33,7 @@ ContextLengthSource = Literal[
 ContextWindowSource = Literal[
     "override",
     "provider_reported",
+    "local_observation",
     "provider_catalog",
     "registry",
     "unknown",
@@ -284,6 +288,8 @@ def resolve_context_window(
     *,
     provider: str | None = None,
     provider_reported_context_window: Any | None = None,
+    local_route: LocalContextRoute | None = None,
+    local_observation: LocalContextObservation | None = None,
     db: HubDatabase | None = None,
 ) -> int | None:
     """Resolve context window using source-aware provider/registry precedence."""
@@ -293,6 +299,8 @@ def resolve_context_window(
         overrides,
         provider=provider,
         provider_reported_context_window=provider_reported_context_window,
+        local_route=local_route,
+        local_observation=local_observation,
         db=db,
     )
     return resolved.value if resolved else None
@@ -326,6 +334,8 @@ def resolve_context_window_with_source(
     *,
     provider: str | None = None,
     provider_reported_context_window: Any | None = None,
+    local_route: LocalContextRoute | None = None,
+    local_observation: LocalContextObservation | None = None,
     db: HubDatabase | None = None,
 ) -> ResolvedContextWindow | None:
     """Resolve context window and expose the selected source."""
@@ -352,28 +362,40 @@ def resolve_context_window_with_source(
             PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS,
         )
     provider_name = provider.strip().lower() if isinstance(provider, str) else None
-    resolution = _get_capability_resolver(db).resolve_context(
-        provider_name or "",
-        model,
+    resolution = resolve_local_context(
+        local_route,
+        local_observation,
         caller_override=caller_override,
         route_override=reported,
     )
+    if resolution is None:
+        resolution = _get_capability_resolver(db).resolve_context(
+            provider_name or "",
+            model,
+            caller_override=caller_override,
+            route_override=reported,
+        )
     source_map: dict[ContextSource, ContextWindowSource] = {
         ContextSource.CALLER_OVERRIDE: "override",
         ContextSource.ROUTE_OVERRIDE: "provider_reported",
+        ContextSource.LOCAL_OBSERVATION: "local_observation",
         ContextSource.PROVIDER_MATRIX: "provider_catalog",
         ContextSource.OPENROUTER: "registry",
         ContextSource.UNKNOWN: "unknown",
     }
     if resolution.value is not None:
-        return _apply_context_window_marker_floor(
-            ResolvedContextWindow(resolution.value, source_map[resolution.source]),
-            has_one_million_marker,
+        resolved = ResolvedContextWindow(
+            resolution.value,
+            source_map[resolution.source],
         )
+        if local_route is not None and local_route.is_local:
+            return resolved
+        return _apply_context_window_marker_floor(resolved, has_one_million_marker)
 
-    warning_key = normalize_model_lookup_id(model)
-    if _remember_unknown_context_window(warning_key):
-        logger.warning("Context window is unknown for model %s", model)
+    if local_route is None or not local_route.is_local:
+        warning_key = normalize_model_lookup_id(model)
+        if _remember_unknown_context_window(warning_key):
+            logger.warning("Context window is unknown for model %s", model)
     return ResolvedContextWindow(None, "unknown")
 
 
