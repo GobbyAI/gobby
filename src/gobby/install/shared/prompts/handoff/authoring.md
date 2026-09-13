@@ -8,21 +8,41 @@ Feedback is checked before content limits. Use clear_session=false while working
 inside tasks. Use clear_session=true only between tasks after task closure;
 an open claimed task blocks clearing.
 
-Write a handoff from the current context epoch only: current state, concrete next
-actions, and still-active constraints or blockers the next epoch needs. Do not
-combine multiple epochs of session history, copy previous handoffs, or reproduce
-completed-work ledgers. Earlier history is stored in the database; reference its
-task or session records when needed.
+All sections share a hard limit of 10,000 JSON-escaped characters, measured as
+len(json.dumps(rendered_markdown)), including headings, list formatting, escaping,
+and enclosing quotes. Aim below approximately 5,000 encoded characters for ordinary
+handoffs to leave headroom. Oversized content is rejected before staging.
+
+Write fresh reflections from the current context epoch only, alongside current
+continuation state. current_state and next_steps describe current work, relevant
+validation, and immediate actions; key_decisions and blockers preserve active
+constraints and obstacles. Reference durable task/design/memory rationale for older
+decisions. what_was_accomplished records this epoch's meaningful outcomes;
+problems_encountered and what_didnt_work record fresh friction observations,
+including resolved friction: attempt, obstacle, consequence or workaround. No general
+lesson is required. notes holds other necessary live context; references locates sources.
+
+Never copy earlier reflections into a new handoff; copied observations inflate
+apparent recurrence in future daily synthesis. Record another occurrence only when
+friction actually recurs. Unresolved blockers can carry forward without their history.
+Do not combine epochs, copy previous handoffs, or reproduce completed-work ledgers.
+Earlier history is stored in the database; reference its task or session records
+when needed. Existing Gobby memory guidance still applies.
 
 Use clear, readable sentences and ordinary technical terms. Do not overuse
 shorthand, invented abbreviations, compressed task-number chains, or cryptic notes
 to fit more history into the handoff. Shorten by removing history and unnecessary
 detail, not by making the remaining text harder to read.
 
-Supply nonblank current_state and at least one nonblank next_steps entry. Rendered
-content is limited to 10,000 JSON-escaped characters including section formatting.
-Oversized content is rejected before staging; shorten it and retry. Reference
-existing evidence instead of copying logs or transcripts.
+Supply nonblank current_state and at least one nonblank next_steps entry. Leave
+optional fields empty when unneeded. Prune history and superseded detail first.
+If necessary live working detail still cannot fit, create or update a session-scoped
+Markdown working-context file and add its project-relative path to references before
+submitting. Keep immediate orientation and next actions inline. Refresh current state
+in the file; never append epoch histories or move discarded history and reflections
+into it. Prepare the file while writes are permitted, before hard context-pressure
+gates block writes. Surface preservation conflicts before compaction; never bypass
+permissions or truncate necessary context.
 
 In a terminal session the daemon interrupts the active turn, confirms the
 interrupt from the transcript, clears the composer, and submits the provider

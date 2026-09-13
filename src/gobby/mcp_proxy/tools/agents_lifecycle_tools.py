@@ -99,7 +99,14 @@ def register_agent_lifecycle_tools(
         name="end_agent_run",
         description=(
             "Persist a structured handoff, signal that this agent run is complete, and "
-            "release its resources. Always self-scoped to the caller."
+            "release its resources. Always self-scoped to the caller. "
+            "Load gobby:references/sessions/handoffs.md. All sections share 10,000 JSON-escaped "
+            "characters including rendered formatting; aim below 5,000 for ordinary handoffs. "
+            "Include current continuation state and fresh epoch friction observations, including "
+            "resolved friction. Never copy earlier reflections; record only actual recurrence. "
+            "For necessary live detail after pruning, create or update permitted Markdown working "
+            "notes and include their project-relative path in references. Never move cumulative "
+            "history into notes. Use readable sentences; leave unneeded optional fields empty."
         ),
     )
     async def end_agent_run(

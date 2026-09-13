@@ -28,22 +28,40 @@ compact boundary for autonomous sessions and whenever resolved `plan_mode` is tr
 
 ## Handoff Content And Incidental History
 
-A handoff is an operational continuation record. Include current state, remaining
-work, decisions, blockers, and relevant final validation from the current context
-epoch. Carry forward earlier constraints only when they still affect the next action,
-with references to the existing evidence rather than cumulative history.
+A handoff records current continuation state plus fresh reflections from the ending
+context epoch. Current state, next steps, active decisions, blockers, and relevant
+validation orient the successor. Carry forward earlier constraints only while they
+affect the work; reference their authoritative task, design document, or Gobby memory.
+
+What Was Accomplished records meaningful outcomes from this epoch. Problems
+Encountered and What Didn't Work preserve concrete friction, including resolved
+friction: the attempt, obstacle, and consequence or workaround. Agents need not infer
+a general lesson. These observations support future daily friction synthesis.
+Never copy earlier reflections into a new handoff: that inflates apparent recurrence.
+Record another occurrence only when friction actually recurs. An unresolved blocker
+may remain in continuation state without repeating its historical narrative. Existing
+memory guidance applies independently; an observation need not become a memory.
 
 Omit superseded intermediate test counts and historical run labels from the handoff
-narrative unless they are needed to explain an active blocker or next action. This
-applies to every authored section, including Problems Encountered, What Didn't Work,
-Notes, and References. Keep actionable failure diagnostics and distinguish completed
+narrative unless needed to explain an active blocker, next action, or fresh friction
+observation. Keep actionable failure diagnostics and distinguish completed
 validation from acceptance work that is still required. A coordination wait is not
 evidence that acceptance ran or passed.
 
-Leave detailed history in existing task/session records, raw transcripts, or optional
-evidence and progress-log files; use references to those sources when needed. A
-reference identifies evidence without inventing a run classification or chronology.
-This policy does not delete or rewrite historical records.
+All sections together must fit 10,000 JSON-escaped characters, measured as
+`len(json.dumps(rendered_markdown))`, including generated formatting, escaping, and
+enclosing quotes. Aim below approximately 5,000 encoded characters for ordinary
+handoffs to leave headroom. Use readable sentences; remove low-value detail instead
+of inventing shorthand. Leave optional fields empty when unneeded.
+
+After pruning, necessary live detail may go in a session-scoped Markdown
+working-context file. Create or update it while writes are permitted and include
+its project-relative path in `references`; keep immediate orientation and next actions
+inline. Refresh current state in the file; never append epoch histories or move
+discarded history and reflections into it. Prepare it before hard context-pressure
+gates block writes; surface preservation conflicts before compaction rather than
+bypassing permissions or truncating content. Existing task/session records and
+transcripts retain history. This policy does not delete or rewrite historical records.
 
 Task #21887 records the inclusion decision accepted on 2026-09-05. Its generated
 recovery/combination examples and "Source Records" terminology predate the current

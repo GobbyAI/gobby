@@ -6,6 +6,7 @@ prompt: |
   plan draft through the imminent compaction, including its code fences,
   decisions, unresolved questions, and review-stage approvals. Resume it after
   compaction without inventing a scratch store or claiming file validation.
+  The complete rendered handoff fits the 10,000 JSON-escaped character cap.
 runs:
   excluded:
     loaded_skills: []

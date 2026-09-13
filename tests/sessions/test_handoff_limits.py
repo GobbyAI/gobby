@@ -20,7 +20,16 @@ def test_handoff_size_counts_escaping_and_rendered_headings(text: str) -> None:
 
 
 def test_optional_sections_share_the_same_total_budget() -> None:
-    with pytest.raises(ValueError, match="Shorten the handoff and retry"):
+    with pytest.raises(ValueError, match="Shorten the inline handoff and retry") as error:
         build_handoff_payload(
             current_state="Ready", next_steps=["Continue"], notes=["x" * 5_000] * 2
         )
+    for instruction in (
+        "including rendered formatting",
+        "Remove cumulative history, copied reflections, and superseded detail",
+        "relevant validation, and brief friction observations from this epoch",
+        "create or update a Markdown session-notes file",
+        "project-relative path to references",
+        "Do not move cumulative history into that file",
+    ):
+        assert instruction in str(error.value)

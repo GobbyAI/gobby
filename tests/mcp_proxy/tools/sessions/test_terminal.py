@@ -863,6 +863,10 @@ class TestSetHandoffFeedback:
         assert "current context epoch only" in prompt
         assert "Earlier history is stored in the database" in prompt
         assert "Do not overuse" in prompt
+        assert "including resolved friction" in prompt
+        assert "Never copy earlier reflections" in prompt
+        assert "project-relative path to references" in prompt
+        assert "5,000 encoded characters" in prompt
         assert "call set_handoff last" in prompt
 
     @pytest.mark.parametrize("clear_session", [False, True])
@@ -988,7 +992,7 @@ class TestSetHandoffFeedback:
                 )
             )
         assert result["error_code"] == "invalid_handoff"
-        assert "Shorten the handoff and retry" in result["error"]
+        assert "Shorten the inline handoff and retry" in result["error"]
         assert _handoff_row_count(temp_db, session_id) == 0
         assert _feedback_row_count(temp_db, session_id) == 0
         assert SessionVariableManager(temp_db).get_variables(session_id) == before

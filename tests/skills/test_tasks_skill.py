@@ -129,8 +129,8 @@ def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> 
         "10,000 JSON-escaped",
         "characters",
         "compressing prose into shorthand",
-        "optional Markdown progress log",
-        "reference its path",
+        "session-scoped Markdown working-context",
+        "project-relative path",
         "`clear_session=false` during planning, review, or ongoing task work",
         "`true` only for a root/coordinator",
         "after closing the",
@@ -138,6 +138,34 @@ def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> 
         "spawned worker finishes with structured `end_agent_run`",
     ):
         assert expected in content
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md",
+        "src/gobby/install/shared/prompts/handoff/authoring.md",
+        "docs/contracts/session-boundary.md",
+        "docs/guides/sessions.md",
+    ],
+)
+def test_handoff_guidance_preserves_friction_without_historical_overflow(
+    relative_path: str,
+) -> None:
+    content = " ".join((REPO_ROOT / relative_path).read_text().split())
+    for expected in (
+        "10,000 JSON-escaped characters",
+        "5,000 encoded characters",
+        "len(json.dumps(rendered_markdown))",
+        "including resolved friction",
+        "Never copy earlier reflections into a new handoff",
+        "friction actually recurs",
+        "project-relative path",
+        "never append epoch histories or move discarded history and reflections into it",
+        "before compaction",
+    ):
+        assert expected in content
+    assert "optional Markdown progress log" not in content
 
 
 def test_handoff_feedback_precedes_handoff_without_duplicate_epoch_submission() -> None:

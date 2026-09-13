@@ -20,8 +20,13 @@ workflow; multiple dependent deliverables route to a plan. Bugs, maintenance,
 features, and refactors all use the same rule. Duration is only an estimate.
 
 The plan route drafts and revises a Markdown artifact with the user. When the
-provider cannot write it yet, the complete latest draft survives compaction in
-the existing structured session handoff. Once materialized, the file is the
+provider cannot write it yet, the complete latest draft can survive compaction in
+the existing structured session handoff only when all rendered sections fit the
+shared 10,000 JSON-escaped character cap. If it cannot fit and writing is prohibited,
+surface the preservation conflict before compaction; never truncate the draft,
+repeatedly submit oversized content, or bypass permissions through another writer.
+When writing is permitted, save the canonical draft and reference its project-relative
+path in the handoff. Once materialized, the file is the
 sole authority. Deterministic validation and explicit user approval are
 mandatory; enhancement and taskless adversarial review are recommended but
 optional.

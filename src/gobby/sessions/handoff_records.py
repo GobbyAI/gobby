@@ -94,8 +94,13 @@ def build_handoff_payload(
     if encoded_size > MAX_HANDOFF_CONTENT_CHARS:
         raise ValueError(
             f"Handoff is too large: {encoded_size} JSON-escaped characters; "
-            f"limit is {MAX_HANDOFF_CONTENT_CHARS}. Shorten the handoff and retry. "
-            "Keep only current state and next actions; reference existing evidence for details."
+            f"limit is {MAX_HANDOFF_CONTENT_CHARS}, including rendered formatting. "
+            "Remove cumulative history, copied reflections, and superseded detail. "
+            "Keep readable current state, next actions, active constraints/blockers, "
+            "relevant validation, and brief friction observations from this epoch. "
+            "If necessary live working detail still cannot fit, create or update a Markdown "
+            "session-notes file and add its project-relative path to references. "
+            "Do not move cumulative history into that file. Shorten the inline handoff and retry."
         )
     return HandoffPayload(
         current_state=state,

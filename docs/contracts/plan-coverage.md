@@ -354,14 +354,20 @@ bugs, maintenance, features, and refactors; duration is an estimate, never the
 routing discriminator.
 
 When provider writes are allowed, the plan lives at
-`.gobby/plans/<slug>.md`. That file is the canonical narrative authority. When
-writes are unavailable, the planner keeps the complete latest conversational
-draft in the existing session handoff at compaction:
+`.gobby/plans/<slug>.md`. That file is the canonical narrative authority; reference
+its project-relative path in handoffs. When writes are unavailable, the planner
+keeps the complete latest conversational draft in the existing session handoff
+at compaction only when all rendered sections fit the shared 10,000 JSON-escaped
+character cap:
 
 - `current_state`: the full Markdown draft, including code fences.
 - `key_decisions`: decisions and stage approvals.
 - `notes`: unresolved questions.
 - `next_steps`: the concrete continuation point.
+
+If the complete draft cannot fit and writing is prohibited, surface the preservation
+conflict before initiating compaction. Never truncate the draft or repeatedly submit
+oversized content. Provider permissions also apply to working-context files.
 
 The planner calls `set_handoff(clear_session=false)` and the resumed session
 consumes it with argumentless `get_handoff`. This staging state is not a second

@@ -26,7 +26,11 @@ rules:
           with at most 3 observations, or observations=[] when there is nothing to report.
           Submission acknowledges feedback; it does not mark it human-reviewed.
           Then load gobby:references/sessions/handoffs.md and keep the rendered handoff within 10,000
-          JSON-escaped characters, including headings. Call set_handoff last.
+          JSON-escaped characters, including headings; aim below 5,000 for ordinary handoffs.
+          Keep current continuation state and fresh epoch friction, including resolved friction.
+          Never copy earlier reflections; record only actual recurrence. Use readable sentences.
+          For necessary live detail after pruning, reference a permitted Markdown working-notes
+          file by project-relative path; never move cumulative history into it. Call set_handoff last.
           Use clear_session=false inside tasks; clear_session=true only between
           tasks after task closure. Do not repeat feedback already submitted this epoch.
 
@@ -61,7 +65,12 @@ rules:
         reason: |
           {{ skill_fetch_directive("gobby:references/sessions/handoffs.md") }}
           Submit required feedback first, then author within the 10,000 JSON-escaped
-          character limit. Use clear_session=false inside tasks and clear_session=true
+          character limit shared by all rendered sections; aim below 5,000 for ordinary handoffs.
+          Keep current continuation state and fresh epoch friction, including resolved friction.
+          Never copy earlier reflections; record only actual recurrence. Use readable sentences.
+          For necessary live detail after pruning, reference a permitted Markdown working-notes
+          file by project-relative path; never move cumulative history into it.
+          Use clear_session=false inside tasks and clear_session=true
           only between tasks after closure.
 
   require-handoff-discipline:
@@ -77,4 +86,9 @@ rules:
           - "gobby-agents:end_agent_run"
         reason: |
           {{ skill_fetch_directive("gobby:references/sessions/handoffs.md") }}
-          Before retrying, revise the handoff to current state and concrete next actions. Do not paste cumulative history, previous handoffs, raw logs, or completed ledgers; reference durable evidence instead.
+          All rendered sections share 10,000 JSON-escaped characters; aim below 5,000 for ordinary handoffs.
+          Keep current continuation state and fresh epoch friction, including resolved friction.
+          Never copy earlier reflections; record only actual recurrence. Use readable sentences.
+          Remove cumulative history, previous handoffs, raw logs, and completed ledgers.
+          For necessary live detail after pruning, create or update a permitted Markdown working-notes
+          file and include its project-relative path in references; never move cumulative history into it.

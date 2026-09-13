@@ -276,7 +276,11 @@ specified. Use explicit session reads when complete evidence matters.
 current state and at least one nonblank next step. Optional entries reject blanks;
 references are deduplicated in their original order. Rendered handoff content is
 limited to 10,000 JSON-escaped characters including formatting. Oversized content
-is rejected before staging; shorten it and retry. Submit required feedback through
+is rejected before staging. The shared budget is `len(json.dumps(rendered_markdown))`,
+including headings, list formatting, escaping, and enclosing quotes. Aim below
+approximately 5,000 encoded characters for ordinary handoffs to leave headroom.
+Use readable sentences; remove low-value detail instead of inventing shorthand.
+Leave optional fields empty when unneeded. Submit required feedback through
 `gobby-sessions:feedback` first, then call `set_handoff` last.
 
 Daemon stop and restart refuse while a live session has an unresolved handoff,
@@ -292,18 +296,34 @@ Load `gobby:references/sessions/handoffs.md` before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;
 the existing model-aware context-pressure warnings also request the reference.
 A completed reference load suppresses further requests until the next context reset.
-Handoffs describe current state and concrete next actions; reference durable
-evidence instead of copying cumulative history or earlier handoffs.
-When detailed progress needs to be retained, keep an optional Markdown progress
-log and include its path in the handoff's `references`; keep the log's contents
-out of the handoff.
+Handoffs contain current continuation state plus fresh reflections from the ending
+epoch. `current_state`, `next_steps`, `key_decisions`, and `blockers` retain current
+work, immediate actions, active constraints, and relevant validation. Reference older
+decisions in their owning task, design document, or Gobby memory.
+
+`what_was_accomplished` records this epoch's meaningful outcomes.
+`problems_encountered` and `what_didnt_work` record fresh friction observations,
+including resolved friction: attempt, obstacle, and consequence or workaround.
+No general lesson is required. Never copy earlier reflections into a new handoff;
+doing so inflates apparent recurrence for future daily synthesis. Record a new
+occurrence only when friction actually recurs. Unresolved blockers may carry forward
+without their history. Existing memory guidance still applies; observations do not
+require a memory write. `notes` holds other necessary live context and `references`
+locates sources.
+
+Prune cumulative history and superseded detail first. If necessary live detail still
+cannot fit, create or update a session-scoped Markdown working-context file and add
+its project-relative path to `references` before submitting. Keep immediate orientation
+and next actions inline. Refresh the file's current state; never append epoch histories
+or move discarded history and reflections into it. Prepare the file while writes are
+permitted, before hard context-pressure gates block them. Surface preservation conflicts
+before compaction; never bypass permissions or truncate necessary context.
 
 Apply the [handoff content policy](../contracts/session-boundary.md#handoff-content-and-incidental-history)
-to every section: retain current state, remaining work, decisions, blockers, and
-relevant final validation. Omit superseded intermediate test counts and historical
-run labels unless they explain an active blocker or next action. Keep detailed
-history in existing task/session records, raw transcripts, or evidence files and
-reference those sources as needed.
+to every section: retain continuation state and fresh epoch observations. Omit
+superseded intermediate test counts and historical run labels unless they explain
+an active blocker, next action, or fresh friction observation. Reference existing
+task/session records and transcripts when historical evidence is needed.
 
 Use these bounded review cases from #21887:
 
@@ -318,8 +338,13 @@ Use these bounded review cases from #21887:
 - **Active failure:** keep the failing command, useful diagnostics, paths, impact,
   and evidence reference needed to resolve an active blocker. Removing incidental
   history must not hide unfinished work or imply that validation passed.
+- **Resolved friction:** record "The schema lookup required a feedback submission;
+  source inspection let me finish diagnosis" once in the epoch where it occurred.
+  Omit it from later reflections unless it actually recurs. Keep an unresolved
+  test-service outage in Blockers, and reference an older active design decision
+  by its task or document rather than copying its rationale.
 
-Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
+The separate feedback survey's observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or
 `always`; optional `disposition` is `worked-around`, `filed-task`, `fixed`,
 `escalated`, or `noted`. Use `other` only when no listed kind fits — it requires
