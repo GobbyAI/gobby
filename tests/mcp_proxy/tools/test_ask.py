@@ -177,6 +177,12 @@ async def test_ask_authorization_and_discovery(
     query_schema = registry.get_schema("query_evidence")
     assert query_schema is not None
     assert "limit" not in query_schema["inputSchema"]["properties"]
+    assert query_schema["inputSchema"]["properties"]["operation"]["enum"] == [
+        "search",
+        "read",
+        "graph",
+    ]
+    assert '"kind":"range"' in query_schema["description"]
 
     with _project_context(project_id), session_context_for_test(SESSION_ID):
         started = await registry.call(
@@ -283,9 +289,13 @@ async def test_composed_ask_registry_binds_each_operation_to_the_current_project
                 {
                     "run_id": "ask-run-1",
                     "attempt": 2,
-                    "draft": {"answer": "bound"},
-                    "draft_hash": "draft-hash",
-                    "evidence_manifest_hash": "evidence-hash",
+                    "draft": {
+                        "question": "Where is the source?",
+                        "question_parts": [],
+                        "claims": [],
+                        "sections": [],
+                    },
+                    "evidence_manifest_hash": "a" * 64,
                 },
             )
 
@@ -304,8 +314,76 @@ async def test_composed_ask_registry_binds_each_operation_to_the_current_project
         assert calls[2][0] == "submit_answer"
         assert calls[2][1]["attempt"] == 2
         assert calls[2][1]["agent_run_id"] == agent_run_id
+        from gobby.ask.claims import AnswerDraft
+
+        answer = AnswerDraft.model_validate(calls[2][1]["draft"])
+        assert answer.investigator_run_id == agent_run_id
+        assert answer.run_id == "ask-run-1"
+        assert calls[2][1]["draft_hash"] == answer.content_hash
 
     assert resolved_projects == [PROJECT_ID] * 3 + [other_project_id] * 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["submit_answer", "submit_review"])
+async def test_submission_schema_exposes_content_and_binds_authenticated_identity(
+    tool_name: str,
+    tmp_path: Path,
+) -> None:
+    import jsonschema
+
+    from gobby.ask.claims import AnswerDraft, ReviewerResult, canonical_hash
+    from gobby.mcp_proxy.tools.ask import create_ask_registry
+
+    service = _AskService()
+    registry = create_ask_registry(
+        lambda _project: service, project_root_resolver=lambda _project, _path: tmp_path
+    )
+    schema = registry.get_schema(tool_name)
+    assert schema is not None
+    input_schema = schema["inputSchema"]
+    arguments: dict[str, Any] = {
+        "run_id": "ask-run",
+        "attempt": 0,
+        "evidence_manifest_hash": "a" * 64,
+    }
+    if tool_name == "submit_answer":
+        body_key, identity_key = "draft", "investigator_run_id"
+        arguments[body_key] = {
+            "question": "Where is the source?",
+            "question_parts": [],
+            "claims": [],
+            "sections": [],
+        }
+        assert "draft_hash" not in input_schema["properties"]
+    else:
+        body_key, identity_key = "review", "reviewer_run_id"
+        arguments[body_key] = {"claim_verdicts": [], "rationale": "No claims were supplied."}
+        arguments["draft_hash"] = "b" * 64
+        assert "review_hash" not in input_schema["properties"]
+    # The published schema resolves all nested citations and verdicts without
+    # requiring the model to invent private identity or cryptographic fields.
+    jsonschema.Draft202012Validator.check_schema(input_schema)
+    jsonschema.validate(arguments, input_schema)
+    forged = deepcopy(arguments)
+    forged[body_key][identity_key] = "foreign-agent"
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(forged, input_schema)
+    with _project_context(PROJECT_ID):
+        with pytest.raises(PermissionError, match="authenticated managed-agent"):
+            await registry.call(tool_name, arguments)
+    assert service.calls == []
+    with _project_context(PROJECT_ID), _agent_run_context("authenticated-agent"):
+        await registry.call(tool_name, arguments)
+    submitted = service.calls[0][1]
+    body = submitted[body_key]
+    assert body[identity_key] == "authenticated-agent"
+    assert body["run_id"] == "ask-run"
+    if tool_name == "submit_answer":
+        assert submitted["draft_hash"] == AnswerDraft.model_validate(body).content_hash
+    else:
+        assert ReviewerResult.model_validate(body).draft_hash == "b" * 64
+        assert submitted["review_hash"] == canonical_hash(body)
 
 
 @pytest.mark.asyncio

@@ -188,19 +188,18 @@ class AnswerSection(BaseModel):
     claim_ids: tuple[str, ...]
 
 
-class AnswerDraft(BaseModel):
+class AnswerContent(BaseModel):
+    """Investigator-authored content, before authenticated provenance is attached."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
-    run_id: str
-    investigator_run_id: str
     question: str
     question_parts: tuple[QuestionPart, ...]
     claims: tuple[Claim, ...]
     sections: tuple[AnswerSection, ...]
 
     @model_validator(mode="after")
-    def _validate_references(self) -> AnswerDraft:
+    def _validate_references(self) -> AnswerContent:
         claim_ids = [claim.id for claim in self.claims]
         if len(set(claim_ids)) != len(claim_ids):
             raise ValueError("claim ids must be unique")
@@ -218,6 +217,12 @@ class AnswerDraft(BaseModel):
         if any(set(claim.question_part_ids) - known_parts for claim in self.claims):
             raise ValueError("claim references an unknown question part")
         return self
+
+
+class AnswerDraft(AnswerContent):
+    schema_version: Literal[1] = 1
+    run_id: str
+    investigator_run_id: str
 
     @property
     def content_hash(self) -> str:
@@ -241,23 +246,28 @@ class ReviewClaimVerdict(BaseModel):
         return value
 
 
-class ReviewerResult(BaseModel):
+class ReviewContent(BaseModel):
+    """Independent reviewer judgments, before submission provenance is attached."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
-    run_id: str
-    reviewer_run_id: str
-    draft_hash: Sha256Digest
-    evidence_manifest_hash: Sha256Digest
     claim_verdicts: tuple[ReviewClaimVerdict, ...]
     missing_question_parts: tuple[str, ...] = ()
     rationale: str
 
     @model_validator(mode="after")
-    def _unique_verdicts(self) -> ReviewerResult:
+    def _unique_verdicts(self) -> ReviewContent:
         claim_ids = [verdict.claim_id for verdict in self.claim_verdicts]
         if len(set(claim_ids)) != len(claim_ids):
             raise ValueError("review claim verdict ids must be unique")
         if not self.rationale.strip():
             raise ValueError("review rationale must not be empty")
         return self
+
+
+class ReviewerResult(ReviewContent):
+    schema_version: Literal[1] = 1
+    run_id: str
+    reviewer_run_id: str
+    draft_hash: Sha256Digest
+    evidence_manifest_hash: Sha256Digest
