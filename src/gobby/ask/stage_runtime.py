@@ -30,12 +30,11 @@ from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime
 from gobby.ask.publication import PublicationError, PublishedAnswer, publish_answer
 from gobby.ask.stages import AskAttemptCheckpoint, AskOrchestrationState, AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
-from gobby.ask.validation import (
+from gobby.ask.validation import validate_claims, validate_review
+from gobby.ask.validation_models import (
     ClaimValidationReport,
     EvidenceManifest,
     ReviewValidationReport,
-    validate_claims,
-    validate_review,
 )
 from gobby.workflows.pipeline_state import ExecutionStatus
 

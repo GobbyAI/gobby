@@ -15,7 +15,7 @@ from gobby.ask.permissions import AskAgentStage
 from gobby.ask.snapshots import SnapshotDriftError
 from gobby.ask.stages import AskAttemptStatus, AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
-from gobby.ask.validation import (
+from gobby.ask.validation_models import (
     EvidenceManifest,
     GraphEvidenceItem,
     RecordedEvidence,

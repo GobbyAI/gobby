@@ -46,7 +46,8 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.ask.validation import EvidenceManifest, validate_claims
+    from gobby.ask.validation import validate_claims
+    from gobby.ask.validation_models import EvidenceManifest
 
     isolated = isolated_checkout_factory(temp_db, "ask-validation-native", root=tmp_path / "repo")
     repo = Path(isolated.root_path)

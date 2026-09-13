@@ -28,7 +28,7 @@ from gobby.ask.permissions import (
 from gobby.ask.pipeline import ASK_PIPELINE_STEPS, parse_ask_pipeline
 from gobby.ask.publication import publish_answer
 from gobby.ask.storage import AskRunStorage
-from gobby.ask.validation import EvidenceManifest
+from gobby.ask.validation_models import EvidenceManifest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.utils.session_context import reset_current_agent_run_id, set_current_agent_run_id

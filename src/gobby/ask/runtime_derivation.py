@@ -22,14 +22,16 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.sandbox_policy import allowed_domains as sandbox_allowed_domains
-from gobby.ask.runtime_validation import (
+from gobby.ask.runtime_controls import (
     ASK_RUNTIME_CONTROLS,
+    ask_runtime_control_digest,
+    ask_sandbox_config,
+    validate_srt_policy_schema,
+)
+from gobby.ask.runtime_validation import (
     ASK_SRT_POLICY_SCHEMA_VERSION,
     AskRuntimeValidation,
     _provider_identity,
-    _validate_srt_policy_schema,
-    ask_runtime_control_digest,
-    ask_sandbox_config,
 )
 from gobby.utils.dependency_requirements import SRT_RELEASE
 
@@ -92,7 +94,7 @@ def assert_ask_srt_policy_boundary(
     provider API and loopback, the sealed source unreadable and unwritable, the
     scratch root unwritable, and no weakened isolation switch.
     """
-    _validate_srt_policy_schema(policy)
+    validate_srt_policy_schema(policy)
     network = policy["network"]
     filesystem = policy["filesystem"]
     permitted = (

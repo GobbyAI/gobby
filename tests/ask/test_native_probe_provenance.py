@@ -405,7 +405,7 @@ def test_seal_rejects_observations_without_captured_raw_probe(
     observations_path.write_text(json.dumps(_observations(provider, tmp_path)), encoding="utf-8")
     _policy, paths = _policy_fixture(tmp_path)
     monkeypatch.setattr(
-        "gobby.ask.runtime_validation.registered_run_tmp",
+        "gobby.ask.runtime_controls.registered_run_tmp",
         lambda _run_root: Path(paths["run_tmp_root"]),
     )
     arguments = argparse.Namespace(

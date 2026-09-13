@@ -38,7 +38,7 @@ def _valid_case(
         ReviewerResult,
         SourceCitation,
     )
-    from gobby.ask.validation import EvidenceManifest
+    from gobby.ask.validation_models import EvidenceManifest
 
     content = b"def alpha():\n    return 1\n"
     excerpt = b"    return 1\n"
@@ -401,7 +401,8 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
         GitMetadataCitation,
         QuestionPart,
     )
-    from gobby.ask.validation import EvidenceManifest, validate_claims
+    from gobby.ask.validation import validate_claims
+    from gobby.ask.validation_models import EvidenceManifest
 
     draft, evidence, blobs, _review = _valid_case()
     body = evidence.model_dump(mode="json")
@@ -512,7 +513,8 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
 
 def test_negative_scope_requires_complete_evidence() -> None:
     from gobby.ask.claims import AssertionKind, EvidenceScope
-    from gobby.ask.validation import EvidenceManifest, validate_claims
+    from gobby.ask.validation import validate_claims
+    from gobby.ask.validation_models import EvidenceManifest
 
     draft, evidence, blobs, _review = _valid_case()
     scoped = draft.model_copy(
@@ -566,7 +568,8 @@ def test_graph_citation_validates_canonical_owner_and_requires_inference() -> No
         GraphCitation,
         QuestionPart,
     )
-    from gobby.ask.validation import EvidenceManifest, validate_claims
+    from gobby.ask.validation import validate_claims
+    from gobby.ask.validation_models import EvidenceManifest
 
     _draft, evidence, blobs, _review = _valid_case()
     body = evidence.model_dump(mode="json")

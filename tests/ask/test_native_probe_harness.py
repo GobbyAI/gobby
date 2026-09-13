@@ -24,11 +24,11 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from gobby.ask.runtime_controls import ask_runtime_control_digest
 from gobby.ask.runtime_validation import (
     ASK_NATIVE_PROBE_EXPECTATIONS,
     ASK_SRT_POLICY_SCHEMA_VERSION,
     AskRuntimeValidationArtifact,
-    ask_runtime_control_digest,
     load_ask_runtime_validation,
     load_ask_runtime_validation_artifacts,
 )
@@ -528,7 +528,7 @@ async def test_bootstrap_policy_uses_the_production_ask_scratch_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.agents.srt_runtime import SandboxLaunch
-    from gobby.ask.runtime_validation import ask_sandbox_config
+    from gobby.ask.runtime_controls import ask_sandbox_config
 
     project_root = tmp_path / "project"
     scratch_root = tmp_path / "scratch"
@@ -2601,7 +2601,7 @@ def test_seal_writes_schema_v2_manifest_accepted_by_production_loader(
     )
     _policy, paths = _policy_fixture(tmp_path)
     monkeypatch.setattr(
-        "gobby.ask.runtime_validation.registered_run_tmp",
+        "gobby.ask.runtime_controls.registered_run_tmp",
         lambda _run_root: Path(paths["run_tmp_root"]),
     )
     artifact_path = tmp_path / "validation" / "claude.json"

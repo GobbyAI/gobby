@@ -23,7 +23,8 @@ from gobby.ask.claims import (
     canonical_hash,
     canonical_json,
 )
-from gobby.ask.validation import (
+from gobby.ask.validation import validate_review
+from gobby.ask.validation_models import (
     ClaimValidationReport,
     EvidenceItem,
     EvidenceManifest,
@@ -31,7 +32,6 @@ from gobby.ask.validation import (
     ReviewValidationReport,
     SourceEvidence,
     SourceEvidenceItem,
-    validate_review,
 )
 
 

@@ -12,7 +12,8 @@ import pytest
 from gobby.agents.code_index import ensure_isolation_code_index
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
-from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
+from gobby.ask.errors import EvidenceAdmissionError
+from gobby.ask.evidence import EvidenceAdmission
 from gobby.ask.snapshots import AskSnapshotManager
 from gobby.ask.storage import AskRunStorage
 from gobby.runtime_grants.service import DeploymentGrantContext

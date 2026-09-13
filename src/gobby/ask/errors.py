@@ -15,3 +15,7 @@ class AskLifecycleConflict(ValueError):
 
 class UnsupportedAskRuntime(RuntimeError):
     """A native provider cannot enforce Ask's MCP-only action surface."""
+
+
+class EvidenceAdmissionError(RuntimeError):
+    """Evidence invocation failed admission, execution, or contract validation."""

@@ -10,7 +10,8 @@ from gobby.ask.contracts import (
     ProfileSnapshot,
     RetrievalMode,
 )
-from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
+from gobby.ask.errors import EvidenceAdmissionError
+from gobby.ask.evidence import EvidenceAdmission
 from gobby.ask.snapshots import (
     AskSnapshotManager,
     PreparedSnapshot,

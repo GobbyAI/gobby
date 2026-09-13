@@ -21,7 +21,8 @@ from gobby.ask.contracts import (
     ProfileSnapshot,
     RetrievalMode,
 )
-from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError, _contains_credential
+from gobby.ask.errors import EvidenceAdmissionError
+from gobby.ask.evidence import EvidenceAdmission, _contains_credential
 from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
 from gobby.runtime_grants.schema import GrantBundle
