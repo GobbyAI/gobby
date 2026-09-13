@@ -153,6 +153,24 @@ Check daemon health.
 gobby health
 ```
 
+### `gobby tokens`
+
+Operator token-ledger diagnostics:
+
+```bash
+gobby tokens stats [--project PROJECT]
+gobby tokens audit --session SESSION [--project PROJECT]
+gobby tokens audit --all [--project PROJECT]
+```
+
+Audit compares transcript-derived events, stored token events, and cached
+session usage. An explicit unknown project fails before token-ledger access.
+Inspect drift and skipped-session diagnostics as well as the
+summary; exit success alone does not establish that every session was audited.
+Adding `--fix` intentionally rebuilds selected session events and cached usage
+transactionally. Rehearse repairs only with isolated transcripts and test state.
+See [Token Ledger Audit](observability.md#token-ledger-audit).
+
 ### `gobby init`
 
 Create project metadata for the current or target directory.

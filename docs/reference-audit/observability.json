@@ -1,0 +1,602 @@
+{
+  "version": 1,
+  "capability": "observability",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/observability.md",
+      "anchors": [
+        "mental-model",
+        "quick-start",
+        "log-files",
+        "rotation-and-size-limits",
+        "contributor-logging-convention",
+        "collect-logs-with-opentelemetry",
+        "default-collector-exclusions",
+        "windows-collector-paths",
+        "privacy-and-retention",
+        "dashboard",
+        "traces",
+        "metrics",
+        "token-usage-and-savings",
+        "prometheus-and-admin-routes",
+        "cli",
+        "http",
+        "mcp",
+        "provider-capacity",
+        "metrics-retention-and-reset",
+        "token-ledger-audit",
+        "file-locations",
+        "see-also"
+      ],
+      "evidence": [
+        "source",
+        "schemas",
+        "focused-current"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "gobby-status",
+        "gobby-tokens"
+      ],
+      "evidence": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "admin",
+        "code-index-metrics-pipelines-and-other-feature-apis"
+      ],
+      "evidence": [
+        "source",
+        "focused-current"
+      ],
+      "scope": "Only the observability-owned usage, token timeseries, metrics snapshots and traces rows; other capability rows retain their own audits."
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_tool_metrics",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_tool_metrics"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_top_tools",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_top_tools"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_failing_tools",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_failing_tools"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_tool_success_rate",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_tool_success_rate"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_session_tools",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_session_tools"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_rule_metrics",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_rule_metrics"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_skill_metrics",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_skill_metrics"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_metrics_timeseries",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_metrics_timeseries"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_provider_capacity",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/capacity.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_provider_capacity"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_usage_report",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_usage_report"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "reset_metrics",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/retention.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.reset_metrics"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "reset_tool_metrics",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/retention.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.reset_tool_metrics"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "cleanup_old_metrics",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/retention.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.cleanup_old_metrics"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-metrics",
+      "tool": "get_retention_stats",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/retention.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/metrics.py",
+        "symbol": "create_metrics_registry.get_retention_stats"
+      },
+      "verification": [
+        "inventory",
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/admin/metrics",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_health.py",
+        "symbol": "register_health_routes.get_metrics"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/admin/stats",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/metrics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_stats.py",
+        "symbol": "register_stats_routes.get_stats"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/admin/usage",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_usage.py",
+        "symbol": "register_usage_routes.get_usage"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/admin/tokens/timeseries",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/admin/_token_timeseries.py",
+        "symbol": "register_token_timeseries_routes.get_token_timeseries"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/metrics/current",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/metrics.py",
+        "symbol": "create_metrics_router.get_current"
+      },
+      "verification": [
+        "source",
+        "focused-current",
+        "metrics-api-probe"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/metrics/snapshots",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/metrics.py",
+        "symbol": "create_metrics_router.get_snapshots"
+      },
+      "verification": [
+        "source",
+        "focused-current",
+        "metrics-api-probe"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/traces",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/traces.py",
+        "symbol": "create_traces_router.list_traces"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/traces/{trace_id}",
+      "audience": "operator/client",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/traces.py",
+        "symbol": "create_traces_router.get_trace"
+      },
+      "verification": [
+        "source",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tokens audit",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tokens.py",
+        "symbol": "audit_tokens"
+      },
+      "verification": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
+      "command": "gobby tokens stats",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md",
+      "implementation": {
+        "path": "src/gobby/cli/tokens.py",
+        "symbol": "token_stats"
+      },
+      "verification": [
+        "source",
+        "cli-help",
+        "focused-current"
+      ]
+    }
+  ],
+  "shared_operations": [
+    {
+      "capability": "admin",
+      "surface": "cli",
+      "command": "gobby status",
+      "implementation": "src/gobby/cli/daemon.py::status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md"
+    },
+    {
+      "capability": "admin",
+      "surface": "http",
+      "routes": [
+        "GET /api/health",
+        "GET /api/admin/startup-progress",
+        "GET /api/admin/status"
+      ],
+      "implementation": "src/gobby/servers/routes/admin/_health.py",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/diagnostics.md"
+    },
+    {
+      "capability": "sessions",
+      "surface": "mcp",
+      "server": "gobby-sessions",
+      "tool": "get_usage_breakdown",
+      "reference": "src/gobby/install/shared/skills/gobby/references/observability/usage.md"
+    },
+    {
+      "capability": "config",
+      "surface": "mcp",
+      "server": "gobby-config",
+      "note": "Discover schema and desired/active values before telemetry changes; reference loading grants no configuration authority."
+    }
+  ],
+  "installed_state": {
+    "scope": "No rule/profile/workflow activation claimed or modified. Configuration values in references are source defaults, explicitly distinguished from active settings.",
+    "evidence": "Installed gobby-metrics list_tools returned all 14 documented public tools in session #12910."
+  },
+  "evidence": [
+    {
+      "id": "inventory",
+      "command": "list_tools(server_name=\"gobby-metrics\")",
+      "result": "14 public tools; all mapped once in operations."
+    },
+    {
+      "id": "schemas",
+      "command": "get_tool_schema on gobby-metrics get_provider_capacity, get_usage_report, reset_tool_metrics, cleanup_old_metrics, get_metrics_timeseries",
+      "result": "Registered signatures/defaults inspected; reset filters optional, cleanup default 7, usage days-only, timeseries has no project filter."
+    },
+    {
+      "id": "source",
+      "command": "Bounded gcode symbol/outline and source reads in session #12910",
+      "result": "Reviewed metrics registry/manager/store, provider capacity, token tracker and CLI, admin metrics/stats/usage/time-series, snapshots/traces, auth middleware, telemetry config/providers, span/snapshot cleanup, logging config, ActivityPanelTabs and Ruff settings."
+    },
+    {
+      "id": "cli-help",
+      "command": "uv run gobby tokens audit --help; uv run gobby tokens stats --help; uv run gobby status --help",
+      "result": "All exit 0; documented options match current CLI."
+    },
+    {
+      "id": "focused-current",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_OTEL_COLLECTOR_SMOKE=1 uv run pytest tests/skills/test_capability_catalog.py tests/mcp_proxy/tools/test_metrics_tool.py tests/mcp_proxy/test_metrics_manager.py tests/mcp_proxy/test_metrics_store.py tests/mcp_proxy/test_metrics_events.py tests/providers/test_capacity_service.py tests/storage/test_provider_capacity.py tests/telemetry/ tests/servers/routes/test_admin.py tests/servers/routes/test_admin_status_budget.py tests/servers/routes/test_traces.py tests/servers/routes/admin/test_stats.py tests/servers/routes/admin/test_usage.py tests/servers/routes/admin/test_token_timeseries_route.py tests/storage/test_metric_snapshots.py tests/cli/test_tokens_cli.py tests/cli/test_status.py tests/sessions/test_token_tracker.py tests/sessions/test_token_tracker_attribution.py -q --tb=short",
+      "result": "388 passed in 21.33s, zero skipped. Includes isolated pinned-Collector smoke, metric/reset/rollup/event behavior, provider capacity, logs/tracing, admin reports, token audit and regression fixes."
+    },
+    {
+      "id": "collector-smoke",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_OTEL_COLLECTOR_SMOKE=1 uv run pytest tests/telemetry/test_otel_collector_config.py -q -rs --tb=short",
+      "result": "8 passed in 8.91s; pinned Collector accepted config and exported only new fixture records to an isolated test receiver. Temporary logs/checkpoints; no user log ingestion."
+    },
+    {
+      "id": "metrics-api-probe",
+      "command": "uv run python - (full inline FastAPI TestClient fixture probe in session #12910 transcript)",
+      "result": "Passed unavailable-storage 503, invalid history bounds 422, valid requested scope/result and current snapshot refresh assertions. No daemon/database connection."
+    },
+    {
+      "id": "quality",
+      "command": "uv run gobby test-types audit tests/cli/test_tokens_cli.py --baseline .gobby/test-types-baseline.json --fail-on-new; uv run gobby test-quality audit tests/cli/test_tokens_cli.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low",
+      "result": "Test types: 1 file, 0 errors. Test quality: 5 tests, 0 issues."
+    },
+    {
+      "id": "lint-types",
+      "command": "uv run ruff check src/gobby/cli/tokens.py tests/cli/test_tokens_cli.py tests/servers/routes/test_admin.py; uv run ruff format --check src/gobby/cli/tokens.py tests/cli/test_tokens_cli.py tests/servers/routes/test_admin.py; uv run mypy src/gobby/cli/tokens.py --follow-imports=silent",
+      "result": "All pass; 3 files formatted; mypy no issues."
+    },
+    {
+      "id": "suppressions",
+      "command": "uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "4290 files, 217 baseline suppressions, 0 new, 0 stale."
+    },
+    {
+      "id": "links-catalog-ast",
+      "command": "uv run python /tmp/gobby_observability_validate.py",
+      "result": "21 capabilities, 24 operation symbols, 60 local links/anchors validated."
+    },
+    {
+      "id": "independent-review",
+      "command": "review_reference_identity initial and follow-up review",
+      "result": "14/14 owned paths reviewed, 0 skipped. High token project-scope finding fixed and follow-up accepted; no remaining material findings."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Quick-start admin curl examples omitted required authentication.",
+      "evidence": "AuthMiddleware protects /api routes except enumerated public health/startup paths.",
+      "resolution": "Use public health for the basic probe; authenticated Prometheus example uses a token variable."
+    },
+    {
+      "finding": "Guide advertises #dashboard/#traces navigation; current Activity tab catalog deliberately excludes Traces.",
+      "evidence": "web/src/components/activity/ActivityPanelTabs.tsx explicit retired-tab exclusion; current traces routes remain implemented.",
+      "resolution": "Removed hash navigation examples, documented current API inspection and hidden Traces tab."
+    },
+    {
+      "finding": "Guide says Ruff G201 is outside policy.",
+      "evidence": "pyproject.toml enables G201.",
+      "resolution": "Corrected logging convention."
+    },
+    {
+      "finding": "Capacity, reset scope, retention semantics, and token ledger CLI lacked operating guidance.",
+      "evidence": "ProviderCapacityService; ToolMetricsStore.reset_metrics/cleanup_old_metrics; cli/tokens.py.",
+      "resolution": "Added separate references and guide sections with defaults, cross-project cleanup scope, deletion-count meaning, state interpretation, and operator-only repair."
+    },
+    {
+      "finding": "Usage described spend without distinguishing token counts from priced costs.",
+      "evidence": "SessionTokenTracker.get_usage_summary returns token totals and groups, not priced invoice fields.",
+      "resolution": "Documented counts, cache dimensions, window/scope differences, and admin empty-on-storage-error behavior."
+    },
+    {
+      "finding": "Lifecycle test fixture predates project-qualified handoff diagnostics.",
+      "evidence": "Initial protected test run: 3 failures, KeyError project_name; production guard query selects project_name/project_id/id.",
+      "resolution": "Updated isolated fixture row and strengthened canonical gobby#12332 assertion. Targeted admin file: 63 passed."
+    },
+    {
+      "finding": "Unknown explicit project could broaden token audit --all --fix to every eligible session; stats similarly widened reads.",
+      "evidence": "Independent source review; three isolated real-resolver CLI regressions failed before fix.",
+      "resolution": "Both token commands now use shared fail-fast project resolution; seven CLI tests pass, including no ledger acquisition for unknown projects.",
+      "relevant_memory": "ab351971-f13a-5b13-b49a-938dc335c1fe"
+    },
+    {
+      "finding": "Guide file locations pointed at removed dashboard/traces directories.",
+      "evidence": "Current ActivityPanelTabs and retained activity/TracesTab.tsx.",
+      "resolution": "Updated file-location inventory and removed obsolete hash navigation."
+    }
+  ],
+  "normative_conflicts": [
+    {
+      "contract": "Daemon-only standard OTLP export and removal of private trace storage/UI/API.",
+      "current_implementation": "Local span storage, trace routes and broadcasting remain; Gobby-specific telemetry.exporter settings remain.",
+      "owner_task": "#18996",
+      "disposition": "Explicit user-directed pause, verified via get_task brief=false; do not implement paused migration or describe it as shipped."
+    },
+    {
+      "contract": "Register shutdown counter as part of the same planned Prometheus corrections.",
+      "current_implementation": "Initial failed lifecycle test captured warning: shutdown_requests_total not registered.",
+      "owner_task": "#18996",
+      "disposition": "Counter registration is explicitly in paused task section 4; recorded without overriding user pause."
+    }
+  ],
+  "verification_limits": [
+    "No live resets, token repairs, configuration edits, daemon restarts, or user log exports performed. Collector smoke used temporary fixture files and an isolated receiver.",
+    "Full pytest suite not requested and not run."
+  ]
+}

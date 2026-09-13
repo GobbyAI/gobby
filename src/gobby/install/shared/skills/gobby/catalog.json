@@ -898,6 +898,44 @@
           "when": "Investigating packages, models, references, capture, or playback"
         }
       ]
+    },
+    {
+      "name": "observability",
+      "description": "Inspect metrics, provider capacity, usage, and daemon diagnostics",
+      "overview": "references/observability/overview.md",
+      "when": "Investigating operational activity, quota, token consumption, or telemetry retention",
+      "topics": [
+        {
+          "name": "metrics",
+          "description": "Inspect tool, rule, skill, and session activity",
+          "path": "references/observability/metrics.md",
+          "when": "Investigating counts, reliability, latency, or time-series reports"
+        },
+        {
+          "name": "capacity",
+          "description": "Interpret provider quota snapshots",
+          "path": "references/observability/capacity.md",
+          "when": "Checking provider capacity, freshness, or exhausted windows"
+        },
+        {
+          "name": "usage",
+          "description": "Interpret token consumption and savings",
+          "path": "references/observability/usage.md",
+          "when": "Comparing token usage, source/model groups, or savings estimates"
+        },
+        {
+          "name": "retention",
+          "description": "Inspect retention and perform authorized cleanup",
+          "path": "references/observability/retention.md",
+          "when": "Inspecting metric ages or preparing resets and cleanup"
+        },
+        {
+          "name": "diagnostics",
+          "description": "Diagnose health, logs, traces, and telemetry",
+          "path": "references/observability/diagnostics.md",
+          "when": "Investigating daemon health, charts, instrumentation, or exporters"
+        }
+      ]
     }
   ]
 }

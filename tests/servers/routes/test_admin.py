@@ -791,7 +791,13 @@ class TestAdminRoutes:
     ) -> None:
         conn = mock_server.session_manager.db.transaction.return_value.__enter__.return_value
         conn.execute.return_value.fetchall.return_value = [
-            {"seq_num": 12332, "attempt_id": "queued-handoff"}
+            {
+                "seq_num": 12332,
+                "id": "pending-session",
+                "project_id": "pending-project",
+                "project_name": "gobby",
+                "attempt_id": "queued-handoff",
+            }
         ]
         with (
             patch("gobby.runner_maintenance.write_shutdown_source") as marker,
@@ -800,7 +806,7 @@ class TestAdminRoutes:
             response = client.post(f"/api/admin/{path}")
         assert response.status_code == 409
         assert response.json()["status"] == "handoff_pending"
-        assert "#12332 (queued-handoff)" in response.json()["message"]
+        assert "gobby#12332 (queued-handoff)" in response.json()["message"]
         marker.assert_not_called()
         spawn.assert_not_called()
         assert mock_server._runner.request_shutdown_calls == []

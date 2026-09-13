@@ -14,7 +14,8 @@ The daemon records operational data at several layers:
 - Savings events record token or character savings from code index, compression,
   discovery, and related systems.
 - Admin HTTP routes expose health and dashboard data.
-- The web dashboard and traces pages visualize those records.
+- HTTP reports expose chart data and stored spans. The current Activity panel
+  hides the Traces tab.
 
 Use dashboard and admin routes for operator status. Use `gobby-metrics` MCP tools
 for agent-readable reports. Use logs and trace storage when debugging a specific
@@ -26,20 +27,17 @@ Check daemon health:
 
 ```bash
 uv run gobby status
-curl -sS http://localhost:60887/api/admin/status
+curl -sS http://localhost:60887/api/health
 ```
 
-Open dashboard and traces:
-
-```text
-http://localhost:60887/#dashboard
-http://localhost:60887/#traces
-```
-
-Fetch Prometheus metrics:
+Use the configured daemon address if it differs from the default above.
+Admin status, usage, metrics, and trace routes require authentication. For
+example, with `GOBBY_API_TOKEN` set to the local CLI token from
+`~/.gobby/local_cli_token`, fetch Prometheus metrics:
 
 ```bash
-curl -sS http://localhost:60887/api/admin/metrics
+curl -sS -H "Authorization: Bearer ${GOBBY_API_TOKEN}" \
+  http://localhost:60887/api/admin/metrics
 ```
 
 Ask the MCP metrics server for a report:
@@ -95,11 +93,12 @@ See [Logging And Telemetry](configuration.md#logging-and-telemetry) for all
 
 ### Contributor Logging Convention
 
-Ruff enforces `G001`, `G002`, `G003`, `G004`, `G010`, and `G101`. Pass dynamic
+Ruff enforces `G001`, `G002`, `G003`, `G004`, `G010`, `G101`, and `G201`. Pass dynamic
 values as lazy logging arguments, such as `logger.info("Processed %s", item)`,
 instead of formatting the message before the logger receives it. Keys passed in
 `extra` must avoid reserved `LogRecord` attributes such as `name`; prefer a
-domain-specific key such as `pipeline_name`. `G201` remains outside this policy.
+domain-specific key such as `pipeline_name`. In exception handlers, prefer
+`logger.exception` when recording the exception traceback (`G201`).
 
 ## Collect Logs With OpenTelemetry
 
@@ -166,7 +165,7 @@ log volume.
 
 ## Dashboard
 
-The dashboard aggregates:
+The reporting APIs provide these dashboard data families:
 
 - System health, uptime, memory, CPU, background tasks, and service health.
 - Task counts and readiness.
@@ -174,6 +173,12 @@ The dashboard aggregates:
 - Token usage by provider/model.
 - Memory counts.
 - HTTP, MCP, system resource, and latency charts.
+
+`/api/admin/stats` uses `hours` in preference to `days` for its time window;
+zero means all history. Its task/session/memory counts honor project scope,
+while the current metrics-event summaries are global within that window.
+The tools summary's `unique_tools` counts the returned top-five rows, not all
+distinct tools. Use the dedicated metrics reports for a complete tool breakdown.
 
 Primary routes:
 
@@ -192,8 +197,16 @@ Tracing is implemented through `src/gobby/telemetry/tracing.py`. Code can use
 through `GobbySpanExporter`, persists them to the hub database through the span
 store, and broadcasts trace events to the UI.
 
-Use traces when you need causality across services, such as an agent spawn, a
-workflow transition, a provider call, or a scheduled pipeline run.
+Inspect current stored spans through authenticated `GET /api/traces` and
+`GET /api/traces/{trace_id}`. The Activity panel deliberately hides the Traces
+tab; `#traces` is not a supported navigation instruction. On the list route,
+`session_id` takes precedence over project/status filters. Without a session
+filter, the current `total` is the span-store total rather than the count of
+the filtered result set; use the returned rows and pagination bounds accordingly.
+
+The daemon-only standard OTLP migration is tracked separately in #18996 and
+was paused for user review. It would remove private storage and trace surfaces;
+that future contract does not describe current configuration or behavior.
 
 ## Metrics
 
@@ -224,7 +237,17 @@ Token usage is exposed by:
 /api/admin/tokens/timeseries
 ```
 
-Use token data to understand provider/model spend and volume.
+Use token data to understand provider/model volume. `get_usage_report` returns
+token counts and source/model groups, not a priced invoice. Keep input, output,
+cache creation, and cache read counts separate when interpreting consumption.
+Its `days` parameter does not provide a project filter.
+
+The admin usage route accepts `hours` and `project_id`; zero hours means all
+recorded history. Token time series adds `granularity` (`30m`, `1h`, or `1d`).
+Compare matching scopes and periods. A storage failure in the current admin
+usage route is logged and returned as empty totals, so check logs before
+concluding that an empty chart proves zero usage. Savings estimates and context
+occupancy are separate from cumulative token consumption.
 
 ## Prometheus And Admin Routes
 
@@ -277,14 +300,13 @@ Use the CLI for operator-level checks:
 
 ```bash
 uv run gobby status
-uv run gobby restart
 ```
 
 For test runs that exercise daemon behavior, keep tests isolated from the user's
 running daemon and always prefix pytest with:
 
 ```bash
-GOBBY_TEST_PROTECT=1
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <focused-path>
 ```
 
 ## HTTP
@@ -307,6 +329,67 @@ for domain state:
 
 Follow progressive discovery before each new tool family.
 
+## Provider Capacity
+
+`gobby-metrics:get_provider_capacity` returns a machine/provider snapshot without
+starting an agent turn. The default service has an AGY reporter. Other supported
+agent providers need not have capacity reporters. Read the observation timestamp,
+windows, support flag, and reason alongside its four-state result:
+
+| State | Interpretation |
+| --- | --- |
+| `available` | No reported window was exhausted at observation; quota is not reserved. |
+| `exhausted` | At least one reported window is exhausted. |
+| `stale` | A transient refresh failed; the previous observation is retained. |
+| `unknown` | No usable observation, reporter, supported version, or service is available. |
+
+The service normally reuses observations for 60 seconds, shares concurrent
+refreshes, and persists successful observations. A read may therefore refresh
+provider data. Unknown capacity is neither unlimited quota nor exhaustion.
+
+## Metrics Retention And Reset
+
+`get_retention_stats` describes aggregate tool metrics. It does not inventory
+every telemetry table. `cleanup_old_metrics` defaults to seven days and accepts
+only intervals of at least one day. It atomically rolls old aggregate rows into
+daily summaries and deletes the originals, based on `last_called_at`. It applies
+across projects, not just the caller's project, and does not implement a raw-event
+TTL. Startup also invokes aggregate cleanup.
+
+The two reset tools derive the calling project from context. `reset_metrics`
+requires a server or tool filter. `reset_tool_metrics` permits omitted filters,
+which resets the calling project's tool metrics. Provide both server and tool
+for a specific-tool reset. Both remove matching aggregates, daily rows, and
+tool-call events atomically; rule/skill events and in-process OTel counters are
+separate. The reported deletion count counts aggregate rows only.
+
+Span cleanup uses active `telemetry.trace_retention_days` (default seven days)
+in its daily loop. Metric snapshots normally run every 60 seconds and retain
+24 hours. These defaults are not proof of the current installed configuration.
+Inspect active settings and background tasks before diagnosing missing history.
+Resets have no undo tool; preserve evidence and use operator backup/recovery
+procedures when needed. Rehearse destructive operations only against isolated
+fixtures or temporary daemon state.
+
+## Token Ledger Audit
+
+The following are operator CLI procedures:
+
+```bash
+uv run gobby tokens stats --project PROJECT
+uv run gobby tokens audit --session SESSION
+```
+
+The audit compares transcript-derived events, the token ledger, and cached
+session totals. `--all` selects sessions with transcripts, with optional project
+scope; an explicit unknown project fails before token-ledger access instead of
+broadening the selection. Use a known project identifier and inspect scope first.
+`--fix` rebuilds that session's token events and cached usage inside a transaction.
+It requires an intentional repair request and a usable authoritative transcript.
+Missing sessions or unreadable transcripts can be reported and skipped; inspect
+the summary and diagnostics, not only the process exit code. Test repairs against
+isolated fixture transcripts and the test hub, never live user sessions.
+
 ## File Locations
 
 - `src/gobby/mcp_proxy/metrics.py`: MCP metrics collection.
@@ -318,8 +401,10 @@ Follow progressive discovery before each new tool family.
 - `src/gobby/servers/routes/admin/_health.py`: health, status, Prometheus.
 - `src/gobby/servers/routes/admin/_usage.py`: token usage routes.
 - `src/gobby/servers/routes/metrics.py`: dashboard metrics snapshots.
-- `web/src/components/dashboard/`: dashboard cards and charts.
-- `web/src/components/traces/`: trace UI.
+- `src/gobby/cli/tokens.py`: operator token-ledger audit and repair.
+- `src/gobby/providers/capacity_service.py`: normalized provider capacity.
+- `web/src/components/activity/TracesTab.tsx`: retained trace component, hidden
+  from the current Activity tab catalog.
 
 ## See Also
 
@@ -330,4 +415,4 @@ Follow progressive discovery before each new tool family.
 - [mcp-tools.md](mcp-tools.md)
 - [testing.md](testing.md)
 
-_Last verified: 2026-07-17_
+_Last verified: 2026-09-12_

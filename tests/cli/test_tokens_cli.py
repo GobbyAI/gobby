@@ -20,6 +20,29 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [["audit", "--all", "--fix"], ["audit", "--session", "#1"], ["stats"]],
+)
+def test_unknown_project_fails_before_token_ledger_access(
+    runner: CliRunner, arguments: list[str]
+) -> None:
+    project_manager = Mock()
+    project_manager.get.return_value = None
+    project_manager.get_by_name.return_value = None
+    project_facade = SimpleNamespace(LocalProjectManager=Mock(return_value=project_manager))
+    with (
+        patch("gobby.cli.utils_resolution.facade", return_value=project_facade),
+        patch("gobby.cli.runtime.require_cli_database"),
+        patch.object(tokens_module, "require_cli_database") as ledger_database,
+    ):
+        result = runner.invoke(tokens_module.tokens, [*arguments, "--project", "unknown-project"])
+
+    assert result.exit_code == 1
+    assert "Project not found: unknown-project" in result.output
+    ledger_database.assert_not_called()
+
+
 class _FakeDatabase:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows

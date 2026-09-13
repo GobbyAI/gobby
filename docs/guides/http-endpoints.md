@@ -107,8 +107,8 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/restart` | Restart the daemon through service-managed or direct restart helpers. |
 | `POST` | `/api/admin/workflows/reload` | Reload installed workflow definitions. |
 | `GET` | `/api/admin/stats` | Aggregate daemon statistics. |
-| `GET` | `/api/admin/usage` | Usage metrics. |
-| `GET` | `/api/admin/tokens/timeseries` | Token usage time series. |
+| `GET` | `/api/admin/usage` | Token-event breakdown; `hours` (0 means all history) and optional `project_id`. Storage failures log and return empty totals. |
+| `GET` | `/api/admin/tokens/timeseries` | Token-event buckets; `hours`, optional `project_id`, and `granularity` (`30m`, `1h`, `1d`). |
 | `POST` | `/api/admin/test/register-project` | Test helper for registering a project. |
 | `POST` | `/api/admin/test/register-agent` | Test helper for registering an agent run. |
 | `DELETE` | `/api/admin/test/unregister-agent/{run_id}` | Test helper for removing an agent run. |
@@ -722,7 +722,7 @@ UI-setting/global-approval save routes. YAML replacement also requires
 | `POST` | `/api/code-index/invalidate` | Invalidate code index data. |
 | `POST` | `/api/code-index/prune` | Operator-only global maintenance; optional JSON `force`, `retention_days`. |
 | `GET` | `/api/metrics/current` | Current metrics snapshot. |
-| `GET` | `/api/metrics/snapshots` | Historical metric snapshots. |
+| `GET` | `/api/metrics/snapshots` | Historical metric snapshots; `hours` 1–24 and `limit` 1–1440 (defaults 1 and 120). |
 | `GET` | `/api/pipelines/executions` | List pipeline executions. |
 | `GET` | `/api/pipelines/executions/search` | Search pipeline executions. |
 | `GET` | `/api/pipelines/{execution_id}` | Get pipeline execution. |
@@ -742,7 +742,7 @@ UI-setting/global-approval save routes. YAML replacement also requires
 | `GET` | `/api/providers/models` | Read the provider-model capability matrix. |
 | `GET` | `/api/chat/{conversation_id}/messages` | Read chat messages. |
 | `DELETE` | `/api/chat/{conversation_id}/messages` | Delete chat messages. |
-| `GET` | `/api/traces` | List traces. |
+| `GET` | `/api/traces` | List stored traces; session scope takes precedence over project/status. Without session scope, `total` is the span-store total, not the filtered count. |
 | `GET` | `/api/traces/{trace_id}` | Get a trace. |
 | `GET` | `/api/voice/status` | Voice availability and warmup; optional `want_stt`/`want_tts` scope readiness. |
 | `POST` | `/api/voice/transcribe` | Multipart audio transcription/translation with optional capability, provider, model, language, and prompt. See [voice API](./voice.md#api-and-websocket-reference). |

@@ -130,7 +130,7 @@ def audit_tokens(
     if not session_ref and not audit_all:
         raise click.UsageError("Provide --session or --all")
 
-    project_id = resolve_project_ref(project_ref, exit_on_not_found=False) if project_ref else None
+    project_id = resolve_project_ref(project_ref) if project_ref else None
 
     with nullcontext(require_cli_database()) as db:
         session_manager = SessionManager(db)
@@ -225,7 +225,7 @@ def audit_tokens(
 @click.option("--project", "project_ref", help="Filter to a project.")
 def token_stats(project_ref: str | None) -> None:
     """Show token event ledger statistics."""
-    project_id = resolve_project_ref(project_ref, exit_on_not_found=False) if project_ref else None
+    project_id = resolve_project_ref(project_ref) if project_ref else None
     with nullcontext(require_cli_database()) as db:
         store = TokenEventStore(db)
         breakdown = store.get_breakdown(project_id=project_id)
