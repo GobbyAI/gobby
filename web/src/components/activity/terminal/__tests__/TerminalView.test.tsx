@@ -151,18 +151,87 @@ function TerminalFocusHarness({ children }: { children: ReactNode }) {
   );
 }
 
+// jsdom ships no ResizeObserver, and the pane observes its scroll surface to
+// re-derive live-edge state after a reflow. A no-op is enough for every case
+// that does not drive the callback by hand.
+class NoopResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
 beforeEach(() => {
   terminalMock.instances.length = 0;
   terminalMock.initGates.length = 0;
   terminalMock.loadGhosttyCore.mockReset();
   terminalMock.loadGhosttyCore.mockResolvedValue({ kind: "ghostty" });
+  vi.stubGlobal("ResizeObserver", NoopResizeObserver);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("TerminalView", () => {
+  it("takes control on focus, releases it on blur, and pastes through the lease", async () => {
+    const user = userEvent.setup();
+    const onFocus = vi.fn();
+    const onBlur = vi.fn();
+    const onPaste = vi.fn();
+
+    render(
+      <TerminalFocusHarness>
+        <TerminalView onFocus={onFocus} onBlur={onBlur} onPaste={onPaste} />
+      </TerminalFocusHarness>,
+    );
+    await settleAsyncWork();
+    const instance = latestInstance();
+
+    await act(async () => {
+      instance.textarea.focus();
+    });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+    expect(onBlur).not.toHaveBeenCalled();
+
+    // Focus moving between the pane's own controls is not a blur: releasing
+    // the lease there would drop control the moment the user reached for the
+    // jump-to-bottom button.
+    await act(async () => {
+      screen.getByTestId("terminal-view").focus();
+      instance.textarea.focus();
+    });
+    expect(onBlur).not.toHaveBeenCalled();
+
+    // Paste goes out as one bracketed write, not as a stream of keystrokes.
+    await user.paste("echo hi");
+    expect(onPaste).toHaveBeenCalledWith("echo hi");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "After terminal" }).focus();
+    });
+    expect(onBlur).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the read-only overlay and offers control back", async () => {
+    const user = userEvent.setup();
+    const onTakeControl = vi.fn();
+
+    const view = render(
+      <TerminalView readOnly={false} onTakeControl={onTakeControl} />,
+    );
+    await settleAsyncWork();
+    expect(screen.queryByTestId("terminal-read-only")).toBeNull();
+
+    view.rerender(<TerminalView readOnly onTakeControl={onTakeControl} />);
+    const notice = screen.getByTestId("terminal-read-only");
+    // Non-colour state cue: the words carry the state, not the hue.
+    expect(notice).toHaveTextContent(/read-only/i);
+
+    await user.click(screen.getByRole("button", { name: "Take back control" }));
+    expect(onTakeControl).toHaveBeenCalledTimes(1);
+  });
+
   it("direct input and ready handshake", async () => {
     const onProtocolResponse = vi.fn();
     const onReady = vi.fn();

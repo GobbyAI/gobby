@@ -2,6 +2,7 @@ import { useState } from "react";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
+import { keepTerminalFocus } from "./terminalFocus";
 import { applyCtrlModifier } from "./terminalKeys";
 
 interface TerminalKeysBarProps {
@@ -81,6 +82,7 @@ export function TerminalKeysBar({
       dense
       className={keyCls}
       aria-label={key.accessibleLabel}
+      onMouseDown={keepTerminalFocus}
       onClick={() => press(key)}
     >
       {key.label}
@@ -100,6 +102,7 @@ export function TerminalKeysBar({
       className={keyCls}
       aria-label={label}
       aria-pressed={pressed}
+      onMouseDown={keepTerminalFocus}
       onClick={onToggle}
     >
       {label}

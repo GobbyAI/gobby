@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { TmuxSession } from "../../../../hooks/useTmuxSessions";
+import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
 import { TerminalSessionList } from "../TerminalSessionList";
 import type { JoinedTerminalSession } from "../terminalSessions";
 

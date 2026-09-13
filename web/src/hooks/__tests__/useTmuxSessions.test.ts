@@ -1,7 +1,14 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { StrictMode, createElement, type ReactNode } from "react";
+import {
+  StrictMode,
+  createElement,
+  forwardRef,
+  useImperativeHandle,
+  useState,
+  type ReactNode,
+} from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,13 +16,41 @@ import {
   type MockWebSocketInstance,
 } from "../../test/mocks/websocket";
 import {
-  TMUX_REQUEST_TIMEOUT_MS,
   createTerminalWsReducer,
   TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
   TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
   TERMINAL_WS_SAFE_INTEGER_MAX,
+} from "../terminalWsFragments";
+import {
+  TMUX_REQUEST_TIMEOUT_MS,
   useTmuxSessions,
 } from "../useTmuxSessions";
+import { TerminalTab } from "../../components/activity/terminal/TerminalTab";
+import type {
+  TerminalViewHandle,
+  TerminalViewProps,
+} from "../../components/activity/terminal/TerminalView";
+
+// 6.1.4 asserts a real mount count, so the pane is the one thing stubbed: the
+// terminal renderer needs a canvas the JSDOM environment does not have.
+const terminalViewMounts = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock("../../components/activity/terminal/TerminalView", () => ({
+  TerminalView: forwardRef<TerminalViewHandle, TerminalViewProps>(
+    (_props, ref) => {
+      useState(() => ++terminalViewMounts.count);
+      useImperativeHandle(ref, () => ({
+        write: () => undefined,
+        getSize: () => ({ rows: 24, cols: 80 }),
+        applyAttachHistory: () => undefined,
+      }));
+      return createElement("div", {
+        role: "log",
+        "aria-label": "Terminal output (read-only)",
+      });
+    },
+  ),
+}));
 
 type WireMessage = Record<string, unknown>;
 
@@ -93,6 +128,28 @@ function respondToAttach(
       terminal_id: name || socket,
     });
   });
+}
+
+/**
+ * The daemon grants write authority only through `terminal_take_control`, so a
+ * test that wants a write on the wire has to hold the lease first.
+ */
+function grantControl(
+  ws: MockWebSocketInstance,
+  takeControl: () => void,
+  attachmentId: string,
+  leaseGeneration = 1,
+): void {
+  act(() => takeControl());
+  act(() =>
+    ws.simulateMessage({
+      type: "terminal_control_result",
+      attachment_id: attachmentId,
+      granted: true,
+      reason: null,
+      lease_generation: leaseGeneration,
+    }),
+  );
 }
 
 beforeEach(() => {
@@ -585,6 +642,7 @@ describe("useTmuxSessions", () => {
       terminal_id: "term-gobby",
     });
     ws.send.mockClear();
+    grantControl(ws, result.current.takeControl, "stream-gobby");
     act(() => result.current.sendInput("pwd\r"));
     expect(sentMessages(ws, "terminal_input")[0]).toMatchObject({
       type: "terminal_input",
@@ -641,6 +699,7 @@ describe("useTmuxSessions", () => {
     );
 
     ws.send.mockClear();
+    grantControl(ws, result.current.takeControl, "stream-wire");
     act(() => {
       result.current.sendInput("\u001b[A");
       result.current.resizeTerminal(42, 120);
@@ -1273,6 +1332,226 @@ describe("useTmuxSessions", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("keeps terminal mounts stable across roster changes", () => {
+    // Row identity is `terminal_id` and the pane is keyed on the attachment,
+    // so neither the order a listing arrives in nor the arrival of other
+    // terminals may take the pane down and put a fresh one up.
+    window.localStorage.setItem("gobby:terminal:session-scope", "all");
+    terminalViewMounts.count = 0;
+    const listRow = (terminalId: string) => ({
+      terminal_id: terminalId,
+      backend: "tmux",
+      ownership: "gobby",
+      state: "live",
+      title: terminalId,
+      session_id: null,
+      agent_run_id: null,
+      dims: null,
+    });
+    const listing = (requestId: string, ids: readonly string[]) => {
+      act(() =>
+        mockWs.instances[0].simulateMessage({
+          type: "terminal_list",
+          request_id: requestId,
+          items: ids.map(listRow),
+          next_cursor: null,
+        }),
+      );
+    };
+
+    const rendered = render(createElement(TerminalTab));
+    const ws = mockWs.instances[0];
+    open(ws);
+    listing("init", ["t-a", "t-b"]);
+    // The tab defers its initial selection by a tick before it attaches.
+    act(() => vi.advanceTimersByTime(1));
+
+    const attach = lastOf(sentMessages(ws, "terminal_attach"));
+    const attachedId = attach?.terminal_id as string;
+    expect(attachedId).toBe("t-a");
+    respondToAttach(ws, attach?.request_id as string, "t-a", "tmux", "att-a");
+    // The pane is keyed on the attachment, so landing one replaces the
+    // placeholder mount — that is the activation contract, not roster churn.
+    const attached = terminalViewMounts.count;
+    expect(attached).toBeGreaterThan(0);
+
+    // Reordered, extended, and shortened listings: same attachment throughout.
+    listing("refresh-1", ["t-b", "t-a"]);
+    listing("refresh-2", ["t-c", "t-b", "t-a"]);
+    listing("refresh-3", ["t-a", "t-c"]);
+    act(() => vi.advanceTimersByTime(1));
+    expect(terminalViewMounts.count).toBe(attached);
+    expect(sentMessages(ws, "terminal_detach")).toEqual([]);
+
+    rendered.unmount();
+  });
+
+  it("takes and releases control around focus", () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => result.current.attachSession("term-1", "tmux"));
+    respondToAttach(
+      ws,
+      requestId(ws, "terminal_attach"),
+      "term-1",
+      "tmux",
+      "att-1",
+    );
+    // Every attach is observe-only; take-control is the sole grant path.
+    expect(result.current.hasControl).toBe(false);
+
+    ws.send.mockClear();
+    act(() => result.current.takeControl());
+    expect(sentMessages(ws, "terminal_take_control")).toEqual([
+      {
+        type: "terminal_take_control",
+        terminal_id: "term-1",
+        attachment_id: "att-1",
+        takeover: false,
+      },
+    ]);
+    expect(result.current.controlPending).toBe(true);
+
+    // A keystroke typed before the result is held, not sent, and the focus
+    // that follows it does not put a second take-control on the wire.
+    act(() => result.current.sendInput("l"));
+    expect(sentMessages(ws, "terminal_input")).toEqual([]);
+    expect(result.current.pendingWrite).toEqual({ kind: "input", payload: "l" });
+    act(() => result.current.takeControl());
+    expect(sentMessages(ws, "terminal_take_control")).toHaveLength(1);
+
+    act(() =>
+      ws.simulateMessage({
+        type: "terminal_control_result",
+        attachment_id: "att-1",
+        granted: true,
+        reason: null,
+        lease_generation: 4,
+      }),
+    );
+    expect(result.current.hasControl).toBe(true);
+    expect(result.current.controlPending).toBe(false);
+    expect(result.current.pendingWrite).toBeNull();
+    // The held keystroke is delivered exactly once, under the new generation.
+    expect(sentMessages(ws, "terminal_input")).toMatchObject([
+      { type: "terminal_input", attachment_id: "att-1", data: "l" },
+    ]);
+
+    ws.send.mockClear();
+    act(() => result.current.releaseControl());
+    expect(sentMessages(ws, "terminal_release_control")).toEqual([
+      {
+        type: "terminal_release_control",
+        terminal_id: "term-1",
+        attachment_id: "att-1",
+      },
+    ]);
+    act(() =>
+      ws.simulateMessage({
+        type: "terminal_control_result",
+        attachment_id: "att-1",
+        granted: true,
+        reason: null,
+        lease_generation: 5,
+      }),
+    );
+    expect(result.current.hasControl).toBe(false);
+    unmount();
+  });
+
+  it("refuses extra input and clears the pending slot on every failure path", () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => result.current.attachSession("term-1", "tmux"));
+    respondToAttach(
+      ws,
+      requestId(ws, "terminal_attach"),
+      "term-1",
+      "tmux",
+      "att-1",
+    );
+
+    /** Type one keystroke with no lease: it asks for control and is held. */
+    const hold = (payload: string) => {
+      ws.send.mockClear();
+      act(() => result.current.sendInput(payload));
+      expect(result.current.pendingWrite).toEqual({ kind: "input", payload });
+      expect(sentMessages(ws, "terminal_take_control")).toHaveLength(1);
+    };
+
+    hold("a");
+    // The second keystroke is refused with a visible cue, never queued.
+    act(() => result.current.sendInput("b"));
+    expect(result.current.pendingWrite).toEqual({ kind: "input", payload: "a" });
+    expect(result.current.writeRefusal).toBe(
+      "Waiting for control of this terminal.",
+    );
+    expect(sentMessages(ws, "terminal_input")).toEqual([]);
+
+    act(() =>
+      ws.simulateMessage({
+        type: "terminal_control_result",
+        attachment_id: "att-1",
+        granted: false,
+        reason: "held",
+        lease_generation: 2,
+      }),
+    );
+    expect(result.current.pendingWrite).toBeNull();
+    expect(result.current.writeRefusal).toBe("Control refused: held.");
+    expect(result.current.hasControl).toBe(false);
+
+    hold("c");
+    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
+    expect(result.current.pendingWrite).toBeNull();
+    expect(result.current.writeRefusal).toBe("Control request timed out.");
+    // The timeout cleared the request, so a result that arrives after it
+    // grants nothing — including for the generation it names.
+    act(() =>
+      ws.simulateMessage({
+        type: "terminal_control_result",
+        attachment_id: "att-1",
+        granted: true,
+        reason: null,
+        lease_generation: 3,
+      }),
+    );
+    expect(result.current.hasControl).toBe(false);
+    expect(sentMessages(ws, "terminal_input")).toEqual([]);
+
+    hold("d");
+    act(() =>
+      ws.simulateMessage({
+        type: "terminal_lease_lost",
+        attachment_id: "att-1",
+        holder: "other-attachment",
+        lease_generation: 4,
+      }),
+    );
+    expect(result.current.pendingWrite).toBeNull();
+    expect(result.current.writeRefusal).toBe(
+      "Another session took control of this terminal.",
+    );
+
+    hold("e");
+    act(() => result.current.releaseControl());
+    expect(result.current.pendingWrite).toBeNull();
+    expect(result.current.writeRefusal).toBe(
+      "Control released before the keystroke was sent.",
+    );
+
+    hold("f");
+    act(() => ws.simulateClose());
+    expect(result.current.pendingWrite).toBeNull();
+    expect(result.current.writeRefusal).toBe(
+      "Reconnected before the keystroke was sent.",
+    );
+    expect(sentMessages(ws, "terminal_input")).toEqual([]);
+    unmount();
+  });
+
   it("test_write_seq_refusals_clear_inflight_and_do_not_resend", () => {
     const { result } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
@@ -1282,6 +1561,7 @@ describe("useTmuxSessions", () => {
     });
     const attachId = requestId(ws, "terminal_attach");
     respondToAttach(ws, attachId, "term-1", "tmux", "att-1");
+    grantControl(ws, result.current.takeControl, "att-1");
     const before = sentMessages(ws, "terminal_input").length;
     act(() => {
       result.current.sendInput("x");
