@@ -152,6 +152,34 @@ class TestSpawnAgent:
         assert response.json()["detail"]["code"] == "runtime_unavailable"
         assert response.json()["detail"]["retryable"] is True
 
+    def test_launcher_replaces_expired_session_and_reuses_active_session(
+        self,
+        session_manager: SessionManager,
+        test_project: Any,
+    ) -> None:
+        expired = session_manager.register(
+            external_id=f"ask_launcher-{test_project.id[:8]}",
+            machine_id=require_machine_id(),
+            source="ask_launcher",
+            project_id=test_project.id,
+        )
+        session_manager.update_status(expired.id, "expired")
+
+        launcher_id = get_or_create_launcher_session(
+            session_manager, test_project.id, "ask_launcher"
+        )
+        launcher = session_manager.get(launcher_id)
+        assert launcher is not None
+        assert launcher.id != expired.id
+        assert launcher.status == "active"
+        assert launcher.machine_id == require_machine_id()
+        assert (
+            get_or_create_launcher_session(session_manager, test_project.id, "ask_launcher")
+            == launcher_id
+        )
+        old_session = session_manager.get(expired.id)
+        assert old_session is not None and old_session.status == "expired"
+
     def test_spawn_session_writers_use_required_machine_identity(
         self,
         client: TestClient,
