@@ -164,6 +164,20 @@ def _match_skill(dim: str, val: str, skill: Skill) -> bool:
     return False
 
 
+def resolve_excluded_skills_for_agent(
+    agent: AgentDefinitionBody, all_skills: list[Skill]
+) -> set[str]:
+    """Resolve explicit exclusions independently of automatic skill selection."""
+    selectors = agent.workflows.skill_selectors
+    if selectors is None:
+        return set()
+    return {
+        skill.name
+        for skill in all_skills
+        if any(_match_skill(*parse_selector(exc), skill) for exc in selectors.exclude)
+    }
+
+
 def resolve_skills_for_agent(
     agent: AgentDefinitionBody, all_skills: list[Skill]
 ) -> set[str] | None:
@@ -177,19 +191,13 @@ def resolve_skills_for_agent(
         return None
 
     include_matches = set()
-    exclude_matches = set()
+    exclude_matches = resolve_excluded_skills_for_agent(agent, all_skills)
 
     for skill in all_skills:
         for inc in selectors.include:
             dim, val = parse_selector(inc)
             if _match_skill(dim, val, skill):
                 include_matches.add(skill.name)
-                break
-
-        for exc in selectors.exclude:
-            dim, val = parse_selector(exc)
-            if _match_skill(dim, val, skill):
-                exclude_matches.add(skill.name)
                 break
 
     return include_matches - exclude_matches

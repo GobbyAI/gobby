@@ -39,7 +39,9 @@ and dynamically discovered installed standalone skills from
 `list_skills(enabled=true, session_id="<current session>")` on `gobby-skills`.
 If the returned count reaches `limit`, repeat with a larger limit until the
 listing is complete; this metadata tool has no public cursor. Preserve default internal
-visibility and active-skill filtering. A connected MCP server is not an
+visibility and explicit skill exclusions. Automatic-injection selections do not
+restrict help: show every enabled standalone skill unless explicitly excluded.
+A connected MCP server is not an
 installed skill. Menus never execute their listed operations.
 
 Use the provider's active trigger. Do not present `/gobby` as universal syntax.

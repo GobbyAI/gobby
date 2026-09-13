@@ -4,10 +4,12 @@ import asyncio
 import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
@@ -18,6 +20,69 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = [pytest.mark.integration]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include", [None, [], ["name:git-commit"]])
+@pytest.mark.parametrize("exclude", [[], ["name:code-*"]])
+async def test_help_lists_unselected_skills_and_honors_explicit_exclusions(
+    populated_db: HubDatabase, include: list[str] | None, exclude: list[str]
+) -> None:
+    from gobby.mcp_proxy.tools.apply_persona import build_session_persona_changes
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from gobby.workflows.agent_models import AgentDefinitionBody, AgentSelector
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    agent_path = (
+        Path(__file__).resolve().parents[4]
+        / "src/gobby/install/shared/workflows/agents/default.yaml"
+    )
+    agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
+    agent.workflows.skill_selectors = (
+        AgentSelector(include=include or [], exclude=exclude)
+        if include is not None or exclude
+        else None
+    )
+    definitions = AgentDefinitionManager(populated_db)
+    definitions.create(name=agent.name, source="custom", definition_json=agent.model_dump_json())
+    session = SessionManager(populated_db).register(
+        external_id="help-discovery",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=None,
+    )
+    variables = SessionVariableManager(populated_db)
+    changes, _ = build_session_persona_changes(agent, populated_db)
+    variables.merge_variables(session.id, changes)
+    # Skills installed after activation must still obey current exclusions.
+    LocalSkillManager(populated_db).create_skill(
+        name="code-new", description="Newly installed", content="# New", enabled=True
+    )
+    registry = create_skills_registry(populated_db)
+    tool = registry.get_tool("list_skills")
+    assert tool is not None
+
+    result = await tool(enabled=True, session_id=session.id)
+
+    assert result["success"] is True
+    assert {skill["name"] for skill in result["skills"]} == (
+        {"git-commit"} if exclude else {"git-commit", "code-review", "code-new"}
+    )
+
+    # Changing to an unrestricted persona clears a prior exclusion.
+    agent.name = "unrestricted"
+    agent.workflows.skill_selectors = None
+    definitions.create(name=agent.name, source="custom", definition_json=agent.model_dump_json())
+    changes, _ = build_session_persona_changes(agent, populated_db)
+    variables.merge_variables(session.id, changes)
+    result = await tool(enabled=True, session_id=session.id)
+    assert {skill["name"] for skill in result["skills"]} == {
+        "git-commit",
+        "code-review",
+        "code-new",
+    }
+
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
@@ -461,7 +526,7 @@ async def test_list_skills_routes_overfetch_batches_through_run_db() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_skills_ignores_value_error_resolving_active_skills() -> None:
+async def test_list_skills_ignores_value_error_resolving_excluded_skills() -> None:
     storage = MagicMock()
     storage.list_skills.return_value = []
     ctx = SkillsContext(
@@ -476,7 +541,7 @@ async def test_list_skills_ignores_value_error_resolving_active_skills() -> None
         hub_manager=None,
         db_runner=None,
     )
-    ctx.get_active_skill_names = AsyncMock(side_effect=ValueError("invalid session"))
+    ctx.get_excluded_skill_names = AsyncMock(side_effect=ValueError("invalid session"))
     registry = InternalToolRegistry(name="gobby-skills")
     register_list_skills(ctx, registry)
     tool = registry.get_tool("list_skills")
@@ -489,7 +554,7 @@ async def test_list_skills_ignores_value_error_resolving_active_skills() -> None
 
 
 @pytest.mark.asyncio
-async def test_list_skills_surfaces_unexpected_active_skill_lookup_errors() -> None:
+async def test_list_skills_surfaces_unexpected_excluded_skill_lookup_errors() -> None:
     storage = MagicMock()
     storage.list_skills.return_value = []
     ctx = SkillsContext(
@@ -504,7 +569,7 @@ async def test_list_skills_surfaces_unexpected_active_skill_lookup_errors() -> N
         hub_manager=None,
         db_runner=None,
     )
-    ctx.get_active_skill_names = AsyncMock(side_effect=RuntimeError("database unavailable"))
+    ctx.get_excluded_skill_names = AsyncMock(side_effect=RuntimeError("database unavailable"))
     registry = InternalToolRegistry(name="gobby-skills")
     register_list_skills(ctx, registry)
     tool = registry.get_tool("list_skills")
@@ -514,3 +579,40 @@ async def test_list_skills_surfaces_unexpected_active_skill_lookup_errors() -> N
 
     assert result == {"success": False, "error": "database unavailable"}
     storage.list_skills.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_exclusions_and_help_limit_span_catalog_pages(populated_db: HubDatabase) -> None:
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+    from gobby.storage.definitions import AgentDefinitionManager
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    AgentDefinitionManager(populated_db).create(
+        name="limited",
+        source="custom",
+        definition_json=(
+            '{"name":"limited","prompts":{"agent":"Test discovery"},'
+            '"workflows":{"skill_selectors":{"include":[],"exclude":["name:code-*"]}}}'
+        ),
+    )
+    session = SessionManager(populated_db).register(
+        external_id="help-pages",
+        machine_id="21000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=None,
+    )
+    SessionVariableManager(populated_db).merge_variables(
+        session.id, {"_agent_type": "limited", "_active_skill_names": []}
+    )
+    storage = LocalSkillManager(populated_db)
+    for index in range(105):
+        storage.create_skill(
+            name=f"code-{index:03d}", description="Excluded", content="# Excluded", enabled=True
+        )
+    tool = create_skills_registry(populated_db).get_tool("list_skills")
+    assert tool is not None
+
+    result = await tool(enabled=True, session_id=session.id, limit=1, include_internal=True)
+
+    assert result["success"] is True
+    assert [skill["name"] for skill in result["skills"]] == ["git-commit"]

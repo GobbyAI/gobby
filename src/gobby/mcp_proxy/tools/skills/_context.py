@@ -83,3 +83,15 @@ class SkillsContext:
         if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
             return None
         return names
+
+    async def get_excluded_skill_names(self, session_id: str) -> set[str]:
+        """Resolve current explicit exclusions independently of auto-injection."""
+        from gobby.skills.discovery import get_session_skill_exclusions
+
+        def _get_exclusions() -> set[str]:
+            resolved_id = self.session_manager.resolve_session_reference(
+                session_id, project_id=self.project_id
+            )
+            return get_session_skill_exclusions(self.db, resolved_id, self.project_id)
+
+        return await self.run_db(_get_exclusions)

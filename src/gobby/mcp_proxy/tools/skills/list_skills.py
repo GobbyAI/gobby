@@ -11,8 +11,6 @@ from gobby.storage.skills import Skill
 
 logger = logging.getLogger(__name__)
 
-_MAX_OVERFETCH_ROUNDS = 3
-
 
 def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
     """Register the list_skills tool on the registry."""
@@ -38,7 +36,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             category: Optional category filter
             enabled: Optional enabled status filter (True/False/None for all)
             limit: Maximum skills to return (default 50)
-            session_id: Optional session ID for filtering by active skills in the session
+            session_id: Optional session ID for honoring explicit skill exclusions
             include_internal: If True, include skills flagged `internal: true` in
                 frontmatter. Default False hides them — they are shared-methodology
                 skills invoked by other skills via get_skill(name=...), not user-facing.
@@ -47,30 +45,32 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             Dict with success status and list of skill metadata
         """
         try:
-            active_names = None
+            excluded_names = None
             if session_id:
                 try:
-                    active_names = await ctx.get_active_skill_names(session_id)
+                    excluded_names = await ctx.get_excluded_skill_names(session_id)
                 except ValueError:
-                    logger.debug("Failed to resolve active skill names for session %s", session_id)
+                    logger.debug(
+                        "Failed to resolve excluded skill names for session %s", session_id
+                    )
 
-            # Over-fetch when a post-query filter (active_names or include_internal=False)
+            # Over-fetch when a post-query filter (exclusions or include_internal=False)
             # will trim results, so we can still fill `limit` after filtering.
             #
             # The fixed multiplier in the old implementation under-delivered when
-            # BOTH filters were active and aggressive (e.g. an active-skills
-            # allowlist of 5 names on a project with hundreds of internal skills).
+            # BOTH filters were active and aggressive (e.g. explicit exclusions
+            # on a project with hundreds of internal skills).
             # Fetch in bounded pages and stop as soon as we have enough post-filter
             # results or the underlying storage reports EOF.
-            needs_overfetch = active_names is not None or not include_internal
-            active_set = set(active_names) if active_names is not None else None
+            excluded_set = set(excluded_names or [])
+            needs_overfetch = bool(excluded_set) or not include_internal
 
             def _apply_post_filters(batch: list[Skill]) -> list[Skill]:
                 filtered = batch
                 if not include_internal:
                     filtered = [s for s in filtered if not s.is_internal()]
-                if active_set is not None:
-                    filtered = [s for s in filtered if s.name in active_set]
+                if excluded_set:
+                    filtered = [s for s in filtered if s.name not in excluded_set]
                 return filtered
 
             async def _list_skills_batch(
@@ -94,7 +94,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             else:
                 page_limit = limit * 5
                 offset = 0
-                for _ in range(_MAX_OVERFETCH_ROUNDS):
+                while True:
                     batch = await _list_skills_batch(
                         limit_value=page_limit,
                         offset_value=offset,

@@ -47,21 +47,22 @@ class TestToolHandlers:
         )
 
     @pytest.mark.parametrize("router_request", ["help", "missing"])
-    def test_native_router_filters_active_skills(
+    def test_native_router_honors_exclusions_without_hiding_unselected_skills(
         self, event_handlers: EventHandlers, router_request: str
     ) -> None:
         manager = MagicMock()
         manager.resolve_skill_name.return_value = None
         manager.discover_core_skills.return_value = [
             ParsedSkill(name="brevity", description="Visible", content=""),
-            ParsedSkill(name="restraint", description="Inactive", content=""),
+            ParsedSkill(name="restraint", description="Excluded", content=""),
+            ParsedSkill(name="swift", description="Available on demand", content=""),
             ParsedSkill(name="hidden", description="Internal", content="", internal=True),
         ]
         event_handlers._skill_manager = manager
-        with patch("gobby.workflows.state_manager.SessionVariableManager") as state:
-            state.return_value.get_variables.return_value = {
-                "_active_skill_names": ["brevity", "hidden"]
-            }
+        with patch(
+            "gobby.skills.discovery.get_session_skill_exclusions",
+            return_value={"restraint"},
+        ) as exclusions:
             response = event_handlers._resolve_skill_tool_call(
                 {"tool_input": {"skill": "gobby", "args": router_request}},
                 "project-override",
@@ -70,10 +71,14 @@ class TestToolHandlers:
         assert response is not None
         assert response.context is not None
         assert "/gobby brevity" in response.context
+        assert "/gobby swift" in response.context
         assert "restraint" not in response.context
         assert "hidden" not in response.context
         assert "/gobby tasks" in response.context
-        state.return_value.get_variables.assert_called_once_with("session-1")
+        assert event_handlers._session_manager is not None
+        exclusions.assert_called_once_with(
+            event_handlers._session_manager.db, "session-1", "project-override"
+        )
 
     @pytest.mark.parametrize("name", ["gobby", "gobby:tasks"])
     def test_native_capability_reference(self, event_handlers: EventHandlers, name: str) -> None:

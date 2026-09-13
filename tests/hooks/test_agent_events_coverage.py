@@ -415,7 +415,7 @@ class TestHandleBeforeAgent:
         handler._turn_lifecycle.begin_turn.assert_called_once()
         handler.session_manager_mock.update_session_status.assert_not_called()
         handler.session_manager_mock.reset_transcript_processed.assert_not_called()
-        handler.session_manager_mock.get.assert_called_once_with("sess-1")
+        handler.session_manager_mock.get.assert_called_with("sess-1")
         mock_resolve_agent.assert_not_called()
         mock_merge.assert_any_call("sess-1", {"_agent_context_injected": True})
         assert _staged_preamble_guard(result) == {}
@@ -819,25 +819,27 @@ class TestGenerateHelpContent:
     """Tests for _generate_help_content."""
 
     @pytest.mark.parametrize("router_request", ["$gobby help", "$gobby unknown"])
-    def test_router_help_and_unknown_preserve_active_visibility(self, router_request: str) -> None:
+    def test_router_help_and_unknown_honor_explicit_exclusions(self, router_request: str) -> None:
         from gobby.skills.parser import ParsedSkill
 
         handler = _TestHandler()
         handler.skill_manager_mock.resolve_skill_name.return_value = None
         handler.skill_manager_mock.discover_core_skills.return_value = [
             ParsedSkill(name="brevity", description="Visible", content=""),
-            ParsedSkill(name="restraint", description="Inactive", content=""),
+            ParsedSkill(name="restraint", description="Excluded", content=""),
+            ParsedSkill(name="swift", description="Available on demand", content=""),
             ParsedSkill(name="unknown-hidden", description="Internal", content="", internal=True),
         ]
-        with patch("gobby.workflows.state_manager.SessionVariableManager") as state:
-            state.return_value.get_variables.return_value = {
-                "_active_skill_names": ["brevity", "unknown-hidden"]
-            }
+        with patch(
+            "gobby.skills.discovery.get_session_skill_exclusions",
+            return_value={"restraint"},
+        ):
             result = handler._intercept_skill_command(
                 router_request, "session-1", "project-override"
             )
         assert result is not None
         assert "$gobby brevity" in result
+        assert "$gobby swift" in result
         assert "restraint" not in result
         assert "unknown-hidden" not in result
         assert "$gobby tasks" in result
@@ -907,7 +909,7 @@ class TestGenerateHelpContent:
         assert context["command_prefix"] == "$gobby"
         assert "- `$gobby expand` — Expand tasks" in context["skills_list"]
 
-    def test_generate_help_logs_active_skill_filter_failure(self) -> None:
+    def test_generate_help_logs_excluded_skill_filter_failure(self) -> None:
         handler = _TestHandler()
         skill = MagicMock()
         skill.name = "expand"
@@ -917,18 +919,20 @@ class TestGenerateHelpContent:
         handler.skill_manager_mock.discover_core_skills.return_value = [skill]
 
         with (
-            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls,
+            patch(
+                "gobby.skills.discovery.get_session_skill_exclusions",
+                side_effect=RuntimeError("database offline"),
+            ),
             patch(
                 "gobby.hooks.event_handlers._agent._load_agent_prompt",
                 return_value="help",
             ),
         ):
-            mock_svm_cls.return_value.get_variables.side_effect = RuntimeError("database offline")
             result = handler._generate_help_content(session_id="sess-1")
 
         assert result == "help"
         handler.logger_mock.warning.assert_called_once()
-        assert "active skills" in handler.logger_mock.warning.call_args.args[0]
+        assert "excluded skills" in handler.logger_mock.warning.call_args.args[0]
 
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()

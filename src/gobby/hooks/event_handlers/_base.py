@@ -68,25 +68,22 @@ class EventHandlersBase:
     ]
 
     def _router_skills(self, session_id: str | None, project_id: str | None) -> list[ParsedSkill]:
-        """Discover installed skills with the same active-session filter on all carriers."""
+        """Advertise installed skills except explicit session exclusions."""
         if self._skill_manager is None:
             return []
         skills = self._skill_manager.discover_core_skills(project_id)
 
         if session_id and self._session_manager:
             try:
-                from gobby.workflows.state_manager import SessionVariableManager
+                from gobby.skills.discovery import get_session_skill_exclusions
 
-                sv_mgr = SessionVariableManager(self._session_manager.db)
-                sv = sv_mgr.get_variables(session_id)
-                if sv:
-                    active_names = sv.get("_active_skill_names")
-                    if active_names is not None:
-                        active_set = set(active_names)
-                        skills = [s for s in skills if s.name in active_set]
+                excluded = get_session_skill_exclusions(
+                    self._session_manager.db, session_id, project_id
+                )
+                skills = [s for s in skills if s.name not in excluded]
             except Exception as e:
                 self.logger.warning(
-                    "Failed to filter help content by active skills for session %s: %s",
+                    "Failed to filter help content by excluded skills for session %s: %s",
                     session_id,
                     e,
                 )
