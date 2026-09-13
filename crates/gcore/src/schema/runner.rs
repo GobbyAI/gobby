@@ -286,6 +286,12 @@ fn schema_tables(client: &mut Client, schema: &str) -> Result<BTreeSet<String>, 
         .collect())
 }
 
+/// Tables that legitimately exist before the baseline and hold no application
+/// data: the external-mode ownership sentinel, and the pgAudit probe row the
+/// Docker image seeds during `initdb`. A database carrying only these is still
+/// fresh, so neither may count toward the corrupt-lineage decision.
+const PRE_BASELINE_INFRA_TABLES: [&str; 2] = ["gobby_install_ownership", "_pgaudit_probe"];
+
 fn classify_baseline_state(
     client: &mut Client,
     schema: &str,
@@ -298,10 +304,8 @@ fn classify_baseline_state(
     let application_tables = tables
         .iter()
         .filter(|table| {
-            !matches!(
-                table.as_str(),
-                "gobby_install_ownership" | "schema_migrations"
-            )
+            table.as_str() != "schema_migrations"
+                && !PRE_BASELINE_INFRA_TABLES.contains(&table.as_str())
         })
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
@@ -488,22 +492,25 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         return Some(statement.to_owned());
     }
     let body = statement_body(statement);
-    if state == BaselineState::GcoreCodeIndex && gcore_hop_owns_code_inheritance_ddl(body) {
-        return None;
-    }
+    // The gcore hop provisions the tables and indexes, so the baseline must not
+    // recreate them. Row-level security is not part of that handover: enabling
+    // it, its policies, and the capability grants come from the baseline for
+    // every code_* table. code_inheritance used to have all of its DDL skipped,
+    // which left it with RLS on and no policy at all, and made any later
+    // migration that ALTERs one of those policies fail on this lineage.
     if let Some(table) = create_table_name(body)
-        && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)
+        && GCORE_CODE_INDEX_TABLES.contains(&table)
     {
         return None;
     }
     if let Some(table) = create_index_table(body)
-        && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)
+        && GCORE_CODE_INDEX_TABLES.contains(&table)
     {
         return Some(add_index_if_not_exists(statement));
     }
     if state == BaselineState::GcoreCodeIndex
         && let Some(table) = alter_table_name(body)
-        && GCORE_CODE_INDEX_CORE_TABLES.contains(&table)
+        && GCORE_CODE_INDEX_TABLES.contains(&table)
     {
         let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
         if normalized.contains(" ADD GENERATED ALWAYS AS IDENTITY ")
@@ -513,47 +520,6 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         }
     }
     Some(statement.to_owned())
-}
-
-fn gcore_hop_owns_code_inheritance_ddl(body: &str) -> bool {
-    if create_table_name(body) == Some("code_inheritance")
-        || create_index_table(body) == Some("code_inheritance")
-        || alter_table_name(body) == Some("code_inheritance")
-    {
-        return true;
-    }
-    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    let upper = normalized.to_ascii_uppercase();
-    // FOREACH keeps baseline RLS DO blocks from being classified as code_inheritance DDL.
-    (upper.starts_with("GRANT ") || upper.contains(" POLICY "))
-        && statement_targets_relation(&normalized, "code_inheritance")
-        && !upper.contains("FOREACH")
-}
-
-fn statement_targets_relation(statement: &str, relation: &str) -> bool {
-    let tokens: Vec<&str> = statement.split_whitespace().collect();
-    let Some(on) = tokens
-        .iter()
-        .position(|token| token.eq_ignore_ascii_case("ON"))
-    else {
-        return false;
-    };
-    let Some(first) = tokens.get(on + 1).copied() else {
-        return false;
-    };
-    let raw = if first.eq_ignore_ascii_case("TABLE") || first.eq_ignore_ascii_case("SEQUENCE") {
-        tokens.get(on + 2).copied().unwrap_or("")
-    } else {
-        first
-    };
-    let name = trim_identifier(raw);
-    let name = name
-        .rsplit_once('.')
-        .map_or(name, |(_, relation_name)| relation_name);
-    name == relation
-        || name
-            .strip_prefix(relation)
-            .is_some_and(|suffix| suffix.starts_with('_'))
 }
 
 fn statement_body(mut statement: &str) -> &str {

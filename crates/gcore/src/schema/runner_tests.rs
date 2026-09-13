@@ -1188,6 +1188,33 @@ fn task_config_alias_upgrade_preserves_overrides_and_stamps_receipt() -> anyhow:
 }
 
 #[test]
+fn docker_pgaudit_probe_database_is_still_a_fresh_lineage() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    // Exactly what the Docker image's initdb pgAudit bootstrap leaves behind.
+    client.batch_execute(
+        "CREATE TABLE _pgaudit_probe (id integer PRIMARY KEY, last_probed_at timestamptz);\
+         INSERT INTO _pgaudit_probe (id, last_probed_at) VALUES (1, NOW())",
+    )?;
+
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+
+    assert!(
+        report.baseline_applied,
+        "a database holding only pre-baseline infra must baseline, not refuse as corrupt"
+    );
+    let probe_rows: i64 = client
+        .query_one("SELECT count(*) FROM _pgaudit_probe", &[])?
+        .get(0);
+    assert_eq!(probe_rows, 1, "baselining must not disturb the probe row");
+    Ok(())
+}
+
+#[test]
 fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
