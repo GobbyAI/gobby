@@ -148,6 +148,10 @@ def ask_provider_args(provider: str, auth_mode: str) -> tuple[str, ...]:
     # directories; `--strict-mcp-config` narrows MCP to the supplied config alone.
     # Together those are the boundary, and they keep the Ask tools reachable.
     arguments = (
+        # Interactive startup can build the first prompt before MCP connects.
+        # Ask stages are unattended: print mode waits for the configured tools
+        # and exits after the agent submits its result and finishes its turn.
+        "--print",
         "--restricted",
         "--disable-slash-commands",
         "--no-chrome",

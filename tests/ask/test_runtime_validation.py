@@ -684,6 +684,7 @@ def test_provider_args_leave_the_mcp_allowlist_reachable(auth_mode: str) -> None
     """
     arguments = ask_provider_args("claude", auth_mode)
 
+    assert "--print" in arguments
     assert "--safe-mode" not in arguments
     assert "--restricted" in arguments
     assert "--strict-mcp-config" in arguments
