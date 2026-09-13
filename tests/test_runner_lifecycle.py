@@ -470,6 +470,7 @@ class TestInitSubsystems:
         runner.hub_manager = None
         runner.config_store = None
         runner.config_runtime = SimpleNamespace(
+            ready=False,
             capture=static_runtime_capture(config),
             register_revision_publisher=MagicMock(),
         )
@@ -479,6 +480,9 @@ class TestInitSubsystems:
         capability_service = MagicMock()
         coverage_auditor = MagicMock()
         capacity_service = MagicMock()
+        local_context_store = MagicMock()
+        local_context_service = MagicMock()
+        local_route = SimpleNamespace(provider="qwen", model_id="Local-Model")
 
         with (
             patch(
@@ -502,22 +506,18 @@ class TestInitSubsystems:
                 "gobby.runner_init.servers.ProviderCapacityService.create_default",
                 return_value=capacity_service,
             ) as capacity_factory,
-            patch("gobby.runner_init.servers.load_codex_config", return_value={}),
-            patch("gobby.runner_init.servers.load_claude_settings", return_value={}),
             patch(
-                "gobby.runner_init.servers.load_qwen_settings",
-                return_value={
-                    "model": {"name": "local-model"},
-                    "modelProviders": {
-                        "openai": [
-                            {
-                                "id": "local-model",
-                                "baseUrl": "http://localhost:1234/v1",
-                            }
-                        ]
-                    },
-                },
-            ),
+                "gobby.runner_init.servers.LocalContextStore",
+                return_value=local_context_store,
+            ) as local_store_factory,
+            patch(
+                "gobby.runner_init.servers.LocalContextService",
+                return_value=local_context_service,
+            ) as local_service_factory,
+            patch(
+                "gobby.runner_init.servers.configured_local_routes",
+                return_value=(local_route,),
+            ) as configured_routes,
             patch("gobby.runner_init.servers.set_app_context"),
         ):
             init_servers(runner)
@@ -530,9 +530,9 @@ class TestInitSubsystems:
             assert "mcp_servers.gobby.required=true" in web_overrides
             assert "mcp_servers.gobby.enabled=true" in web_overrides
             assert coverage_factory.call_args is not None
-            excluded_providers = cast(
-                Callable[[], frozenset[str]],
-                coverage_factory.call_args.kwargs["excluded_providers"],
+            excluded_models = cast(
+                Callable[[], frozenset[tuple[str, str]]],
+                coverage_factory.call_args.kwargs["excluded_models"],
             )()
 
         assert runner.codex_client is fake_client
@@ -545,10 +545,14 @@ class TestInitSubsystems:
         assert services.llm_service is None
         assert services.provider_capacity_service is capacity_service
         assert services.provider_capability_service is capability_service
+        assert services.local_context_service is local_context_service
         assert coverage_factory.call_args is not None
-        assert "excluded_models" not in coverage_factory.call_args.kwargs
-        assert callable(coverage_factory.call_args.kwargs["excluded_providers"])
-        assert excluded_providers == frozenset({"qwen"})
+        assert "excluded_providers" not in coverage_factory.call_args.kwargs
+        assert callable(coverage_factory.call_args.kwargs["excluded_models"])
+        assert excluded_models == frozenset({("qwen", "local-model")})
+        configured_routes.assert_called_once_with(config, machine_id="machine-1")
+        local_store_factory.assert_called_once()
+        local_service_factory.assert_called_once_with(local_context_store, run_db=None)
         capacity_factory.assert_called_once_with(
             runner.database,
             machine_id="machine-1",

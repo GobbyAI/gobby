@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.agents.codex_oss import (
@@ -24,7 +25,11 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
 )
-from gobby.ai.endpoints import parse_endpoint_model_selector, parse_endpoint_selector
+from gobby.ai.endpoints import (
+    endpoint_provider,
+    parse_endpoint_model_selector,
+    parse_endpoint_selector,
+)
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
@@ -45,6 +50,12 @@ from gobby.servers.websocket.chat.backends import (
     QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -277,6 +288,46 @@ class WebChatRuntimeManager:
         """Return a copy of the discovered ACP ``SessionInfo`` cache."""
         return {key: dict(value) for key, value in self._acp_session_infos.items()}
 
+    async def _refresh_local_context(
+        self,
+        model: str | None,
+    ) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+        """Refresh context for an exact local endpoint selector."""
+        selector = parse_endpoint_model_selector(model)
+        if selector is None:
+            return None, None
+        endpoint = self._generation_endpoints.get(selector.endpoint_name)
+        if endpoint is None:
+            return None, None
+
+        from gobby.app_context import get_app_context
+        from gobby.providers.capabilities.local_context_config import endpoint_route
+        from gobby.utils.machine_id import require_machine_id
+
+        route = endpoint_route(
+            machine_id=require_machine_id(),
+            endpoint_name=selector.endpoint_name,
+            endpoint=endpoint,
+            provider=endpoint_provider(selector.endpoint_name),
+            model_id=selector.model or endpoint.model,
+        )
+        if not route.is_local:
+            return None, None
+        context = get_app_context()
+        service = getattr(context, "local_context_service", None)
+        if service is None:
+            return route, None
+        try:
+            return route, await service.refresh(route)
+        except Exception:
+            logger.warning(
+                "Local chat context refresh failed (endpoint=%s, model=%s)",
+                selector.endpoint_name,
+                route.model_id,
+                exc_info=True,
+            )
+            return route, None
+
     async def create_session(
         self,
         *,
@@ -303,6 +354,11 @@ class WebChatRuntimeManager:
             record = await ensure_agy_support()
             if not record.supported:
                 raise RuntimeError(record.reason)
+        local_route = None
+        local_observation = None
+        local_context_provider = provider in {"claude", "codex"}
+        if local_context_provider:
+            local_route, local_observation = await self._refresh_local_context(model)
         session: ChatSessionProtocol
         if provider == "qwen":
             session = QwenManagedChatSession(
@@ -351,6 +407,11 @@ class WebChatRuntimeManager:
                 session.reasoning_effort = reasoning_effort
         else:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
+        if local_context_provider:
+            context_session = cast(Any, session)
+            context_session._local_context_route = local_route
+            context_session._local_context_observation = local_observation
+            context_session._local_context_refresher = self._refresh_local_context
         self._apply_launch_snapshot(session, snapshot)
         return session
 

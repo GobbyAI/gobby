@@ -279,10 +279,12 @@ class ChatSessionMessagesMixin:
                         output_tokens = usage.get("output_tokens", 0) or 0
 
                         context_window = resolve_context_window(
-                            self._last_model,
+                            self._context_model(),
                             None,
                             overrides=self._context_window_overrides or None,
                             provider="claude",
+                            local_route=getattr(self, "_local_context_route", None),
+                            local_observation=getattr(self, "_local_context_observation", None),
                         )
 
                         logger.info(
@@ -376,13 +378,22 @@ class ChatSessionMessagesMixin:
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
 
     def _resolve_context_window_fallback(self) -> int | None:
-        """Resolve context_window from _last_model for error paths."""
+        """Resolve context_window from session-local evidence for error paths."""
         return resolve_context_window(
-            self._last_model,
+            self._context_model(),
             None,
             overrides=self._context_window_overrides or None,
             provider="claude",
+            local_route=getattr(self, "_local_context_route", None),
+            local_observation=getattr(self, "_local_context_observation", None),
         )
+
+    def _context_model(self) -> str | None:
+        """Prefer the exact local route model, then the observed response model."""
+        route_model = getattr(getattr(self, "_local_context_route", None), "model_id", None)
+        if isinstance(route_model, str):
+            return route_model
+        return self._last_model
 
     async def interrupt(self) -> None:
         """Interrupt the current response stream."""
