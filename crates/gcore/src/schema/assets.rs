@@ -128,6 +128,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/435_bind_tool_grants_to_requested_checkout.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 436,
+        filename: "436_add_session_heuristic_title_and_reasoning_effort.sql",
+        checksum: "6fa7aef5d57f478717db6d50c601ef205dc72c04d9d6fdeaf2b1c2fe83bd8453",
+        sql: include_str!(
+            "../../assets/schema/migrations/436_add_session_heuristic_title_and_reasoning_effort.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

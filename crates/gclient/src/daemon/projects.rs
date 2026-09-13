@@ -66,8 +66,17 @@ pub struct SessionRow {
     pub machine_id: Option<String>,
     pub agent_run_id: Option<String>,
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     /// The session that spawned this one, for a child session of an agent run.
     pub parent_session_id: Option<String>,
+}
+
+impl SessionRow {
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        self.reasoning_effort
+            .as_deref()
+            .filter(|effort| !effort.is_empty())
+    }
 }
 
 /// One entry of `/api/agents/runs?project_id=`.

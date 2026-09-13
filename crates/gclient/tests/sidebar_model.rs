@@ -12,6 +12,7 @@ use gobby_client::daemon::{
     TaskRef, TerminalRef, WorktreeRow,
 };
 use gobby_client::ui::chrome::RowState;
+use serde_json::json;
 use tokio::time::Instant;
 
 const LOCAL_MACHINE: &str = "m-local";
@@ -56,6 +57,17 @@ fn model(rows: &SidebarRows, roster: &[RosterEntry], panes: &[Pane]) -> SidebarM
         panes: &panes,
         git_refreshed_at: Instant::now(),
     })
+}
+
+#[test]
+fn session_row_accepts_a_missing_reasoning_effort() {
+    let row: SessionRow = serde_json::from_value(json!({
+        "id": "sess-a",
+        "status": "active"
+    }))
+    .expect("an older daemon session row should deserialize");
+
+    assert_eq!(row.reasoning_effort(), None);
 }
 
 /// 2.1.1: `attention == null` renders idle or working by the pane's output,
@@ -304,5 +316,82 @@ fn build_joins_projects_worktrees_and_agents() {
         model.machines,
         [LOCAL_MACHINE, REMOTE_MACHINE],
         "machines list every agent host plus this one, sorted"
+    );
+}
+
+#[test]
+fn build_prefers_run_effort_then_falls_back_to_session_effort() {
+    let rows = SidebarRows {
+        sessions: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![
+                SessionRow {
+                    id: "sess-run".to_string(),
+                    reasoning_effort: Some("medium".to_string()),
+                    ..Default::default()
+                },
+                SessionRow {
+                    id: "sess-requested".to_string(),
+                    reasoning_effort: Some("low".to_string()),
+                    ..Default::default()
+                },
+                SessionRow {
+                    id: "sess-interactive".to_string(),
+                    reasoning_effort: Some("minimal".to_string()),
+                    ..Default::default()
+                },
+            ],
+        )]),
+        runs: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![
+                RunRow {
+                    run_id: "run-effective".to_string(),
+                    effective_reasoning_effort: Some("high".to_string()),
+                    requested_reasoning_effort: Some("max".to_string()),
+                    ..Default::default()
+                },
+                RunRow {
+                    run_id: "run-requested".to_string(),
+                    requested_reasoning_effort: Some("max".to_string()),
+                    ..Default::default()
+                },
+            ],
+        )]),
+        ..Default::default()
+    };
+    let mut effective_agent = entry("run:run-effective", Some("terminal-a"));
+    effective_agent.session_id = Some("sess-run".to_string());
+    effective_agent.run_id = Some("run-effective".to_string());
+    let mut requested_agent = entry("run:run-requested", Some("terminal-b"));
+    requested_agent.session_id = Some("sess-requested".to_string());
+    requested_agent.run_id = Some("run-requested".to_string());
+    let mut interactive_agent = entry("session:sess-interactive", Some("terminal-c"));
+    interactive_agent.session_id = Some("sess-interactive".to_string());
+
+    let model = model(
+        &rows,
+        &[effective_agent, requested_agent, interactive_agent],
+        &[
+            pane(1, "terminal-a", false, true),
+            pane(2, "terminal-b", false, true),
+            pane(3, "terminal-c", false, true),
+        ],
+    );
+
+    assert_eq!(
+        model.agents[0].effort.as_deref(),
+        Some("high"),
+        "a run's effective effort wins over its requested and session efforts"
+    );
+    assert_eq!(
+        model.agents[1].effort.as_deref(),
+        Some("max"),
+        "a run's requested effort wins over its session effort"
+    );
+    assert_eq!(
+        model.agents[2].effort.as_deref(),
+        Some("minimal"),
+        "an interactive row falls back to its session effort"
     );
 }

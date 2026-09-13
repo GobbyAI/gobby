@@ -4425,6 +4425,10 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "sessions.heuristic_title",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "sessions.id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -4483,6 +4487,10 @@
     {
       "name": "sessions.project_id",
       "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "sessions.reasoning_effort",
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "sessions.sandbox_enabled",

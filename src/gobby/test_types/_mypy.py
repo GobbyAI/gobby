@@ -51,6 +51,18 @@ class MypyInvocationError(RuntimeError):
         super().__init__("\n".join(details))
 
 
+def _mypy_environment(root: Path) -> dict[str, str]:
+    """Keep mypy imports in the invoked checkout, ahead of editable installations."""
+    environment = os.environ.copy()
+    resolved = root.resolve()
+    entries = [str(resolved / "src"), str(resolved)]
+    inherited = environment.get("MYPYPATH")
+    if inherited:
+        entries.append(inherited)
+    environment["MYPYPATH"] = os.pathsep.join(entries)
+    return environment
+
+
 def resolve_mypy_command(root: Path, override: str | None = None) -> tuple[str, ...]:
     """Resolve mypy in the target project, pinning package managers to their markers."""
 
@@ -73,6 +85,7 @@ def resolve_mypy_command(root: Path, override: str | None = None) -> tuple[str, 
             probe = subprocess.run(
                 probe_command,
                 cwd=root,
+                env=_mypy_environment(root),
                 capture_output=True,
                 check=False,
                 timeout=_MYPY_PROBE_TIMEOUT_SECONDS,
@@ -155,6 +168,7 @@ def run_mypy(
         completed = subprocess.run(
             command,
             cwd=root,
+            env=_mypy_environment(root),
             capture_output=True,
             text=True,
             check=False,

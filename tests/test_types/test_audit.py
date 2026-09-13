@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import signal
@@ -243,3 +244,78 @@ def test_run_mypy_reports_missing_checker_and_timeout(tmp_path: Path) -> None:
     command = _checker_command(tmp_path, "import time\ntime.sleep(5)\n")
     with pytest.raises(MypyInvocationError, match="timed out"):
         run_mypy(("tests",), root=tmp_path, mypy_command=command, timeout=0)
+
+
+@pytest.mark.parametrize(
+    "marker,manager", [("uv.lock", "uv"), ("poetry.lock", "poetry"), ("pdm.lock", "pdm")]
+)
+@pytest.mark.parametrize("inherited", [None, "", os.pathsep.join(["/old/src", "/extra path"])])
+def test_probe_and_audit_receive_worktree_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marker: str,
+    manager: str,
+    inherited: str | None,
+) -> None:
+    root = tmp_path / "worktree with spaces"
+    root.mkdir()
+    (root / marker).touch()
+    monkeypatch.chdir(tmp_path)
+    if inherited is None:
+        monkeypatch.delenv("MYPYPATH", raising=False)
+    else:
+        monkeypatch.setenv("MYPYPATH", inherited)
+    original = dict(os.environ)
+    calls: list[dict[str, object]] = []
+
+    def fake_run(
+        command: tuple[str, ...] | list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        shutil, "which", lambda name: f"/tools/{manager}" if name == manager else None
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert run_mypy(("tests",), root=Path(root.name)) == ()
+    assert len(calls) == 2
+    expected = os.pathsep.join([str(root / "src"), str(root)])
+    if inherited:
+        expected += os.pathsep + inherited
+    for call in calls:
+        assert call["cwd"] == Path(root.name)
+        assert call["env"] == {**original, "MYPYPATH": expected}
+        assert call["env"] is not os.environ
+    assert dict(os.environ) == original
+
+
+@pytest.mark.parametrize("layout", ["src", "."])
+@pytest.mark.parametrize("inherit_path", [False, True])
+def test_real_mypy_prefers_worktree_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str, inherit_path: bool
+) -> None:
+    root = tmp_path / "worktree with spaces"
+    modules = root / layout
+    modules.mkdir(parents=True)
+    main = tmp_path / "main checkout"
+    main.mkdir()
+    (main / "task_app.py").write_text("value: str = 'wrong checkout'\n", encoding="utf-8")
+    (modules / "task_app.py").write_text("value: int = 1\n", encoding="utf-8")
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_local.py").write_text(
+        "from task_app import value\nresult: int = value\n", encoding="utf-8"
+    )
+    # Model the competing interpreter path of the main checkout's editable install.
+    monkeypatch.setenv("PYTHONPATH", str(main))
+    if inherit_path:
+        monkeypatch.setenv("MYPYPATH", str(main))
+    else:
+        monkeypatch.delenv("MYPYPATH", raising=False)
+    original = dict(os.environ)
+    command = f"{shlex.quote(sys.executable)} -m mypy --no-incremental"
+    report = audit_types_paths((tests_dir,), root=root, mypy_command=command)
+    assert report.files_scanned == 1
+    assert report.issues == ()
+    assert dict(os.environ) == original
