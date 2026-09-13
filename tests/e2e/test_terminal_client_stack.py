@@ -44,7 +44,7 @@ from tests.e2e.conftest import (
     DaemonInstance,
     daemon_token,
 )
-from tests.e2e.gclient_driver import GclientDriver, Screen
+from tests.e2e.gclient_driver import GclientDriver, Screen, in_prefix_mode
 from tests.e2e.test_external_terminal_attach import (
     APPROVAL_PROMPT,
     E2E_PROJECT_ID,
@@ -1060,14 +1060,23 @@ def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         _wait_for_host(http, daemon_instance)
     with _gclient(daemon_instance) as client:
-        client.expect("terminals")
+        # The sidebar bands are Machines / Projects / Sessions
+        # (`SidebarSection::title`, crates/gclient/src/ui/hit.rs).
+        client.expect("Sessions")
+        # First run opens one shell of its own and focuses it
+        # (crates/gclient/tests/client_loop.rs::
+        # first_run_opens_one_shell_and_never_auto_opens), so the status line
+        # reports a focused pane and its transport, never the no-pane copy.
         client.wait_for(
-            lambda screen: "no pane" in screen.lines[-1], description="bottom status bar"
+            lambda screen: " │ direct" in screen.lines[-1] or " │ proxy" in screen.lines[-1],
+            description="bottom status bar naming the first-run pane",
         )
         assert client.poll() is None
-        client.chord("\x1b")
+        client.send("\x02")
+        client.wait_for(in_prefix_mode, description="prefix mode")
+        client.send("\x1b")
         client.wait_for(
-            lambda screen: "prefix" not in screen.lines[-1], description="prefix mode dismissed"
+            lambda screen: not in_prefix_mode(screen), description="prefix mode dismissed"
         )
         assert client.poll() is None
 
@@ -1165,6 +1174,17 @@ class ClientWire:
                 raise
 
 
+def _short(terminal_id: str) -> str:
+    """The name every gclient chrome surface gives a terminal.
+
+    `Pane::display_name` falls back to `short_terminal_id` -- "never the raw
+    UUID, which says nothing and crowds out the state and backend tokens that
+    share the row" (crates/gclient/src/app/pane.rs). Sidebar rows and the
+    status line therefore carry the leading segment only.
+    """
+    return terminal_id[:8]
+
+
 async def _screen(client: GclientDriver, text: str, *, timeout: float = 15.0) -> None:
     await asyncio.to_thread(client.expect, text, timeout=timeout)
 
@@ -1197,7 +1217,7 @@ async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInst
         assert row["backend"] == "tmux"
     async with ClientWire(daemon_instance).running() as wire:
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-            await _screen(client, terminal_id)
+            await _screen(client, _short(terminal_id))
             await asyncio.to_thread(client.chord, "\t")
             await _screen(client, "GCLIENT-ROW-OK")
             await _screen(client, "direct")
@@ -1211,7 +1231,7 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
     terminal_id = await _shell(daemon_instance)
     async with ClientWire(daemon_instance).running() as wire:
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-            await _screen(client, terminal_id)
+            await _screen(client, _short(terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
             await _screen(client, "direct")
             await _take_and_echo(client, "GCLIENT-NATIVE-OK")
@@ -1237,7 +1257,7 @@ async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance
     wire.frame_socket = str(daemon_instance.gobby_home / "remote-host.sock")
     async with wire.running():
         async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
-            await _screen(client, terminal_id)
+            await _screen(client, _short(terminal_id))
             await _screen(client, "GCLIENT-SHELL-READY")
             await _screen(client, "proxy")
             await _take_and_echo(client, "GCLIENT-PROXY-OK")
@@ -1306,8 +1326,8 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
                 await writers[0].wait_closed()
                 await _screen(client, "proxy")
                 await _take_and_echo(client, "GCLIENT-FALLBACK-OK")
-                assert "terminals" in client.screen.text
-                assert terminal_id in client.screen.text
+                assert "Sessions" in client.screen.text
+                assert _short(terminal_id) in client.screen.text
                 finalized = [
                     item
                     for item in wire.received
@@ -1433,12 +1453,12 @@ async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         assert client.screen.cols == 120
         assert client.screen.rows == 40
-        assert terminal_id in client.screen.lines[-1]
+        assert _short(terminal_id) in client.screen.lines[-1]
         client.resize(100, 32)
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         await asyncio.to_thread(
             client.wait_for,
-            lambda screen: terminal_id in screen.lines[31],
+            lambda screen: _short(terminal_id) in screen.lines[31],
             description="status bar moved to the resized bottom row",
         )
         assert len(client.screen.lines) == 32

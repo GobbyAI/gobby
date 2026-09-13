@@ -126,6 +126,21 @@ class Screen:
                 self.cells[self.y][x] = " "
 
 
+PREFIX_CUE = "prefix "
+
+
+def in_prefix_mode(screen: Screen) -> bool:
+    """Whether the status line is showing prefix mode.
+
+    `render_status_line` (crates/gclient/src/ui/status.rs) always names the
+    prefix -- "the prefix is the way into every chord, quit included" -- so the
+    bare word is never absent and cannot report the mode. Prefix mode adds the
+    mode segment from `mode_name`, ahead of that permanent cue, giving a second
+    occurrence. Two is the mode; one is the cue alone.
+    """
+    return screen.lines[-1].count(PREFIX_CUE) > 1
+
+
 class GclientDriver:
     """Run a real client with a controlling 120×40 PTY and bounded teardown."""
 
@@ -215,12 +230,10 @@ class GclientDriver:
 
     def chord(self, key: str) -> None:
         self.send("\x02")
-        self.wait_for(
-            lambda screen: "prefix" in screen.lines[-1], description="prefix mode", timeout=3.0
-        )
+        self.wait_for(in_prefix_mode, description="prefix mode", timeout=3.0)
         self.send(key)
         self.wait_for(
-            lambda screen: "prefix" not in screen.lines[-1],
+            lambda screen: not in_prefix_mode(screen),
             description="prefix action completed",
             timeout=3.0,
         )

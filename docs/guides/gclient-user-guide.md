@@ -129,9 +129,9 @@ on its bottom row. An empty tab area shows `no pane open`.
 **Status line.** From left to right: the focused pane's control indicator
 (`[● held]`, `[○ observe]`, `[▲ take-back]`, `[◌ lease lost]`, or
 `[◌ read-only]`), the pane's name and tmux address, its transport (`direct` or
-`proxy`), the current mode when it is not plain terminal mode, the prefix chord
-when the client runs inside tmux, `daemon unreachable` during an outage, and the
-latest status message. Clicking the control indicator takes, releases, or takes
+`proxy`), the current mode when it is not plain terminal mode, the prefix chord,
+shifted when the client runs inside tmux, `daemon unreachable` during an
+outage, and the latest status message. Clicking the control indicator takes, releases, or takes
 back control.
 
 ## The prefix key

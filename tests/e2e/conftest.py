@@ -1647,7 +1647,13 @@ _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
 # A real sandbox escape would also leak db/config files that aren't listed
 # here, so these omissions do not weaken the check.
 _ALWAYS_EXEMPT_BASENAMES = {"shutdown_intent_active.json"}
-_ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/", "session_wiki/")
+# `cache/` is a build cache, not daemon state: cargo writes there during any
+# concurrent `gobby build`, `gobby cutover`, or plain cargo build on this
+# machine. Watching it made an unrelated build fail the test under it with a
+# sandbox-escape message naming the test's own code, which is the worst
+# property a detector can have -- it sends the reader to debug something that
+# is not theirs. A real sandbox escape still leaks db/config paths outside it.
+_ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/", "session_wiki/", "cache/")
 
 
 def _is_production_daemon_artifact(rel_path: str) -> bool:
