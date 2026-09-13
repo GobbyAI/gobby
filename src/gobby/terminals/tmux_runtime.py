@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env, validate_spawn_key
@@ -23,6 +24,7 @@ from gobby.storage.terminals import (
     tmux_locator_key,
 )
 from gobby.terminals.dimensions import validate_dimensions
+from gobby.terminals.host_protocol import frames_socket_path
 from gobby.terminals.key_bytes import TMUX_KEY_NAMES, encode_named_key
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
@@ -58,11 +60,10 @@ class TmuxTerminalRuntime:
         self,
         sessions: TmuxSessionManager,
         *,
-        frame_host_epoch: str = "",
+        host_control: Any | None = None,
     ) -> None:
         self._sessions = sessions
-        self._frame_host_epoch = frame_host_epoch
-        self._frame_host_socket: str | None = None
+        self._host_control = host_control
 
     def _cmd(self) -> list[str]:
         return self._sessions.base_args()
@@ -161,7 +162,7 @@ class TmuxTerminalRuntime:
             server_start_time = raw_start
             locator = AttachLocator(
                 backend="tmux",
-                frame_host_epoch=self._frame_host_epoch,
+                frame_host_epoch="",
                 socket_path=socket_path,
                 pane_id=pane_id,
             )
@@ -194,10 +195,7 @@ class TmuxTerminalRuntime:
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:
         if not prepared.persist_acknowledged:
             raise CommitSpawnRefusedError("persist has not been acknowledged")
-        locator = prepared.locator or AttachLocator(
-            backend="tmux",
-            frame_host_epoch=self._frame_host_epoch,
-        )
+        locator = prepared.locator or AttachLocator(backend="tmux", frame_host_epoch="")
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:
@@ -397,10 +395,16 @@ class TmuxTerminalRuntime:
         locator = terminal.locator or {}
         pid = locator.get("server_pid")
         start = locator.get("server_start_time")
+        manager = getattr(self._host_control, "_manager", None)
+        directory = getattr(manager, "socket_dir", None)
+        if directory is None:
+            directory = getattr(self._host_control, "socket_dir", None)
         return AttachLocator(
             backend="tmux",
-            frame_host_epoch=self._frame_host_epoch or str(terminal.host_epoch or ""),
-            host_socket=self._frame_host_socket,
+            frame_host_epoch=str(
+                terminal.host_epoch or getattr(self._host_control, "host_epoch", "") or ""
+            ),
+            host_socket=(None if directory is None else str(frames_socket_path(Path(directory)))),
             host_terminal_id=(
                 None if locator.get("pane_id") is None else str(locator.get("pane_id"))
             ),
@@ -430,7 +434,7 @@ class TmuxTerminalRuntime:
         return parts[0] == "1", parts[1] == "1", parts[2] == "1"
 
 
-def configured_tmux_runtime() -> TmuxTerminalRuntime:
+def configured_tmux_runtime(host_control: Any | None = None) -> TmuxTerminalRuntime:
     """Runtime over the daemon-configured tmux session manager.
 
     The accessor is imported at call time so the configured socket (and any
@@ -438,4 +442,4 @@ def configured_tmux_runtime() -> TmuxTerminalRuntime:
     """
     from gobby.agents.tmux import get_tmux_session_manager
 
-    return TmuxTerminalRuntime(get_tmux_session_manager())
+    return TmuxTerminalRuntime(get_tmux_session_manager(), host_control=host_control)

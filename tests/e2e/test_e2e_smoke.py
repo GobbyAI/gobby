@@ -45,6 +45,14 @@ def test_production_daemon_gcode_runtime_grant_is_external_write_exempt() -> Non
     assert _is_production_daemon_artifact("config.yaml") is False
 
 
+def test_production_daemon_ask_artifacts_are_external_write_exempt() -> None:
+    ask_root = "ask/8d0aa13f-902c-405c-96e8-af2a7cf82b1d"
+
+    assert _is_production_daemon_artifact(f"{ask_root}/request.json") is True
+    assert _is_production_daemon_artifact(f"{ask_root}/transcript.jsonl") is True
+    assert _is_production_daemon_artifact("ask") is False
+
+
 class TestE2EInfrastructure:
     """Tests verifying E2E fixtures work correctly."""
 

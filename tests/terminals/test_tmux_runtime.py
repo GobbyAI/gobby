@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -22,6 +23,7 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.terminals import AttachLocator, TerminalManager
+from gobby.terminals.host_protocol import frames_socket_path
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -57,6 +59,25 @@ def _sessions() -> _StubSessions:
     sessions = _StubSessions(TmuxConfig(history_limit=10000))
     sessions.is_available = MagicMock(return_value=True)
     return sessions
+
+
+@pytest.mark.asyncio
+async def test_attach_locator_uses_live_host_identity(tmp_path: Path) -> None:
+    host = SimpleNamespace(host_epoch="epoch-1", socket_dir=tmp_path)
+    runtime = TmuxTerminalRuntime(_sessions(), host_control=host)
+    terminal = make_memory_terminal()
+
+    first = await runtime.attach_locator(terminal)
+
+    assert first.frame_host_epoch == "epoch-1"
+    assert first.host_socket == str(frames_socket_path(tmp_path))
+    assert first.is_valid_for_direct("tmux") is True
+
+    host.host_epoch = "epoch-2"
+    second = await runtime.attach_locator(terminal)
+
+    assert second.frame_host_epoch == "epoch-2"
+    assert second.is_valid_for_direct("tmux") is True
 
 
 @pytest.mark.asyncio

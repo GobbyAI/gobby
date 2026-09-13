@@ -373,7 +373,12 @@ def reserve_tmux_socket() -> Path:
     return socket_path
 
 
-def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
+def _seed_e2e_runtime_state(
+    postgres_db: Any,
+    project_dir: Path,
+    *,
+    terminal_host_socket_dir: Path | None = None,
+) -> Path:
     """Seed PostgreSQL-owned runtime config and the synthetic E2E project.
 
     Returns the daemon's private tmux socket path. Without ``tmux.socket_path``
@@ -386,18 +391,19 @@ def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
 
     tmux_socket = reserve_tmux_socket()
     mutations = ConfigMutations(postgres_db)
+    values: dict[str, object] = {
+        "test_mode": True,
+        "tmux.socket_path": str(tmux_socket),
+        "memory.dream.enabled": False,
+        "gobby-tasks.expansion.enabled": False,
+        "gobby-tasks.validation.enabled": False,
+        "code_index.enabled": False,
+    }
+    if terminal_host_socket_dir is not None:
+        values["terminal_host.socket_dir"] = str(terminal_host_socket_dir)
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
-        patch=ConfigPatch(
-            values={
-                "test_mode": True,
-                "tmux.socket_path": str(tmux_socket),
-                "memory.dream.enabled": False,
-                "gobby-tasks.expansion.enabled": False,
-                "gobby-tasks.validation.enabled": False,
-                "code_index.enabled": False,
-            }
-        ),
+        patch=ConfigPatch(values=values),
         source="e2e-fixture",
     )
     project_id = "00000000-0000-0000-0000-000000000e2e"
@@ -679,7 +685,12 @@ def e2e_config(
 
     # Runtime configuration is PostgreSQL-owned. The legacy config.yaml below
     # remains input coverage for bootstrap-path resolution only.
-    tmux_socket = _seed_e2e_runtime_state(postgres_db, e2e_project_dir)
+    terminal_host_socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
+    tmux_socket = _seed_e2e_runtime_state(
+        postgres_db,
+        e2e_project_dir,
+        terminal_host_socket_dir=terminal_host_socket_dir,
+    )
 
     config_content = f"""
 daemon_port: {http_port}
@@ -742,6 +753,7 @@ files_home: {files_home}
     yield config_path, http_port, ws_port
 
     kill_tmux_server(tmux_socket)
+    shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
@@ -1626,6 +1638,7 @@ def _production_daemon_running() -> bool:
 # Known daemon artifacts that the production daemon may create/touch
 _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
+    "ask/",
     "cache/transcript-indexes/",
     "gcode-runtime/",
     "grants/",
