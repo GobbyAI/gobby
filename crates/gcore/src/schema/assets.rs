@@ -114,6 +114,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/433_flatten_gcode_read_policy_disjunction.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 434,
+        filename: "434_canonical_task_config_keys.sql",
+        checksum: "d170cbbb75ea311a8f768fb53dffec0b72e8ba71b9b6e88da251b2911f5e0170",
+        sql: include_str!("../../assets/schema/migrations/434_canonical_task_config_keys.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

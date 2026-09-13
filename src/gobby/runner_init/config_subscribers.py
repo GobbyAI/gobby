@@ -195,7 +195,7 @@ _STATEFUL_ROUTES: Mapping[str, _ConsumerRoute] = {
 
 _PREFIX_ROUTES: tuple[tuple[str, _ConsumerRoute], ...] = (
     (
-        "gobby_tasks.validation.",
+        "gobby-tasks.validation.",
         _route(
             "TaskValidator",
             "runner_init.services._build_task_validator",
@@ -224,7 +224,7 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "cron": _route("cron scheduler", "iteration ConfigRuntime.capture"),
     "daemon_health_check_interval": _route("health loop", "iteration ConfigRuntime.capture"),
     "digest": _route("memory digest", "operation ConfigRuntime.capture"),
-    "gobby_tasks": _route("task tools and validation", "operation ConfigRuntime.capture"),
+    "gobby-tasks": _route("task tools and validation", "operation ConfigRuntime.capture"),
     "hook_extensions": _route("hook extension resolution", "operation ConfigRuntime.capture"),
     "hooks": _route("hook execution", "operation ConfigRuntime.capture"),
     "import_mcp_server": _route("MCP import", "request ConfigRuntime.capture"),

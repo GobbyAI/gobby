@@ -632,6 +632,8 @@ _MAPPING_PATTERNS = MappingProxyType(
 
 
 def _canonical_key(source_path: str) -> str:
+    if source_path.startswith("gobby_tasks."):
+        return "gobby-tasks." + source_path.removeprefix("gobby_tasks.")
     if source_path == RUNTIME_EMBEDDINGS_CONFIG_PREFIX:
         return AI_EMBEDDINGS_CONFIG_PREFIX
     if source_path.startswith(f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}."):
@@ -663,7 +665,7 @@ def _pattern_from_mapping(leaf: _Leaf, pattern: str) -> ConfigPatternSpec:
     arguments = get_args(leaf.annotation)
     value_annotation = arguments[1] if len(arguments) == 2 else object
     return ConfigPatternSpec(
-        pattern=pattern,
+        pattern=_canonical_key(pattern),
         annotation=value_annotation,
         default=leaf.default,
         source_path=leaf.source_path,

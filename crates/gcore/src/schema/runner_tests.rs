@@ -1143,6 +1143,51 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
 }
 
 #[test]
+fn task_config_alias_upgrade_preserves_overrides_and_stamps_receipt() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    // Reconstruct the pre-434 state using the real schema and migration runner.
+    client.batch_execute(
+        "DELETE FROM schema_migrations WHERE version = 434; \
+         UPDATE config_state SET revision = 7 WHERE id; \
+         INSERT INTO config_store(key, value, source, revision) \
+         VALUES ('gobby_tasks.validation.max_iterations', '7', 'user', 7);",
+    )?;
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let row = client.query_one(
+        "SELECT key, value, source, revision FROM config_store \
+         WHERE key IN ('gobby_tasks.validation.max_iterations', \
+                       'gobby-tasks.validation.max_iterations')",
+        &[],
+    )?;
+    assert_eq!(
+        row.get::<_, String>(0),
+        "gobby-tasks.validation.max_iterations"
+    );
+    assert_eq!(row.get::<_, String>(1), "7");
+    assert_eq!(row.get::<_, String>(2), "user");
+    assert_eq!(row.get::<_, i64>(3), 8);
+    let migration = MIGRATIONS
+        .iter()
+        .find(|candidate| candidate.version == 434)
+        .expect("migration 434 must stay registered");
+    assert_eq!(migration_receipt_count(&mut client, migration)?, 1);
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let revision: i64 = client
+        .query_one("SELECT revision FROM config_state WHERE id", &[])?
+        .get(0);
+    assert_eq!(revision, 8);
+    Ok(())
+}
+
+#[test]
 fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

@@ -76,6 +76,8 @@ def _flatten_mapping(value: Mapping[str, object], prefix: str = "") -> set[str]:
 
 
 def _canonical_key(source_path: str) -> str:
+    if source_path.startswith("gobby_tasks."):
+        return "gobby-tasks." + source_path.removeprefix("gobby_tasks.")
     if source_path == "embeddings":
         return "ai.embeddings"
     if source_path.startswith("embeddings."):
@@ -117,8 +119,8 @@ def test_mapping_patterns_are_complete() -> None:
         "ai.generation.endpoints.{endpoint}.{field}",
         "ai.generation.profile_defaults.{profile}",
         "mcp_client_proxy.tool_timeouts.{tool}",
-        "gobby_tasks.expansion.pattern_criteria.patterns.{pattern}",
-        "gobby_tasks.expansion.pattern_criteria.detection_keywords.{pattern}",
+        "gobby-tasks.expansion.pattern_criteria.patterns.{pattern}",
+        "gobby-tasks.expansion.pattern_criteria.detection_keywords.{pattern}",
         "verification_defaults.custom.{command}",
         "skills.hubs.{hub}.{field}",
         "context_window_overrides.{model_match}",
