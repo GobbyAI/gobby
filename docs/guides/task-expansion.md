@@ -251,7 +251,7 @@ a dev-only run without creating child tasks.
 Plan-backed expansion consumes the Plan-Coverage Contract, not the older
 free-form `## Phase 1` / `### 1.1` outline style. The full contract is
 `docs/contracts/plan-coverage.md`; the authoring surface is
-`src/gobby/install/shared/skills/plan-draft/SKILL.md`.
+`src/gobby/install/shared/skills/gobby/references/plan/drafting.md`.
 
 Interactive enhancement and adversarial review are optional and each requires
 approval; selected enhancement is capped at one round unless changed. The
@@ -502,8 +502,8 @@ Use:
 | `src/gobby/mcp_proxy/tools/tasks/_expansion.py` | Expansion MCP tools and run lifecycle |
 | `src/gobby/install/shared/prompts/expansion/user.md` | Expansion prompt (DB-synced as `expansion/user`) |
 | `src/gobby/install/shared/prompts/expansion/system.md` | Expansion system prompt incl. TDD mode (DB-synced as `expansion/system`) |
-| `src/gobby/install/shared/skills/expand/SKILL.md` | `/gobby expand` skill |
-| `src/gobby/install/shared/skills/plan-draft/SKILL.md` | Typed plan authoring skill |
+| `src/gobby/install/shared/skills/gobby/references/plan/expansion.md` | Plan expansion reference |
+| `src/gobby/install/shared/skills/gobby/references/plan/drafting.md` | Typed plan authoring reference |
 | `docs/contracts/plan-coverage.md` | Plan-Coverage Contract reference |
 
 ## See Also

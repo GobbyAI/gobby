@@ -2,7 +2,7 @@ tags: [plan-mode, state-tracking, gobby, default]
 
 rules:
   handle-plan-mode-entry:
-    description: "Request the plan skill once per interactive Plan Mode period"
+    description: "Request the plan reference once per interactive Plan Mode period"
     event: turn_start
     enabled: true
     priority: 10
@@ -11,7 +11,7 @@ rules:
     effects:
       - type: load_skill
         delivery: on_receipt
-        skill: plan
+        skill: gobby:references/plan/overview.md
       - type: set_variable
         delivery: on_receipt
         variable: plan_skill_directive_delivered

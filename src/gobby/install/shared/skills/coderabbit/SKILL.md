@@ -47,7 +47,7 @@ send the provider's native Gobby plan command:
 - Unsupported or unknown provider: stop with a blocker instead of guessing.
 
 After sending keys, verify that the target session is actually in native Plan
-Mode before triage. Loading the `plan` skill or composing a plan in normal chat
+Mode before triage. Loading the plan reference or composing a plan in normal chat
 does not satisfy this gate.
 
 Plan Mode triage is read-only: ingest supplied findings and

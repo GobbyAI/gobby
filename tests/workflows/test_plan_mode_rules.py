@@ -150,7 +150,7 @@ class TestHandlePlanModeEntry:
         effects = body.resolved_effects
         assert len(effects) == 2
         assert effects[0].type == "load_skill"
-        assert effects[0].skill == "plan"
+        assert effects[0].skill == "gobby:references/plan/overview.md"
         assert effects[0].delivery == "on_receipt"
         assert effects[1].type == "set_variable"
         assert effects[1].variable == "plan_skill_directive_delivered"
@@ -175,8 +175,10 @@ class TestHandlePlanModeEntry:
         second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert first.context is not None
-        assert skill_fetch_directive("plan") in first.context
-        assert second.context is None or (skill_fetch_directive("plan") not in second.context)
+        assert skill_fetch_directive("gobby:references/plan/overview.md") in first.context
+        assert second.context is None or (
+            skill_fetch_directive("gobby:references/plan/overview.md") not in second.context
+        )
         assert variables["plan_skill_directive_delivered"] is True
 
     @pytest.mark.asyncio
@@ -225,7 +227,7 @@ class TestHandlePlanModeEntry:
 
         variables = SessionVariableManager(db).get_variables(SESSION_ID)
         assert response.context is not None
-        assert skill_fetch_directive("plan") in response.context
+        assert skill_fetch_directive("gobby:references/plan/overview.md") in response.context
         assert variables["plan_mode"] is True
         assert variables["plan_skill_directive_delivered"] is True
         assert variables.get("plan_skill_loaded") is not True
@@ -250,7 +252,7 @@ class TestHandlePlanModeEntry:
         with worker_staging_scope():
             reentry = await handler._evaluate_rules(event)
         assert reentry.context is not None
-        assert skill_fetch_directive("plan") in reentry.context
+        assert skill_fetch_directive("gobby:references/plan/overview.md") in reentry.context
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_type", ["developer", "planner", "qa-reviewer"])
@@ -276,7 +278,9 @@ class TestHandlePlanModeEntry:
             variables=variables,
         )
 
-        assert response.context is None or (skill_fetch_directive("plan") not in response.context)
+        assert response.context is None or (
+            skill_fetch_directive("gobby:references/plan/overview.md") not in response.context
+        )
         assert "plan_skill_directive_delivered" not in variables
 
 

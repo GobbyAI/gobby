@@ -169,7 +169,7 @@ async def test_managed_web_plan_delivery_periods(
 
     def contains_directive(prompt: str) -> bool:
         # ACP serializes text blocks; the other transports carry a plain text field.
-        directive = skill_fetch_directive("plan")
+        directive = skill_fetch_directive("gobby:references/plan/overview.md")
         return directive in prompt or json.dumps(directive, ensure_ascii=False)[1:-1] in prompt
 
     session.set_chat_mode("normal")
@@ -229,12 +229,16 @@ async def test_claude_web_directive_ack_requires_serialized_hook_output(
     assert variables.get_variables(SESSION_ID).get("plan_skill_directive_delivered") is not True
     output = await prompt_hook(prompt_input, None, context)
     serialized = json.loads(json.dumps(output))
-    assert skill_fetch_directive("plan") in serialized["hookSpecificOutput"]["additionalContext"]
+    assert (
+        skill_fetch_directive("gobby:references/plan/overview.md")
+        in serialized["hookSpecificOutput"]["additionalContext"]
+    )
     assert variables.get_variables(SESSION_ID)["plan_skill_directive_delivered"] is True
     output = await prompt_hook(prompt_input, None, context)
     serialized = json.loads(json.dumps(output))
     assert (
-        skill_fetch_directive("plan") not in serialized["hookSpecificOutput"]["additionalContext"]
+        skill_fetch_directive("gobby:references/plan/overview.md")
+        not in serialized["hookSpecificOutput"]["additionalContext"]
     )
 
 

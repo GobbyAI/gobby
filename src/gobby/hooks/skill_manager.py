@@ -86,7 +86,7 @@ class HookSkillManager:
         skills = manager.discover_core_skills()
 
         # Get a specific skill
-        tasks_skill = manager.get_skill_by_name("tasks")
+        restraint_skill = manager.get_skill_by_name("restraint")
         ```
     """
 
@@ -408,15 +408,19 @@ class HookSkillManager:
         Returns:
             List of skill names that are relevant for the category
         """
-        # Category to skill mappings
+        # Category to exact Gobby reference identities
+        tasks = "gobby:references/tasks/overview.md"
+        plan = "gobby:references/plan/overview.md"
+        expansion = "gobby:references/plan/expansion.md"
+        source_control = "gobby:references/source-control/overview.md"
         category_skills: dict[str, list[str]] = {
-            "code": ["tasks", "expand", "source-control"],
-            "test": ["tasks", "expand"],
-            "docs": ["tasks", "plan"],
-            "config": ["tasks", "mcp-servers"],
-            "refactor": ["tasks", "expand", "source-control"],
-            "planning": ["tasks", "plan", "expand"],
-            "research": ["tasks", "memory"],
+            "code": [tasks, expansion, source_control],
+            "test": [tasks, expansion],
+            "docs": [tasks, plan],
+            "config": [tasks, "gobby:references/mcp-servers/overview.md"],
+            "refactor": [tasks, expansion, source_control],
+            "planning": [tasks, plan, expansion],
+            "research": [tasks, "gobby:references/memory/overview.md"],
         }
 
         # Get skills for the category (or empty list if no match)

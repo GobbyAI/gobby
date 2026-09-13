@@ -83,8 +83,7 @@ def validate_plan_file(
                 "use canonical IDs matching ^P\\d+$ (e.g. `## P1: Setup`). "
                 "Headings like `## Phase 1: Setup` or `## 1: Setup` are silently "
                 "dropped by the parser and cannot anchor expansion. See "
-                "src/gobby/install/shared/skills/plan-draft/SKILL.md "
-                "§ 'Phase Heading Syntax'."
+                "gobby:references/plan/coverage.md."
             ],
             "warnings": warnings,
             "symbol_validation": skipped_symbols,

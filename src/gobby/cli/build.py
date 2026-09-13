@@ -123,7 +123,10 @@ def _project_repo_path(project_id: str) -> Path:
 
 def invoke_build_skill() -> None:
     """Invoke the interactive build skill path."""
-    click.echo("No build input provided. Invoke the build skill from your active Gobby session.")
+    click.echo(
+        "No build input provided. Run `/gobby build` (Codex: `$gobby build`) "
+        "from your active Gobby session."
+    )
 
 
 def _require_database() -> HubDatabase:

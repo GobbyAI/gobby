@@ -50,15 +50,15 @@ class TestHookSkillManager:
         skill_names = [s.name for s in skills]
         assert len(skill_names) > 0  # At least some skills exist
 
-    def test_discover_core_skills_finds_memory_skill(self) -> None:
-        """Test that discover_core_skills finds the memory skill."""
+    def test_discover_core_skills_finds_router_skill(self) -> None:
+        """Test that discover_core_skills finds the gobby router skill."""
         from gobby.hooks.skill_manager import HookSkillManager
 
         manager = HookSkillManager()
         skills = manager.discover_core_skills()
 
         skill_names = [s.name for s in skills]
-        assert "memory" in skill_names
+        assert "gobby" in skill_names
 
     def test_discovered_skills_have_name_and_content(self) -> None:
         """Test that discovered skills have name and content attributes."""
@@ -81,10 +81,10 @@ class TestHookSkillManager:
         from gobby.hooks.skill_manager import HookSkillManager
 
         manager = HookSkillManager()
-        skill = manager.get_skill_by_name("source-control")
+        skill = manager.get_skill_by_name("restraint")
 
         assert skill is not None
-        assert skill.name == "source-control"
+        assert skill.name == "restraint"
 
     def test_get_skill_by_name_not_found(self) -> None:
         """Test getting a non-existent skill returns None."""
@@ -111,7 +111,8 @@ class TestHookSkillManager:
         manager = HookSkillManager()
         result = manager.recommend_skills(category="code")
 
-        assert "tasks" in result
+        assert "gobby:references/tasks/overview.md" in result
+        assert "gobby:references/source-control/overview.md" in result
 
     def test_recommend_skills_for_docs_category(self) -> None:
         """Test that recommend_skills returns docs-related skills."""
@@ -120,18 +121,26 @@ class TestHookSkillManager:
         manager = HookSkillManager()
         result = manager.recommend_skills(category="docs")
 
-        assert "tasks" in result
-        assert "plan" in result
+        assert "gobby:references/tasks/overview.md" in result
+        assert "gobby:references/plan/overview.md" in result
 
     @pytest.mark.parametrize(
         "category", ["code", "test", "docs", "config", "refactor", "planning", "research"]
     )
     def test_recommendations_resolve_to_bundled_skills(self, category: str) -> None:
         from gobby.hooks.skill_manager import HookSkillManager
+        from gobby.skills.capability_catalog import load_capability_catalog
 
         manager = HookSkillManager()
         available = {skill.name for skill in manager.discover_core_skills()}
-        assert set(manager.recommend_skills(category=category)) <= available
+        available.update(
+            f"gobby:{path}"
+            for capability in load_capability_catalog().capabilities
+            for path in (capability.overview, *(topic.path for topic in capability.topics))
+        )
+        recommended = manager.recommend_skills(category=category)
+        assert any(name.startswith("gobby:references/") for name in recommended)
+        assert set(recommended) <= available
 
     def test_recommend_skills_unknown_category_returns_always_apply(self) -> None:
         """Test that recommend_skills returns alwaysApply skills for unknown category."""

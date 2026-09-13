@@ -153,7 +153,8 @@ class TestBuildGobbyInstructions:
         assert "switch lanes" in prompt_section
         assert "Do not paraphrase" in prompt_section
         assert (
-            "Direct `gcode` calls do not require loading the `code-index` skill" in prompt_section
+            "Direct `gcode` calls do not require loading `gobby:references/code-index/overview.md`"
+            in prompt_section
         )
 
 

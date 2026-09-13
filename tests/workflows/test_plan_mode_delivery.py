@@ -89,7 +89,7 @@ async def test_native_prompt_delivery_periods(
         session_manager=cast(SessionManager, SimpleNamespace(get=lambda _: session)),
     )
     adapter = adapter_type()
-    directive = skill_fetch_directive("plan")
+    directive = skill_fetch_directive("gobby:references/plan/overview.md")
 
     def native_event(mode: str) -> HookEvent:
         session.chat_mode = "normal" if mode == "default" else mode

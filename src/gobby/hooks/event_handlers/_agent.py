@@ -297,7 +297,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         """Intercept /gobby or $gobby skill commands.
 
         Returns context string to add, or None if not a Gobby router command.
-        Supports space syntax (/gobby expand, $gobby expand) and legacy slash-router
+        Supports space syntax (/gobby plan, $gobby plan) and legacy slash-router
         colon syntax.
         """
         match = _GOBBY_CMD_PATTERN.match(prompt)

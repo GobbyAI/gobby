@@ -429,8 +429,8 @@ class TestSuggestNextTask:
         assert result["suggestion"] is not None
         assert "recommended_skills" in result
         assert isinstance(result["recommended_skills"], list)
-        # Code category should include gobby-tasks
-        assert "gobby-tasks" in result["recommended_skills"]
+        # Code category should include the tasks reference
+        assert "gobby:references/tasks/overview.md" in result["recommended_skills"]
 
     def test_suggest_next_task_no_skills_when_no_suggestion(self, mock_readiness_registry) -> None:
         """Test that recommended_skills is not included when no task is suggested."""

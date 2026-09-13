@@ -16,7 +16,7 @@ How to drive a browser well with the tools Gobby already ships. `playwright`
 and `chrome-devtools` are **templates**. Instantiate them before use
 (instance names default to the template name). Then reach the instance with
 progressive discovery (`list_tools("playwright")`,
-`list_tools("chrome-devtools")`). See the `mcp-servers` skill.
+`list_tools("chrome-devtools")`). See `gobby:references/mcp-servers/templates.md`.
 
 ## Tool Routing
 

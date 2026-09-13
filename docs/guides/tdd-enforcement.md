@@ -23,8 +23,9 @@ before the config change.
 
 ## Developer Skills
 
-All developer agents load `development-discipline` before implementation. That
-skill requires test judgment on every developer task and tells the agent to load
+All developer agents load `gobby:references/development/obligations.md` before
+implementation. That reference requires test judgment on every developer task and
+tells the agent to load
 `test-driven-development` when the task is marked `tdd:required`, requests the
 additional skill, or has validation criteria requiring TDD.
 
@@ -123,7 +124,7 @@ When auditing this guide, verify:
 - TDD validation criteria require red, green, refactor/final-green, exact
   command, and supported test-quality audit or unsupported-language fallback
   evidence.
-- Developer agents load `development-discipline`.
+- Developer agents load `gobby:references/development/obligations.md`.
 - QA and epic QA agent definitions mention TDD evidence and test-quality
   audit requirements.
 - Runtime rule paths still live under

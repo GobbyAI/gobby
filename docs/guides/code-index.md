@@ -359,7 +359,7 @@ invalidation returns HTTP `207`; inspect the body rather than treating every
 
 Gobby includes a `require-code-index-skill` rule in the shared code-index
 ruleset. When active, it blocks first-pass code navigation reads and searches
-until the agent loads the `code-index` skill. The loaded guidance points agents
+until the agent loads `gobby:references/code-index/overview.md`. The loaded guidance points agents
 to:
 
 ```bash
