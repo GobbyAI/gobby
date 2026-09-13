@@ -775,7 +775,9 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
         row = _pending(terminals, sample_project["id"])
         recorded = terminals.record_process(
             row.id,
-            {"pgid": leader, "start_time": start_time},
+            {"host_terminal_id": "ht-tree", "pgid": leader, "start_time": start_time},
+            attempt_generation=row.attempt_generation,
+            attempt_started_at=row.attempt_started_at,
         )
         assert recorded is not None
         live = terminals.promote_to_live(
@@ -835,7 +837,11 @@ async def test_prepare_commit_persists_before_commit(
     stored = terminals.get(row.id)
     assert stored is not None
     assert stored.state == "pending"
-    assert stored.process == {"pgid": 4242, "start_time": 12.5}
+    assert stored.process == {
+        "host_terminal_id": "ht-prep",
+        "pgid": 4242,
+        "start_time": 12.5,
+    }
     assert client.spawn_commits == [(row.id, row.spawn_key)]
 
     failing = _pending(terminals, sample_project["id"])

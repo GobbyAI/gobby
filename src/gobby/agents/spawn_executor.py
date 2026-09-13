@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 from gobby.agents.spawn_executor_providers import (
@@ -40,7 +41,8 @@ from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
-from gobby.terminals.native_runtime import classify_native_spawn_failure
+from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.native_runtime import HostEpochMismatch, classify_native_spawn_failure
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -57,6 +59,7 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
+_TIMEOUT_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
 
 __all__ = [
     "SpawnRequest",
@@ -130,16 +133,20 @@ async def _settle_native_spawn_failure(
     spawn_key: str,
     exc: BaseException,
     host_terminal_id: str | None = None,
+    host_epoch: str | None = None,
 ) -> tuple[str, str | None]:
     code, detail, settlement = classify_native_spawn_failure(exc)
     if settlement == "fail_pending_kill":
         pending = await asyncio.to_thread(manager.get, terminal_id)
-        await kill_spawn_key(
+        mismatch = await kill_spawn_key(
             runtime,
             spawn_key,
             pending=pending,
             host_terminal_id=host_terminal_id,
+            host_epoch=host_epoch,
         )
+        if mismatch is not None:
+            code, detail = "host_epoch_changed", str(mismatch)
     if settlement != "pending":
         await asyncio.to_thread(manager.fail_pending, terminal_id)
     return code, detail
@@ -374,7 +381,11 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 error="retry_terminal_not_pending",
                 terminal_id=existing.id,
             )
-        bumped = await asyncio.to_thread(manager.bump_attempt_generation, existing.id)
+        bumped = await asyncio.to_thread(
+            manager.retry_attempt_unsettled,
+            existing.id,
+            existing.attempt_generation,
+        )
         if bumped is None:
             return SpawnResult(
                 success=False,
@@ -389,7 +400,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
     else:
         terminal_id = mint_terminal_id()
         spawn_key = derive_spawn_key(backend, terminal_id)
-        await asyncio.to_thread(
+        bumped = await asyncio.to_thread(
             manager.create_pending,
             terminal_id,
             request.project_id,
@@ -401,6 +412,9 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             agent_run_id=plan.agent_run_id,
             title=plan.title,
         )
+
+    attempt_generation = bumped.attempt_generation
+    attempt_started_at = bumped.attempt_started_at
 
     if request.cancel_event is not None and request.cancel_event.is_set():
         await asyncio.to_thread(manager.fail_pending, terminal_id)
@@ -464,10 +478,16 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         else:
             prepared = await asyncio.shield(prepare_task)
     except TimeoutError:
-        pending = await asyncio.to_thread(manager.get, terminal_id)
-        await kill_spawn_key(runtime, spawn_key, pending=pending)
-        if backend == "native":
-            await asyncio.to_thread(manager.fail_pending, terminal_id)
+        _schedule_timeout_cleanup(
+            prepare_task,
+            manager=manager,
+            runtime=runtime,
+            backend=backend,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            attempt_generation=attempt_generation,
+            attempt_started_at=attempt_started_at,
+        )
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -501,7 +521,15 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 exc=exc,
             )
         else:
-            await asyncio.to_thread(manager.fail_pending, terminal_id)
+            if request.retry_terminal_id and _tmux_duplicate_session_error(exc):
+                pending = await asyncio.to_thread(manager.get, terminal_id)
+                await kill_spawn_key(runtime, spawn_key, pending=pending)
+            await asyncio.to_thread(
+                manager.fail_pending_attempt,
+                terminal_id,
+                attempt_generation=attempt_generation,
+                attempt_started_at=attempt_started_at,
+            )
             code, detail = str(exc), None
         return SpawnResult(
             success=False,
@@ -550,6 +578,8 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         spawn_key=spawn_key,
         prepared=prepared,
         reservation_id=spawn_request.reservation_id,
+        attempt_generation=attempt_generation,
+        attempt_started_at=attempt_started_at,
     )
 
 
@@ -564,12 +594,21 @@ async def _promote_prepared(
     spawn_key: str,
     prepared: RuntimePreparedSpawn,
     reservation_id: str | None = None,
+    attempt_generation: int,
+    attempt_started_at: datetime,
 ) -> SpawnResult:
-    if prepared.process is not None:
+    if backend == "native" and prepared.host_terminal_id is not None:
+        process_record: dict[str, object] = {"host_terminal_id": prepared.host_terminal_id}
+        if prepared.process is not None:
+            process_record.update(
+                {"pgid": prepared.process.pgid, "start_time": prepared.process.start_time}
+            )
         await asyncio.to_thread(
             manager.record_process,
             terminal_id,
-            {"pgid": prepared.process.pgid, "start_time": prepared.process.start_time},
+            process_record,
+            attempt_generation=attempt_generation,
+            attempt_started_at=attempt_started_at,
         )
     stored = prepared.stored_locator or {}
     locator_key = prepared.locator_key or ""
@@ -588,6 +627,7 @@ async def _promote_prepared(
                 spawn_key,
                 pending=pending,
                 host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
             await asyncio.to_thread(manager.fail_pending, terminal_id)
             code, detail, _settlement = classify_native_spawn_failure(exc)
@@ -611,6 +651,7 @@ async def _promote_prepared(
                 spawn_key=spawn_key,
                 exc=exc,
                 host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
         raise
     except CommitSpawnRefusedError as exc:
@@ -622,6 +663,7 @@ async def _promote_prepared(
                 spawn_key=spawn_key,
                 exc=exc,
                 host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
         else:
             await asyncio.to_thread(manager.fail_pending, terminal_id)
@@ -645,6 +687,7 @@ async def _promote_prepared(
             spawn_key=spawn_key,
             exc=exc,
             host_terminal_id=prepared.host_terminal_id,
+            host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
         )
         return SpawnResult(
             success=False,
@@ -656,8 +699,8 @@ async def _promote_prepared(
             terminal_id=terminal_id,
         )
 
-    promoted = await asyncio.to_thread(
-        manager.promote_to_live,
+    promoted = await settle_promotion(
+        manager,
         terminal_id,
         locator=stored,
         locator_key=locator_key,
@@ -670,7 +713,13 @@ async def _promote_prepared(
         if _same_live_identity(current, backend, locator_key):
             promoted = current
         else:
-            await kill_spawn_key(runtime, spawn_key, pending=current)
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=current,
+                host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+            )
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -710,6 +759,127 @@ async def _promote_prepared(
         locator=handle.locator,
         message=f"{plan.auth_cli} agent spawned with session {plan.child_session_id}",
     )
+
+
+async def settle_promotion(
+    manager: TerminalManager,
+    terminal_id: str,
+    *,
+    locator: Mapping[str, object],
+    locator_key: str,
+    host_epoch: str | None = None,
+    session_name: str | None = None,
+    window_id: str | None = None,
+    title: str | None = None,
+) -> Terminal | None:
+    """Serialize promotion with exit settlement for one durable row."""
+    async with manager.settle_lock(terminal_id):
+        return await asyncio.to_thread(
+            manager.promote_to_live,
+            terminal_id,
+            locator=locator,
+            locator_key=locator_key,
+            host_epoch=host_epoch,
+            session_name=session_name,
+            window_id=window_id,
+            title=title,
+        )
+
+
+def _tmux_duplicate_session_error(exc: BaseException) -> bool:
+    message = str(exc).casefold()
+    return "duplicate" in message or "already exists" in message
+
+
+async def _cleanup_timed_out_prepare(
+    prepare_task: asyncio.Task[RuntimePreparedSpawn],
+    *,
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    backend: str,
+    terminal_id: str,
+    spawn_key: str,
+    attempt_generation: int,
+    attempt_started_at: datetime,
+) -> None:
+    try:
+        prepared = prepare_task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        if backend == "tmux" and _tmux_duplicate_session_error(exc):
+            pending = await asyncio.to_thread(manager.get, terminal_id)
+            await kill_spawn_key(runtime, spawn_key, pending=pending)
+        await asyncio.to_thread(
+            manager.fail_pending_attempt,
+            terminal_id,
+            attempt_generation=attempt_generation,
+            attempt_started_at=attempt_started_at,
+        )
+        return
+
+    if backend == "native":
+        host_terminal_id = prepared.host_terminal_id
+        if host_terminal_id is not None:
+            try:
+                await kill_spawn_key(
+                    runtime,
+                    spawn_key,
+                    pending=None,
+                    host_terminal_id=host_terminal_id,
+                    host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+                )
+            except HostUnavailableError:
+                return
+    else:
+        pending = await asyncio.to_thread(manager.get, terminal_id)
+        await kill_spawn_key(runtime, spawn_key, pending=pending)
+    await asyncio.to_thread(
+        manager.fail_pending_attempt,
+        terminal_id,
+        attempt_generation=attempt_generation,
+        attempt_started_at=attempt_started_at,
+    )
+
+
+def _schedule_timeout_cleanup(
+    prepare_task: asyncio.Task[RuntimePreparedSpawn],
+    *,
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    backend: str,
+    terminal_id: str,
+    spawn_key: str,
+    attempt_generation: int,
+    attempt_started_at: datetime,
+) -> None:
+    def schedule(completed: asyncio.Task[RuntimePreparedSpawn]) -> None:
+        task = asyncio.create_task(
+            _cleanup_timed_out_prepare(
+                completed,
+                manager=manager,
+                runtime=runtime,
+                backend=backend,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                attempt_generation=attempt_generation,
+                attempt_started_at=attempt_started_at,
+            )
+        )
+        _TIMEOUT_CLEANUP_TASKS.add(task)
+        task.add_done_callback(_finish_timeout_cleanup)
+
+    prepare_task.add_done_callback(schedule)
+
+
+def _finish_timeout_cleanup(task: asyncio.Task[None]) -> None:
+    _TIMEOUT_CLEANUP_TASKS.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.warning("Timed-out terminal cleanup failed", exc_info=True)
 
 
 def _same_live_identity(
@@ -753,7 +923,17 @@ async def kill_spawn_key(
     *,
     pending: Terminal | None,
     host_terminal_id: str | None = None,
-) -> None:
+    host_epoch: str | None = None,
+) -> HostEpochMismatch | None:
+    if runtime.backend == "native" and host_terminal_id is not None:
+        terminate_host_id = getattr(runtime, "terminate_host_id", None)
+        if not callable(terminate_host_id):
+            raise RuntimeError("native runtime does not support terminate_host_id")
+        terminate = cast(
+            Callable[[str, str | None], Awaitable[HostEpochMismatch | None]],
+            terminate_host_id,
+        )
+        return await terminate(host_terminal_id, host_epoch)
     terminal = _terminal_for_spawn_key(runtime.backend, spawn_key, pending)
     if host_terminal_id:
         terminal.locator = {**(terminal.locator or {}), "host_terminal_id": host_terminal_id}
@@ -761,11 +941,12 @@ async def kill_spawn_key(
         await runtime.terminate(terminal, 1.0)
     except Exception:
         logger.debug("spawn_key terminate failed for %s", spawn_key, exc_info=True)
+    return None
 
 
 async def reap_stale_pending_terminals(
     manager: TerminalManager,
-    runtime: TerminalRuntime,
+    runtime_registry: TerminalRuntimeRegistry,
     *,
     in_doubt_seconds: float,
     now: datetime | None = None,
@@ -778,12 +959,31 @@ async def reap_stale_pending_terminals(
     del now
     reaped: list[str] = []
     for row in manager.list_stale_pending(in_doubt_seconds):
-        if row.spawn_key:
+        runtime = runtime_registry.resolve(row.backend)
+        if row.backend == "native":
+            process = row.process or {}
+            host_terminal_id = process.get("host_terminal_id")
+            if not isinstance(host_terminal_id, str) or not host_terminal_id:
+                result = manager.fail_pending_attempt(
+                    row.id,
+                    attempt_generation=row.attempt_generation,
+                    attempt_started_at=row.attempt_started_at,
+                )
+                if result is not None:
+                    reaped.append(row.id)
+                continue
             try:
-                if await runtime.is_live(row):
-                    continue
-            except Exception:
-                logger.debug("is_live failed during reap of %s", row.id, exc_info=True)
+                await kill_spawn_key(
+                    runtime,
+                    row.spawn_key or row.id,
+                    pending=row,
+                    host_terminal_id=host_terminal_id,
+                    host_epoch=row.host_epoch,
+                )
+            except HostUnavailableError:
+                continue
+        elif row.spawn_key:
+            await kill_spawn_key(runtime, row.spawn_key, pending=row)
         result = manager.fail_pending_attempt(
             row.id,
             attempt_generation=row.attempt_generation,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import uuid
@@ -883,8 +884,13 @@ def test_attempt_generation_and_native_process_metadata(
     pending = _create_pending(manager, sample_project["id"], backend="native")
     assert pending.attempt_generation == 1
     assert pending.attempt_started_at is not None
-    process = {"pgid": 4242, "start_time": 1_700_000_000}
-    manager.record_process(pending.id, process)
+    process = {"host_terminal_id": "ht-process", "pgid": 4242, "start_time": 1_700_000_000}
+    manager.record_process(
+        pending.id,
+        process,
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
     host_terminal_id = str(uuid.uuid4())
     epoch = str(uuid.uuid4())
     live = manager.promote_to_live(
@@ -942,3 +948,148 @@ def test_cas_stale_transitions_affect_zero_rows(
         manager.promote_to_live(pending.id, locator=locator, locator_key=_tmux_key(locator)) is None
     )
     assert manager.fail_pending(pending.id) is None
+
+
+def test_settle_exit_is_guarded_cas(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="native")
+    process = {"host_terminal_id": "ht-pending", "pgid": 101, "start_time": 201}
+    recorded = manager.record_process(
+        pending.id,
+        process,
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    assert recorded is not None
+    assert manager.settle_exit(pending.id, "ht-other") is None
+    still_pending = manager.get(pending.id)
+    assert still_pending is not None
+    assert still_pending.state == "pending"
+    exited = manager.settle_exit(pending.id, "ht-pending")
+    assert exited is not None
+    assert exited.state == "exited"
+
+    live_pending = _create_pending(manager, sample_project["id"], backend="native")
+    manager.record_process(
+        live_pending.id,
+        {"host_terminal_id": "ht-live"},
+        attempt_generation=live_pending.attempt_generation,
+        attempt_started_at=live_pending.attempt_started_at,
+    )
+    live = manager.promote_to_live(
+        live_pending.id,
+        locator={"host_terminal_id": "ht-live"},
+        locator_key=native_locator_key("epoch-live", "ht-live"),
+        host_epoch="epoch-live",
+    )
+    assert live is not None
+    assert manager.settle_exit(live.id, "ht-wrong") is None
+    live_exited = manager.settle_exit(live.id, "ht-live")
+    assert live_exited is not None
+    assert live_exited.state == "exited"
+
+
+@pytest.mark.asyncio
+async def test_settle_lock_serializes_promotion_and_exit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.agents.spawn_executor import settle_promotion
+
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="native")
+    manager.record_process(
+        pending.id,
+        {"host_terminal_id": "ht-race", "pgid": 102, "start_time": 202},
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+
+    async def settle_exit() -> Terminal | None:
+        async with manager.settle_lock(pending.id):
+            return await asyncio.to_thread(manager.settle_exit, pending.id, "ht-race")
+
+    promoted, exited = await asyncio.gather(
+        settle_promotion(
+            manager,
+            pending.id,
+            locator={"host_terminal_id": "ht-race"},
+            locator_key=native_locator_key("epoch-race", "ht-race"),
+            host_epoch="epoch-race",
+        ),
+        settle_exit(),
+    )
+    assert promoted is not None or exited is not None
+    settled = manager.get(pending.id)
+    assert settled is not None
+    assert settled.state == "exited"
+
+
+def test_record_process_is_attempt_cas_merge(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="native")
+    with pytest.raises(ValueError):
+        manager.record_process(
+            pending.id,
+            {"pgid": 103, "start_time": 203},
+            attempt_generation=pending.attempt_generation,
+            attempt_started_at=pending.attempt_started_at,
+        )
+
+    recorded = manager.record_process(
+        pending.id,
+        {"host_terminal_id": "ht-cas", "reservation_id": "rsv"},
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    assert recorded is not None
+    assert recorded.process == {"host_terminal_id": "ht-cas", "reservation_id": "rsv"}
+
+    stale_generation = pending.attempt_generation
+    stale_started_at = pending.attempt_started_at
+    bumped = manager.bump_attempt_generation(pending.id)
+    assert bumped is not None
+    assert (
+        manager.record_process(
+            pending.id,
+            {"host_terminal_id": "ht-stale"},
+            attempt_generation=stale_generation,
+            attempt_started_at=stale_started_at,
+        )
+        is None
+    )
+    merged = manager.merge_process_reap_record(pending.id, pgid=104, start_time=204)
+    assert merged is not None
+    assert merged.process == {"reservation_id": "rsv", "pgid": 104, "start_time": 204}
+
+
+def test_bump_attempt_drops_host_id_and_retry_refuses_settled(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="native")
+    recorded = manager.record_process(
+        pending.id,
+        {"host_terminal_id": "ht-settled", "pgid": 105},
+        attempt_generation=pending.attempt_generation,
+        attempt_started_at=pending.attempt_started_at,
+    )
+    assert recorded is not None
+    assert manager.retry_attempt_unsettled(pending.id, pending.attempt_generation) is None
+
+    bumped = manager.bump_attempt_generation(pending.id)
+    assert bumped is not None
+    assert bumped.process == {"pgid": 105}
+
+    fresh = _create_pending(manager, sample_project["id"], backend="native")
+    fresh_generation = fresh.attempt_generation
+    retried = manager.retry_attempt_unsettled(fresh.id, fresh_generation)
+    assert retried is not None
+    assert retried.attempt_generation == fresh_generation + 1

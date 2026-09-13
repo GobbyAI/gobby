@@ -13,6 +13,15 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.terminal_settlement import (
+    ALLOWED_EDGES as ALLOWED_EDGES,
+)
+from gobby.storage.terminal_settlement import (
+    IllegalTerminalTransitionError as IllegalTerminalTransitionError,
+)
+from gobby.storage.terminal_settlement import (
+    TerminalSettlementMixin,
+)
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 from gobby.utils.machine_id import require_machine_id
 
@@ -22,19 +31,6 @@ UNRESOLVED_WRITE_MAX_ENTRIES = 32
 UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
 FRAMES_SOCKET_NAME = "gterm-frames.sock"
 TERMINAL_STATES = ("pending", "live", "exited", "orphaned")
-ALLOWED_EDGES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("pending", "live"),
-        ("pending", "exited"),
-        ("live", "exited"),
-        ("live", "orphaned"),
-        ("orphaned", "exited"),
-    }
-)
-
-
-class IllegalTerminalTransitionError(RuntimeError):
-    """Raised when a caller requests a state edge outside the allowlist."""
 
 
 class ProjectOwnershipConflictError(RuntimeError):
@@ -264,10 +260,11 @@ def mint_terminal_id() -> str:
     return str(uuid4())
 
 
-class TerminalManager:
+class TerminalManager(TerminalSettlementMixin):
     """Hub-transaction CRUD and CAS transitions for the terminals table."""
 
     def __init__(self, db: HubDatabase) -> None:
+        super().__init__()
         self.db = db
 
     def get(self, terminal_id: str) -> Terminal | None:
@@ -366,44 +363,6 @@ class TerminalManager:
                 truncate_title(title),
             ),
         )
-
-    def fail_pending(self, terminal_id: str) -> Terminal | None:
-        """CAS pending → exited for a spawn that never produced a resource."""
-        return self._cas(terminal_id, expected="pending", new_state="exited")
-
-    def fail_pending_attempt(
-        self,
-        terminal_id: str,
-        *,
-        attempt_generation: int,
-        attempt_started_at: datetime,
-    ) -> Terminal | None:
-        """CAS pending → exited only when generation and attempt clock still match."""
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET state = 'exited',
-                updated_at = now()
-            WHERE id = %s
-              AND state = 'pending'
-              AND attempt_generation = %s
-              AND attempt_started_at = %s
-            RETURNING *
-            """,
-            (str(UUID(terminal_id)), attempt_generation, attempt_started_at),
-        )
-        return None if row is None else Terminal.from_row(row)
-
-    def mark_exited(self, terminal_id: str) -> Terminal | None:
-        """CAS live|orphaned → exited without clearing locator identity."""
-        live = self._cas(terminal_id, expected="live", new_state="exited")
-        if live is not None:
-            return live
-        return self._cas(terminal_id, expected="orphaned", new_state="exited")
-
-    def mark_orphaned(self, terminal_id: str) -> Terminal | None:
-        """CAS live → orphaned (native host-epoch / host-crash loss)."""
-        return self._cas(terminal_id, expected="live", new_state="orphaned")
 
     def transition_for_test(
         self, terminal_id: str, expected: str, new_state: str
@@ -680,19 +639,6 @@ class TerminalManager:
             return None
         return row
 
-    def record_process(self, terminal_id: str, process: Mapping[str, object]) -> Terminal | None:
-        """Store native {pgid, start_time} on a still-pending row."""
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET process = %s, updated_at = now()
-            WHERE id = %s AND state = 'pending' AND backend = 'native'
-            RETURNING *
-            """,
-            (Jsonb(dict(process)), str(UUID(terminal_id))),
-        )
-        return None if row is None else Terminal.from_row(row)
-
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
         """Record the PTY geometry the runtime was last told to apply."""
         row = self.db.fetchone(
@@ -703,21 +649,6 @@ class TerminalManager:
             RETURNING *
             """,
             (rows, cols, str(UUID(terminal_id))),
-        )
-        return None if row is None else Terminal.from_row(row)
-
-    def bump_attempt_generation(self, terminal_id: str) -> Terminal | None:
-        """Increment attempt_generation and refresh attempt_started_at on a pending row."""
-        row = self.db.fetchone(
-            """
-            UPDATE terminals
-            SET attempt_generation = attempt_generation + 1,
-                attempt_started_at = now(),
-                updated_at = now()
-            WHERE id = %s AND state = 'pending'
-            RETURNING *
-            """,
-            (str(UUID(terminal_id)),),
         )
         return None if row is None else Terminal.from_row(row)
 
@@ -828,30 +759,3 @@ class TerminalManager:
         if row is None:
             raise KeyError(terminal_id)
         return Terminal.from_row(row)
-
-    def _cas(
-        self,
-        terminal_id: str,
-        *,
-        expected: str,
-        new_state: str,
-        extra: str = "",
-        extra_params: tuple[object, ...] = (),
-    ) -> Terminal | None:
-        if (expected, new_state) not in ALLOWED_EDGES:
-            raise IllegalTerminalTransitionError(
-                f"Illegal terminal transition {expected}->{new_state}"
-            )
-        params = (new_state, *extra_params, str(UUID(terminal_id)), expected)
-        row = self.db.fetchone(
-            f"""
-            UPDATE terminals
-            SET state = %s,
-                updated_at = now()
-                {extra}
-            WHERE id = %s AND state = %s
-            RETURNING *
-            """,
-            params,
-        )
-        return None if row is None else Terminal.from_row(row)

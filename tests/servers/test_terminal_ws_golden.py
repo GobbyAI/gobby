@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,6 +73,10 @@ class _GoldenManager:
 
     def get(self, terminal_id: str) -> _GoldenRow | None:
         return self.row if terminal_id == self.row.id else None
+
+    @asynccontextmanager
+    async def settle_lock(self, _terminal_id: str) -> AsyncIterator[None]:
+        yield
 
     def list_page(
         self,
