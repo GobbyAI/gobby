@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import socket
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,7 @@ from httpx import ASGITransport, AsyncClient
 
 from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.ask.service import AskService
+from gobby.mcp_proxy.tools.ask import create_ask_registry
 from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.ask import create_ask_router
@@ -28,6 +29,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
+from gobby.utils.project_context import reset_project_context, set_project_context
 from tests.ask.service_support import (
     CompletingPipelineExecutor,
     RecordingCompletionRegistry,
@@ -48,6 +50,8 @@ PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 SESSION_ID = "22222222-2222-4222-8222-222222222222"
 DEADLINE = "2026-09-09T12:10:00Z"
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+_AskCli = Callable[..., Awaitable[tuple[int, dict[str, Any], str]]]
 
 _AskOperation = Literal["start", "get", "wait", "resume", "cancel", "export"]
 _ManagedOwner = Literal["agent_run", "managed_execution"]
@@ -447,9 +451,10 @@ async def test_start_binds_only_to_authorized_caller_checkout(
     await harness.service.wait(run_id, project_id=harness.project_id, timeout=5)
 
 
-async def test_installed_cli_lifecycle_against_authenticated_service(
+@pytest.fixture
+async def real_ask_cli(
     real_ask_harness: _RealAskHarness, tmp_path: Path
-) -> None:
+) -> AsyncIterator[tuple[_AskCli, str]]:
     harness = real_ask_harness
     binary = Path(os.environ.get("GOBBY_GCODE_BIN", "target/debug/gcode")).resolve(strict=True)
     home = tmp_path / "cli-home"
@@ -510,57 +515,67 @@ async def test_installed_cli_lifecycle_against_authenticated_service(
 
     try:
         await asyncio.wait_for(ready.wait(), 5)
-        code, completed, stderr = await cli("Which service owns Ask?")
-        assert code == 0, stderr
-        assert completed["status"] == "completed"
-        # The controlled executor completes without publishing an answer; the
-        # lifecycle adapter must preserve the service's null outcome verbatim.
-        assert completed["answer_outcome"] is None
-        run_id = completed["run_id"]
-        code, fetched, stderr = await cli("--status", run_id)
-        assert code == 0, stderr
-        assert fetched == harness.service.get(run_id, project_id=harness.project_id).model_dump(
-            mode="json"
-        )
-
-        release = asyncio.Event()
-        harness.executor.gate(release)
-        code, started, stderr = await cli("Hold this run for cancellation", "--background")
-        assert code == 0, stderr
-        pending_id = started["run_id"]
-        await asyncio.wait_for(harness.executor.running.wait(), 5)
-        async with AsyncClient(base_url=url, headers=harness.headers) as client:
-            timed_out = await client.get(
-                f"/api/ask/runs/{pending_id}/wait",
-                params={"project_id": harness.project_id, "timeout_seconds": 0.01},
-            )
-            assert timed_out.status_code == 408
-            missing = await client.get(
-                "/api/ask/runs/not-a-run", params={"project_id": harness.project_id}
-            )
-            assert missing.status_code == 404
-            denied = await client.get(
-                f"/api/ask/runs/{pending_id}", params={"project_id": PROJECT_ID}
-            )
-            assert denied.status_code == 403
-            removed_flag = await client.post(
-                "/api/ask/runs",
-                json={"project_id": harness.project_id, "question": "Where?", "commit_ref": "HEAD"},
-            )
-            assert removed_flag.status_code == 422
-        code, cancelled, stderr = await cli("--cancel", pending_id)
-        assert code == 2
-        assert cancelled["status"] == "cancelled"
-        assert "ask_cancelled" in stderr
-        release.set()
+        yield cli, url
     finally:
         server.should_exit = True
         await asyncio.wait_for(serving, 5)
         listener.close()
 
 
+async def test_installed_cli_lifecycle_against_authenticated_service(
+    real_ask_harness: _RealAskHarness, real_ask_cli: tuple[_AskCli, str]
+) -> None:
+    harness = real_ask_harness
+    cli, url = real_ask_cli
+    code, completed, stderr = await cli("Which service owns Ask?")
+    assert code == 0, stderr
+    assert completed["status"] == "completed"
+    # The controlled executor completes without publishing an answer; the
+    # lifecycle adapter must preserve the service's null outcome verbatim.
+    assert completed["answer_outcome"] is None
+    run_id = completed["run_id"]
+    code, fetched, stderr = await cli("--status", run_id)
+    assert code == 0, stderr
+    assert fetched == harness.service.get(run_id, project_id=harness.project_id).model_dump(
+        mode="json"
+    )
+
+    release = asyncio.Event()
+    harness.executor.gate(release)
+    code, started, stderr = await cli("Hold this run for cancellation", "--background")
+    assert code == 0, stderr
+    pending_id = started["run_id"]
+    await asyncio.wait_for(harness.executor.running.wait(), 5)
+    async with AsyncClient(base_url=url, headers=harness.headers) as client:
+        timed_out = await client.get(
+            f"/api/ask/runs/{pending_id}/wait",
+            params={"project_id": harness.project_id, "timeout_seconds": 0.01},
+        )
+        assert timed_out.status_code == 408
+        missing = await client.get(
+            "/api/ask/runs/not-a-run", params={"project_id": harness.project_id}
+        )
+        assert missing.status_code == 404
+        denied = await client.get(f"/api/ask/runs/{pending_id}", params={"project_id": PROJECT_ID})
+        assert denied.status_code == 403
+        removed_flag = await client.post(
+            "/api/ask/runs",
+            json={"project_id": harness.project_id, "question": "Where?", "commit_ref": "HEAD"},
+        )
+        assert removed_flag.status_code == 422
+    code, cancelled, stderr = await cli("--cancel", pending_id)
+    assert code == 2
+    assert cancelled["status"] == "cancelled"
+    assert "ask_cancelled" in stderr
+    release.set()
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "cancelled"])
 async def test_shared_run_contract_and_event_driven_wait(
     real_ask_harness: _RealAskHarness,
+    real_ask_cli: tuple[_AskCli, str],
+    tmp_path: Path,
+    terminal_status: str,
 ) -> None:
     release = asyncio.Event()
     real_ask_harness.executor.gate(release)
@@ -577,11 +592,27 @@ async def test_shared_run_contract_and_event_driven_wait(
     )
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "running"
-    # The HTTP surface returns the shared service's record verbatim, which is what
-    # makes the CLI and MCP surfaces answer identically: they read the same object.
     direct = real_ask_harness.service.get(run_id, project_id=real_ask_harness.project_id)
     assert fetched.json() == direct.model_dump(mode="json")
     assert fetched.json()["deadline_at"] == started["deadline_at"]
+    registry = create_ask_registry(
+        lambda _project_id: real_ask_harness.service,
+        project_root_resolver=lambda _project_id, _project_path: tmp_path,
+    )
+
+    async def assert_adapters(expected: dict[str, Any]) -> None:
+        code, cli_record, stderr = await real_ask_cli[0]("--status", run_id)
+        assert code == (2 if expected["status"] == "cancelled" else 0), stderr
+        if expected["status"] == "cancelled":
+            assert "ask_cancelled" in stderr
+        context = set_project_context({"id": real_ask_harness.project_id})
+        try:
+            mcp_record = await registry.call("get_ask_run", {"run_id": run_id})
+        finally:
+            reset_project_context(context)
+        assert cli_record == mcp_record == expected
+
+    await assert_adapters(fetched.json())
     # The route, not the caller, chooses the two Ask profiles.
     record = real_ask_harness.service.storage.get(run_id)
     assert record is not None
@@ -603,12 +634,37 @@ async def test_shared_run_contract_and_event_driven_wait(
     # storage, which is what lets the pipeline wake it instead of a poll interval.
     assert real_ask_harness.completions.awaited == [f"ask:{run_id}"]
 
+    # Disconnecting one foreground client must not cancel the durable run.
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert (
+        real_ask_harness.service.get(run_id, project_id=real_ask_harness.project_id).status
+        == "running"
+    )
+    waiting = asyncio.ensure_future(
+        real_ask_harness.client.get(
+            f"/api/ask/runs/{run_id}/wait",
+            headers=real_ask_harness.headers,
+            params={"project_id": real_ask_harness.project_id, "timeout_seconds": 10},
+        )
+    )
+    if terminal_status == "cancelled":
+        cancelled = await real_ask_harness.client.post(
+            f"/api/ask/runs/{run_id}/cancel",
+            headers=real_ask_harness.headers,
+            params={"project_id": real_ask_harness.project_id},
+        )
+        assert cancelled.status_code == 200
     release.set()
     waited = await waiting
     assert waited.status_code == 200
-    assert waited.json()["status"] == "completed"
+    assert waited.json()["status"] == terminal_status
     assert waited.json()["run_id"] == run_id
     assert waited.json()["deadline_at"] == started["deadline_at"]
+    await assert_adapters(waited.json())
+    if terminal_status == "cancelled":
+        assert waited.json()["typed_error"] is None
 
 
 async def test_waiter_disconnect_does_not_cancel_the_run(
