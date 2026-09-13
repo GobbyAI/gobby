@@ -236,7 +236,10 @@ def create_ask_registry(
             "literal for exact identifiers. read selector: "
             '{"kind":"range","path":"relative/file","start_line":1,"end_line":40}, or '
             '{"kind":"symbol","path":"relative/file","qualified_name":"Class.method"}, '
-            'or {"kind":"commit_metadata"}. Graph selector has query callers/callees/usages/'
+            'or {"kind":"commit_metadata","commit_oid":"full 40-character commit hash"}. '
+            "Omit commit_oid for the recorded HEAD; an explicit commit reads its first-parent "
+            "change metadata without changing the source index. "
+            "Graph selector has query callers/callees/usages/"
             "imports/directed_path/scoped_view, source and optional target as "
             '{"kind":"symbol","path":"relative/file","qualified_name":"name"} or '
             '{"kind":"path","path":"relative/file"}; optional direction incoming/outgoing/both, '

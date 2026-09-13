@@ -151,7 +151,10 @@ pub enum ReadSelector {
         path: String,
         qualified_name: String,
     },
-    CommitMetadata,
+    CommitMetadata {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit_oid: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

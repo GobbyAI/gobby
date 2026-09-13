@@ -47,7 +47,10 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
                 &matches[0],
             )?)]
         }
-        ReadSelector::CommitMetadata => commit_items(library)?,
+        ReadSelector::CommitMetadata { commit_oid } => commit_items(
+            library,
+            commit_oid.as_deref().unwrap_or(&library.binding.commit_oid),
+        )?,
     };
     let result_limit = items.len();
     Ok(QueryResult {
@@ -58,7 +61,7 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
         },
         items,
         lane: match selector {
-            ReadSelector::CommitMetadata => "read_commit_metadata",
+            ReadSelector::CommitMetadata { .. } => "read_commit_metadata",
             ReadSelector::Range { .. } => "read_range",
             ReadSelector::Symbol { .. } => "read_symbol",
         }
@@ -95,7 +98,15 @@ pub(super) fn validate_selector(selector: &ReadSelector) -> Result<()> {
                 });
             }
         }
-        ReadSelector::CommitMetadata => {}
+        ReadSelector::CommitMetadata { commit_oid } => {
+            if let Some(oid) = commit_oid
+                && (oid.len() != 40 || !oid.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err(EvidenceError::InvalidSelector {
+                    detail: "commit_oid must be a full 40-character commit object id".to_string(),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -254,10 +265,8 @@ fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<Sou
     })
 }
 
-fn commit_items(library: &EvidenceLibrary) -> Result<Vec<EvidenceItem>> {
-    let binding = &library.binding;
-    let commit =
-        super::provenance::load_commit_binding(&library.repository_root, &binding.commit_oid)?;
+fn commit_items(library: &EvidenceLibrary, commit_oid: &str) -> Result<Vec<EvidenceItem>> {
+    let commit = super::provenance::load_commit_binding(&library.repository_root, commit_oid)?;
     let records = if commit.changed_paths.is_empty() {
         vec![None]
     } else {
@@ -270,7 +279,7 @@ fn commit_items(library: &EvidenceLibrary) -> Result<Vec<EvidenceItem>> {
             let evidence_id = format!(
                 "commit:{}",
                 canonical_hash(&(
-                    &binding.commit_oid,
+                    commit_oid,
                     &commit.parent_oids,
                     &commit.comparison_parent_oid,
                     &commit.comparison_kind,
@@ -280,7 +289,7 @@ fn commit_items(library: &EvidenceLibrary) -> Result<Vec<EvidenceItem>> {
             );
             Ok(EvidenceItem::CommitMetadata(CommitMetadataEvidence {
                 evidence_id,
-                commit_oid: binding.commit_oid.clone(),
+                commit_oid: commit_oid.to_string(),
                 parent_oids: commit.parent_oids.clone(),
                 comparison_parent_oid: commit.comparison_parent_oid.clone(),
                 comparison_kind: commit.comparison_kind,

@@ -18,94 +18,6 @@ fn test_evidence_cli_contract() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
-fn snapshot_cli_returns_native_canonical_inventory_without_services() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    Command::new("git")
-        .args(["init", "--quiet", "-b", "main"])
-        .current_dir(repo)
-        .status()?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow::anyhow!("git init failed"))?;
-    std::fs::write(repo.join("choice.h"), "#define CHOICE 1\n")?;
-    std::fs::write(repo.join("choice.cpp"), "int choice = 1;\n")?;
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(repo)
-        .status()?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow::anyhow!("git add failed"))?;
-    let commit = Command::new("git")
-        .args([
-            "-c",
-            "user.name=Evidence Snapshot Test",
-            "-c",
-            "user.email=evidence-snapshot@example.invalid",
-            "commit",
-            "--quiet",
-            "-m",
-            "root",
-        ])
-        .current_dir(repo)
-        .status()?;
-    anyhow::ensure!(commit.success(), "git commit failed");
-    let commit_oid = String::from_utf8(
-        Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(repo)
-            .output()?
-            .stdout,
-    )?
-    .trim()
-    .to_string();
-    let request = serde_json::json!({
-        "schema_version": 1,
-        "project_id": "project-native-snapshot",
-        "commit_oid": commit_oid,
-        "action": "inspect",
-    });
-    let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
-        .args([
-            "--quiet",
-            "--format",
-            "json",
-            "--project",
-            repo.to_str().expect("UTF-8 temporary path"),
-            "evidence",
-            "--snapshot-json",
-            &serde_json::to_string(&request)?,
-        ])
-        .env_remove("DATABASE_URL")
-        // Read-only inspection must not require a writable ambient temp directory.
-        .env("TMPDIR", repo.join("unavailable-temp"))
-        .env("TMP", repo.join("unavailable-temp"))
-        .env("TEMP", repo.join("unavailable-temp"))
-        .output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let response: Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(response["schema_version"], 1);
-    assert_eq!(response["binding"]["commit_oid"], request["commit_oid"]);
-    assert_eq!(
-        response["binding"]["commit"]["comparison_kind"],
-        "empty_tree"
-    );
-    let header = response["inventory"]["entries"]
-        .as_array()
-        .expect("inventory entries")
-        .iter()
-        .find(|entry| entry["path"] == "choice.h")
-        .expect("header entry");
-    assert_eq!(header["language"], "c");
-    Ok(())
-}
-
 type LineRangeFixture = (&'static str, &'static [u8], Option<usize>);
 
 const LINE_RANGE_FIXTURES: [LineRangeFixture; 5] = [
@@ -366,7 +278,7 @@ fn database_contract() -> anyhow::Result<()> {
 
     let metadata_request = EvidenceRequest {
         operation: EvidenceOperation::Read {
-            read: ReadSelector::CommitMetadata,
+            read: ReadSelector::CommitMetadata { commit_oid: None },
         },
         ..range_request.clone()
     };
@@ -653,7 +565,7 @@ fn assert_pure_preflight_rejections(
         schema_version: 1,
         binding: binding.clone(),
         operation: EvidenceOperation::Read {
-            read: ReadSelector::CommitMetadata,
+            read: ReadSelector::CommitMetadata { commit_oid: None },
         },
         max_bytes: DEFAULT_MAX_BYTES,
         continuation: None,

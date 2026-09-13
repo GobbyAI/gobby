@@ -393,7 +393,10 @@ def test_claim_validation_and_review_gates() -> None:
         )
 
 
-def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
+@pytest.mark.parametrize("requested_commit", [None, "9" * 40])
+def test_typed_git_metadata_citation_binds_canonical_comparison(
+    requested_commit: str | None,
+) -> None:
     from gobby.ask.claims import (
         AnswerDraft,
         AnswerSection,
@@ -408,6 +411,7 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
     draft, evidence, blobs, _review = _valid_case()
     body = evidence.model_dump(mode="json")
     binding = body["repository_binding"]
+    commit_oid = requested_commit or binding["commit_oid"]
     changed_path = {
         "status": "modified",
         "similarity": None,
@@ -420,8 +424,9 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
         "old_blob_oid": "c" * 40,
         "new_blob_oid": "f" * 40,
     }
+    parent_oids = ["b" * 40]
     commit = {
-        "parent_oids": ["b" * 40],
+        "parent_oids": parent_oids,
         "comparison_parent_oid": "b" * 40,
         "comparison_kind": "first_parent",
         "changed_paths_digest": _json_hash([changed_path], sort_keys=False),
@@ -429,7 +434,7 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
     record_hash = _json_hash(changed_path, sort_keys=False)
     evidence_id = "commit:" + _json_hash(
         [
-            binding["commit_oid"],
+            commit_oid,
             commit["parent_oids"],
             commit["comparison_parent_oid"],
             commit["comparison_kind"],
@@ -441,7 +446,7 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
     metadata = {
         "item_type": "commit_metadata",
         "evidence_id": evidence_id,
-        "commit_oid": binding["commit_oid"],
+        "commit_oid": commit_oid,
         "parent_oids": commit["parent_oids"],
         "comparison_parent_oid": commit["comparison_parent_oid"],
         "comparison_kind": commit["comparison_kind"],
@@ -451,6 +456,11 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
         "record_hash": record_hash,
     }
     response = body["records"][0]["response"]
+    response["request"]["read"] = {"kind": "commit_metadata"}
+    if requested_commit is not None:
+        response["request"]["read"]["commit_oid"] = requested_commit
+    response["request_fingerprint"] = _json_hash(response["request"])
+    body["records"][0]["request_hash"] = _json_hash(response["request"])
     response["items"].append(metadata)
     response["bounds"]["returned_items"] = 2
     response["bounds"]["total_items"] = 2
@@ -467,7 +477,7 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
         run_id="run-1",
         evidence_id=evidence_id,
         commit_oid=metadata["commit_oid"],
-        parent_oids=tuple(metadata["parent_oids"]),
+        parent_oids=tuple(parent_oids),
         comparison_parent_oid=metadata["comparison_parent_oid"],
         comparison_kind=metadata["comparison_kind"],
         changed_paths_digest=metadata["changed_paths_digest"],

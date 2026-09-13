@@ -791,7 +791,7 @@ fn assert_continuation_binding(library: &EvidenceLibrary) -> anyhow::Result<()> 
     let mut metadata = request(
         &library.binding,
         EvidenceOperation::Read {
-            read: ReadSelector::CommitMetadata,
+            read: ReadSelector::CommitMetadata { commit_oid: None },
         },
     );
     let full = library.query(metadata.clone())?;
@@ -827,6 +827,55 @@ fn assert_continuation_binding(library: &EvidenceLibrary) -> anyhow::Result<()> 
         library.query(changed).expect_err("bound cursor").code(),
         "continuation_mismatch"
     );
+    Ok(())
+}
+
+#[test]
+fn commit_metadata_can_read_history_without_rebinding_the_source_index() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let repo = temporary.path();
+    std::fs::write(repo.join("later.txt"), "later\n")?;
+    git(repo, &["add", "later.txt"])?;
+    let later = commit(repo, "later change")?;
+    let current_binding = RepositoryBinding {
+        commit_oid: later.clone(),
+        tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
+        ..binding.clone()
+    };
+    let library = EvidenceLibrary::new(
+        repo,
+        current_binding.clone(),
+        Arc::new(FakeFacts::for_source(&current_binding)),
+    )?;
+    let response = library.query(request(
+        &current_binding,
+        EvidenceOperation::Read {
+            read: ReadSelector::CommitMetadata {
+                commit_oid: Some(binding.commit_oid.clone()),
+            },
+        },
+    ))?;
+    assert_eq!(response.binding, current_binding);
+    assert!(!response.items.is_empty());
+    for item in response.items {
+        let EvidenceItem::CommitMetadata(item) = item else {
+            panic!("expected commit metadata");
+        };
+        assert_eq!(item.commit_oid, binding.commit_oid);
+        assert_ne!(item.commit_oid, later);
+        assert_ne!(
+            item.changed_path.and_then(|path| path.new_path),
+            Some("later.txt".to_string())
+        );
+    }
+    for invalid in ["HEAD", "--all", "", "not-a-commit"] {
+        assert!(matches!(
+            read::validate_selector(&ReadSelector::CommitMetadata {
+                commit_oid: Some(invalid.to_string()),
+            }),
+            Err(EvidenceError::InvalidSelector { .. })
+        ));
+    }
     Ok(())
 }
 
@@ -1043,7 +1092,7 @@ fn evidence_rejects_foreign_index_and_unsafe_provenance() -> anyhow::Result<()> 
     let mut malformed = request(
         &binding,
         EvidenceOperation::Read {
-            read: ReadSelector::CommitMetadata,
+            read: ReadSelector::CommitMetadata { commit_oid: None },
         },
     );
     malformed.binding.commit_oid = "--output=/tmp/foreign".into();

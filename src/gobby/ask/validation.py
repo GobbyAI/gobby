@@ -149,12 +149,15 @@ def _validate_source(
 
 def _validate_git_metadata(
     item: CommitMetadataEvidenceItem,
-    binding: RepositoryBinding,
+    response: GcodeEvidenceResponse,
 ) -> list[ValidationDiagnostic]:
     diagnostics: list[ValidationDiagnostic] = []
-    if item.commit_oid != binding.commit_oid:
+    selector = response.request.get("read", {})
+    requested_commit = selector.get("commit_oid") if isinstance(selector, dict) else None
+    expected_commit = requested_commit or response.binding.commit_oid
+    if item.commit_oid != expected_commit:
         diagnostics.append(
-            _diagnostic("git_metadata_mismatch", "commit differs from recorded provenance")
+            _diagnostic("git_metadata_mismatch", "commit differs from the evidence request")
         )
     if item.parent_oids:
         if (
@@ -347,7 +350,7 @@ def _validate_evidence_manifest(
             elif isinstance(item, GraphEvidenceItem):
                 item_diagnostics = _validate_graph(item, binding, pinned_blobs)
             else:
-                item_diagnostics = _validate_git_metadata(item, binding)
+                item_diagnostics = _validate_git_metadata(item, response)
             diagnostics.extend(
                 diagnostic.model_copy(update={"evidence_id": item.evidence_id})
                 for diagnostic in item_diagnostics
