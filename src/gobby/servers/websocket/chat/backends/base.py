@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -244,12 +244,20 @@ class ManagedChatSessionBase:
 
     async def switch_model(self, new_model: str) -> None:
         await self._backend.switch_model(self, new_model)
-        await self._set_local_context(None, None)
+        context_model = new_model
+        pending_route: LocalContextRoute | None = None
+        selector = parse_endpoint_model_selector(new_model)
+        if selector is not None and self._model:
+            context_model = f"endpoint:{selector.endpoint_name}/{self._model}"
+            existing_route = self._local_context_route
+            if (
+                existing_route is not None
+                and existing_route.is_local
+                and existing_route.endpoint_id == f"endpoint:{selector.endpoint_name}"
+            ):
+                pending_route = replace(existing_route, model_id=self._model)
+        await self._set_local_context(pending_route, None)
         if self._local_context_refresher is not None:
-            context_model = new_model
-            selector = parse_endpoint_model_selector(new_model)
-            if selector is not None and self._model:
-                context_model = f"endpoint:{selector.endpoint_name}/{self._model}"
             route, observation = await self._local_context_refresher(context_model)
             await self._set_local_context(route, observation)
 

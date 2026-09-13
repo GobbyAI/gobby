@@ -21,6 +21,7 @@ from gobby.providers.capabilities.local_context_config import (
     LocalContextRoute,
     endpoint_route,
 )
+from gobby.providers.capabilities.resolve import ContextResolution, ContextSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
@@ -663,24 +664,44 @@ async def test_codex_cancelled_refresh_invalidates_previous_context(
     session._local_context_refresher = cancel_refresh
     session._session_manager_ref = SimpleNamespace(db=MagicMock())
     session.db_session_id = "db-session"
+    session._context_window_overrides = {concrete_model: 99_000}
+    remote_resolver = MagicMock()
+    remote_resolver.resolve_context.return_value = ContextResolution(
+        value=88_000,
+        source=ContextSource.PROVIDER_MATRIX,
+    )
     monkeypatch.setattr(
         "gobby.servers.websocket.chat.backends.codex.ensure_local_model",
         AsyncMock(return_value=concrete_model),
     )
 
-    with patch(
-        "gobby.sessions.context_usage.persist_local_context_variables",
-        side_effect=persist,
+    with (
+        patch(
+            "gobby.sessions.context_usage.persist_local_context_variables",
+            side_effect=persist,
+        ),
+        patch(
+            "gobby.llm.context_windows._get_capability_resolver",
+            return_value=remote_resolver,
+        ),
     ):
         await session._set_local_context(old_route, old_observation)
         with pytest.raises(asyncio.CancelledError):
             await session.switch_model("endpoint:metal/auto")
+        assert session._resolve_context_window() is None
+        session._context_window_overrides = {}
+        assert session._resolve_context_window() is None
 
     assert session.model == "endpoint:metal/auto"
     assert session._model == concrete_model
-    assert session._local_context_route is None
+    assert session._local_context_route is not None
+    assert session._local_context_route.is_local
+    assert session._local_context_route.endpoint_id == "endpoint:metal"
+    assert session._local_context_route.model_id == concrete_model
     assert session._local_context_observation is None
-    assert persisted == [(old_route, old_observation), (None, None)]
+    assert persisted[0] == (old_route, old_observation)
+    assert persisted[1] == (session._local_context_route, None)
+    remote_resolver.resolve_context.assert_not_called()
 
 
 @pytest.mark.asyncio
