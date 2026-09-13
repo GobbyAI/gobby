@@ -43,6 +43,37 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    ("accepted_ids", "missing_parts", "needs_repair"),
+    [
+        (("claim-return",), (), False),
+        ((), (), True),
+        (("claim-return",), ("behavior",), True),
+    ],
+)
+def test_repair_is_needed_only_for_unresolved_question_parts(
+    accepted_ids: tuple[str, ...], missing_parts: tuple[str, ...], needs_repair: bool
+) -> None:
+    from gobby.ask.stage_runtime import AskStageRuntime
+    from gobby.ask.validation import validate_claims, validate_review
+
+    draft, evidence, blobs, original = _valid_case()
+    review = original.model_copy(
+        update={
+            "claim_verdicts": tuple(
+                verdict.model_copy(update={"accepted": verdict.claim_id in accepted_ids})
+                for verdict in original.claim_verdicts
+            ),
+            "missing_question_parts": missing_parts,
+        }
+    )
+    deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
+    reviewed = validate_review(draft, evidence, deterministic, review)
+    assert deterministic.is_valid
+    assert reviewed.accepted_claim_ids == (() if missing_parts else accepted_ids)
+    assert AskStageRuntime._needs_repair(draft, deterministic, reviewed) is needs_repair
+
+
 def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
     return ProfileSnapshot(
         identifier=identifier,

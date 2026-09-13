@@ -13,7 +13,7 @@ from typing import Any
 
 from gobby.ask.agents import AskAgentRuntime, AskAgentSpec
 from gobby.ask.artifacts import AskArtifactStore
-from gobby.ask.claims import AnswerDraft, ReviewerResult, canonical_hash
+from gobby.ask.claims import AnswerDraft, ClaimClassification, ReviewerResult, canonical_hash
 from gobby.ask.contracts import AskRunRecord
 from gobby.ask.evidence import EvidenceAdmission
 from gobby.ask.evidence_runtime import (
@@ -746,10 +746,18 @@ class AskStageRuntime:
         deterministic: ClaimValidationReport,
         review: ReviewValidationReport,
     ) -> bool:
-        claim_ids = {claim.id for claim in draft.claims}
+        accepted_ids = set(deterministic.accepted_claim_ids) & set(review.accepted_claim_ids)
+        section_ids = {claim_id for section in draft.sections for claim_id in section.claim_ids}
+        supported_parts = {
+            part_id
+            for claim in draft.claims
+            if claim.id in accepted_ids & section_ids
+            and claim.classification in {ClaimClassification.DIRECT, ClaimClassification.INFERRED}
+            for part_id in claim.question_part_ids
+        }
         return (
-            not deterministic.is_valid
-            or set(review.accepted_claim_ids) != claim_ids
+            bool(deterministic.diagnostics)
+            or any(part.id not in supported_parts for part in draft.question_parts)
             or bool(review.missing_question_parts)
             or bool(review.diagnostics)
         )
