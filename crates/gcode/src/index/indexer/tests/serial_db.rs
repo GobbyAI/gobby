@@ -408,7 +408,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         &[&test_uuid_param(&shared_file.id)],
     )
     .expect("mark shared projections complete");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &first_machine_id,
         &shared_file,
@@ -529,7 +529,7 @@ fn full_indexing_reparses_previously_adopted_content() {
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &shared_file).expect("seed shared content version");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &first_machine_id,
         &shared_file,
@@ -647,7 +647,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &parent_file).expect("seed parent content version");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &parent_file,
@@ -692,7 +692,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         &[&test_uuid_param(&overlay_file.id)],
     )
     .expect("mark overlay projections complete");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &first_machine_id,
         &overlay_file,

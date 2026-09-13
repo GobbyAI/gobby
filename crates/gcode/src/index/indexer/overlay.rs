@@ -243,7 +243,7 @@ pub(super) fn index_overlay_files(
             && indexable
             && matches!(action, OverlayReconcileAction::Index)
             && let Some(hash) = current_hash
-            && api::adopt_file_state(
+            && api::file_state::adopt_file_state(
                 conn,
                 &machine_id,
                 overlay_project_id,
@@ -278,7 +278,7 @@ pub(super) fn index_overlay_files(
                 }
             }
             OverlayReconcileAction::Inherit => {
-                api::delete_file_state(
+                api::file_state::delete_file_state(
                     conn,
                     &machine_id,
                     overlay_project_id,
@@ -293,7 +293,7 @@ pub(super) fn index_overlay_files(
                 outcome.tombstones_indexed += 1;
             }
             OverlayReconcileAction::DeleteOverlay => {
-                api::delete_file_state(
+                api::file_state::delete_file_state(
                     conn,
                     &machine_id,
                     overlay_project_id,

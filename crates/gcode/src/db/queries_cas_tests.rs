@@ -277,7 +277,7 @@ fn upsert_content_version(conn: &mut postgres::Client, project_id: &str, hash: &
 
 fn point_file_state(conn: &mut postgres::Client, project_id: &str, hash: &str) {
     let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         conn,
         &machine_id,
         &IndexedFile {

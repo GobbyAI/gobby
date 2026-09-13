@@ -80,7 +80,7 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &indexed_file)?;
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &indexed_file,

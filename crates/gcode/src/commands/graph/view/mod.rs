@@ -237,7 +237,7 @@ pub(super) fn visible_map_for_candidates(
 ) -> anyhow::Result<VisibleFileMap> {
     let paths = candidate_paths(candidates);
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let visible_paths = visibility::visible_graph_paths(&mut conn, ctx, &paths)?;
+    let visible_paths = visibility::graph::visible_graph_paths(&mut conn, ctx, &paths)?;
     Ok(visible_map_from(
         candidates,
         visible_paths,

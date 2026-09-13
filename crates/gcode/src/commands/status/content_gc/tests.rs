@@ -91,7 +91,7 @@ mod serial_db {
 
         let machine_id = gobby_core::machine::read_local_machine_id().expect("local machine id");
         assert!(
-            api::adopt_file_state(
+            api::file_state::adopt_file_state(
                 &mut conn,
                 &machine_id,
                 &project_id,
@@ -109,7 +109,7 @@ mod serial_db {
         );
 
         assert!(
-            api::adopt_file_state(
+            api::file_state::adopt_file_state(
                 &mut conn,
                 &machine_id,
                 &project_id,

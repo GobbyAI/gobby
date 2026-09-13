@@ -742,29 +742,29 @@ fn callees_keeps_external_and_unresolved_targets() {
     let visible_ids = HashSet::from([local_id.to_string()]);
     let visible_paths = HashSet::from(["src/lib.rs".to_string()]);
 
-    assert!(crate::visibility::graph_result_is_visible(
+    assert!(crate::visibility::graph::graph_result_is_visible(
         &local,
         &visible_ids,
         &visible_paths
     ));
-    assert!(crate::visibility::graph_result_is_visible(
+    assert!(crate::visibility::graph::graph_result_is_visible(
         &external,
         &visible_ids,
         &visible_paths
     ));
-    assert!(crate::visibility::graph_result_is_visible(
+    assert!(crate::visibility::graph::graph_result_is_visible(
         &unresolved,
         &visible_ids,
         &visible_paths
     ));
-    assert!(!crate::visibility::graph_result_is_visible(
+    assert!(!crate::visibility::graph::graph_result_is_visible(
         &hidden_external,
         &visible_ids,
         &visible_paths
     ));
     let mut hidden_local = local.clone();
     hidden_local.id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into();
-    assert!(!crate::visibility::graph_result_is_visible(
+    assert!(!crate::visibility::graph::graph_result_is_visible(
         &hidden_local,
         &visible_ids,
         &visible_paths

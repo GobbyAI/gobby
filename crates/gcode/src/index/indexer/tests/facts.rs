@@ -735,7 +735,7 @@ mod serial_db {
         mark_owner_fully_synced(&mut conn, &project_id, "src/base.py", "hash-b");
         let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
         assert!(
-            api::adopt_file_state(
+            api::file_state::adopt_file_state(
                 &mut conn,
                 &machine_id,
                 &project_id,

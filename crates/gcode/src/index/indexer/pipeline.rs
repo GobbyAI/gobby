@@ -110,7 +110,7 @@ fn index_discovered_files(
         let orphans =
             get_orphan_files(conn, &machine_id, project_id, &current_files.present_paths)?;
         for orphan in &orphans {
-            api::delete_file_state(
+            api::file_state::delete_file_state(
                 conn,
                 &machine_id,
                 project_id,
@@ -151,7 +151,7 @@ fn index_discovered_files(
         }
         if !request.full
             && let Some(content_hash) = current_files.hashes.get(&rel)
-            && api::adopt_file_state(
+            && api::file_state::adopt_file_state(
                 conn,
                 &machine_id,
                 project_id,
@@ -177,7 +177,7 @@ fn index_discovered_files(
         )? {
             Some(counts) => outcome.add_counts(counts),
             None => {
-                api::delete_file_state(
+                api::file_state::delete_file_state(
                     conn,
                     &machine_id,
                     project_id,
@@ -204,7 +204,7 @@ fn index_discovered_files(
         }
         if !request.full
             && let Some(content_hash) = current_files.hashes.get(&rel)
-            && api::adopt_file_state(
+            && api::file_state::adopt_file_state(
                 conn,
                 &machine_id,
                 project_id,
@@ -293,7 +293,7 @@ fn index_explicit_files_with_connection(
 
         if !abs.exists() {
             let rel = requested_relative_path(root_path, fp);
-            api::delete_file_state(
+            api::file_state::delete_file_state(
                 conn,
                 &machine_id,
                 project_id,
@@ -325,7 +325,7 @@ fn index_explicit_files_with_connection(
                     outcome.skipped_files += 1;
                     continue;
                 };
-                api::delete_file_state(
+                api::file_state::delete_file_state(
                     conn,
                     &machine_id,
                     project_id,
@@ -365,7 +365,7 @@ fn index_explicit_files_with_connection(
         if !request.full
             && let Some(rel) = rel.as_deref()
             && let Ok(content_hash) = crate::index::hasher::file_content_hash(&abs)
-            && api::adopt_file_state(
+            && api::file_state::adopt_file_state(
                 conn,
                 &machine_id,
                 project_id,

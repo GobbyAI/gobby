@@ -98,7 +98,7 @@ mod serial_db {
         let mut file = indexed_file(&project_id, rel, "file-hash-v1", 1, 16);
         api::upsert_file(&mut conn, &file).expect("insert indexed file");
         let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
-        api::upsert_file_state(
+        api::file_state::upsert_file_state(
             &mut conn,
             &machine_id,
             &file,
@@ -218,7 +218,7 @@ mod serial_db {
 
         let local_file = indexed_file(&project_id, "src/local.rs", "hash-local", 1, 16);
         api::upsert_file(&mut conn, &local_file).expect("insert local file");
-        api::upsert_file_state(
+        api::file_state::upsert_file_state(
             &mut conn,
             &local_machine,
             &local_file,
@@ -229,7 +229,7 @@ mod serial_db {
 
         let foreign_file = indexed_file(&project_id, "src/foreign.rs", "hash-foreign", 1, 16);
         api::upsert_file(&mut conn, &foreign_file).expect("insert foreign file");
-        api::upsert_file_state(
+        api::file_state::upsert_file_state(
             &mut conn,
             &foreign_machine,
             &foreign_file,
@@ -301,7 +301,7 @@ mod serial_db {
         let file = indexed_file(&project_id, "src/lib.rs", "file-hash", 1, 16);
         api::upsert_file(&mut conn, &file).expect("seed incomplete content version");
         assert!(
-            !api::adopt_file_state(
+            !api::file_state::adopt_file_state(
                 &mut conn,
                 &machine_id,
                 &project_id,
@@ -321,7 +321,7 @@ mod serial_db {
         )
         .expect("complete projection state");
         assert!(
-            api::adopt_file_state(
+            api::file_state::adopt_file_state(
                 &mut conn,
                 &machine_id,
                 &project_id,
@@ -488,7 +488,7 @@ fn mark_graph_unsynced_clears_completion_and_attempt_for_selected_files() {
     let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
     let file = indexed_file(&project_id, "src/lib.rs", "hash-1", 1, 16);
     api::upsert_file(&mut conn, &file).expect("insert indexed file");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &file,
@@ -500,7 +500,7 @@ fn mark_graph_unsynced_clears_completion_and_attempt_for_selected_files() {
     api::upsert_file(&mut conn, &old_file).expect("insert historic indexed file");
     let empty_file = indexed_file(&project_id, "src/empty.rs", "hash-empty", 0, 0);
     api::upsert_file(&mut conn, &empty_file).expect("insert empty indexed file");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &empty_file,
@@ -979,7 +979,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
     )
     .expect("mark projections synced");
 
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &file,
@@ -987,7 +987,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Primary,
     )
     .expect("matching primary file state");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &file,
@@ -995,7 +995,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Primary,
     )
     .expect_err("stale primary file state");
-    api::delete_file_state(
+    api::file_state::delete_file_state(
         &mut conn,
         &machine_id,
         &project_id,
@@ -1005,7 +1005,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
     )
     .expect_err("stale primary delete");
     assert!(
-        api::delete_file_state(
+        api::file_state::delete_file_state(
             &mut conn,
             &machine_id,
             &project_id,
@@ -1016,7 +1016,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         .expect("matching primary delete")
     );
     assert!(
-        api::adopt_file_state(
+        api::file_state::adopt_file_state(
             &mut conn,
             &machine_id,
             &project_id,
@@ -1027,7 +1027,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         )
         .expect("matching primary adoption")
     );
-    api::adopt_file_state(
+    api::file_state::adopt_file_state(
         &mut conn,
         &machine_id,
         &project_id,
@@ -1046,14 +1046,14 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
     for writer in ["upsert", "adopt", "delete"] {
         let mut writer_tx = conn.transaction().expect("begin primary file writer");
         match writer {
-            "upsert" => api::upsert_file_state(
+            "upsert" => api::file_state::upsert_file_state(
                 &mut writer_tx,
                 &machine_id,
                 &file,
                 root,
                 api::IndexWriteMode::Primary,
             ),
-            "adopt" => api::adopt_file_state(
+            "adopt" => api::file_state::adopt_file_state(
                 &mut writer_tx,
                 &machine_id,
                 &project_id,
@@ -1063,7 +1063,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
                 api::IndexWriteMode::Primary,
             )
             .map(|_| ()),
-            "delete" => api::delete_file_state(
+            "delete" => api::file_state::delete_file_state(
                 &mut writer_tx,
                 &machine_id,
                 &project_id,
@@ -1107,7 +1107,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
             ],
         )
         .expect("rebind after file writers commit");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &file,
@@ -1115,7 +1115,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Primary,
     )
     .expect_err("old-root file upsert cannot write after rebind");
-    api::adopt_file_state(
+    api::file_state::adopt_file_state(
         &mut conn,
         &machine_id,
         &project_id,
@@ -1125,7 +1125,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
         api::IndexWriteMode::Primary,
     )
     .expect_err("old-root adoption cannot write after rebind");
-    api::delete_file_state(
+    api::file_state::delete_file_state(
         &mut conn,
         &machine_id,
         &project_id,
@@ -1145,7 +1145,7 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
     )
     .expect("seed overlay indexed project");
     api::upsert_file(&mut conn, &overlay_file).expect("seed overlay shared file");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &overlay_file,
@@ -1199,7 +1199,7 @@ fn primary_writer_blocks_rebind_and_stale_writer_cannot_repopulate() {
     api::upsert_file(&mut writer_conn, &file).expect("seed shared file");
 
     let mut writer_tx = writer_conn.transaction().expect("begin primary writer");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut writer_tx,
         &machine_id,
         &file,
@@ -1259,7 +1259,7 @@ fn primary_writer_blocks_rebind_and_stale_writer_cannot_repopulate() {
         .expect("count rebound selectors")
         .get(0);
     assert_eq!(selector_count, 0);
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut writer_conn,
         &machine_id,
         &file,

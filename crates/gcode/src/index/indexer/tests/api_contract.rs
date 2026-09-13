@@ -303,7 +303,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
 
     let file = contract_file(&project_id, "src/lib.rs", "primary-hash");
     seed_contract_file(&mut conn, &file);
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &file,
@@ -311,7 +311,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         api::IndexWriteMode::Primary,
     )
     .expect("matching primary file state");
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &file,
@@ -319,7 +319,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         api::IndexWriteMode::Primary,
     )
     .expect_err("stale primary file state");
-    api::delete_file_state(
+    api::file_state::delete_file_state(
         &mut conn,
         &machine_id,
         &project_id,
@@ -329,7 +329,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
     )
     .expect_err("stale primary delete");
     assert!(
-        api::delete_file_state(
+        api::file_state::delete_file_state(
             &mut conn,
             &machine_id,
             &project_id,
@@ -340,7 +340,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         .expect("matching primary delete")
     );
     assert!(
-        api::adopt_file_state(
+        api::file_state::adopt_file_state(
             &mut conn,
             &machine_id,
             &project_id,
@@ -351,7 +351,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         )
         .expect("matching primary adoption")
     );
-    api::adopt_file_state(
+    api::file_state::adopt_file_state(
         &mut conn,
         &machine_id,
         &project_id,
@@ -380,7 +380,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
     .expect("overlay stats without checkout");
     let overlay_file = contract_file(&overlay_id, "src/overlay.rs", "overlay-hash");
     seed_contract_file(&mut conn, &overlay_file);
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut conn,
         &machine_id,
         &overlay_file,
@@ -389,7 +389,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
     )
     .expect("overlay file state without checkout");
     assert!(
-        api::delete_file_state(
+        api::file_state::delete_file_state(
             &mut conn,
             &machine_id,
             &overlay_id,
@@ -400,7 +400,7 @@ fn primary_and_overlay_api_modes_enforce_checkout_contract() {
         .expect("overlay delete without checkout")
     );
     assert!(
-        api::adopt_file_state(
+        api::file_state::adopt_file_state(
             &mut conn,
             &machine_id,
             &overlay_id,
@@ -474,7 +474,7 @@ fn primary_writer_rebind_code(writer: PrimaryWriter) -> Option<String> {
         seed_contract_file(&mut writer_conn, &file);
     }
     if matches!(writer, PrimaryWriter::Delete) {
-        api::upsert_file_state(
+        api::file_state::upsert_file_state(
             &mut writer_conn,
             &machine_id,
             &file,
@@ -565,10 +565,14 @@ fn run_primary_writer(
             api::IndexWriteMode::Primary,
             true,
         ),
-        PrimaryWriter::FileUpsert => {
-            api::upsert_file_state(conn, machine_id, file, root, api::IndexWriteMode::Primary)
-        }
-        PrimaryWriter::Adopt => api::adopt_file_state(
+        PrimaryWriter::FileUpsert => api::file_state::upsert_file_state(
+            conn,
+            machine_id,
+            file,
+            root,
+            api::IndexWriteMode::Primary,
+        ),
+        PrimaryWriter::Adopt => api::file_state::adopt_file_state(
             conn,
             machine_id,
             project_id,
@@ -578,7 +582,7 @@ fn run_primary_writer(
             api::IndexWriteMode::Primary,
         )
         .map(|_| ()),
-        PrimaryWriter::Delete => api::delete_file_state(
+        PrimaryWriter::Delete => api::file_state::delete_file_state(
             conn,
             machine_id,
             project_id,

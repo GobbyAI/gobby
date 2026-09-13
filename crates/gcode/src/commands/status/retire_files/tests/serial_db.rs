@@ -787,7 +787,7 @@ fn exact_retirement_tombstone_requires_empty_facts_and_removed_selector() -> any
     };
     // Exercise the same canonical upserts as the overlay tombstone writer.
     api::upsert_file(&mut fixture.conn, &tombstone)?;
-    api::upsert_file_state(
+    api::file_state::upsert_file_state(
         &mut fixture.conn,
         &fixture.manifest.machine_id,
         &tombstone,
@@ -805,7 +805,7 @@ fn exact_retirement_tombstone_requires_empty_facts_and_removed_selector() -> any
     fixture.write_manifest()?;
     let file = &fixture.manifest.files[1];
     assert!(validate_file(&mut fixture.conn, &fixture.manifest, file).is_err());
-    api::delete_file_state(
+    api::file_state::delete_file_state(
         &mut fixture.conn,
         &fixture.manifest.machine_id,
         &fixture.manifest.project_id,

@@ -86,7 +86,7 @@ fn post_filter_graph_results(
         return Ok(results);
     }
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    visibility::filter_visible_graph_results(&mut conn, ctx, results)
+    visibility::graph::filter_visible_graph_results(&mut conn, ctx, results)
 }
 
 pub(crate) fn collect_paged_graph_results(

@@ -110,7 +110,7 @@ where
 
     fn upsert_file(&mut self, file: &IndexedFile) -> anyhow::Result<()> {
         api::upsert_file(self.conn, file)?;
-        api::upsert_file_state(
+        api::file_state::upsert_file_state(
             self.conn,
             &self.machine_id,
             file,
