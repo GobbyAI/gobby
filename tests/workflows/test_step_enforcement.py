@@ -1036,6 +1036,48 @@ class TestStepTransitions:
     """Test step transitions via on_mcp_success handlers."""
 
     @pytest.mark.asyncio
+    async def test_self_transition_reenters_once_per_tool_event(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="investigate",
+            workflow_data={
+                "name": "self-transition",
+                "version": "2.0",
+                "enabled": False,
+                "steps": [
+                    {
+                        "name": "investigate",
+                        "allowed_tools": "all",
+                        "transitions": [{"to": "investigate", "when": "True"}],
+                    }
+                ],
+            },
+        )
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-ask",
+                    "tool_name": "query_evidence",
+                },
+            },
+        )
+        for _ in range(2):
+            notice = await engine._process_step_after_tool(event, SESSION_ID, {})
+            assert notice == "Step transition: investigate -> investigate"
+        assert "Stopped step transition chain" not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_on_mcp_success_sets_variable(
         self,
         db: "HubDatabase",

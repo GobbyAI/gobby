@@ -538,6 +538,10 @@ class EnforcementCompletionMixin:
 
             if not transition_taken:
                 break
+            # Re-enter a step once per tool event; no handlers run within this
+            # chain to change the self-transition condition.
+            if transition_steps[-1][0] == transition_steps[-1][1]:
+                break
         else:
             logger.warning(
                 "Stopped step transition chain for workflow %s (session=%s) after %d transitions",
