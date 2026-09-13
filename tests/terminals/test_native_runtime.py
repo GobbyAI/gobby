@@ -149,9 +149,7 @@ class FakeHostClient:
             "reserve_generation": 1,
         }
 
-    async def spawn_commit(
-        self, terminal_id: str, spawn_key: str, commit_deadline_ms: int
-    ) -> None:
+    async def spawn_commit(self, terminal_id: str, spawn_key: str, commit_deadline_ms: int) -> None:
         await self.ensure_connected()
         self.commit_deadlines.append(commit_deadline_ms)
         if self.commit_error is not None:
