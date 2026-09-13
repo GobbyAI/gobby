@@ -1,4 +1,4 @@
-skill: build-rule
+skill: "gobby:references/rules/authoring.md"
 agent: default
 description: Agent must author per-turn rules under time pressure without confusing provider hook events with normalized turn boundaries.
 prompt: |
@@ -15,7 +15,7 @@ runs:
         text: Added before_agent and stop rules from memory.
   loaded:
     loaded_skills:
-      - build-rule
+      ["gobby:references/rules/authoring.md", "gobby:references/rules/events.md", "gobby:references/rules/effects.md"]
     actions:
       - action: consult_event_table
         source: build-rule

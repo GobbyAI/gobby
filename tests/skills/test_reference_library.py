@@ -615,3 +615,107 @@ def test_new_native_command_cannot_hide_behind_stale_contract(tmp_path: Path) ->
     )
     with pytest.raises(ValueError, match="Clap/contract command drift.*future-operation"):
         native_cli_inventory(tmp_path)
+
+
+SCENARIO_OPERATION_REFERENCES: dict[str, tuple[str, ...]] = {
+    "create_task": ("gobby:references/tasks/creation.md",),
+    "edit": ("gobby:references/tasks/implementation.md",),
+    "preview_close": ("gobby:references/tasks/closing.md",),
+    "review_memory": ("gobby:references/memory/post-task.md",),
+    "fix_finding": ("gobby:references/tasks/implementation.md",),
+    "close_current_task": ("gobby:references/tasks/closing.md",),
+    "set_handoff_compact": ("gobby:references/sessions/handoffs.md",),
+    "set_handoff_clear": ("gobby:references/sessions/handoffs.md",),
+    "get_agent_result": ("gobby:references/agents/lifecycle.md",),
+    "get_agent_capture_pages": (
+        "gobby:references/agents/lifecycle.md",
+        "gobby:references/mcp-servers/results.md",
+    ),
+    "draft_plan": ("gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md"),
+    "stage_handoff": ("gobby:references/sessions/handoffs.md",),
+    "set_handoff": ("gobby:references/sessions/handoffs.md",),
+    "save_plan": ("gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md"),
+    "hand_to_task_workflow": (
+        "gobby:references/tasks/overview.md",
+        "gobby:references/tasks/creation.md",
+    ),
+    "derive_plan_handoff_manifest": ("gobby:references/plan/approval.md",),
+    "apply_plan_handoff_manifest": ("gobby:references/plan/approval.md",),
+    "write_pipeline_yaml": ("gobby:references/pipelines/authoring.md",),
+    "validate_pipeline_definition": ("gobby:references/pipelines/validation.md",),
+    "create_pipeline": ("gobby:references/pipelines/authoring.md",),
+    "run_pipeline": ("gobby:references/pipelines/execution.md",),
+    "create_cron_job": ("gobby:references/pipelines/scheduling.md",),
+    "run_cron_job": ("gobby:references/pipelines/scheduling.md",),
+    "gcode_search": ("gobby:references/code-index/search.md",),
+    "gcode_outline": ("gobby:references/code-index/retrieval.md",),
+    "gcode_symbol": ("gobby:references/code-index/retrieval.md",),
+    "gcode_sibling_sweep": ("gobby:references/code-index/search.md",),
+    "apply_bounded_repair": (
+        "gobby:references/plan/repair.md",
+        "gobby:references/plan/drafting.md",
+        "gobby:references/plan/coverage.md",
+    ),
+    "capture_findings_in_owning_section": (
+        "gobby:references/plan/drafting.md",
+        "gobby:references/plan/coverage.md",
+    ),
+    "consult_event_table": ("gobby:references/rules/events.md",),
+    "author_rules": (
+        "gobby:references/rules/authoring.md",
+        "gobby:references/rules/events.md",
+        "gobby:references/rules/effects.md",
+    ),
+    "create_coordination_epic": ("gobby:references/tasks/creation.md",),
+    "normalize_leaf_stages": (
+        "gobby:references/tasks/reviews.md",
+        "gobby:references/build/stages.md",
+    ),
+    "launch_build": ("gobby:references/build/starting.md",),
+    "monitor_dispatch": ("gobby:references/build/monitoring.md",),
+    "fix_actionable_coordination_bug": ("gobby:references/tasks/implementation.md",),
+    "monitor_agents": ("gobby:references/agents/lifecycle.md",),
+    "set_handoff_before_agent_wait": ("gobby:references/sessions/handoffs.md",),
+    "wait_for_agent_once_to_subscribe": (
+        "gobby:references/agents/lifecycle.md",
+        "gobby:references/sessions/waits.md",
+    ),
+    "close_target": ("gobby:references/tasks/closing.md",),
+    "close_coordination_epic": ("gobby:references/tasks/closing.md",),
+}
+
+
+def test_reference_contract_5_2_3() -> None:
+    """Replay recorded obligations and reject scenarios loading retired instructions."""
+    from gobby.skills.instruction_requirements import parse_instruction_requirement
+    from tests.skills.scenario_runner import run_recorded_skill_scenario
+
+    root = Path(__file__).resolve().parents[2]
+    bundled = root / "src/gobby/install/shared/skills"
+    scenarios = sorted((root / "tests/skills/scenarios").rglob("*.yaml"))
+    migrated = 0
+    for path in scenarios:
+        result = run_recorded_skill_scenario(path)
+        requirement = parse_instruction_requirement(result.skill)
+        instruction = bundled / requirement.skill / (requirement.path or "SKILL.md")
+        assert instruction.is_file(), (path, result.skill)
+        if requirement.path is not None:
+            migrated += 1
+        for identity in result.loaded.loaded_skills:
+            loaded = parse_instruction_requirement(identity)
+            assert (bundled / loaded.skill / (loaded.path or "SKILL.md")).is_file(), (
+                path,
+                identity,
+            )
+        available = set(result.loaded.loaded_skills)
+        for action in result.loaded.actions:
+            if requirement.skill == "gobby":
+                required = SCENARIO_OPERATION_REFERENCES.get(action["action"], ())
+                assert set(required) <= available, (path, action["action"], required, available)
+            if action.get("action") == "load_reference":
+                available.add(f"{requirement.skill}:{action['path']}")
+                assert (bundled / requirement.skill / action["path"]).is_file(), (
+                    path,
+                    action["path"],
+                )
+    assert migrated == 22

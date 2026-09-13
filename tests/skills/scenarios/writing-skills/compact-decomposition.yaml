@@ -1,4 +1,4 @@
-skill: writing-skills
+skill: "gobby:references/skills/authoring.md"
 agent: default
 description: Loaded authoring decomposes an oversized monolith and records validation evidence.
 prompt: Create a bundled multi-mode deployment skill with enough detail to exceed 15,000 bytes.
@@ -11,7 +11,7 @@ runs:
       - action: respond
         text: Wrote one comprehensive SKILL.md without size validation.
   loaded:
-    loaded_skills: [writing-skills]
+    loaded_skills: ["gobby:references/skills/authoring.md"]
     actions:
       - action: write_skill_router
         sections: [purpose, common-path, invariants, topic-index]

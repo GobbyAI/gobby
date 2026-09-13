@@ -6,7 +6,7 @@ parser, expansion QA, and close-time coverage gate can prove every accepted item
 has implementation work.
 
 Use the `/gobby plan` skill for interactive drafting. It gathers requirements,
-loads the `plan-draft` methodology, writes the plan artifact, and runs the
+loads the `gobby:references/plan/drafting.md` methodology, writes the plan artifact, and runs the
 planner-side validation flow before expansion. Use
 `gobby build <plan-file> --isolation none` to start lifecycle automation from an
 approved plan file.

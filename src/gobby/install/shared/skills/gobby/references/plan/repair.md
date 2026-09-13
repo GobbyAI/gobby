@@ -2,6 +2,9 @@
 Load for validator residue, failed review application, interrupted evidence, or stale manifests.
 
 ## Mechanical repair
+Load standalone `restraint` and the complete [drafting](drafting.md) and
+[coverage](coverage.md) references before repairing. Read the linked coverage
+contract; a lint result alone does not supply the plan grammar.
 Run standard validation with project context; run expansion mode too only for a manifest-bearing artifact. Discover the exact failing lint and source location. A bounded mechanic may fix shape already determined by the narrative: kind markers, acceptance prefixes and existing artifact refs, contiguous Targets, exact symbol spelling, justified wildcard scope, known carrier omissions, dependency reference spelling and table-row acceptance.
 Sweep the whole plan for each failure class. Shared-file ordering may follow existing document order only when acyclic and consistent with stated ownership. A large-file split may use only a split boundary/file already specified. Never invent scope, new promises, ownership or a design choice; return needs-planner with section, lint and exact missing decision.
 Never edit M1, locked decisions or V1 checkpoints. Revalidate selected modes after repairs; stop after five full passes and report residue honestly. Report scope, before/after counts, expansion passed or unrun-no-manifest, repairs, needs_planner, byte-identical V1 and whether resealing is required.

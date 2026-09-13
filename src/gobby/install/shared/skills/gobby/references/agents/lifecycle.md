@@ -8,6 +8,9 @@ list filters/limits and displayed live state are not proof of task completion.
 Read `get_agent_result` for durable results, `get_agent_capture` for saved capture,
 and `get_agent_live_output` for current terminal evidence. Capture and result have
 different provenance; missing live output does not prove a run is finished.
+When a terminal result includes capture metadata, retrieve `get_agent_capture`
+and consume every page before judging the result. Follow [oversized-result
+retrieval](../mcp-servers/results.md) when the proxy offloads a response.
 `wait_for_agent` follows daemon-resume chains and registers a durable completion
 subscription for live work. Call it once and yield. `wait_for_output` is a bounded
 run-terminal regex diagnostic with internal polling, not a durable completion

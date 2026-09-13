@@ -9,13 +9,15 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.code_index.models import IndexedProject, IndexWriteMode
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import atomic_write_bytes, ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
+from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.loader import SkillLoader
-from gobby.skills.parser import parse_skill_file
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -36,16 +38,16 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/review-learning"
+SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/gobby/references/memory"
 SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
 WORKFLOWS = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
-PLAN_SKILL = SKILLS_ROOT / "plan/SKILL.md"
-PLAN_DRAFT_SKILL = SKILLS_ROOT / "plan-draft/SKILL.md"
-PLAN_REVIEW_SKILL = SKILLS_ROOT / "plan-review/SKILL.md"
+PLAN_SKILL = SKILLS_ROOT / "gobby/references/plan/approval.md"
+PLAN_DRAFT_SKILL = SKILLS_ROOT / "gobby/references/plan/drafting.md"
+PLAN_REVIEW_SKILL = SKILLS_ROOT / "gobby/references/plan/review.md"
 
 
 def _body() -> str:
-    return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    return " ".join((SKILL_DIR / "review-lessons.md").read_text(encoding="utf-8").split())
 
 
 def _skill_body(path: Path) -> str:
@@ -115,6 +117,9 @@ def _review_setup(
     project = install_isolated_checkout_project(
         temp_db, root, name=stem, machine_id=require_machine_id()
     ).project
+    CodeIndexStorage(temp_db).upsert_project_stats(
+        IndexedProject(id=project.id, root_path=str(root)), mode=IndexWriteMode.PRIMARY
+    )
     session = SessionManager(temp_db).register(
         external_id=f"{stem}-parent",
         machine_id="21000000-0000-4000-8000-000000000002",
@@ -208,69 +213,68 @@ def _approval(
 
 
 def test_review_learning_skill_parses_and_is_discoverable() -> None:
-    parsed = parse_skill_file(SKILL_DIR / "SKILL.md")
-    skills = SkillLoader().load_directory(SKILLS_ROOT)
-
-    assert parsed.name == "review-learning"
-    assert parsed.description.startswith("Use when")
-    assert "review-learning" in {skill.name for skill in skills}
+    catalog = load_capability_catalog()
+    assert catalog.folded_skills["review-learning"] == "gobby:references/memory/review-lessons.md"
+    names = {skill.name for skill in SkillLoader().load_directory(SKILLS_ROOT)}
+    assert "gobby" in names
+    assert "review-learning" not in names
+    assert _body()
 
 
 def test_review_learning_skill_documents_tool_contract() -> None:
     body = _body()
-
-    assert "gobby-review-learning" in body
-    assert "recall_review_context" in body
-    assert "record_review_lesson" in body
-    assert "Relevant memory/lesson" in body
-    assert "pattern_id" in body
-    assert "principle" in body
-    assert "root_cause" in body
-    assert "prevention" in body
-    assert "query_hints" in body
-    assert "gcode search" in body
-    assert "gcode grep" in body
-    assert "Required for `confirmed` and `no-fix-policy`: non-empty `title` or `message`" in body
-    assert "plus non-empty `principle` or `prevention`" in body
-    assert "`stale` and `invalid` remain no-op decisions" in body
+    for term in (
+        "gobby-review-learning",
+        "recall_review_context",
+        "record_review_lesson",
+        "Relevant memory/lesson",
+        "pattern_id",
+        "principle/prevention",
+        "root cause",
+        "query_hints",
+        "stable exact terms",
+        "nonempty title/message",
+        "`stale` and `invalid` record nothing",
+    ):
+        assert term in body
 
 
 def test_review_learning_skill_documents_memory_only_delivery() -> None:
     body = _body()
-
-    assert "A raw failure with no verified fix must not" in body
-    assert "`stale` or `invalid`: skip recording" in body
-    assert "Review learning never creates" in body
-    assert "updates Gobby tasks automatically" in body
-    assert "It is metadata only and causes no task or repository mutation" in body
-    assert "concrete artifact, owner, implementation approach" in body
-    assert "Recurrence count alone is evidence of importance" in body
+    for term in (
+        "require a verified fix reference in evidence",
+        "A raw failure is insufficient",
+        "Review learning never creates tasks automatically",
+        "`guardrail_target` is metadata and creates no task, rule, or repository change",
+        "apply the repository found-work ladder",
+    ):
+        assert term in body
 
 
 def test_plan_skill_documents_parallel_review_contract() -> None:
-    body = _skill_body(PLAN_SKILL)
+    body = _skill_body(PLAN_REVIEW_SKILL) + _skill_body(PLAN_SKILL)
     for phrase in (
         "plan-adversary-taskless",
         "prepare_plan_review_round",
         "bind_evidence_run",
         "coverage_attestation",
         "completed_plan_review_rounds",
-        "finalization succeeds",
+        "Failed/incomplete evidence never counts as a completed review round",
     ):
         assert phrase in body
 
 
 def test_review_producer_hooks_reference_review_learning() -> None:
-    code_reviewer = (SKILLS_ROOT / "code-review/SKILL.md").read_text(encoding="utf-8")
-    epic = (SKILLS_ROOT / "epic-review/SKILL.md").read_text(encoding="utf-8")
-    qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text(encoding="utf-8")
-
-    assert "REQUIRED SKILL: review-learning" in code_reviewer
+    code_reviewer = (SKILLS_ROOT / "code-review/SKILL.md").read_text()
+    epic = (SKILLS_ROOT / "gobby/references/review/epic.md").read_text()
+    outcomes = (SKILLS_ROOT / "gobby/references/review/outcomes.md").read_text()
+    qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text()
+    assert "gobby:references/memory/review-lessons.md" in code_reviewer
     assert "recall_review_context" in code_reviewer
     assert "source_kind=agent_review" in code_reviewer
-    assert "REQUIRED SKILL: review-learning" in epic
-    assert "source_kind=qa_rejection" in epic
-    assert "review-learning" in qa_reviewer
+    assert "applicable memory review" in epic
+    assert "qa_rejection" in outcomes
+    assert "gobby:references/memory/review-lessons.md" in qa_reviewer
     assert "record_review_lesson" in qa_reviewer
 
 
@@ -289,11 +293,11 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
     assert "participating_section_ids" in review_learning
     assert "causal_section_ids" in review_learning
     assert "The reviser records" in review_learning
-    assert "recall_review_lessons_by_class" in plan_review
-    assert "mandatory extra review pass" in plan_review
+    assert "recall plan reviewer-miss lessons" in plan_review
+    assert "apply each recalled check" in plan_review
     assert "fixer-induced-defect" in planner
     assert "before every revision" in planner.lower()
-    assert "class-aware" in plan
+    assert "each independently proven class remains recordable" in plan
 
     monkeypatch.setattr(
         "gobby.review_learning.service._current_project_id",
@@ -401,23 +405,23 @@ def test_interactive_approval_sequence(
     draft_contract = _skill_body(PLAN_DRAFT_SKILL)
     adversary_contract = _skill_body(PLAN_REVIEW_SKILL)
     taskless_agent = (WORKFLOWS / "plan-adversary-taskless.yaml").read_text(encoding="utf-8")
-    protocol = plan_contract.split("## Interactive Review Evidence Protocol", 1)[1]
+    protocol = plan_contract.split("## Reviewed approval", 1)[1].split("## Approval without", 1)[0]
     normalized_protocol = " ".join(protocol.split())
 
     operation_order = [
         protocol.index("apply_plan_review_manifest"),
         protocol.index("append_plan_changelog_round"),
-        protocol.index("render_plan_changelog_round"),
         protocol.index("finalize_plan_review_evidence"),
         protocol.index("checkpoint_plan_review_lesson_mint"),
     ]
     assert operation_order == sorted(operation_order)
-    assert "durable pre-finalization approval intent" in normalized_protocol
-    assert "pending_lesson_mint" in protocol
-    assert "manifest_state=revoked" in protocol
-    assert "append_plan_changelog_round" in draft_contract
-    assert "preserve those bytes verbatim" in draft_contract.lower()
-    assert "never writes the plan file" in adversary_contract
+    assert "atomically records approval intent and manifest checkpoint" in normalized_protocol
+    assert "pending lesson-mint state" in protocol
+    assert "drift revokes the intent" in (PLAN_SKILL.parent / "repair.md").read_text()
+    assert "append_plan_changelog_round" in protocol
+    assert "never overwrite it with a stale mirror" in draft_contract.lower()
+    assert "never hand-edit fences" in protocol
+    assert "Never edit the plan" in adversary_contract
     assert "manifest_entries" in taskless_agent
     assert "full typed entries" in taskless_agent
 

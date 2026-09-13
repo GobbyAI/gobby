@@ -17,10 +17,12 @@ SKILL_DIR = (
     / "install"
     / "shared"
     / "skills"
+    / "gobby"
+    / "references"
     / "tasks"
 )
-SKILL_PATH = SKILL_DIR / "SKILL.md"
-HANDOFFS_PATH = SKILL_DIR.parent / "handoff-discipline" / "SKILL.md"
+SKILL_PATH = SKILL_DIR / "closing.md"
+HANDOFFS_PATH = SKILL_DIR.parent / "sessions" / "handoffs.md"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HANDOFF_PROMPT_PATH = (
     REPO_ROOT / "src" / "gobby" / "install" / "shared" / "prompts" / "handoff" / "authoring.md"
@@ -40,152 +42,112 @@ OWNERSHIP_SCENARIO_PATH = (
 
 
 def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
-    """Close guidance mirrors the source-aware evidence contract."""
-    content = SKILL_PATH.read_text()
-
-    guidance = content.split("### Close-Validation Command Patterns", maxsplit=1)[1].split(
-        "## Exact Interactive Close Sequence", maxsplit=1
-    )[0]
+    implementation = (SKILL_DIR / "implementation.md").read_text()
+    closing = SKILL_PATH.read_text()
     for expected in (
-        "Finish all edits and formatting before the final focused validation",
-        "task-attributed edit makes earlier validation stale",
+        "final validation after every final edit and formatting change",
         "definitive exit",
-        "uv run pytest tests/tasks/test_validation.py -q",
-        "VAR=value <validation-command>",
-        "cd <dir> && <validation-command>",
-        "validation command on the next line",
-        "successful top-level `<validation-a> && <validation-b>`",
-        "Pipelines, including pipefail-enabled forms",
-        "<validation>; echo ...",
-        "<validation> && echo ...",
-        "<validation> || ...",
-        "<validation> & ...",
-        "Subshells",
-        "`js_repl` or node wrappers",
-        "Rerun the underlying validation directly after the final edit",
+        "environment prefixes",
+        "pipelines",
+        "fallbacks",
+        "backgrounding",
+        "subshells",
+        "trailing output",
+        "direct rerun",
+        "later edit makes",
+        "prior evidence stale; committing does not",
     ):
-        assert expected in guidance
+        assert expected in implementation
+    assert "claiming, closing, and worked-on sessions" in closing
+    assert "link windows" in closing
     for provider in ("Claude Code", "Qwen", "Droid", "Grok", "Codex"):
-        assert provider not in guidance, f"close guidance must stay provider-neutral: {provider}"
+        assert provider not in implementation + closing
 
 
 def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     content = SKILL_PATH.read_text()
-
     assert len(content) < 15_000
-    assert "## Create or Claim Before Editing" in content
-    assert "## Exact Interactive Close Sequence" in content
-    assert content.index("1. Finish all file edits.") < content.index(
-        "2. Sweep the native tracker and current transcript for owned findings"
+    steps = (
+        "1. Finish all edits; resolve every owned finding",
+        "2. Run focused validation after the final edit",
+        "3. Stage only task paths and commit",
+        "4. Call `close_task` once",
+        "5. Repair any deterministic blocker",
+        "6. After `closed=true` or a closure notification",
     )
-    assert content.index(
-        "2. Sweep the native tracker and current transcript for owned findings"
-    ) < content.index("3. Run focused validation after the final edit.")
-    assert content.index("3. Run focused validation after the final edit.") < content.index(
-        "5. Stage specific files and commit"
-    )
-    assert content.index("5. Stage specific files and commit") < content.index(
-        "6. Call `close_task` once"
-    )
-    assert content.index("6. Call `close_task` once") < content.index(
-        '7. If `close_task` returns `error="agentic_review_required"`'
-    )
-    assert content.index(
-        '7. If `close_task` returns `error="agentic_review_required"`'
-    ) < content.index("8. Call `review_task_memories`")
-    assert "review_task_memories" not in content[: content.index("6. Call `close_task` once")]
-    assert "Call `close_task` once with" in content
-    assert "A ready call links the commit and closes atomically." in content
+    positions = [content.index(step) for step in steps]
+    assert positions == sorted(positions)
     assert "exact validation commands and results" in content
+    assert "`preview=true` closes when ready" in content
+    assert "review_task_memories" in content[positions[-1] :]
     assert "Repeat the same `close_task` call without `preview`" not in content
-    assert "repeat the conditional close" not in content
-    assert "references/creation.md" in content
-    assert "references/no-work-closures.md" in content
-    assert "references/review-flows.md" in content
+    overview = (SKILL_DIR / "overview.md").read_text()
+    for topic in ("creation", "implementation", "closing", "reviews"):
+        assert topic in overview
 
 
 def test_agentic_close_review_waits_once_and_parks_the_caller() -> None:
     content = SKILL_PATH.read_text()
-    normalized = " ".join(content.split())
-
-    assert "`wait_for_agent(run_id=validator_run_id)` once" in normalized
-    assert "end the turn" in normalized
-    assert "Do not poll status or re-call `close_task` while the review runs" in normalized
-    assert "automatic durable completion subscription" in normalized
+    assert "`agentic_review_required`, register `wait_for_agent`" in content
+    assert "`validator_run_id`" in content
+    assert "and yield" in content
+    assert "Do not poll or repeatedly call close while review is running" in content
 
 
 def test_creation_guidance_uses_structured_named_test_references() -> None:
-    content = (SKILL_DIR / "references" / "creation.md").read_text()
-
-    assert "When criteria depend on named test bodies" in content
-    assert "test: `tests/skills/test_tasks_skill.py::" in content
-    assert '"validation_criteria": (' in content
+    content = (SKILL_DIR / "creation.md").read_text()
+    assert "`test: path::test_symbol`" in content
+    assert "`file: path`" in content
+    assert '"validation_criteria":' in content
+    assert '"claim": True' in content
 
 
 def test_claimed_task_owns_native_substeps_and_found_work() -> None:
-    content = SKILL_PATH.read_text()
-
-    assert "For multi-step work, initialize the provider's native task" in content
-    assert "One Gobby task owns the deliverable" in content
-    assert "native tracker owns its implementation substeps" in content
-    assert "add the finding to the claimed task's native tracker" in content
-    assert "before closing that same Gobby task" in content
-    assert "Create another Gobby task only when the user explicitly directs it" in content
-    assert all(
-        label in content for label in ("`needs-decision`", "`needs-planning`", "`clean-window`")
-    )
-    assert "parent coordinator" in content
-    assert "failing command, diagnostics, paths," in content
-    assert "Sweep the native tracker and current transcript for owned findings" in content
+    content = (SKILL_DIR / "implementation.md").read_text()
+    assert "one deliverable's implementation substeps" in content
+    assert "provider's native tracker" in content
+    assert "Fix and verify it inside the current task" in content
+    assert "another active session" in content
+    assert "command, diagnostics, paths, and impact" in content
+    assert "Preserve their files" in content
+    assert "passing scoped run" in content
+    for label in ("`needs-decision`", "`needs-planning`", "`clean-window`"):
+        assert label in content
+    assert "Filing alone does not finish found work" in content
+    assert "coordination within the fix, not deferral reasons" in content
 
 
 def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> None:
     content = HANDOFFS_PATH.read_text()
-
-    assert "name: handoff-discipline" in content
-    assert "Load `handoff-discipline`" in SKILL_PATH.read_text()
-    assert not (SKILL_DIR / "references" / "handoffs.md").exists()
-
-    assert "Planning or review reaches context pressure" in content
-    assert "Active task reaches context pressure" in content
-    assert "`set_handoff(clear_session=false)`" in content
-    assert "Root/coordinator has closed the current task" in content
-    assert "moves to another task or epic child" in content
-    assert "`set_handoff(clear_session=true)`" in content
-    assert "reserved for moving between tasks" in content
-    assert "task closes" in content
-    assert "Spawned worker finishes or completes a blocker handoff" in content
-    assert "Structured `end_agent_run(...)`" in content
-    assert "multiple epochs" in content
-    assert "cumulative history, previous handoffs, raw logs, or" in content
-    assert "completed ledgers" in content
-    assert "invented abbreviations" in content
-    assert "create or update a Markdown file" in content
-    assert "include its path in the handoff's `references`" in content
-    assert "Reuse an existing relevant log" in content
-    assert "do not paste it into the handoff or" in content
-    assert "try to compress it there" in content
-    assert "Progress logs are optional" in content
-    assert "at most 10,000 JSON-escaped characters" in content
+    for expected in (
+        "Load before authoring",
+        "implementation",
+        "tracker",
+        "current context",
+        "epoch",
+        "previous handoffs, logs, or completed ledgers",
+        "10,000 JSON-escaped",
+        "characters",
+        "compressing prose into shorthand",
+        "optional Markdown progress log",
+        "reference its path",
+        "`clear_session=false` during planning, review, or ongoing task work",
+        "`true` only for a root/coordinator",
+        "after closing the",
+        "current task",
+        "spawned worker finishes with structured `end_agent_run`",
+    ):
+        assert expected in content
 
 
 def test_handoff_feedback_precedes_handoff_without_duplicate_epoch_submission() -> None:
     content = HANDOFFS_PATH.read_text()
     prompt = HANDOFF_PROMPT_PATH.read_text()
-
-    feedback_call = "`gobby-sessions:feedback(observations=[])`"
-    assert "When working in the Gobby repository" in content
-    assert "current-epoch survey" in content
-    assert "separate" in content
-    assert feedback_call in content
-    assert "`submitted` or `acknowledged`, never" in content
-    assert "`human reviewed`" in content
-    assert "current epoch is already submitted" in content
-    assert "do not submit a" in content
-    assert "gratuitous duplicate" in content
-    assert content.index(feedback_call) < content.index("Call `set_handoff` last.")
-    assert "In other projects, follow their configured survey scope." in content
-
+    assert "submit the epoch's feedback first" in content
+    assert "`feedback(observations=[])`" in content
+    assert "duplicate acknowledgment for the same epoch" in content
+    assert "human-reviewed" in content
+    assert content.index("`feedback(observations=[])`") < content.index("Call `set_handoff` last.")
     assert "gobby-sessions:feedback first" in prompt
     assert prompt.index("gobby-sessions:feedback first") < prompt.index("set_handoff last")
 
@@ -198,22 +160,27 @@ def test_brevity_uses_normal_prose_for_structured_handoffs() -> None:
 
 
 def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
-    for content in (AGENTS_PATH.read_text(), SKILL_PATH.read_text()):
-        assert "applicable `wait_for_*`" in content
-        assert "yield the turn" in content
-        assert "repeated status calls" in content
-        assert "repeated `capture_output`" in content
-
-    skill = SKILL_PATH.read_text()
-    assert "`wait_for_agent` for spawned runs" in skill
-    assert "`wait_for_output` for terminal" in skill
+    agents = AGENTS_PATH.read_text()
+    for expected in (
+        "applicable `wait_for_*`",
+        "yield the turn",
+        "repeated status calls",
+        "repeated `capture_output`",
+    ):
+        assert expected in agents
+    closing = SKILL_PATH.read_text()
+    assert "register `wait_for_agent`" in closing
+    assert "and yield" in closing
+    assert "Do not poll or repeatedly call close" in closing
 
 
 def test_guides_document_single_call_conditional_close() -> None:
-    for path in (TASKS_GUIDE_PATH, MCP_GUIDE_PATH):
+    for path in (TASKS_GUIDE_PATH, SKILL_PATH):
         content = path.read_text()
         assert "preview=true" in content
-        assert "closed=true" in content
+        assert "closes" in content
+        assert "agentic_review_required" in content
+        assert "review_task_memories" in content
         assert "preview=false" not in content
 
 

@@ -17,7 +17,7 @@ runs:
   loaded:
     loaded_skills:
       - repository-maintenance
-      - code-index
+      - "gobby:references/code-index/overview.md"
     actions:
       - action: identify_state_owner
         owner: tasks

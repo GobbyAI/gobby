@@ -5,12 +5,15 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gobby.plans.review_evidence_io import parse_plan_bytes
+from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.semantic_lint import lint_plan_document
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PLAN_REVIEW = PROJECT_ROOT / "src/gobby/install/shared/skills/plan-review/SKILL.md"
+PLAN_REVIEW = PROJECT_ROOT / "src/gobby/install/shared/skills/gobby/references/plan/review.md"
 ADVERSARY = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
 
 MALFORMED_CASES = [
@@ -78,16 +81,35 @@ def _adversary_prompt() -> str:
 
 
 @pytest.mark.parametrize(("cause", "malformed_plan", "required_terms"), MALFORMED_CASES)
-def test_rejects_each_case(
+def test_grammar_gate_and_review_boundary(
     cause: str,
     malformed_plan: str,
     required_terms: tuple[str, ...],
 ) -> None:
-    assert malformed_plan
-    body = _plan_review_body()
-    assert f"Plan-Coverage Contract rejection: {cause}" in body
-    for term in required_terms:
-        assert term in body
+    # Exercise the upstream grammar/semantic gate instead of pinning retired prose.
+    content = ("# Rejection fixture\n**Plan ID:** rejection\n\n" + malformed_plan).encode()
+    try:
+        document = parse_plan_bytes("rejection.md", content)
+    except ReviewEvidenceError as exc:
+        assert exc.code == "invalid_plan"
+        expected = {
+            "missing kind": "missing kind: front-matter",
+            "missing acceptance": "missing **Acceptance:** block",
+            "ID collision": "duplicate section ID",
+            "malformed item ID": "does not belong to section",
+            "malformed deferral": "missing YAML deferral object",
+            "zero artifact references": "has no artifact reference",
+        }
+        assert expected[cause] in str(exc)
+    else:
+        if cause == "missing ID":
+            # Unnumbered framing is outside the typed section inventory; the
+            # qualitative reviewer must still trace every requirement.
+            assert document.sections == ()
+            assert "Trace each obligation to acceptance" in _plan_review_body()
+            return
+        issues = lint_plan_document(document).issues
+        assert any(issue.code == "table-row-decomposition" for issue in issues), required_terms
 
 
 def test_rejects_table_row_decomposition_violation() -> None:
@@ -109,19 +131,19 @@ def test_rejects_table_row_decomposition_violation() -> None:
 
     body = _plan_review_body()
     lowered = body.lower()
-    assert "table-row decomposition" in lowered
-    assert "missing rows" in lowered
-    assert "table data-row count" in body
+    assert "[coverage](coverage.md)" in lowered
+    document = parse_plan_bytes("rows.md", five_row_fixture.encode())
+    assert any(
+        issue.code == "table-row-decomposition" for issue in lint_plan_document(document).issues
+    )
 
 
 def test_accepts_standalone_category_test_deliverables() -> None:
-    body = _plan_review_body()
-
-    assert "duplicate/filler TDD-wrapper test tasks" in body
-    assert "Standalone" in body
-    assert "`category: test`" in body
-    assert "parity" in body
-    assert "acceptance criteria" in body
+    contract = (PROJECT_ROOT / "docs/contracts/plan-coverage.md").read_text()
+    assert "Filler tasks" in contract
+    assert "`category: test` is valid for standalone test infrastructure" in contract
+    assert "parity" in contract
+    assert "own acceptance criteria" in contract
 
 
 def test_plan_adversary_prompt_documents_upstream_draft_validation_contract() -> None:
@@ -135,20 +157,15 @@ def test_plan_adversary_prompt_documents_upstream_draft_validation_contract() ->
 def test_review_methodology_delegates_mechanical_blast_radius_verification() -> None:
     body = " ".join(_plan_review_body().split())
 
-    assert "semantic and architectural" in body
+    assert "runtime_invariants" in body
     assert "repository_blast_radius" in body
-    assert "spot-check" in body
-    assert "deterministic sweep report" in body
+    assert "spot-checking" in body
+    assert "deterministic report" in body
     assert "delegated-verified" in body
 
 
-def test_review_methodology_records_deterministic_gate_trial_outcome() -> None:
-    body = " ".join(_plan_review_body().split()).lower()
-
-    assert "session #11061" in body
-    assert "rounds 5–10" in body
-    assert "six consecutive rounds" in body
-    assert "zero validator-class findings" in body
-    assert "3 of 10" in body
-    assert "8 blocking semantic findings" in body
-    assert "did not establish semantic convergence" in body
+def test_review_methodology_does_not_confuse_mechanical_and_semantic_success() -> None:
+    body = " ".join(_plan_review_body().split())
+    assert "Base-validate canonical bytes immediately before each round" in body
+    assert "Walk requirements, all inputs/control-flow branches" in body
+    assert "Do not approve a plan you do not understand" in body

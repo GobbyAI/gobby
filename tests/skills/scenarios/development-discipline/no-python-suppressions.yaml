@@ -1,4 +1,4 @@
-skill: development-discipline
+skill: "gobby:references/development/obligations.md"
 agent: default
 description: Developer is pressed to silence Python diagnostics so a nearly finished task can ship.
 prompt: |
@@ -16,7 +16,7 @@ runs:
         text: Silenced both diagnostics to finish before the deadline.
   loaded:
     loaded_skills:
-      - development-discipline
+      - "gobby:references/development/obligations.md"
     actions:
       - action: inspect_diagnostics
         path: src/example/sdk_adapter.py

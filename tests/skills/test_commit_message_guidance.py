@@ -19,14 +19,18 @@ def test_commit_message_guidance_uses_project_placeholder(
     bundled_skills_root: Path,
 ) -> None:
     skill_bodies = {
-        name: (bundled_skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-        for name in ("coderabbit", "tasks", "source-control")
+        name: (bundled_skills_root / path).read_text(encoding="utf-8")
+        for name, path in {
+            "coderabbit": "coderabbit/SKILL.md",
+            "tasks": "gobby/references/tasks/closing.md",
+            "source-control": "gobby/references/source-control/commits.md",
+        }.items()
     }
     for skill_name, body in skill_bodies.items():
         assert "[<project_name>-#<task_number>]" in body
         assert "[gobby-#" not in body
         assert "[gobby-cli-#" not in body
-        git_commit_examples = re.findall(r"git commit(?: --only)? -m \"([^\"]+)\"", body)
+        git_commit_examples = re.findall(r"git commit(?: --only)? -m [\"\']([^\"\']+)[\"\']", body)
         if skill_name == "coderabbit":
             assert "Commit with the task ref" in body
         else:
@@ -35,8 +39,8 @@ def test_commit_message_guidance_uses_project_placeholder(
 
 
 def test_tasks_skill_scopes_commits_to_owned_task_paths(bundled_skills_root: Path) -> None:
-    body = (bundled_skills_root / "tasks" / "SKILL.md").read_text(encoding="utf-8")
+    body = (bundled_skills_root / "gobby/references/tasks/closing.md").read_text(encoding="utf-8")
 
-    assert "git commit --only -- <task paths>" in body
-    assert 'git commit --only -m "[<project_name>-#<task_number>]' in body
-    assert "foreign staged entries remain intact" in body
+    assert "-- <task paths>" in body
+    assert "git commit --only -m '[<project_name>-#<task_number>]" in body
+    assert "Stage only task paths" in body

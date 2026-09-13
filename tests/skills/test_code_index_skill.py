@@ -1,168 +1,126 @@
-"""Tests for bundled code-index skill guidance."""
+"""Code-index operating contracts remain discoverable through focused references."""
 
-import os
 from pathlib import Path
 
 import pytest
 
-from gobby.skills.parser import parse_skill_file
-
 pytestmark = pytest.mark.unit
-
-SKILL_PATH = Path("src/gobby/install/shared/skills/code-index/SKILL.md")
-GCODE_SKILL_PATH_ENV = "GOBBY_GCODE_SKILL_PATH"
-REPO_ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[2]
+REFERENCES = ROOT / "src/gobby/install/shared/skills/gobby/references/code-index"
 
 
-def _gcode_bundled_skill_path() -> Path:
-    configured_path = os.environ.get(GCODE_SKILL_PATH_ENV)
-    if configured_path:
-        return Path(configured_path).expanduser()
-    return REPO_ROOT / "crates/gcode/assets/SKILL.md"
+def _body(topic: str) -> str:
+    return " ".join((REFERENCES / f"{topic}.md").read_text().split())
 
 
 def test_code_index_skill_documents_positional_path_filters() -> None:
-    """Document supported path filter syntax for gcode search commands."""
-    parsed = parse_skill_file(SKILL_PATH)
-    body = parsed.content
-
-    assert parsed.name == "code-index"
-    assert parsed.get_category() == "core"
-
-    assert 'gcode search "query" [PATH ...]' in body
-    assert 'gcode grep "regex" [PATH ...] -m 50' in body
-    assert 'gcode search-content "query" [PATH ...]' in body
-    assert "`gcode tree [PATH ...]`" in body
-    assert "OR semantics before paging" in body
-    assert "Bare project-file paths resolve from the project root" in body
-    assert "-m/--limit" in body
-    assert "`--max-count` is an alias for `--limit`" in body
-    assert "--format json" in body
-    assert "--path <glob>" not in body
-    assert "positional path filters" in body
-    assert "Use `gcode` directly for the code-index graph projection." in body
-    assert "graph sync/read/lifecycle behavior lives in `gcode`" in body
-    assert "via the Gobby daemon" not in body
+    search, navigation, graphs = (_body(name) for name in ("search", "navigation", "graphs"))
+    assert "positional paths/globs with OR semantics" in search
+    assert "Multiple positional paths and globs use OR semantics" in navigation
+    assert "Bare paths resolve from the project root" in navigation
+    assert "`-m/--limit` has alias `--max-count`" in search
+    assert "Gcode owns graph and vector operations" in graphs
+    assert "daemon HTTP routes delegate UI operations" in graphs
 
 
 def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
-    """Document gcode-first navigation before falling back to line readers."""
-    parsed = parse_skill_file(SKILL_PATH)
-    body = parsed.content
-
-    assert "## Recommended Workflow" in body
-    assert '`gcode search "concept"`' in body
-    assert '`gcode search-symbol "name"`' in body
-    assert '`gcode search-content "text"`' in body
-    assert "`gcode outline path/to/file`" in body
+    body = _body("retrieval")
+    assert "`gcode symbol-at path/to/file.py:42` after a file/line hit" in body
+    assert "`gcode outline path/to/file.py`" in body
     assert "`gcode symbol <full-uuid>`" in body
-    assert "`gcode symbols <full-uuid> <full-uuid> ...`" in body
-    assert "Search output is intentionally snippet-sized" in body
-    assert "before reaching for broad `sed`, `awk`, or full-file reads" in body
-    assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
+    assert "`gcode symbols` for a batch" in body
+    assert "Fetch tight neighboring context only when needed after retrieval" in body
+    assert "do not replace this flow with whole-file reads" in body
 
 
 def test_code_index_skill_front_loads_command_selection_and_lane_recovery() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
-    selection_position = body.index("## Choose the command first")
-    search_details_position = body.index("## Search details")
-    assert selection_position < search_details_position
-    assert '`gcode search-symbol "name"`' in body
-    assert '`gcode grep -w "identifier" -m 50`' in body
-    assert '`gcode grep -F "literal" -m 50`' in body
-    assert '`gcode search-content "text"`' in body
-    assert '`gcode search "concept"`' in body
-    assert "hybrid symbol search" in body
-    assert "Switch lanes" in body
-    assert "Do not paraphrase the same `search` query or page through irrelevant results" in body
+    body = _body("search")
+    for command in (
+        'gcode search-symbol "name"',
+        'gcode grep -w "identifier"',
+        'gcode grep -F "spawn_ui_server("',
+        'gcode search-content "text"',
+        'gcode search "concept"',
+    ):
+        assert command in body
+    assert body.index("Query shape") < body.index("Ranked search accepts")
+    assert "switch according to query shape" in body
+    assert "Do not paraphrase the same fuzzy query or page through noise" in body
 
 
 def test_code_index_skill_documents_ast_only_outline_and_markdown_recovery() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
+    body = _body("retrieval")
     assert "`outline` is AST-only" in body
-    assert "parser-backed source files" in body
+    assert "Markdown and other content-only files" in body
     assert "gcode grep '^#{1,6} ' path/to/file.md -m 200" in body
-    assert "content-only files" in body
 
 
 def test_code_index_skill_documents_allow_stale_flag() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
+    body = _body("recovery")
     assert "--allow-stale" in body
     assert "--no-freshness" not in body
 
 
 def test_code_index_skill_documents_grep_compat_exit_and_grant_errors() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
-    assert "-l/--files-with-matches" in body
-    assert "`-E`, `-n`, `-r`, and `-R` are accepted no-ops" in body
-    assert "one-line JSON usage error" in body
-    assert "Exit 0 always means success, including empty results" in body
-    assert "payload_skew" in body
-    assert "api_contract_mismatch" in body
-    assert "stop retrying gcode" in body
-    assert "`recovery` directive" in body
-    assert "--no-freshness" not in body
+    search, recovery = _body("search"), _body("recovery")
+    assert "`-l` for files" in search
+    assert "`-E/-n/-r/-R` are accepted no-ops" in search
+    assert "Empty success is not an error" in search
+    assert "payload_skew" in recovery
+    assert "api_contract_mismatch" in recovery
+    assert "recovery" in recovery
+    assert "--no-freshness" not in recovery
 
 
 def test_code_index_skill_documents_durable_plan_targets() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
-    assert "## Plan Target References" in body
-    assert "`path/to/file.py::Class.method`" in body
-    assert "`path/to/file.rs::Type::method`" in body
-    assert "`path/to/file.py::* — scope-reason: <non-empty explanation>`" in body
-    assert "Never use the returned symbol" in body
-    resolve_position = body.index("Resolve each changed symbol")
-    usages_position = body.index("`gcode usages`", resolve_position)
-    blast_position = body.index("`gcode blast-radius`", resolve_position)
-    assert resolve_position < usages_position
-    assert resolve_position < blast_position
+    body = _body("navigation")
+    assert "resolve exact qualified names before broader impact queries" in body
+    assert "`path.py::Class.method`" in body
+    assert "`path.rs::Type::method`" in body
+    assert "Use neither UUIDs nor line numbers as durable plan targets" in body
+    assert "File-wide targets need a scope reason" in body
 
 
 def test_code_index_skill_documents_callees_and_graph_view() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
-    assert "`gcode callees <symbol>`" in body
-    assert "Collection commands accept `--limit`, `--offset`, and `--token-budget`" in body
-    assert "automatically uses a 2,000-token page budget" in body
-    assert "prints an exact shell-safe continuation command" in body
-    assert "oversized first item is returned complete" in body
-    assert "`gcode graph view --view=mcg --file <file>`" in body
-    assert "`--module <module>`" in body
-    assert "`gcode graph view --view=fcg|class-hierarchy --symbol <symbol>`" in body
-    assert "complete within `--depth`" in body
-    assert "omitted `--depth` is 8 for CHG and 1 for FCG/MCG" in body
-    assert "`incoming_truncated`" in body
-    assert "`outgoing_truncated`" in body
-    assert "Leiden via `analyze`" in body
-    assert "`E(P)`" in body
-    assert "`nodes[].file` is nullable" in body
+    impact, graphs, navigation = (_body(name) for name in ("impact", "graphs", "navigation"))
+    assert "`callees` for outgoing calls" in impact
+    assert "2,000-token compact-text page budget" in navigation
+    assert "oversized first item remains complete" in navigation
+    assert "exact shell-safe continuation command unchanged" in navigation
+    for expected in (
+        "--view mcg",
+        "--module",
+        "--view fcg",
+        "--view class-hierarchy",
+        "depth 8",
+        "no row limit within depth",
+        "default to depth 1",
+        "incoming/outgoing truncation",
+        "nullable node `file`",
+        "module aliases identify the same provider neighborhood",
+    ):
+        assert expected in graphs
 
 
 def test_code_index_skill_prefers_compact_location_retrieval() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
-    assert "Navigation commands default to compact text" in body
-    assert "use `gcode symbol-at path/to/file.py:42` after search" in body
-    assert "Compact text omits UUIDs, scores, and ranking-lane diagnostics" in body
-    assert "Use `--verbose` or `--format json`" in body
+    assert "compact-text" in _body("navigation")
+    assert "Text omits UUIDs and ranking diagnostics" in _body("search")
+    assert "Request JSON or `--verbose` only when needed" in _body("search")
+    assert "`gcode symbol-at path/to/file.py:42`" in _body("retrieval")
 
 
 def test_code_index_skill_documents_stale_ids_and_callback_fallback() -> None:
-    body = parse_skill_file(SKILL_PATH).content
-
-    assert "Edited files invalidate content-derived symbol IDs" in body
-    assert "rerun `gcode outline`" in body
-    assert "use `gcode symbol-at`" in body
-    assert "call and import edges" in body
-    assert "callback references" in body
-    assert "`gcode grep -w`" in body
+    body = _body("retrieval")
+    assert "Content-derived IDs change after edits" in body
+    assert "re-resolve the file with `outline` or `symbol-at`" in body
+    assert "retains valid requested bodies and reports missing IDs" in body
+    impact = _body("impact")
+    assert "callback references can leave gaps" in impact
+    assert 'gcode grep -w "symbol_name"' in impact
 
 
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
-    """Keep Gobby's install template byte-identical to gcode's bundled skill."""
-    assert SKILL_PATH.read_bytes() == _gcode_bundled_skill_path().read_bytes()
+    """The native installer must carry the same thin router, not retired instructions."""
+    assert (ROOT / "crates/gcode/assets/SKILL.md").read_bytes() == (
+        REFERENCES.parents[1] / "SKILL.md"
+    ).read_bytes()

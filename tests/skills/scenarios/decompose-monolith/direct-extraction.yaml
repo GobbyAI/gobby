@@ -18,7 +18,7 @@ runs:
   loaded:
     loaded_skills:
       - decompose-monolith
-      - code-index
+      - "gobby:references/code-index/overview.md"
     actions:
       - action: confirm_source_ceiling
         ceiling: repository-defined or 1,000 lines

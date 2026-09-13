@@ -46,20 +46,28 @@ You'll see a progress bar while indexing:
 
 After init, you can search immediately.
 
-For supported isolation/worktree identities, `gcode init` can install the bundled `gcode` skill
+For supported isolation/worktree identities, `gcode init` can install the bundled `gobby` router
 for Claude Code, Codex, Droid, Grok, Qwen, and AGY:
 
 | CLI | Project-local files |
 |-----|---------------------|
-| Claude Code | `.claude-plugin/plugin.json`, `skills/gcode/SKILL.md` |
-| Codex | `.codex/skills/gcode/SKILL.md` |
-| Droid | `.factory/skills/gcode/SKILL.md` |
-| Grok | `.grok/skills/gcode/SKILL.md` |
-| Qwen | `.qwen/skills/gcode/SKILL.md` |
-| AGY | `.agents/skills/gcode/SKILL.md` |
+| Claude Code | `.claude-plugin/plugin.json`, `skills/gobby/SKILL.md` |
+| Codex | `.codex/skills/gobby/SKILL.md` |
+| Droid | `.factory/skills/gobby/SKILL.md` |
+| Grok | `.grok/skills/gobby/SKILL.md` |
+| Qwen | `.qwen/skills/gobby/SKILL.md` |
+| AGY | `.agents/skills/gobby/SKILL.md` |
 
 Gobby-managed projects skip these project-local writes because Gobby owns CLI
-wiring.
+wiring. The router loads Gobby's code-index references through its connected MCP
+server; a connected server alone does not count as an installed standalone skill.
+
+Reinstallation preserves an existing current router, including its generated
+catalog appendix. An unrecognized router or custom Claude plugin manifest stops
+installation with a preservation diagnostic; reconcile that file explicitly.
+Upgrade removes the predecessor `gcode/SKILL.md` only when its bytes match the
+known bundled carrier. Modified predecessors are reported for manual reconciliation;
+other files in that directory remain untouched.
 
 ### First Search
 

@@ -1,4 +1,4 @@
-skill: development-discipline
+skill: "gobby:references/development/obligations.md"
 agent: default
 description: Deadline pressure tempts an executor to trust a stale line hint.
 prompt: |
@@ -11,7 +11,7 @@ runs:
     actions:
       - action: edit_stale_line_hint
   loaded:
-    loaded_skills: [development-discipline]
+    loaded_skills: ["gobby:references/development/obligations.md"]
     actions:
       - action: read_research_context
       - action: inspect_referenced_symbols

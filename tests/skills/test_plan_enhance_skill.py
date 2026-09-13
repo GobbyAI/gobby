@@ -1,149 +1,89 @@
-"""Content-level tests for the bundled plan-enhance methodology skill.
-
-plan-enhance is the single source of truth for how to constructively enhance a
-gobby plan document — the Better/Bigger counterweight to plan-review. It is
-consumed from two places:
-  - the interactive /gobby plan skill's enhancement phase (Step 4.5), via the
-    spawned plan-enhancer-taskless agent,
-  - the autonomous plan-enhancer.yaml lifecycle agent (load_skill step before
-    suggesting), which records suggestions via record_plan_enhancement.
-
-These tests guard content drift: the enhancer is advisory-only (never edits the
-plan, never gates), it loads the shared proportionality test so it never
-suggests a Rube Goldberg, it honestly reports `converged` rather than inventing
-work, and its output schema carries the exact ranked fields the planner and
-coordinator parse, with severity pinned to `opportunity` (never blocking).
-"""
+"""Constructive enhancement remains advisory and preserves serialized suggestions."""
 
 from pathlib import Path
 
 import pytest
 
-from gobby.skills.parser import parse_skill_file
+from gobby.skills.capability_catalog import load_capability_catalog
 
 pytestmark = pytest.mark.unit
-
-SKILL_PATH = Path("src/gobby/install/shared/skills/plan-enhance/SKILL.md")
-
-
-class TestPlanEnhanceFrontmatter:
-    def test_skill_parses(self) -> None:
-        parsed = parse_skill_file(SKILL_PATH)
-        assert parsed.name == "plan-enhance"
-        assert parsed.description
-        # Discoverable by enhancement-related terms
-        lowered = parsed.description.lower()
-        assert "enhance" in lowered or "improvement" in lowered
-
-    def test_audience_is_all(self) -> None:
-        """Used by both interactive coordinator and spawned plan-enhancer agent."""
-        parsed = parse_skill_file(SKILL_PATH)
-        assert parsed.audience_config is not None
-        assert parsed.audience_config.audience == "all"
+REFERENCE = Path("src/gobby/install/shared/skills/gobby/references/plan/enhancement.md")
 
 
-class TestPlanEnhanceContent:
-    @pytest.fixture
-    def body(self) -> str:
-        return SKILL_PATH.read_text(encoding="utf-8")
+@pytest.fixture
+def body() -> str:
+    return " ".join(REFERENCE.read_text().split())
 
-    def test_two_lenses_better_and_bigger(self, body: str) -> None:
-        """The constructive pass walks Better (in-scope polish) and Bigger (justified net-new)."""
-        assert "Better" in body
-        assert "Bigger" in body
-        assert "better | bigger" in body or "better|bigger" in body
 
-    def test_constructive_attitude_not_a_critic(self, body: str) -> None:
-        lowered = body.lower()
-        assert "constructive" in lowered
-        assert "opportunity-seeking" in lowered
+def test_enhancement_catalog_identity() -> None:
+    assert load_capability_catalog().folded_skills["plan-enhance"] == (
+        "gobby:references/plan/enhancement.md"
+    )
 
-    def test_references_proportionality_justification_test(self, body: str) -> None:
-        """No gold-plating: every suggestion passes the shared proportionality test first."""
-        assert "proportionality" in body
-        assert "justification test" in body.lower()
-        assert "gold-plating" in body.lower()
 
-    def test_never_edits_plan_or_gates(self, body: str) -> None:
-        lowered = body.lower()
-        assert "never edit the plan file" in lowered
-        # No approve/reject/manifest authority — that belongs to the adversary.
-        assert "never approve" in lowered
-        assert "manifest" in lowered
+def test_scope_and_conformance_judgment(body: str) -> None:
+    for term in (
+        "Better strengthens existing scope",
+        "Bigger adds scope only when traceable",
+        "Preserve any mandated mechanism exactly",
+        "Contract silence is Better/clarity",
+        "wrong claim is a correctness issue to point out, not redesign",
+        "restraint's ladder",
+        "proportionality",
+        "Record the stopping rung",
+        "Rank surviving offers by impact versus effort, then risk",
+    ):
+        assert term in body
 
-    def test_no_quota_reports_honestly(self, body: str) -> None:
-        """A tight plan converges with zero suggestions instead of inventing work."""
-        lowered = body.lower()
-        assert "do not manufacture suggestions" in lowered
-        assert "converged: true" in lowered
-        assert "zero" in lowered
 
-    def test_ranked_by_impact_vs_effort(self, body: str) -> None:
-        lowered = body.lower()
-        assert "impact" in lowered and "effort" in lowered
+def test_no_mutation_verdict_or_quota_authority(body: str) -> None:
+    assert "never edits the plan, approves/rejects, writes M1, or gates correctness" in body
+    assert "without quotas" in body
+    assert "Converged means an empty list after a complete pass" in body
+    assert "this never implies approval of another phase" in body
 
-    def test_output_schema_fields(self, body: str) -> None:
-        """The advisory suggestion schema the planner/coordinator parses."""
-        for field in (
-            "converged",
-            "lens",
-            "category",
-            "location",
-            "description",
-            "suggested_enhancement",
-            "impact",
-            "effort",
-            "risk",
-            "severity",
-        ):
-            assert field in body, f"Output schema missing field: {field}"
 
-    def test_effort_enum_uses_full_words(self, body: str) -> None:
-        assert "effort: small" in body
-        assert "small|medium|large" in body
-        assert "effort: S" not in body
-        assert "`S|M|L`" not in body
+@pytest.mark.parametrize(
+    "field",
+    [
+        "converged",
+        "lens",
+        "category",
+        "location",
+        "description",
+        "suggested_enhancement",
+        "impact",
+        "effort",
+        "risk",
+        "severity",
+        "stable ID",
+    ],
+)
+def test_suggestion_fields_remain_complete(body: str, field: str) -> None:
+    assert field in body
 
-    def test_category_enum(self, body: str) -> None:
-        for category in ("scope", "testability", "reuse", "sequencing", "clarity"):
-            assert category in body, f"Category enum missing: {category}"
 
-    def test_skill_distinguishes_correctness_defects_from_conformance_gaps(self, body: str) -> None:
-        normalized = " ".join(body.lower().split())
-        assert "a settled contract is existing scope" in normalized
-        assert "a **correctness defect** is a wrong claim inside the plan" in normalized
-        assert "but do not propose the fix" in normalized
-        assert (
-            "a **conformance gap** is plan silence about a mechanism a cited contract" in normalized
-        )
-        assert "propose the fix as" in normalized
-        assert "`lens: better`, `category: clarity`" in normalized
-        assert "never classify that gap as" in normalized
-        assert "`lens: bigger` or `category: scope`" in normalized
+def test_closed_payload_values_and_complete_presentation(body: str) -> None:
+    for term in (
+        "`better` or `bigger`",
+        "`scope`, `testability`, `reuse`, `sequencing`, or `clarity`",
+        "`low`, `med`, or `high`",
+        "`small`, `medium`, or `large`",
+        "`severity` is always `opportunity`",
+        "every metadata field",
+        "do not substitute a summary",
+        "rationale for every suggestion",
+        "individual accept/decline decisions before edits",
+    ):
+        assert term in body
 
-    def test_skill_includes_worked_e4_conformance_example(self, body: str) -> None:
-        normalized = " ".join(body.lower().split())
-        assert "**worked e4 example:**" in normalized
-        assert "one token consumed by both css media queries and `useismobile`" in normalized
-        assert "separate hard-coded thresholds satisfy the cited contract" in normalized
 
-    def test_skill_instructs_suggestions_to_preserve_mandated_mechanisms(self, body: str) -> None:
-        lowered = body.lower()
-        normalized = " ".join(lowered.split())
-        assert "preserve mandated mechanisms" in lowered
-        assert "name that mechanism in `suggested_enhancement`" in lowered
-        assert "carry its exact implementation constraint" in lowered
-        assert "including any exact mechanism mandated" in normalized
-
-    def test_severity_is_always_opportunity_never_blocking(self, body: str) -> None:
-        """The enhancer has no blocking severity — blocking belongs to the adversary."""
-        assert "opportunity" in body
-        lowered = body.lower()
-        assert "never" in lowered and "blocking" in lowered
-
-    def test_autonomous_exit_records_enhancement_then_ends_run(self, body: str) -> None:
-        assert "record_plan_enhancement" in body
-        assert "end_agent_run" in body
-
-    def test_interactive_exit_sends_message(self, body: str) -> None:
-        assert "send_message" in body
+def test_completion_uses_supported_tools_and_typed_handoff(body: str) -> None:
+    for term in (
+        "record_plan_enhancement",
+        "suggestions serialized as strings",
+        "end_agent_run requires current_state and next_steps",
+        "independent of adversarial review",
+        "Do not record a failed/truncated run as converged",
+    ):
+        assert term in body

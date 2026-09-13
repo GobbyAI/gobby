@@ -1,4 +1,4 @@
-skill: tasks
+skill: "gobby:references/tasks/overview.md"
 agent: default
 description: Multi-step work finds a defect under context pressure, then finishes the deliverable.
 prompt: |
@@ -17,7 +17,7 @@ runs:
         text: The follow-up task and checkpoint preserve the work.
   loaded:
     loaded_skills:
-      - tasks
+      ["gobby:references/tasks/overview.md", "gobby:references/tasks/implementation.md", "gobby:references/sessions/handoffs.md", "gobby:references/tasks/closing.md"]
     actions:
       - action: claim_task
       - action: initialize_native_tracker

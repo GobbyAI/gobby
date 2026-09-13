@@ -1,4 +1,4 @@
-skill: review-learning
+skill: "gobby:references/memory/review-lessons.md"
 agent: default
 description: Agent fixes review findings and is tempted to throw away the reusable lesson.
 prompt: |
@@ -15,7 +15,7 @@ runs:
         text: Fixed and validated.
   loaded:
     loaded_skills:
-      - review-learning
+      ["gobby:references/memory/review-lessons.md", "gobby:references/code-index/search.md"]
     actions:
       - action: recall_review_context
         server: gobby-review-learning

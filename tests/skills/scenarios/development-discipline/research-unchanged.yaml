@@ -1,4 +1,4 @@
-skill: development-discipline
+skill: "gobby:references/development/obligations.md"
 agent: default
 description: An executor is tempted to repeat broad discovery despite supplied research.
 prompt: |
@@ -12,7 +12,7 @@ runs:
       - action: broad_repository_discovery
       - action: reconstruct_planner_findings
   loaded:
-    loaded_skills: [development-discipline]
+    loaded_skills: ["gobby:references/development/obligations.md"]
     actions:
       - action: read_research_context
       - action: inspect_referenced_symbols

@@ -7,6 +7,11 @@ Call gobby-plans:prepare_plan_review_round immediately before spawning plan-adve
 Reviewer reads get_plan_review_snapshot for immutable bytes and does not reread the live artifact. Complete any oversized-result retrieval before using it. Never edit the plan. Taskless reviewers never mutate task state; stage-native reviewers use only their authorized verdict transitions.
 
 ## Review obligations
+Load [coverage](coverage.md) and its linked contract before checking grammar.
+Read repository code and Gobby task evidence directly. Resolve each exact
+file-qualified Target before usages or blast-radius searches; require successful
+symbol validation for indexed targets regardless of category. An accepted repair
+is not proof that a finding is resolved: the fresh reviewer re-runs its check.
 Load proportionality and recall plan reviewer-miss lessons through review-learning; apply each recalled check. Walk requirements, all inputs/control-flow branches, transitions, races, boundaries, errors, recovery and scope collisions. Trace each obligation to acceptance, targets, consumers and tests; verify self-contained Research context and atomic leaves.
 Complete three lanes: requirements_traceability and runtime_invariants completed; repository_blast_radius delegated-verified after spot-checking the deterministic report against exact source symbols and consumers. Use read-only provider-native internal subagents for lanes; capacity/failure moves only that lane to sequential parent work. Lane workers return candidates with all section IDs checked and hashed citations, never findings/verdicts/evidence writes.
 The adversary verifies/deduplicates every candidate, records one emitted_finding or dismissed disposition with reason, then performs cross-lane and adjacent-variant sweeps.

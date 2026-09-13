@@ -41,6 +41,10 @@ For an explicitly expected-failing TDD test-writing deliverable, omit the green
 landing instead; do not retry or escalate merely because the intended red test
 fails. Other deliverables retain their applicable passing verification gate.
 
+If the survey returns an active_resolution_id, continue that active resolution;
+do not abort solely because a previous campaign recorded no progress. The
+no-progress redispatch cap applies only after the current orchestrator run
+completes a worker attempt and verifies that the resolution did not advance.
 Keep live resolutions resumable. A busy-resolution response requires sequential
 retry after inspection, not parallel conflict calls. `merge_apply` rejects pending
 conflicts and marker-bearing/missing contents. `merge_abort` aborts an active Git

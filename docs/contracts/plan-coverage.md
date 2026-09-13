@@ -588,7 +588,7 @@ atomically inserts the round entry (prose + fence) at the end of the changelog;
 coordinators never hand-edit round fences.
 
 Repair-class findings (`traceability`, `bad-sequencing`, `weak-testability`,
-and `gobby-format`, per the category matrix in `plan-review`) may carry typed
+and `gobby-format`, per the category matrix in `gobby:references/plan/review.md`) may carry typed
 `repairs` — `add_targets`, `add_dependency`, or `add_acceptance` payloads whose
 every `section_id` comes from the evidence manifest. Those repairs are payload,
 never writes: the adversary only returns them, and the coordinator's
@@ -605,7 +605,7 @@ and after. Design-class findings stay prose; the planner owns those edits.
 
 A constructive `plan-enhancer` pass is recommended and optional for interactive
 planning; autonomous `gobby build` controls it with
-`--plan-enhancement-rounds`. It loads `plan-enhance` and `proportionality` and
+`--plan-enhancement-rounds`. It loads `gobby:references/plan/enhancement.md` and `proportionality` and
 emits ranked Better/Bigger suggestions. The enhancer is advisory only: it never
 approves, rejects, edits the plan file, or writes the manifest. Fold-ins are the
 planner's or coordinator's responsibility. When adversarial review is selected,

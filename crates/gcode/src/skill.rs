@@ -1,8 +1,9 @@
-//! Embedded gcode skill for AI CLI agents.
+//! Embedded Gobby router for AI CLI agents.
 //!
 //! Bundles the SKILL.md content and installs it to every supported
 //! project-level AI CLI skill target.
 
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// The embedded SKILL.md content.
@@ -71,26 +72,88 @@ pub fn install_skill(project_root: &Path, target: &SkillTarget) -> std::io::Resu
     }
 }
 
-/// Install as a Claude Code plugin with plugin.json + skills/gcode/SKILL.md
+/// Install as a Claude Code plugin with plugin.json + skills/gobby/SKILL.md
 fn install_claude_plugin(project_root: &Path) -> std::io::Result<String> {
     let plugin_dir = project_root.join(".claude-plugin");
-    std::fs::create_dir_all(&plugin_dir)?;
-    std::fs::write(plugin_dir.join("plugin.json"), PLUGIN_JSON)?;
+    let manifest = plugin_dir.join("plugin.json");
+    match std::fs::read(&manifest) {
+        Ok(content) if content == PLUGIN_JSON.as_bytes() => {}
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("Preserved custom plugin manifest at {}", manifest.display()),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
 
-    let skill_dir = project_root.join("skills").join("gcode");
+    let skills_dir = project_root.join("skills");
+    let skill_dir = skills_dir.join("gobby");
     std::fs::create_dir_all(&skill_dir)?;
-    std::fs::write(skill_dir.join("SKILL.md"), SKILL_CONTENT)?;
+    write_router(&skill_dir.join("SKILL.md"))?;
+    std::fs::create_dir_all(&plugin_dir)?;
+    std::fs::write(manifest, PLUGIN_JSON)?;
+    retire_previous_carrier(&skills_dir)?;
 
-    Ok("skills/gcode/SKILL.md".to_string())
+    Ok("skills/gobby/SKILL.md".to_string())
 }
 
 /// Install as a SKILL.md in the CLI's skills directory.
 fn install_skill_dir(project_root: &Path, cli_dir: &str) -> std::io::Result<String> {
-    let skill_dir = project_root.join(cli_dir).join("skills").join("gcode");
+    let skills_dir = project_root.join(cli_dir).join("skills");
+    let skill_dir = skills_dir.join("gobby");
     std::fs::create_dir_all(&skill_dir)?;
-    std::fs::write(skill_dir.join("SKILL.md"), SKILL_CONTENT)?;
+    write_router(&skill_dir.join("SKILL.md"))?;
+    retire_previous_carrier(&skills_dir)?;
 
-    Ok(format!("{}/skills/gcode/SKILL.md", cli_dir))
+    Ok(format!("{}/skills/gobby/SKILL.md", cli_dir))
+}
+
+/// Keep an existing current carrier (including generated catalog metadata).
+/// Refuse to overwrite custom or unrecognized older instruction bodies.
+fn write_router(path: &Path) -> std::io::Result<()> {
+    match std::fs::read(path) {
+        Ok(content) if content.starts_with(SKILL_CONTENT.as_bytes()) => Ok(()),
+        Ok(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "Preserved existing router at {}. Reconcile this custom or outdated carrier with the bundled gobby router before installing.",
+                path.display()
+            ),
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(path, SKILL_CONTENT)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Retire only the exact Gobby-owned predecessor; custom instructions stay intact.
+fn retire_previous_carrier(skills_dir: &Path) -> std::io::Result<()> {
+    let legacy_dir = skills_dir.join("gcode");
+    let legacy_file = legacy_dir.join("SKILL.md");
+    let content = match std::fs::read(&legacy_file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let digest: String = Sha256::digest(&content)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if digest != "fa83fa3f3203912c99e72ec00fbca670f653edc5da5fb16c8eb777bf9d854ee0" {
+        eprintln!(
+            "Preserved custom skill at {}. Replace retired code-index instructions with gobby:references/code-index/overview.md if applicable.",
+            legacy_file.display()
+        );
+        return Ok(());
+    }
+    std::fs::remove_file(&legacy_file)?;
+    if std::fs::read_dir(&legacy_dir)?.next().is_none() {
+        std::fs::remove_dir(&legacy_dir)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -99,17 +162,17 @@ mod tests {
 
     fn target_path(project_root: &Path, target: &SkillTarget) -> std::path::PathBuf {
         match target.kind {
-            InstallKind::ClaudePlugin => project_root.join("skills/gcode/SKILL.md"),
+            InstallKind::ClaudePlugin => project_root.join("skills/gobby/SKILL.md"),
             InstallKind::SkillDir { cli_dir } => {
-                project_root.join(cli_dir).join("skills/gcode/SKILL.md")
+                project_root.join(cli_dir).join("skills/gobby/SKILL.md")
             }
         }
     }
 
     fn expected_reported_path(target: &SkillTarget) -> String {
         match target.kind {
-            InstallKind::ClaudePlugin => "skills/gcode/SKILL.md".to_string(),
-            InstallKind::SkillDir { cli_dir } => format!("{cli_dir}/skills/gcode/SKILL.md"),
+            InstallKind::ClaudePlugin => "skills/gobby/SKILL.md".to_string(),
+            InstallKind::SkillDir { cli_dir } => format!("{cli_dir}/skills/gobby/SKILL.md"),
         }
     }
 
@@ -178,7 +241,7 @@ mod tests {
         )
         .expect("parse plugin manifest");
 
-        assert_eq!(reported_path, "skills/gcode/SKILL.md");
+        assert_eq!(reported_path, "skills/gobby/SKILL.md");
         assert_eq!(manifest["name"], "gcode");
         assert_eq!(
             manifest["description"],
@@ -217,5 +280,71 @@ mod tests {
                 "keep"
             );
         }
+    }
+
+    #[test]
+    fn upgrade_retires_only_owned_predecessor_and_keeps_custom_files() {
+        let previous = include_str!("../tests/fixtures/retired-code-index-skill.md");
+        for target in supported_targets() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let destination = target_path(tmp.path(), target);
+            let skills_dir = destination
+                .parent()
+                .expect("gobby dir")
+                .parent()
+                .expect("skills dir");
+            let old = skills_dir.join("gcode");
+            std::fs::create_dir_all(&old).expect("legacy dir");
+            std::fs::write(old.join("SKILL.md"), previous).expect("legacy carrier");
+            std::fs::write(old.join("user-notes.md"), "keep").expect("custom notes");
+            install_skill(tmp.path(), target).expect("upgrade");
+            assert!(!old.join("SKILL.md").exists());
+            assert_eq!(
+                std::fs::read_to_string(old.join("user-notes.md")).expect("notes"),
+                "keep"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&destination).expect("router"),
+                SKILL_CONTENT
+            );
+            install_skill(tmp.path(), target).expect("repeat upgrade");
+            std::fs::write(old.join("SKILL.md"), "Customized instructions").expect("custom skill");
+            install_skill(tmp.path(), target).expect("preserve custom");
+            assert_eq!(
+                std::fs::read_to_string(old.join("SKILL.md")).expect("custom skill"),
+                "Customized instructions"
+            );
+        }
+    }
+
+    #[test]
+    fn existing_custom_router_is_preserved() {
+        for target in supported_targets() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let destination = target_path(tmp.path(), target);
+            std::fs::create_dir_all(destination.parent().expect("router parent")).expect("parent");
+            std::fs::write(&destination, "Custom gobby router").expect("custom router");
+            let error = install_skill(tmp.path(), target).expect_err("must preserve custom router");
+            assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(
+                std::fs::read_to_string(&destination).expect("custom router"),
+                "Custom gobby router"
+            );
+            assert!(!tmp.path().join(".claude-plugin/plugin.json").exists());
+        }
+    }
+
+    #[test]
+    fn custom_plugin_manifest_is_preserved_before_installation() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plugin_dir = tmp.path().join(".claude-plugin");
+        std::fs::create_dir_all(&plugin_dir).expect("plugin directory");
+        let manifest = plugin_dir.join("plugin.json");
+        let custom = r#"{"name":"user-plugin","version":"2.0.0"}"#;
+        std::fs::write(&manifest, custom).expect("custom manifest");
+        let error = install_claude_plugin(tmp.path()).expect_err("custom manifest is preserved");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(manifest).expect("manifest"), custom);
+        assert!(!tmp.path().join("skills/gobby").exists());
     }
 }

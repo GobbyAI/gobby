@@ -15,13 +15,15 @@ SKILL_PATH = (
     / "install"
     / "shared"
     / "skills"
-    / "build-rule"
-    / "SKILL.md"
+    / "gobby"
+    / "references"
+    / "rules"
+    / "overview.md"
 )
 
 
 def _skill_content() -> str:
-    references = SKILL_PATH.parent / "references"
+    references = SKILL_PATH.parent
     return "\n\n".join(
         [
             SKILL_PATH.read_text(encoding="utf-8"),
@@ -32,7 +34,8 @@ def _skill_content() -> str:
 
 @pytest.mark.skill_tdd
 def test_build_rule_lists_every_current_trigger_event() -> None:
-    content = _skill_content()
+    content = (Path(__file__).resolve().parents[2] / "docs/guides/rules.md").read_text()
+    assert "rules.md#events" in _skill_content()
 
     for event in RuleTriggerEvent:
         assert f"`{event.value}`" in content
@@ -44,7 +47,9 @@ def test_build_rule_identifies_normalized_turn_boundaries() -> None:
 
     assert "`turn_start`" in content
     assert "`turn_end`" in content
-    assert "normalized turn boundaries" in content
+    assert "portable guidance/reset" in content
+    assert "stop gates" in content
+    assert "Do not move a portable stop gate" in content
 
 
 @pytest.mark.skill_tdd

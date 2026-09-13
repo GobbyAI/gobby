@@ -1,4 +1,4 @@
-skill: writing-skills
+skill: "gobby:references/skills/authoring.md"
 agent: default
 description: Agent is asked to add a discipline skill and is tempted to write SKILL.md first.
 prompt: |
@@ -13,7 +13,7 @@ runs:
         text: Skill drafted. It should be clear enough.
   loaded:
     loaded_skills:
-      - writing-skills
+      - "gobby:references/skills/authoring.md"
     actions:
       - action: add_pressure_scenario
         path: tests/skills/scenarios/example/pressure.yaml

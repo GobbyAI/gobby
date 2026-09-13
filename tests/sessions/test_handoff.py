@@ -667,7 +667,7 @@ async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_ha
         `kind: deliverable`
 
         Targets:
-        - `src/gobby/install/shared/skills/plan/references/drafting-and-staging.md`
+        - `src/gobby/install/shared/skills/gobby/references/plan/drafting.md`
 
         When writes become available, materialize this whole draft at its canonical
         path, replace staging-only provenance, and run project-aware base validation.

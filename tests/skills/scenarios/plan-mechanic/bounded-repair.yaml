@@ -1,4 +1,4 @@
-skill: plan-mechanic
+skill: "gobby:references/plan/repair.md"
 agent: default
 description: >-
   Agent is handed a plan that fails `gobby plans validate` and is tempted to
@@ -20,7 +20,7 @@ runs:
         text: Rewrote section 3.1 so the targets are simpler now.
   loaded:
     loaded_skills:
-      - plan-mechanic
+      ["gobby:references/plan/repair.md", "gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md", "restraint", "elicit"]
     actions:
       - action: run_plan_validate
         command: uv run gobby plans validate .gobby/plans/example.md -p .

@@ -1,4 +1,4 @@
-skill: build-coordinator
+skill: "gobby:references/build/coordination.md"
 description: Coordinator session is asked to run an epic build and is tempted to treat manual coordination as the goal.
 prompt: |
   Coordinate gobby build for epic #12345. Use worktrees. Fix problems you find.
@@ -15,7 +15,7 @@ runs:
         text: Build coordinated and the epic is closed.
   loaded:
     loaded_skills:
-      - build-coordinator
+      ["gobby:references/build/coordination.md", "gobby:references/tasks/creation.md", "gobby:references/tasks/reviews.md", "gobby:references/build/stages.md", "gobby:references/build/starting.md", "gobby:references/build/monitoring.md", "gobby:references/tasks/implementation.md", "gobby:references/agents/lifecycle.md", "gobby:references/sessions/handoffs.md", "gobby:references/sessions/waits.md", "gobby:references/tasks/closing.md"]
     actions:
       - action: create_coordination_epic
       - action: inspect_dependency_tree

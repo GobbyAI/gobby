@@ -1,4 +1,4 @@
-skill: plan
+skill: "gobby:references/plan/overview.md"
 agent: default
 description: Coordinator re-reads a terminal adversary result and is tempted to treat its bounded terminal excerpt as the complete report.
 prompt: |
@@ -13,7 +13,7 @@ runs:
         text: Continued from the visible terminal excerpt.
   loaded:
     loaded_skills:
-      - plan
+      ["gobby:references/plan/overview.md", "gobby:references/agents/lifecycle.md", "gobby:references/mcp-servers/results.md", "restraint", "elicit"]
     actions:
       - action: get_agent_result
       - action: inspect_capture_metadata

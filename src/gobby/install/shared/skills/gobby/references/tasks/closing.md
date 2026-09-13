@@ -9,7 +9,7 @@ Finish in this order:
 1. Finish all edits; resolve every owned finding and verify applicable criteria.
 2. Run focused validation after the final edit and follow it to definitive exit.
 3. Stage only task paths and commit with a task reference. Use
-   `git commit --only -m '[gobby-#42] fix: describe the change' -- <task paths>`.
+   `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`. Include exact validation commands and results in the summary.
 5. Repair any deterministic blocker before retrying. If the response is

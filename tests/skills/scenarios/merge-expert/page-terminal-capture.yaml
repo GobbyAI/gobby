@@ -1,4 +1,4 @@
-skill: merge-expert
+skill: "gobby:references/source-control/merge-campaigns.md"
 agent: default
 description: Merge coordinator re-reads a terminal worker result and is tempted to treat its bounded terminal excerpt as the complete report.
 prompt: |
@@ -12,7 +12,7 @@ runs:
       - action: finish_sweep
   loaded:
     loaded_skills:
-      - merge-expert
+      ["gobby:references/source-control/merge-campaigns.md", "gobby:references/agents/lifecycle.md", "gobby:references/mcp-servers/results.md"]
     actions:
       - action: get_agent_result
       - action: inspect_capture_metadata

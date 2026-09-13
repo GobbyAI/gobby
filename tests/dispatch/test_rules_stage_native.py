@@ -97,6 +97,7 @@ def test_current_stage_uses_leftmost_non_done_manifest_row() -> None:
 
     current = rules.current_stage(task)
 
+    assert isinstance(current, SimpleNamespace)
     assert current.name == "development"
     assert current.position == 2
     assert rules.task_has_stage(task, "merge") is True
@@ -180,7 +181,7 @@ def test_bundled_merge_assets_do_not_reference_removed_lifecycle_tools() -> None
         (
             "src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml",
             "src/gobby/install/shared/workflows/agents/merge-worker.yaml",
-            "src/gobby/install/shared/skills/merge-expert/SKILL.md",
+            "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
         )
     )
 

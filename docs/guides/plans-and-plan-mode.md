@@ -100,7 +100,7 @@ After materialization and base validation, `/gobby plan` offers an optional
 enhancement loop. When selected, the parent session spawns
 `plan-enhancer-taskless` (no `task_id`, `isolation="none"`) with the plan path,
 round number, max rounds, and parent session id. The enhancer loads
-`plan-enhance` and `proportionality`, then returns ranked Better/Bigger
+`gobby:references/plan/enhancement.md` and standalone `proportionality`, then returns ranked Better/Bigger
 suggestions to the parent via `send_message` and calls `end_agent_run`. It never
 claims tasks, edits the plan file, or calls a review verdict.
 
@@ -118,7 +118,7 @@ passes the returned evidence ID, canonical path, clean deterministic sweep repor
 round number, review cap, and parent session ID, then binds the spawned run with
 `bind_evidence_run`. Spawn/bind failure expires the evidence; successful binding
 is followed immediately by a structured `set_handoff(clear_session=false)`. The adversary loads
-`plan-review` and `proportionality`, returns structured findings or approval to
+`gobby:references/plan/review.md` and standalone `proportionality`, returns structured findings or approval to
 the parent, and calls `end_agent_run`. It does not claim or mutate Gobby tasks.
 The adversary now also carries an `over-engineering` review dimension: mechanism
 disproportionate to the goal is a finding, while ambition and net-new scope are
@@ -159,7 +159,7 @@ review evidence. After user approval, offer either manual expansion or build:
 uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
 ```
 
-`/gobby expand` remains available for operator expansion, debugging, and
+`/gobby plan references expansion` loads manual expansion guidance for debugging and
 targeted reruns.
 
 ## Plan Records

@@ -1,4 +1,4 @@
-skill: plan
+skill: "gobby:references/plan/overview.md"
 agent: default
 description: Investigation routes one independently closeable refactor to the existing task workflow.
 prompt: |
@@ -13,7 +13,7 @@ runs:
       - action: respond
         text: A refactor needs a plan because its risk sounds high.
   loaded:
-    loaded_skills: [plan]
+    loaded_skills: ["gobby:references/plan/overview.md", "gobby:references/tasks/overview.md", "gobby:references/tasks/creation.md", "restraint", "elicit"]
     actions:
       - action: investigate_repository
       - action: map_deliverables
@@ -22,7 +22,7 @@ runs:
       - action: route_work
         route: task
       - action: load_reference
-        path: references/work-routing.md
+        path: "references/plan/overview.md"
       - action: define_task_scope
         scope: Refactor cache key normalization and its focused tests as one deliverable.
       - action: define_validation_criteria

@@ -1,4 +1,4 @@
-skill: plan
+skill: "gobby:references/plan/overview.md"
 agent: default
 description: Investigation routes dependent bug deliverables to a plan instead of routing by work kind.
 prompt: |
@@ -16,7 +16,7 @@ runs:
       - action: respond
         text: Bug fixes always use one task regardless of their dependency graph.
   loaded:
-    loaded_skills: [plan]
+    loaded_skills: ["gobby:references/plan/overview.md", "restraint", "elicit"]
     actions:
       - action: investigate_repository
       - action: map_deliverables
@@ -27,7 +27,7 @@ runs:
       - action: elicit_decision
         topic: repair compatibility boundary
       - action: load_reference
-        path: references/drafting-and-staging.md
+        path: "references/plan/drafting.md"
       - action: respond
         text: Dependent deliverables use the plan route; work kind and duration are estimates, not routing rules.
 assertions:

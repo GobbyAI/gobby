@@ -67,7 +67,7 @@ When navigating code for context or understanding:
 1. **Locate with gcode**: `gcode grep -w <identifier> [PATH ...] -m 50` for identifier text search, `gcode grep -F "literal string" [PATH ...] -m 50` for literal strings and call sites, `gcode grep "regex" [PATH ...] -m 50` for regex text search, `gcode search "concept"` for fuzzy concepts, `gcode search-symbol "name"` for known symbols, or `gcode search-content "text"` for ranked file-content hits.
 2. **Known file/line**: use `gcode symbol-at path/to/file.py:42` after search, grep, diagnostics, stack traces, or user-provided locations.
 3. **Navigate parser-backed source by structure/ID**: use `gcode outline path/to/file` to survey AST structure. For Markdown or other content-only files, switch to `gcode grep` or `gcode search-content`. Request `--verbose` or `--format json` only when IDs or ranking diagnostics are required, then use `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> ...`.
-4. **Fetch bounded context when needed**: Read with offset/limit or `sed`/`head`/`tail` ranges of at most 40 lines is always available. Same-turn-written files and scratchpads remain directly accessible.
+4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
 
 Search output is intentionally snippet-sized. Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
 
@@ -162,13 +162,4 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 
 Navigation commands default to compact text: `search`, `search-symbol`, `search-text`, `search-content`, `grep`, `outline`, `symbol`, `symbol-at`, `symbols`, `kinds`, `tree`, `repo-outline`, `callers`, `callees`, `usages`, `imports`, `path`, and `blast-radius`. Compact text omits UUIDs, scores, and ranking-lane diagnostics. Use `--verbose` or `--format json` when those fields are required. Nested structural graph and lifecycle commands keep complete JSON defaults. Use `--quiet` to suppress warnings. Exit 0 always means success, including empty results — do not re-verify with a second call. Nonzero exits print a one-line JSON error on stderr. `--allow-stale` is the only freshness bypass and is rarely needed now that freshness failures degrade to warnings.
 
-On `payload_skew` or `api_contract_mismatch`, stop retrying gcode, report the
-`recovery` directive to the user, and use fallback tools for the attempted paths
-and operation. Recovery never exempts unrelated indexed paths or another operation.
-
-Successful zero-symbol or unsupported-file `outline` diagnostics allow source
-reading for that file. Ordinary zero-match searches do not grant fallback.
-Explicit generated or excluded targets (including ignored `web/dist/assets`)
-and external paths allow direct filesystem inspection. Every target and every
-segment of a compound command must qualify independently. Refresh warnings with
-usable results remain successful navigation.
+On `payload_skew` or `api_contract_mismatch`, stop retrying gcode, report the `recovery` directive to the user, and continue with fallback tools (recorded failures fail the redirect rules open).

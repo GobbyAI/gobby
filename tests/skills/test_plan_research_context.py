@@ -21,18 +21,18 @@ SKILLS = ROOT / "src/gobby/install/shared/skills"
     [
         (
             "plan-draft/preserve-research.yaml",
-            "plan-draft/references/task-structure.md",
-            "**Research context:**",
+            "gobby/references/plan/drafting.md",
+            "its own Research context",
         ),
         (
             "development-discipline/research-unchanged.yaml",
-            "development-discipline/SKILL.md",
-            "Read the supplied Research context",
+            "gobby/references/development/obligations.md",
+            "supplied research and specification",
         ),
         (
             "development-discipline/research-moved-symbol.yaml",
-            "development-discipline/SKILL.md",
-            "targeted rediscovery",
+            "gobby/references/development/obligations.md",
+            "Rediscover only stale or missing evidence",
         ),
     ],
 )

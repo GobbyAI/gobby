@@ -14,7 +14,7 @@ from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL_PATH = REPO_ROOT / "src/gobby/install/shared/skills/epic-review/SKILL.md"
+SKILL_PATH = REPO_ROOT / "src/gobby/install/shared/skills/gobby/references/review/outcomes.md"
 WORKFLOWS = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 
 
@@ -32,25 +32,25 @@ class EpicFindingEntry(TypedDict):
 
 
 async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None:
-    skill = SKILL_PATH.read_text(encoding="utf-8")
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
     epic_reviewer = (WORKFLOWS / "epic-reviewer.yaml").read_text(encoding="utf-8")
     qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text(encoding="utf-8")
 
     required_contract = (
         "list_check_keys",
-        "lesson_classes",
+        "one occurrence per proven class",
         "principle",
-        "root_cause",
+        "root cause",
         "prevention",
-        "leaf_task_ref",
-        "confirmed_fix_evidence",
+        "leaf task ref",
+        "confirmed fix evidence",
         "epic-qa:<lesson_type>:<check-key>",
         "source_kind=qa_rejection",
-        "lesson-domain:code",
-        "guardrail_target=checklist",
-        "guardrail_target=validation",
+        "code-domain",
+        "checklist for qa-miss",
+        "validation for validation-miss",
         "path tags",
-        "Incomplete entries mint nothing",
+        "Incomplete or unproven classes mint nothing",
     )
     for phrase in required_contract:
         assert phrase in skill

@@ -1,4 +1,4 @@
-skill: tasks
+skill: "gobby:references/tasks/overview.md"
 agent: default
 description: Agent is under time pressure to create, implement, and close a task without loading lifecycle details.
 prompt: |
@@ -15,7 +15,7 @@ runs:
         text: Task closed.
   loaded:
     loaded_skills:
-      - tasks
+      ["gobby:references/tasks/overview.md", "gobby:references/tasks/creation.md", "gobby:references/tasks/implementation.md", "gobby:references/tasks/closing.md", "gobby:references/memory/post-task.md"]
     actions:
       - action: create_task
         validation_criteria: >-

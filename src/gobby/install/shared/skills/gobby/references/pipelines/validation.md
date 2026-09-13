@@ -15,6 +15,21 @@ Loader reference checks cover prompt, condition, input, exec and string outputs;
 inspect nested MCP/wait arguments separately. A valid result does not prove
 external tools, credentials, input types, commands or side effects will succeed.
 
+A harmless two-step definition for isolated validation:
+
+```yaml
+name: reference-check
+type: pipeline
+steps:
+  - id: inspect
+    exec: printf ready
+  - id: publish
+    exec: printf done
+    approval:
+      required: true
+      message: Approve the fixture's final step?
+```
+
 Use isolated test hub/temporary daemon fixtures to create, run and inspect a
 harmless example. Exercise conditions, output types, failure, approval and resume
 where relevant. Fetch actual target-tool schemas for MCP examples. Never use the

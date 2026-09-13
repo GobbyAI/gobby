@@ -1,4 +1,4 @@
-skill: plan-draft
+skill: "gobby:references/plan/drafting.md"
 agent: default
 description: A planner must preserve findings under pressure to shorten a nearly finished plan.
 prompt: |
@@ -13,7 +13,7 @@ runs:
       - action: draft_targets_only
         text: Update Example.validate; investigate callers and tests during implementation.
   loaded:
-    loaded_skills: [plan-draft]
+    loaded_skills: ["gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md", "restraint", "elicit"]
     actions:
       - action: capture_findings_in_owning_section
         text: |

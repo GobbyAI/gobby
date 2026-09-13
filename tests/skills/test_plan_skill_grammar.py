@@ -17,8 +17,8 @@ CANONICAL_PLAN_HEADING_REGEX = (
     r"(?=\s|[).:-]|$)"
 )
 
-PLAN_DRAFT = Path("src/gobby/install/shared/skills/plan-draft/SKILL.md")
-PLAN_REVIEW = Path("src/gobby/install/shared/skills/plan-review/SKILL.md")
+PLAN_DRAFT = Path("docs/contracts/plan-coverage.md")
+PLAN_REVIEW = Path("src/gobby/install/shared/skills/gobby/references/plan/review.md")
 PLANNER = Path("src/gobby/install/shared/workflows/agents/planner.yaml")
 ADVERSARY = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
 
@@ -89,7 +89,7 @@ def test_deferral_object_and_covers_record_documented() -> None:
 def test_table_row_decomposition_rule_documented() -> None:
     surfaces = {
         "plan-draft": _skill_bundle(PLAN_DRAFT),
-        "plan-review": _skill_bundle(PLAN_REVIEW),
+        "plan-review": _skill_bundle(PLAN_REVIEW) + _skill_bundle(PLAN_DRAFT),
         "planner": _agent_prompt(PLANNER),
         "plan-adversary": _agent_prompt(ADVERSARY),
     }

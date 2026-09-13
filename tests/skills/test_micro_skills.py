@@ -25,17 +25,15 @@ class TestSourceControlSkill:
 
     def test_source_control_skill_exists(self, skills_dir: Path) -> None:
         """Verify source-control skill directory exists."""
-        skill_dir = skills_dir / "source-control"
+        skill_dir = skills_dir / "gobby/references/source-control"
         assert skill_dir.exists(), f"Expected skill directory: {skill_dir}"
 
     def test_source_control_skill_content_mentions_commit_and_release_workflow(
         self, skill_loader: SkillLoader, skills_dir: Path
     ) -> None:
         """Verify skill content covers commit workflow and defers task closeout."""
-        skill_path = skills_dir / "source-control"
-        skill = skill_loader.load_skill(skill_path)
-
-        content = skill.content.lower()
+        skill_path = skills_dir / "gobby/references/source-control/overview.md"
+        content = skill_path.read_text().lower()
         # Should still cover commit/release guidance while pointing task closeout
         # callers at tasks.
         assert "commit" in content

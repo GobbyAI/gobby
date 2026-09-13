@@ -1,165 +1,86 @@
 ---
-name: code-index
-description: Instructions for using gcode CLI for code search and retrieval. Loaded on demand when project has a code index.
+name: gobby
+description: "Router contract for provider-aware Gobby help and installed skill dispatch."
+version: "3.0.0"
 category: core
+triggers: help
 metadata:
   gobby:
     audience: all
 ---
 
-# Code Index (gcode)
+# Gobby Router
 
-This project is indexed. Use `gcode` via Bash for fast code search and navigation — saves 90%+ tokens vs reading entire files.
+Gobby skill routing is provider-dependent. Codex uses `$gobby`; providers with
+an installed slash router use `/gobby`. The router advertises installed skills
+and catalog capabilities on bare help requests and routes explicit loads through
+`gobby-skills`.
 
-## Choose the command first
+## Catalog and Loading
 
-| Intent | Command |
-|---|---|
-| Known symbol | `gcode search-symbol "name"` |
-| Exact identifier occurrence | `gcode grep -w "identifier" -m 50` |
-| Exact literal or call site | `gcode grep -F "literal" -m 50` |
-| Repository text, docs, or config | `gcode search-content "text"` |
-| Fuzzy code concept | `gcode search "concept"` (hybrid symbol search) |
-| Parser-backed source structure | `gcode outline path/to/file` |
+The single capability catalog is `catalog.json` in the bundled Gobby skill.
+Retrieve its metadata with `get_skill_file(name="gobby", path="catalog.json")`
+on `gobby-skills`, after leasing that tool's schema in a separate outer result.
+Follow `page.next_cursor` using only `cursor` until null. Installed carriers may
+include a generated capability list; topic paths and loading conditions come
+from the catalog. Never maintain another hand-written capability inventory.
 
-Switch lanes after irrelevant or empty results: use the query shape to select the
-right command. Do not paraphrase the same `search` query or page through irrelevant results.
-Direct `gcode` calls do not require loading this skill.
+Instruction bodies require explicit loading. For each selected overview or topic,
+use `get_skill_file(name="gobby", path="<catalog path>")`, schema first when
+unleased, and follow every cursor until null. A menu, catalog, partial page,
+failed load or this router does not satisfy a reference requirement. Tool
+schemas remain authoritative for parameters.
 
-## Search details
+## Help Requests
 
-- `gcode grep -w <identifier> [PATH ...] -m 50` — whole-word ASCII identifier grep over `code_content_chunks`; use this for identifier-like text search
-- `gcode grep "regex" [PATH ...] -m 50` — regex grep over indexed `code_content_chunks`; defaults to grouped text output for bounded line matches
-- `gcode grep -F "literal" [PATH ...] -m 50` — fixed-string grep over indexed `code_content_chunks`; use this when the literal text contains regex metacharacters
-- `gcode grep -l "pattern" [PATH ...] -m 50` — list matching file paths instead of matching lines
-- `gcode search "query" [PATH ...]` — hybrid symbol search: symbol BM25 + semantic symbol vectors + graph boost (best for fuzzy concepts or natural-language queries); it never ranks content chunks
-- `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
-- `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
-- `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
+For Codex help requests (`$gobby`, `$gobby help`) and slash-router help
+requests (`/gobby`, `/gobby help`), show capability descriptions from the catalog
+and dynamically discovered installed standalone skills from
+`list_skills(enabled=true, session_id="<current session>")` on `gobby-skills`.
+If the returned count reaches `limit`, repeat with a larger limit until the
+listing is complete; this metadata tool has no public cursor. Preserve default internal
+visibility and active-skill filtering. A connected MCP server is not an
+installed skill. Menus never execute their listed operations.
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-w/--word`, `-g/--glob`, `-i`, `-F`, `-l/--files-with-matches`, `-C/-A/-B`, and `-m/--limit`; `--max-count` is an alias for `--limit`. `-E`, `-n`, `-r`, and `-R` are accepted no-ops (rg/grep muscle memory). Unknown flags return a one-line JSON usage error with a `recovery` hint; do not retry the failing gcode call. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, deterministic `sources`, and actionable `hint` redirects for identifier/literal queries, empty symbol results, or content-only paths; path globs that require post-filter fallback surface a hint/warning. Text hints go to stderr unless `--quiet` is set.
+Use the provider's active trigger. Do not present `/gobby` as universal syntax.
 
-Bare `gcode grep "pattern"` is regex-backed, and the dialect is Rust regex, not grep
-BRE. Write alternation as `a|b`: `a\|b` is a literal pipe, so it silently returns zero
-matches and exit 0 rather than erroring — indistinguishable from a genuine no-hit
-result. Use `-F` for literal text containing regex metacharacters like `(`, `)`, `[`, `]`, `.`, `*`, `+`, `?`, `|`, `^`, `$`, or `\`. For example, `gcode grep "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120` is an anti-pattern because `(` starts a regex group and fails with `error: unclosed group`. Use `gcode grep -F "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120` for a literal search, or `gcode grep "TaskExpansionConfig\\(" tests/config/test_tasks.py --format text -m 120` when intentionally writing regex.
+## Routing
 
-## Retrieval
+| Request after the trigger | Action |
+| --- | --- |
+| `<capability>` | Load its catalog overview |
+| `<capability> references` | Show topic descriptions, loading conditions and exact `<trigger> <capability> references <topic>` examples |
+| `<capability> references <topic>` | Load exactly that topic |
+| `<capability> <request>` | Load the overview and each topic whose loading condition applies, then handle the original request |
+| `<skill> [args]` | Resolve the installed standalone skill and load it |
+| `skill <skill> [args]` | Explicit standalone dispatch, including capability-name collisions |
+| Unknown name or topic | Show available choices; perform no operation |
 
-- `gcode outline path/to/file.py` — hierarchical AST symbol map for parser-backed source files (much cheaper than Read)
-- `gcode symbol-at path/to/file.py:42` or `gcode symbol-at path/to/file.py:42:7` — retrieve the symbol containing a known file location, falling back to the nearest visible symbol
-- `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
-- `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve bounded source bodies by exact stored IDs
+Capability names take precedence. Singular `skill` escapes to standalone
+resolution; plural `skills` is the skill-management capability. Honor project
+overrides and existing skill-name resolution. These provider forms are supported:
 
-Symbol IDs must be full stored UUIDs from `gcode search --format json`, `gcode search-symbol --verbose`, or `gcode outline --verbose`. Literal placeholders, wildcards, globs, and prefix IDs such as `id1`, `514??`, `abc*`, or `80abc77f` are invalid.
+```text
+$gobby <skill> [args]
+$gobby skill <skill> [args]
+/gobby <skill> [args]
+/gobby skill <skill> [args]
+/gobby:<skill> [args]
+```
 
-Edited files invalidate content-derived symbol IDs. When an ID is missing, rerun `gcode outline` for the edited file or use `gcode symbol-at`; batch retrieval still returns every valid requested symbol and reports every missing ID.
+Standalone dispatch uses `get_skill(name="<skill>")`. If a leading argument
+selects a declared skill level, pass it as `level` to that load. Preserve the
+remaining arguments and complete every content page before continuing.
+The router does not inline skill bodies. Trailing command arguments remain in the original user prompt
+and must not be duplicated into `<gobby-context>`. Native Skill calls preserve
+their arguments in the returned directive because the blocked call will not run.
 
-`outline` is AST-only. Content-only files return success with no symbols and a recovery
-diagnostic. For Markdown headings use
-`gcode grep '^#{1,6} ' path/to/file.md -m 200`; use `gcode search-content` for broader
-Markdown, documentation, config, or other content-only file retrieval.
+## MCP Server Discovery
 
-## Recommended Workflow
+For MCP tool access, use context-aware progressive discovery:
 
-When navigating code for context or understanding:
-
-1. **Locate with gcode**: `gcode grep -w <identifier> [PATH ...] -m 50` for identifier text search, `gcode grep -F "literal string" [PATH ...] -m 50` for literal strings and call sites, `gcode grep "regex" [PATH ...] -m 50` for regex text search, `gcode search "concept"` for fuzzy concepts, `gcode search-symbol "name"` for known symbols, or `gcode search-content "text"` for ranked file-content hits.
-2. **Known file/line**: use `gcode symbol-at path/to/file.py:42` after search, grep, diagnostics, stack traces, or user-provided locations.
-3. **Navigate parser-backed source by structure/ID**: use `gcode outline path/to/file` to survey AST structure. For Markdown or other content-only files, switch to `gcode grep` or `gcode search-content`. Request `--verbose` or `--format json` only when IDs or ranking diagnostics are required, then use `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> ...`.
-4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
-
-Search output is intentionally snippet-sized. Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
-
-## Plan Target References
-
-Plan `Targets:` blocks use durable file-qualified names:
-
-- Python: `path/to/file.py::Class.method`
-- Rust: `path/to/file.rs::Type::method` (the validator splits only the first
-  `::`)
-- File-wide: `path/to/file.py::* — scope-reason: <non-empty explanation>`
-- Bare path: only for a new or indexed zero-symbol file
-
-Resolve each changed symbol with `gcode search-symbol "<name>" path/to/file`
-and copy the exact displayed `qualified_name`. Never use the returned symbol
-UUID or a line number in a plan Target. Resolve and validate these canonical
-Targets before running `gcode usages` or `gcode blast-radius`; those broader
-queries discover consumers and adjacent effects after the change anchor is
-known.
-
-## Navigation
-
-- `gcode repo-outline` — high-level project summary with module symbol counts
-- `gcode tree [PATH ...]` — file tree with symbol counts; optional file, directory, and glob filters use OR semantics before paging
-- `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
-
-Bare project-file paths resolve from the project root; `./` and `../` resolve from the current directory; absolute paths map into the current checkout or overlay. Use `gcode tree crates/gcode/src 'docs/**/*.md'` for directory-focused exploration.
-
-## Impact Analysis
-
-Use these **before making changes** to understand what you'll affect:
-
-- `gcode blast-radius <name>` — walk call/import graph transitively to find all affected code
-- `gcode callers <symbol-id>` — who calls this function/method? Prefer a full symbol ID after resolving one
-- `gcode callees <symbol>` — who this function/method calls
-- `gcode usages <symbol-id>` — call and import edges for a symbol. Prefer a full symbol ID after resolving one; callback references are outside the current graph surface, so use `gcode grep -w` with the symbol name as its pattern
-- `gcode imports <file>` — what does this file import?
-- `gcode path <from> <to>` — shortest CALLS path between two symbol queries (requires the graph backend); `--max-depth` bounds the hop search
-
-Collection commands accept `--limit`, `--offset`, and `--token-budget`. Compact text automatically uses a 2,000-token page budget. Every page contains whole semantic items and prints an exact shell-safe continuation command when more remain; run that command unchanged. An oversized first item is returned complete. Explicit JSON is unbounded unless a limit default or token budget applies and adds `next_offset` plus conditional `budget_exceeded`.
-
-## Graph views
-
-- `gcode graph view --view=mcg --file <file>` or `--module <module>` — scoped IMPORTS dump
-- `gcode graph view --view=fcg|class-hierarchy --symbol <symbol>` — scoped CALLS or heritage dump; graph views emit complete JSON plus a complete Mermaid fence
-
-CHG is complete within `--depth` (no row LIMIT); omitted `--depth` is 8 for CHG and 1 for FCG/MCG. FCG/MCG keep #18786 incoming/outgoing edge limits and report `incoming_truncated` / `outgoing_truncated`; they do not clip JSON or Mermaid. MCG communities are Leiden via `analyze`.
-
-A unique MCG file-path seed and every uniquely resolving raw module alias of that file (`E(P)`, including importer-relative specifiers recovered from active `code_imports`) yield the same scoped graph. Walk the provider-file key plus every module key in `E(P)` so consumers of each alias and outgoing dependencies of the provider appear for all those seeds. After each hop, close newly discovered files and uniquely resolved modules through the same `E` operation so a discovered alias of `Q` still reaches `Q`'s provider dependencies. Incoming IMPORTS are consumers, not owners. Do not persist a provider-file column or ownership fact.
-
-`nodes[].file` is nullable: declaring path for files/symbols, unique provider path for a uniquely resolved module, otherwise null.
-
-## Graph Lifecycle
-
-Use `gcode` directly for the code-index graph projection.
-
-`gcode` owns the code-index graph projection. The daemon exposes HTTP shim routes
-for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
-
-- `gcode graph sync-file --file <file>` — sync one indexed file into the graph projection
-- `gcode graph sync-file --file <file> --allow-missing-indexed-file` — daemon/background-worker stale-work tolerance only
-- `gcode graph clear` — clear the current project's graph projection
-- `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
-- `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
-- `gcode repair` — promote stranded local imports, detect graph drift, and queue affected files for projection resync. Pending LocalImport inheritance rows project as UnresolvedCallee until promoted; promotion searches module-root candidate subtrees for a unique top-level definition; resolver-stranded rows are rewritten with `gcode index --full --files <owner paths>`
-- `gcode graph cleanup-orphans` — remove graph projection data for files missing from PostgreSQL and run project graph orphan cleanup
-- `gcode vector cleanup-orphans` — remove Qdrant code-symbol vectors for files missing from PostgreSQL, without resolving embeddings
-- `gcode prune` — remove stale project records globally and reconcile graph and vector projections for all remaining indexed projects; use `--project` to scope projection cleanup
-
-## When to use which
-
-| Looking for... | Use |
-|---|---|
-| A function or class by concept (fuzzy) | `gcode search "concept"` |
-| A symbol you know the exact name of | `gcode search-symbol "name"` |
-| An identifier-like text occurrence | `gcode grep -w <identifier> [PATH ...]` |
-| An exact string literal, call site, dotted config key, quoted string, doc phrase, config value, comment, script line, CSS rule | `gcode grep -F "literal" [PATH ...]` |
-| Ranked content search across comments/docs/config/source text | `gcode search-content "query" [PATH ...]` |
-| Source code at a known file and line | `gcode symbol-at path/to/file:42` |
-| AST structure of a parser-backed source file | `gcode outline path/to/file` |
-| Markdown headings | `gcode grep '^#{1,6} ' path/to/file.md -m 200` |
-| Source code of a specific symbol | `gcode symbol <full-uuid>` |
-| What breaks if I change X | `gcode blast-radius <name>` |
-| Who calls a function | `gcode callers <symbol-id>` |
-| Who a function calls | `gcode callees <symbol>` |
-| A scoped CALLS or class-hierarchy graph | `gcode graph view --view=fcg --symbol <symbol>` |
-| A scoped IMPORTS graph | `gcode graph view --view=mcg --file <file>` |
-| All references to a symbol | `gcode usages <symbol-id>` |
-| Shortest call path between two symbols | `gcode path <from> <to>` |
-
-## Output and global flags
-
-Navigation commands default to compact text: `search`, `search-symbol`, `search-text`, `search-content`, `grep`, `outline`, `symbol`, `symbol-at`, `symbols`, `kinds`, `tree`, `repo-outline`, `callers`, `callees`, `usages`, `imports`, `path`, and `blast-radius`. Compact text omits UUIDs, scores, and ranking-lane diagnostics. Use `--verbose` or `--format json` when those fields are required. Nested structural graph and lifecycle commands keep complete JSON defaults. Use `--quiet` to suppress warnings. Exit 0 always means success, including empty results — do not re-verify with a second call. Nonzero exits print a one-line JSON error on stderr. `--allow-stale` is the only freshness bypass and is rarely needed now that freshness failures degrade to warnings.
-
-On `payload_skew` or `api_contract_mismatch`, stop retrying gcode, report the `recovery` directive to the user, and continue with fallback tools (recorded failures fail the redirect rules open).
+- Call a known tool directly when its schema is leased in the current context.
+- For a known unleased tool, call `get_tool_schema` directly, then `call_tool`.
+- Use `list_tools` only when the tool name is unknown.
+- Use `list_mcp_servers` only when the server is unknown or registry inspection is intended.
+- Call `get_skill`, `list_skills`, and `search_skills` directly; these bootstrap tools are exempt.

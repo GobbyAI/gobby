@@ -373,11 +373,9 @@ def test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance(
 
 
 def test_task_skill_removes_follow_up_refactor_task_direction() -> None:
-    body = (PROJECT_ROOT / "src/gobby/install/shared/skills/tasks/SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    body = (
+        PROJECT_ROOT / "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md"
+    ).read_text(encoding="utf-8")
 
-    assert "finish the decomposition inside the current" in body
-    assert "claimed task and session" in body
-    assert "Deferred refactor tasks are prohibited" in body
+    assert "complete that decomposition within this task; do not defer it" in body
     assert "newly created one left unclaimed" not in body

@@ -1,4 +1,4 @@
-skill: plan
+skill: "gobby:references/plan/overview.md"
 agent: default
 description: Agent presents a canonical plan under time pressure and is tempted to leave artifact provenance outside the copied plan body.
 prompt: |
@@ -19,7 +19,7 @@ runs:
           Deploy the new stack, verify health, then switch traffic.
   loaded:
     loaded_skills:
-      - plan
+      ["gobby:references/plan/overview.md", "gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md", "restraint", "elicit"]
     actions:
       - action: save_plan
         path: .gobby/plans/blue-green-rollout.md

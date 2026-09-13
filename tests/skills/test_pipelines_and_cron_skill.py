@@ -1,83 +1,54 @@
-"""Contract tests for the bundled pipelines-and-cron authoring skill."""
-
-from __future__ import annotations
+"""Pipeline/scheduling references preserve their operating contracts."""
 
 from pathlib import Path
 
 import pytest
 import yaml
 
+from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.loader import SkillLoader
 from gobby.workflows.definitions import PipelineDefinition
 
 pytestmark = pytest.mark.unit
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/pipelines-and-cron"
-SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
+ROOT = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills"
+REFERENCES = ROOT / "gobby/references/pipelines"
 
 
 def _body() -> str:
-    return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-
-
-def _frontmatter() -> dict:
-    header = _body().split("---", 2)[1]
-    data = yaml.safe_load(header)
-    assert isinstance(data, dict)
-    return data
-
-
-def _pipeline_example() -> dict:
-    block = _body().split("```yaml", 1)[1].split("```", 1)[0]
-    data = yaml.safe_load(block)
-    assert isinstance(data, dict)
-    return data
+    return "\n".join(path.read_text() for path in sorted(REFERENCES.glob("*.md")))
 
 
 def test_metadata_is_discoverable_and_authoring_category() -> None:
-    frontmatter = _frontmatter()
-    skill = SkillLoader().load_skill(SKILL_DIR)
-
-    assert frontmatter["name"] == "pipelines-and-cron"
-    assert frontmatter["description"].startswith("Use when")
-    assert frontmatter["category"] == "authoring"
-    assert frontmatter["metadata"]["gobby"]["audience"] == "all"
-    assert skill.name == "pipelines-and-cron"
-    assert skill.get_category() == "authoring"
+    catalog = load_capability_catalog()
+    capability = next(item for item in catalog.capabilities if item.name == "pipelines")
+    assert capability.description and capability.when
+    assert {topic.name for topic in capability.topics} >= {"authoring", "scheduling", "execution"}
+    assert catalog.folded_skills["pipelines-and-cron"] == "gobby:references/pipelines/overview.md"
 
 
 def test_bundled_directory_discovery_finds_pipelines_and_cron() -> None:
-    skills = SkillLoader().load_directory(SKILLS_ROOT)
-
-    assert "pipelines-and-cron" in {skill.name for skill in skills}
+    names = {skill.name for skill in SkillLoader().load_directory(ROOT)}
+    assert "gobby" in names
+    assert "pipelines-and-cron" not in names
+    assert "gobby-workflows:list_pipelines" in _body()
 
 
 def test_pipeline_yaml_example_matches_runtime_definition() -> None:
-    pipeline = PipelineDefinition.model_validate(_pipeline_example())
-
-    assert pipeline.name == "release-check"
-    assert [step.id for step in pipeline.steps] == ["test", "deploy"]
+    block = (REFERENCES / "validation.md").read_text().split("```yaml", 1)[1].split("```", 1)[0]
+    pipeline = PipelineDefinition.model_validate(yaml.safe_load(block))
+    assert pipeline.name == "reference-check"
+    assert [step.id for step in pipeline.steps] == ["inspect", "publish"]
     assert pipeline.steps[1].approval is not None
     assert pipeline.steps[1].approval.required is True
 
 
 def test_documents_current_pipeline_tool_lifecycle() -> None:
-    body = _body()
-
-    for tool_name in (
-        "create_pipeline",
-        "run_pipeline",
-        "get_pipeline_status",
-        "update_pipeline",
-    ):
-        assert tool_name in body
+    for name in ("create_pipeline", "run_pipeline", "get_pipeline_status", "update_pipeline"):
+        assert name in _body()
 
 
 def test_documents_complete_cron_tool_family() -> None:
-    body = _body()
-
-    for tool_name in (
+    for name in (
         "list_cron_jobs",
         "create_cron_job",
         "get_cron_job",
@@ -87,18 +58,14 @@ def test_documents_complete_cron_tool_family() -> None:
         "run_cron_job",
         "list_cron_runs",
     ):
-        assert tool_name in body
+        assert name in _body()
 
 
 def test_separates_automation_paths_and_omits_retired_content() -> None:
-    body = _body()
-    normalized = body.lower()
-
-    assert "deterministic multi-step" in normalized
-    assert "scheduled" in normalized
-    assert "task-lifecycle automation" in normalized
-    assert "gobby build" in body
-    assert "dispatch" in body
+    body = " ".join(_body().split())
+    assert "pipelines for ordered steps, cron for timing" in body
+    assert "build capability for task lifecycle dispatch" in body
+    assert "without moving task ownership" in body
     assert "## Agent Definitions" not in body
     assert "mode: terminal" not in body
     assert "mark_task_" not in body

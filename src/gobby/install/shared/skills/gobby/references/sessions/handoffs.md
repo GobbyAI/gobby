@@ -2,8 +2,8 @@
 
 Load before authoring `gobby-sessions:set_handoff` or cooperative
 `gobby-agents:end_agent_run` content, and when diagnosing handoff recovery.
-Fetch the applicable schemas. Existing installed skill gates remain authoritative
-until migration; load `handoff-discipline` if the active gate requires it.
+Fetch the applicable schemas. Load this exact reference completely before
+authoring the handoff; loading the router alone does not satisfy its gate.
 
 Derive readable current state and concrete next actions from the implementation
 tracker. Include decisions, blockers, commands, diagnostics, paths, impact, and

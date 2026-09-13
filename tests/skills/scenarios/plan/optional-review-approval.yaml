@@ -1,4 +1,4 @@
-skill: plan
+skill: "gobby:references/plan/overview.md"
 agent: default
 description: Declining optional reviews preserves validation and explicit approval before implementation.
 prompt: |
@@ -14,12 +14,12 @@ runs:
       - action: respond
         text: Reviews were skipped, so expansion started immediately.
   loaded:
-    loaded_skills: [plan]
+    loaded_skills: ["gobby:references/plan/overview.md", "restraint", "elicit"]
     actions:
       - action: load_reference
-        path: references/evidence-and-recovery.md
+        path: "references/plan/approval.md"
       - action: load_reference
-        path: references/build-handoff.md
+        path: "references/plan/expansion.md"
       - action: validate_plan
         mode: base
         plan_file: .gobby/plans/session-recovery.md

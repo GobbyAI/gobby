@@ -1,4 +1,4 @@
-skill: code-index
+skill: "gobby:references/code-index/overview.md"
 agent: default
 description: Agent finds a search hit and is tempted to inspect broad line ranges before symbol retrieval.
 prompt: |
@@ -17,7 +17,7 @@ runs:
         text: Used broad sed/file reads after the search hit to inspect context.
   loaded:
     loaded_skills:
-      - code-index
+      ["gobby:references/code-index/overview.md", "gobby:references/code-index/search.md", "gobby:references/code-index/retrieval.md"]
     actions:
       - action: gcode_search
         command: gcode search-content "parse_skill_file" src/gobby/skills --limit 5

@@ -131,12 +131,12 @@ def test_validate_covers_artifact_referenced_by_path() -> None:
 def test_validate_covers_artifact_referenced_by_path_basename_with_parent() -> None:
     item = _item(
         "A1.1",
-        artifact_ref="src/gobby/install/shared/skills/plan-draft/SKILL.md",
+        artifact_ref="src/gobby/install/shared/skills/gobby/references/plan/drafting.md",
     )
 
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
-        "plan-draft SKILL.md documents the acceptance-item shape.",
+        "plan drafting.md documents the acceptance-item shape.",
         "#leaf",
         _plan_doc("A1", item),
     )
@@ -148,13 +148,13 @@ def test_validate_covers_artifact_referenced_by_embedded_path() -> None:
     item = _item(
         "A1.1",
         artifact_ref=(
-            "`src/gobby/install/shared/skills/plan-draft/SKILL.md` (canonical authoring surface)"
+            "`src/gobby/install/shared/skills/gobby/references/plan/drafting.md` (canonical authoring surface)"
         ),
     )
 
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
-        "src/gobby/install/shared/skills/{plan,plan-draft}/SKILL.md is covered.",
+        "src/gobby/install/shared/skills/gobby/references/{plan,build}/drafting.md is covered.",
         "#leaf",
         _plan_doc("A1", item),
     )

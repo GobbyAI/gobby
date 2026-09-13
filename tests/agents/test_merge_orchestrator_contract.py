@@ -21,7 +21,9 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENT_PATH = REPO_ROOT / "src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml"
-SKILL_PATH = REPO_ROOT / "src/gobby/install/shared/skills/merge-expert/SKILL.md"
+SKILL_PATH = (
+    REPO_ROOT / "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md"
+)
 
 REQUIRED_EXECUTE_TOOLS = {
     "gobby-tasks-ops:get_delivery_state",
@@ -316,14 +318,16 @@ def test_execute_allow_list_matches_merge_expert_contract() -> None:
     execute = _step(_agent(), "execute")
     allowed = set(execute["allowed_mcp_tools"])
     blocked = set(execute["blocked_mcp_tools"])
-    skill = SKILL_PATH.read_text(encoding="utf-8")
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     assert REQUIRED_EXECUTE_TOOLS <= allowed
     assert FORBIDDEN_EXECUTE_TOOLS <= blocked
     assert "gobby-agents:kill_agent" not in allowed
-    assert "Workers terminate themselves via `end_agent_run`" in skill
-    assert "gobby-agents:wait_for_agent" in skill
-    assert "Do not use Bash sleep loops" in skill
+    lifecycle = (SKILL_PATH.parents[1] / "agents/lifecycle.md").read_text()
+    assert "`end_agent_run` with current_state and concrete next_steps" in lifecycle
+    assert "`wait_for_agent`" in skill
+    waits = (SKILL_PATH.parents[1] / "sessions/waits.md").read_text()
+    assert "instead of\npolling status or registering repeatedly" in waits
     assert "Workers terminate themselves via `kill_agent`" not in skill
 
 
@@ -331,7 +335,7 @@ def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
     agent = _agent()
     instructions = agent["prompts"]["agent"]
     execute = _step(agent, "execute")
-    skill = SKILL_PATH.read_text(encoding="utf-8")
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     assert "gobby-agents:wait_for_agent" in instructions
     assert "Do NOT use Bash sleep loops" in instructions
@@ -340,9 +344,8 @@ def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
     assert "end the turn" in instructions
     assert "re-call `gobby-agents:wait_for_agent` first" in instructions
     assert "current_batch_run_ids" in instructions
-    assert "subscribe once" in skill
-    assert "end the turn" in skill
-    assert "re-call `gobby-agents:wait_for_agent` first" in skill
+    assert "Subscribe once with `wait_for_agent` and yield" in skill
+    assert "Process the delivered terminal" in skill
     assert "gobby-agents:wait_for_agent" in execute["allowed_mcp_tools"]
     assert "worker returns success" in instructions
     assert "unresolved merge state" in instructions
@@ -1135,7 +1138,7 @@ async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
 
 
 def test_merge_expert_continues_active_resolution_before_abort() -> None:
-    skill = SKILL_PATH.read_text(encoding="utf-8")
+    skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     assert "active_resolution_id" in skill
     assert "continue that active" in skill
@@ -1167,12 +1170,10 @@ def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> N
     assert "multiple merge_resolve calls in the same assistant turn" in instructions
     assert "Do not" in instructions
     assert "synthesize manual" in instructions
-    assert "merge_resolve(conflict_id=..., use_ai=true)" in skill
-    assert "exactly one pending conflict_id at a time" in skill
-    assert "multiple `merge_resolve` calls in the same assistant turn" in skill
-    assert "Do not" in skill
-    assert "synthesize manual `resolved_content`" in skill
-    assert "Prefer worker-side verification" in skill
+    assert "one `conflict_id` at a time with `merge_resolve`" in skill
+    assert "not parallel conflict calls" in skill
+    assert "do not synthesize manual contents" in skill
+    assert "Verify with the scoped `verify_in_worktree` command" in skill
 
 
 def test_merge_orchestrator_preserves_guarded_verify_commands() -> None:
@@ -1182,17 +1183,22 @@ def test_merge_orchestrator_preserves_guarded_verify_commands() -> None:
     assert "Preserve any required environment guards" in instructions
     assert "GOBBY_TEST_PROTECT=1 uv run pytest" in instructions
     assert "env GOBBY_TEST_PROTECT=1" in instructions
-    assert "Preserve required environment guards" in skill
-    assert "GOBBY_TEST_PROTECT=1" in skill
+    assert "Preserve isolated test guards" in skill
+    assert "never substitute a full test suite" in skill
 
 
 def test_merge_orchestrator_does_not_green_gate_tdd_red_phase_pytest() -> None:
     instructions = " ".join(_agent()["prompts"]["agent"].split())
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
-    for text in (instructions, skill):
+    for text in (instructions,):
         assert "TDD red-phase" in text
         assert "expected-failing pytest command" in text
         assert "do not" in text.lower()
         assert "green" in text
         assert "QA red evidence" in text
+
+    assert "explicitly expected-failing TDD test-writing deliverable" in skill
+    assert "omit the green `verify_command` gate" in skill
+    assert "existing QA red-phase evidence" in skill
+    assert "do not retry or escalate" in skill

@@ -1,4 +1,4 @@
-skill: build-rule
+skill: "gobby:references/rules/authoring.md"
 agent: default
 description: Loaded rule authoring selects event and effect guidance and validates the artifact.
 prompt: Build a rule that blocks task closure when focused validation has not passed.
@@ -11,12 +11,12 @@ runs:
       - action: respond
         text: Added a plausible rule without effect semantics or validation.
   loaded:
-    loaded_skills: [build-rule]
+    loaded_skills: ["gobby:references/rules/authoring.md"]
     actions:
       - action: load_reference
-        path: references/events-and-conditions.md
+        path: "references/rules/events.md"
       - action: load_reference
-        path: references/effects.md
+        path: "references/rules/effects.md"
       - action: write_rule
         fields: [event, condition, effect, message]
       - action: validate_rule

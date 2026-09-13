@@ -11,7 +11,16 @@ Walk every phase without quotas. Before retaining a suggestion, apply restraint'
 
 ## Boundaries and completion
 The enhancer never edits the plan, approves/rejects, writes M1, or gates correctness. Return converged plus ranked suggestions containing stable ID, lens, category, location, description, suggested_enhancement, impact, effort, risk and severity opportunity. Converged means an empty list after a complete pass.
-Interactive coordinator presents every suggestion and records individual accept/decline decisions before edits. Fold accepted changes into the canonical artifact, append enhancement provenance under V1 as bold round entries, preserve history, and revalidate. Stop at convergence, all-declined, or cap; this never implies approval of another phase.
+The serialized suggestion payload has closed vocabularies: `lens` is `better` or
+`bigger`; `category` is `scope`, `testability`, `reuse`, `sequencing`, or `clarity`;
+`impact` and `risk` are `low`, `med`, or `high`; `effort` is `small`, `medium`, or
+`large`; `severity` is always `opportunity`. Preserve full description and
+suggested_enhancement text plus every metadata field when presenting suggestions;
+do not substitute a summary. In unattended authorized selection, record an
+accept/decline vote and concrete rationale for every suggestion.
+
+Interactive coordinator presents every suggestion and records individual accept/decline decisions before edits. Fold accepted changes into the canonical artifact, append enhancement provenance under V1 as bold round entries, preserve history, and revalidate. Record `kind: enhancement`, `enhancer_run`,
+round/cap, `suggestions_presented`, each vote and its rationale in that provenance. Stop at convergence, all-declined, or cap; this never implies approval of another phase.
 Autonomous enhancer uses gobby-tasks-ops:record_plan_enhancement with round_number, converged, and suggestions serialized as strings (the registered tool accepts a string array, not structured suggestion objects), then delivers its result and ends its agent run with the required structured handoff. Current end_agent_run requires current_state and next_steps; no-argument examples in old source skills are obsolete. Its budget is independent of adversarial review; installed stage policy determines subsequent dispatch.
 Failures use agent lifecycle diagnostics and complete report retrieval. Do not record a failed/truncated run as converged or launch a replacement merely because no terminal text appeared.
 

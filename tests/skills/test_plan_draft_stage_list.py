@@ -12,13 +12,13 @@ from gobby.config.build import SKIPPABLE_STAGES, SkippableStage
 
 pytestmark = pytest.mark.unit
 
-SKILL_PATH = Path("src/gobby/install/shared/skills/plan-draft/SKILL.md")
+SKILL_PATH = Path("docs/guides/dispatch.md")
 DROPPED_STAGES = frozenset({"adversarial_review", "expansion_qa", "code_review_qa"})
 
 
 def _stage_section(body: str) -> str:
     match = re.search(
-        r"### Canonical Build Stages\n(?P<section>.*?)(?:\n### |\n## |\Z)",
+        r"Bundled stages, in order \(installed rows may differ\):\n(?P<section>.*?)(?:\nEach registry|\Z)",
         body,
         flags=re.DOTALL,
     )
@@ -46,4 +46,4 @@ def test_dropped_stages_absent() -> None:
 
     assert documented.isdisjoint(DROPPED_STAGES)
     for stage_name in DROPPED_STAGES:
-        assert stage_name not in body
+        assert stage_name not in _stage_section(body)

@@ -1,110 +1,70 @@
-"""Content-level tests for the bundled plan-mechanic methodology skill.
-
-plan-mechanic is the bounded mechanical-repair step of the plan loop: it runs
-between the planner's semantic repair and the next adversary round, fixes only
-what `gobby plans validate` can detect, and stops on anything that needs a
-design choice. These tests guard content drift: the skill stays mechanical
-(never redesigns, never touches V1 fences or the manifest), covers every
-validator lint code, requires caller-selected project-aware validation, and
-reports unrun expansion honestly instead of guessing.
-"""
-
-from __future__ import annotations
+"""Mechanical repair remains bounded and never becomes redesign."""
 
 from pathlib import Path
 
 import pytest
 
-from gobby.skills.parser import parse_skill_file
+from gobby.skills.capability_catalog import load_capability_catalog
 from tests.skills.scenario_runner import run_recorded_skill_scenario
 
 pytestmark = pytest.mark.unit
-
-SKILL_PATH = Path("src/gobby/install/shared/skills/plan-mechanic/SKILL.md")
-SCENARIO = Path(__file__).resolve().parent / "scenarios" / "plan-mechanic" / "bounded-repair.yaml"
-
-LINT_CODES = (
-    "target-coverage",
-    "shared-target-ordering",
-    "production-size-growth",
-    "derived-carriers",
-    "unresolved-dependency",
-    "table-row-decomposition",
-)
+REFERENCE = Path("src/gobby/install/shared/skills/gobby/references/plan/repair.md")
+SCENARIO = Path(__file__).resolve().parent / "scenarios/plan-mechanic/bounded-repair.yaml"
 
 
-class TestPlanMechanicFrontmatter:
-    def test_skill_parses_as_internal_methodology(self) -> None:
-        parsed = parse_skill_file(SKILL_PATH)
-        assert parsed.name == "plan-mechanic"
-        assert "validate" in parsed.description.lower()
-        assert parsed.is_internal()
-
-    def test_audience_is_all(self) -> None:
-        """Loaded by a spawned repair agent and by the interactive coordinator."""
-        parsed = parse_skill_file(SKILL_PATH)
-        assert parsed.audience_config is not None
-        assert parsed.audience_config.audience == "all"
+@pytest.fixture
+def body() -> str:
+    return " ".join(REFERENCE.read_text().split())
 
 
-class TestPlanMechanicContent:
-    @pytest.fixture
-    def body(self) -> str:
-        return SKILL_PATH.read_text(encoding="utf-8")
-
-    def test_loads_restraint_and_plan_draft_first(self, body: str) -> None:
-        assert 'get_skill(name="restraint")' in body
-        assert 'get_skill(name="plan-draft")' in body
-
-    def test_hard_boundaries_forbid_redesign_fences_manifest(self, body: str) -> None:
-        lowered = body.lower()
-        assert "never redesign" in lowered
-        assert "never edit the `## v1 plan changelog`" in lowered
-        assert "byte-identical" in lowered
-        assert "never write the `## m1 task manifest`" in lowered
-
-    def test_design_choice_stops_with_needs_planner(self, body: str) -> None:
-        assert "needs-planner" in body
-        assert "a design choice is a stop, not a guess" in body.lower()
-
-    @pytest.mark.parametrize("code", LINT_CODES)
-    def test_repair_table_covers_every_validator_lint(self, body: str, code: str) -> None:
-        assert f"`{code}`" in body
-
-    def test_repair_table_covers_symbol_target_forms(self, body: str) -> None:
-        assert "mix exact symbols with `::*`" in body
-        assert "scope-reason" in body
-        assert 'gcode search-symbol "<name>" <path>' in body
-        assert "followed by a blank line" in body
-
-    def test_procedure_selects_first_draft_or_manifest_bearing_validation(self, body: str) -> None:
-        assert "caller-selected validation scope" in body
-        assert "`first-draft`" in body
-        assert "Run base validation only" in body
-        assert "`manifest-bearing`" in body
-        assert "Run both base and expansion validation" in body
-        assert "uv run gobby plans validate <plan-file> -p <project-root>" in body
-        assert "uv run gobby plans validate <plan-file> -p <project-root> --mode expansion" in body
-        assert "`-p` is required" in body
-
-    def test_procedure_is_bounded_and_checks_v1_diff(self, body: str) -> None:
-        lowered = body.lower()
-        assert "after five full passes" in lowered
-        assert "git diff -- <plan-file>" in body
-
-    def test_report_schema_fields(self, body: str) -> None:
-        for field in ("validation:", "repairs:", "needs_planner:", "v1_changelog:", "ledger:"):
-            assert field in body
-        assert "scope: <first-draft | manifest-bearing>" in body
-        assert "expansion_validation: <passed | unrun-no-manifest>" in body
-        assert "never report expansion as zero" in body
-
-    def test_exit_sends_message_then_ends_run(self, body: str) -> None:
-        assert "`send_message`" in body
-        assert "`end_agent_run`" in body
+def test_mechanic_catalog_identity() -> None:
+    assert load_capability_catalog().folded_skills["plan-mechanic"] == (
+        "gobby:references/plan/repair.md"
+    )
 
 
-@pytest.mark.skill_tdd
+def test_prerequisites_and_scope(body: str) -> None:
+    for term in (
+        "Load standalone `restraint`",
+        "[drafting](drafting.md)",
+        "[coverage](coverage.md)",
+        "Read the linked coverage contract",
+        "Run standard validation with project context",
+        "expansion mode too only for a manifest-bearing artifact",
+        "fix shape already determined by the narrative",
+        "Sweep the whole plan",
+        "only a split boundary/file already specified",
+    ):
+        assert term in body
+
+
+def test_repair_preserves_decisions_and_immutable_checkpoints(body: str) -> None:
+    for term in (
+        "Never invent scope, new promises, ownership or a design choice",
+        "return needs-planner with section, lint and exact missing decision",
+        "Never edit M1, locked decisions or V1 checkpoints",
+        "after five full passes",
+        "before/after counts",
+        "unrun-no-manifest",
+        "byte-identical V1",
+        "whether resealing is required",
+    ):
+        assert term in body
+
+
+def test_evidence_recovery_preserves_transaction_order(body: str) -> None:
+    for term in (
+        "append canonical result, finalize, then apply accepted typed repairs",
+        "invalid_repair: the atomic apply leaves bytes unchanged",
+        "Idempotent repairs report already_present",
+        "drift revokes the intent",
+        "pending_lesson_mint",
+        "never forge source hashes",
+        "never launch attempts or expired evidence",
+    ):
+        assert term in body
+
+
 def test_plan_mechanic_applies_bounded_repairs_instead_of_rewriting() -> None:
     result = run_recorded_skill_scenario(SCENARIO)
 

@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/python"
 DEVELOPMENT_DISCIPLINE_FILE = (
-    REPO_ROOT / "src/gobby/install/shared/skills/development-discipline/SKILL.md"
+    REPO_ROOT / "src/gobby/install/shared/skills/gobby/references/development/obligations.md"
 )
 
 
@@ -76,9 +76,9 @@ def test_python_skill_prohibits_suppressions_and_routes_to_typed_boundaries() ->
 def test_development_discipline_prohibits_python_suppressions() -> None:
     content = DEVELOPMENT_DISCIPLINE_FILE.read_text(encoding="utf-8")
 
-    assert "never add `# type: ignore` or `# noqa`" in content
-    assert "typed adapter" in content
-    assert "local stub" in content
+    assert "add no `type: ignore` or `noqa`" in " ".join(content.split())
+    assert "typed seams" in content
+    assert "casts at deliberate invalid-input boundaries" in content
     assert "gobby test-types suppressions" in content
 
 

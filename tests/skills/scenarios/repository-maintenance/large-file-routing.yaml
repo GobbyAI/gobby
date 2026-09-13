@@ -16,7 +16,7 @@ runs:
     loaded_skills:
       - repository-maintenance
       - decompose-monolith
-      - code-index
+      - "gobby:references/code-index/overview.md"
     actions:
       - action: load_required_skill
         skill: decompose-monolith

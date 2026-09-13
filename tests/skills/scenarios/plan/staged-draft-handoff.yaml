@@ -1,4 +1,4 @@
-skill: plan
+skill: "gobby:references/plan/overview.md"
 agent: default
 description: A write-restricted provider preserves a complete conversational plan draft through compaction and retrieval.
 prompt: |
@@ -22,7 +22,7 @@ runs:
       - action: respond
         text: The detailed Markdown and code examples were lost during compaction.
   loaded:
-    loaded_skills: [plan]
+    loaded_skills: ["gobby:references/plan/overview.md", "gobby:references/plan/drafting.md", "gobby:references/plan/coverage.md", "gobby:references/sessions/handoffs.md", "restraint", "elicit"]
     actions:
       - action: draft_plan
         text: &draft |

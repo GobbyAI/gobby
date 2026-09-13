@@ -15,7 +15,7 @@ standalone `code-review` skill before the pre-commit review.
 
    ```bash
    git add path/to/owned-file
-   git commit --only -m '[project-#123] fix: describe the change' -- path/to/owned-file
+   git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- path/to/owned-file
    ```
 
 5. Keep the returned commit SHA for the task's lifecycle transition. Follow the

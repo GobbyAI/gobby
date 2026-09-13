@@ -1,4 +1,4 @@
-skill: pipelines-and-cron
+skill: "gobby:references/pipelines/overview.md"
 agent: default
 description: Agent must separate deterministic, scheduled, and task-lifecycle automation.
 prompt: |
@@ -16,7 +16,7 @@ runs:
         text: Used one build loop and a developer agent definition for the whole automation.
   loaded:
     loaded_skills:
-      - pipelines-and-cron
+      ["gobby:references/pipelines/overview.md", "gobby:references/pipelines/authoring.md", "gobby:references/pipelines/validation.md", "gobby:references/pipelines/execution.md", "gobby:references/pipelines/scheduling.md"]
     actions:
       - action: classify_automation_path
         deterministic: pipeline

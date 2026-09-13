@@ -408,10 +408,11 @@ deferral:
     repo_root = Path(__file__).resolve().parents[2]
     contract = (repo_root / "docs/contracts/plan-coverage.md").read_text(encoding="utf-8")
     draft_grammar = (
-        repo_root / "src/gobby/install/shared/skills/plan-draft/references/plan-coverage-grammar.md"
+        repo_root / "src/gobby/install/shared/skills/gobby/references/plan/coverage.md"
     ).read_text(encoding="utf-8")
     assert canonical_block in contract
-    assert canonical_block in draft_grammar
+    assert "docs/contracts/plan-coverage.md" in draft_grammar
+    assert "task_ref, reason, owner, original_acceptance_items" in draft_grammar
     plan = _write_plan(
         tmp_path,
         f"""> **Plan ID:** plan
