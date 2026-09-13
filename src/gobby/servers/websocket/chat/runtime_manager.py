@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.agents.codex_oss import (
@@ -24,7 +25,10 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
 )
-from gobby.ai.endpoints import parse_endpoint_model_selector, parse_endpoint_selector
+from gobby.ai.endpoints import (
+    parse_endpoint_model_selector,
+    parse_endpoint_selector,
+)
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
@@ -45,6 +49,12 @@ from gobby.servers.websocket.chat.backends import (
     QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -277,6 +287,28 @@ class WebChatRuntimeManager:
         """Return a copy of the discovered ACP ``SessionInfo`` cache."""
         return {key: dict(value) for key, value in self._acp_session_infos.items()}
 
+    async def _refresh_local_context(
+        self,
+        model: str | None,
+    ) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+        """Refresh context for an exact local endpoint selector."""
+        selector = parse_endpoint_model_selector(model)
+        if selector is None:
+            return None, None
+        endpoint = self._generation_endpoints.get(selector.endpoint_name)
+        if endpoint is None:
+            return None, None
+
+        from gobby.agents.local_model import refresh_local_model_context
+        from gobby.utils.machine_id import require_machine_id
+
+        return await refresh_local_model_context(
+            endpoint,
+            endpoint_name=selector.endpoint_name,
+            model=selector.model or endpoint.model,
+            machine_id=require_machine_id(),
+        )
+
     async def create_session(
         self,
         *,
@@ -303,6 +335,7 @@ class WebChatRuntimeManager:
             record = await ensure_agy_support()
             if not record.supported:
                 raise RuntimeError(record.reason)
+        local_context_provider = provider in {"claude", "codex"}
         session: ChatSessionProtocol
         if provider == "qwen":
             session = QwenManagedChatSession(
@@ -351,6 +384,9 @@ class WebChatRuntimeManager:
                 session.reasoning_effort = reasoning_effort
         else:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
+        if local_context_provider:
+            context_session = cast(Any, session)
+            context_session._local_context_refresher = self._refresh_local_context
         self._apply_launch_snapshot(session, snapshot)
         return session
 

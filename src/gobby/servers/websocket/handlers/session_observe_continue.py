@@ -428,6 +428,9 @@ async def handle_continue_in_chat(
         if resume_in_place
         else await _resolved_session_title(mixin, session_manager, session.db_session_id)
     )
+    session_ref = getattr(session, "session_ref", None)
+    if not isinstance(session_ref, str) or not session_ref:
+        session_ref = session.db_session_id
 
     # Send confirmation
     await websocket.send(
@@ -438,7 +441,7 @@ async def handle_continue_in_chat(
                 "source_session_id": source_session_id,
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
-                "ref": session.session_ref or session.db_session_id,
+                "ref": session_ref,
                 "title": continued_title,
                 "source": effective_provider,
                 "model": effective_model,

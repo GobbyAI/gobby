@@ -415,17 +415,15 @@ class CodexWebChatBackend:
                 session._app_client = None
                 raise
 
-        if (
-            self._generation_endpoint is not None
-            and self._generation_endpoint.wire_api == "chat-completions"
-        ):
-            local_endpoint = self._generation_endpoint
-            if session._model:
-                local_endpoint = local_endpoint.model_copy(update={"model": session._model})
-            try:
-                session._model = await ensure_local_model(local_endpoint, run_manager=None)
-            except LocalModelError as exc:
-                raise RuntimeError(local_model_preflight_message(local_endpoint, exc)) from exc
+        await self._ensure_local_wire_model(session)
+
+        if session._local_context_refresher is not None:
+            context_model = session._model_selector or session._model
+            selector = parse_endpoint_model_selector(context_model)
+            if selector is not None and session._model:
+                context_model = f"endpoint:{selector.endpoint_name}/{session._model}"
+            route, observation = await session._local_context_refresher(context_model or "")
+            await session._set_local_context(route, observation)
 
         if session._thread_id:
             thread = await client.resume_thread(session._thread_id)
@@ -479,6 +477,17 @@ class CodexWebChatBackend:
 
         session._model_selector = requested_model
         session._model = selector.model or self._generation_endpoint.model
+
+    async def _ensure_local_wire_model(self, session: CodexManagedChatSession) -> None:
+        endpoint = self._generation_endpoint
+        if endpoint is None or endpoint.wire_api != "chat-completions":
+            return
+        if session._model:
+            endpoint = endpoint.model_copy(update={"model": session._model})
+        try:
+            session._model = await ensure_local_model(endpoint, run_manager=None)
+        except LocalModelError as exc:
+            raise RuntimeError(local_model_preflight_message(endpoint, exc)) from exc
 
     async def detach_session(self, session: CodexManagedChatSession) -> None:
         session._connected = False
@@ -713,7 +722,15 @@ class CodexWebChatBackend:
         session._turn_id = None
 
     async def switch_model(self, session: CodexManagedChatSession, new_model: str) -> None:
-        self._apply_requested_model(session, new_model)
+        previous_selector = session._model_selector
+        previous_model = session._model
+        try:
+            self._apply_requested_model(session, new_model)
+            await self._ensure_local_wire_model(session)
+        except BaseException:
+            session._model_selector = previous_selector
+            session._model = previous_model
+            raise
 
     async def clear_session_context(self, session: CodexManagedChatSession) -> bool:
         """Reset the session's conversation context to a fresh Codex thread.

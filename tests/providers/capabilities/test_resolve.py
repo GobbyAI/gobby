@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from gobby.config.ai import ModelMetadataAlias
+from gobby.providers.capabilities.local_context import (
+    ContextDiagnostic,
+    LocalContextInstance,
+    LocalContextObservation,
+)
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -50,6 +56,31 @@ class _ModelMetadataStore:
         return self.reasoning_metadata.get(model)
 
 
+@dataclass(frozen=True, slots=True)
+class _LocalRoute:
+    machine_id: str = "machine"
+    endpoint_id: str = "endpoint"
+    configuration_fingerprint: str = "configuration"
+    model_id: str = "model"
+    instance_id: str | None = None
+    is_local: bool = True
+
+    def matches_observation(self, observation: LocalContextObservation) -> bool:
+        return (
+            self.machine_id,
+            self.endpoint_id,
+            self.configuration_fingerprint,
+            self.model_id,
+            self.instance_id,
+        ) == (
+            observation.machine_id,
+            observation.endpoint_id,
+            observation.configuration_fingerprint,
+            observation.model_id,
+            observation.instance_id,
+        )
+
+
 def _snapshot(
     *,
     context_length: int | None = 128_000,
@@ -95,6 +126,25 @@ def _snapshot(
     return ProviderSnapshot(provider="provider", generation=1, models=(model,), sources=(source,))
 
 
+def _local_observation(
+    *,
+    provider: str = "ollama",
+    model_id: str = "model",
+    configuration_fingerprint: str = "configuration",
+    diagnostics: tuple[ContextDiagnostic, ...] = (),
+) -> LocalContextObservation:
+    return LocalContextObservation(
+        machine_id="machine",
+        endpoint_id="endpoint",
+        configuration_fingerprint=configuration_fingerprint,
+        provider=provider,
+        model_id=model_id,
+        canonical_limit=262_144,
+        diagnostics=diagnostics,
+        instances=(LocalContextInstance(model_id=model_id, runtime_limit=32_768),),
+    )
+
+
 def test_context_precedence_order() -> None:
     resolver = CapabilityResolver(_CapabilityStore(_snapshot()), _ModelMetadataStore(32_000))
 
@@ -115,6 +165,84 @@ def test_context_precedence_order() -> None:
     assert (matrix.value, matrix.source) == (128_000, ContextSource.PROVIDER_MATRIX)
     assert (metadata.value, metadata.source) == (32_000, ContextSource.OPENROUTER)
     assert (unknown.value, unknown.source) == (None, ContextSource.UNKNOWN)
+
+
+def test_local_context_never_uses_remote_metadata() -> None:
+    class _NoLookupCapabilityStore:
+        def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
+            raise AssertionError("local context must not read the provider matrix")
+
+    class _NoLookupMetadataStore:
+        def get_context_window(self, model: str) -> int | None:
+            raise AssertionError("local context must not read model metadata")
+
+        def get_model_metadata(self, model: str) -> ModelMetadata | None:
+            raise AssertionError("local context must not read reasoning metadata")
+
+    resolver = CapabilityResolver(
+        _NoLookupCapabilityStore(),
+        _NoLookupMetadataStore(),
+        [
+            ModelMetadataAlias(
+                provider="provider",
+                provider_model_id="model",
+                openrouter_model_id="registry-model",
+            )
+        ],
+    )
+    route = _LocalRoute()
+    unusable_observations = (
+        None,
+        _local_observation(configuration_fingerprint="other-configuration"),
+        _local_observation(model_id="other-model"),
+        _local_observation(diagnostics=(ContextDiagnostic.ENDPOINT_UNAVAILABLE,)),
+        _local_observation(diagnostics=(ContextDiagnostic.SUPERSEDED,)),
+    )
+
+    for observation in unusable_observations:
+        result = resolver.resolve_context(
+            "qwen",
+            "model",
+            caller_override=16_384,
+            route_override=8_192,
+            local_route=route,
+            local_observation=observation,
+        )
+        assert (result.value, result.source) == (None, ContextSource.UNKNOWN)
+
+
+def test_local_context_caps_preserve_winning_source() -> None:
+    resolver = CapabilityResolver(_CapabilityStore(None), _ModelMetadataStore(None))
+    route = _LocalRoute()
+    observation = _local_observation()
+
+    observed = resolver.resolve_context(
+        "qwen",
+        "model",
+        caller_override=65_536,
+        route_override=48_000,
+        local_route=route,
+        local_observation=observation,
+    )
+    caller = resolver.resolve_context(
+        "qwen",
+        "model",
+        caller_override=16_384,
+        route_override=24_000,
+        local_route=route,
+        local_observation=observation,
+    )
+    route_cap = resolver.resolve_context(
+        "qwen",
+        "model",
+        route_override=8_192,
+        local_route=route,
+        local_observation=observation,
+    )
+
+    assert (observed.value, observed.source) == (32_768, ContextSource.LOCAL_OBSERVATION)
+    assert (caller.value, caller.source) == (16_384, ContextSource.CALLER_OVERRIDE)
+    assert (route_cap.value, route_cap.source) == (8_192, ContextSource.ROUTE_OVERRIDE)
 
 
 def test_direct_metadata_match_precedes_provider_alias() -> None:

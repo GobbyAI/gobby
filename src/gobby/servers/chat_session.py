@@ -6,6 +6,8 @@ context across messages. Sessions are keyed by conversation_id (stable across
 WebSocket reconnections) rather than ephemeral client_id.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -13,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -40,6 +42,11 @@ from gobby.servers.chat_session_helpers import (
 from gobby.servers.chat_session_hooks import ChatSessionHooksMixin
 from gobby.servers.chat_session_messages import ChatSessionMessagesMixin
 from gobby.servers.chat_session_permissions import ChatSessionPermissionsMixin
+
+if TYPE_CHECKING:
+    from gobby.config.ai import GenerationEndpointConfig
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
 ClaudeReasoningEffort = Literal["low", "medium", "high", "max"]
@@ -103,6 +110,15 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _max_history_message_chars: int = field(default=2000, repr=False)
     _max_history_total_chars: int = field(default=30_000, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
+    _local_context_route: LocalContextRoute | None = field(default=None, repr=False)
+    _local_context_observation: LocalContextObservation | None = field(default=None, repr=False)
+    _local_context_refresher: (
+        Callable[
+            [str],
+            Awaitable[tuple[LocalContextRoute | None, LocalContextObservation | None]],
+        ]
+        | None
+    ) = field(default=None, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)
@@ -174,6 +190,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         selection = resolve_generation_endpoint_selector(self._config, requested_model)
         if selection is None:
+            await self._set_local_context(None, None)
             return requested_model or self._default_model
 
         endpoint = selection.endpoint_with_selected_model()
@@ -191,6 +208,13 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             resolved_model = await ensure_local_model(endpoint, run_manager=None)
         except LocalModelError as e:
             raise RuntimeError(f"Local model pre-flight failed: {e}") from e
+        await self._set_local_context(
+            *await self._refresh_local_context_after_setup(
+                endpoint_name=selection.name,
+                endpoint=endpoint,
+                resolved_model=resolved_model,
+            )
+        )
 
         logger.info(
             "ChatSession %s using local endpoint %s model: %s",
@@ -199,6 +223,52 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             resolved_model,
         )
         return resolved_model
+
+    async def _refresh_local_context_after_setup(
+        self,
+        *,
+        endpoint_name: str,
+        endpoint: GenerationEndpointConfig,
+        resolved_model: str,
+    ) -> tuple[LocalContextRoute | None, LocalContextObservation | None]:
+        selected = f"endpoint:{endpoint_name}/{resolved_model}"
+        if self._local_context_refresher is not None:
+            route, observation = await self._local_context_refresher(selected)
+        else:
+            from gobby.agents.local_model import refresh_local_model_context
+
+            route, observation = await refresh_local_model_context(
+                endpoint,
+                endpoint_name=endpoint_name,
+                model=resolved_model,
+            )
+        return route, observation
+
+    async def _set_local_context(
+        self,
+        route: LocalContextRoute | None,
+        observation: LocalContextObservation | None,
+    ) -> None:
+        self._local_context_route = route
+        self._local_context_observation = observation
+        if self._session_manager_ref is None or self.db_session_id is None:
+            return
+        from gobby.sessions.context_usage import persist_local_context_variables
+
+        try:
+            await asyncio.to_thread(
+                persist_local_context_variables,
+                self._session_manager_ref,
+                self.db_session_id,
+                route,
+                observation,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist chat session local context",
+                extra={"session_id": self.db_session_id},
+                exc_info=True,
+            )
 
     def _resolve_reasoning_effort(self) -> ClaudeReasoningEffort | None:
         normalized = (self.reasoning_effort or "").strip().lower()
@@ -212,6 +282,12 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         await self.stop()
         self.resume_session_id = resume_target
         await self.start(model=current_model)
+
+    async def _reconnect_for_model_change(self, new_model: str) -> None:
+        resume_target = self.sdk_session_id or self.resume_session_id
+        await self.stop()
+        self.resume_session_id = resume_target
+        await self.start(model=new_model)
 
     async def start(self, model: str | None = None) -> None:
         """Connect the ClaudeSDKClient with configured options."""
@@ -434,9 +510,23 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         resolved_model = new_model
         if new_model == "local":
             raise RuntimeError("Model 'local' has been removed; replace it with 'endpoint:<name>'")
-        from gobby.ai.endpoints import resolve_generation_endpoint_selector
+        from gobby.ai.endpoints import (
+            parse_endpoint_model_selector,
+            resolve_generation_endpoint_selector,
+        )
 
         selection = resolve_generation_endpoint_selector(self._config, new_model)
+        current_selector = parse_endpoint_model_selector(self._model)
+        new_selector = parse_endpoint_model_selector(new_model)
+        current_endpoint = current_selector.endpoint_name if current_selector is not None else None
+        new_endpoint = new_selector.endpoint_name if new_selector is not None else None
+        if current_endpoint != new_endpoint:
+            await self._reconnect_for_model_change(new_model)
+            return
+        local_context: tuple[LocalContextRoute | None, LocalContextObservation | None] = (
+            None,
+            None,
+        )
         if selection is not None:
             endpoint = selection.endpoint_with_selected_model()
             if endpoint.wire_api == "responses":
@@ -448,8 +538,15 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 resolved_model = await ensure_local_model(endpoint, run_manager=None)
             except LocalModelError as e:
                 raise RuntimeError(f"Local model pre-flight failed: {e}") from e
+            local_context = await self._refresh_local_context_after_setup(
+                endpoint_name=selection.name,
+                endpoint=endpoint,
+                resolved_model=resolved_model,
+            )
         await self._client.set_model(resolved_model)
         self._model = new_model
+        self._last_model = resolved_model
+        await self._set_local_context(*local_context)
 
     def add_output_tokens(self, tokens: int) -> int:
         """Accumulate output token usage and return the new total."""

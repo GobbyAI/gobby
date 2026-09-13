@@ -5,16 +5,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.ai.endpoints import parse_endpoint_model_selector
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.context_windows import resolve_context_window
 
 if TYPE_CHECKING:
     from gobby.config.values import ConfigRuntimeReader
+    from gobby.providers.capabilities.local_context import LocalContextObservation
+    from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +149,15 @@ class ManagedChatSessionBase:
     _pending_agent_name: str | None = field(default=None, repr=False)
     _plan_approval_completed: bool = field(default=False, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
+    _local_context_route: LocalContextRoute | None = field(default=None, repr=False)
+    _local_context_observation: LocalContextObservation | None = field(default=None, repr=False)
+    _local_context_refresher: (
+        Callable[
+            [str],
+            Awaitable[tuple[LocalContextRoute | None, LocalContextObservation | None]],
+        ]
+        | None
+    ) = field(default=None, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _needs_history_injection: bool = field(default=False, repr=False)
@@ -232,6 +244,48 @@ class ManagedChatSessionBase:
 
     async def switch_model(self, new_model: str) -> None:
         await self._backend.switch_model(self, new_model)
+        context_model = new_model
+        pending_route: LocalContextRoute | None = None
+        selector = parse_endpoint_model_selector(new_model)
+        if selector is not None and self._model:
+            context_model = f"endpoint:{selector.endpoint_name}/{self._model}"
+            existing_route = self._local_context_route
+            if (
+                existing_route is not None
+                and existing_route.is_local
+                and existing_route.endpoint_id == f"endpoint:{selector.endpoint_name}"
+            ):
+                pending_route = replace(existing_route, model_id=self._model)
+        await self._set_local_context(pending_route, None)
+        if self._local_context_refresher is not None:
+            route, observation = await self._local_context_refresher(context_model)
+            await self._set_local_context(route, observation)
+
+    async def _set_local_context(
+        self,
+        route: LocalContextRoute | None,
+        observation: LocalContextObservation | None,
+    ) -> None:
+        self._local_context_route = route
+        self._local_context_observation = observation
+        if self._session_manager_ref is None or self.db_session_id is None:
+            return
+        from gobby.sessions.context_usage import persist_local_context_variables
+
+        try:
+            await asyncio.to_thread(
+                persist_local_context_variables,
+                self._session_manager_ref,
+                self.db_session_id,
+                route,
+                observation,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist managed chat local context",
+                extra={"session_id": self.db_session_id},
+                exc_info=True,
+            )
 
     def add_output_tokens(self, tokens: int) -> int:
         self._accumulated_output_tokens += max(0, tokens)
@@ -311,6 +365,8 @@ class ManagedChatSessionBase:
             None,
             overrides=self._context_window_overrides or None,
             provider=self.provider,
+            local_route=self._local_context_route,
+            local_observation=self._local_context_observation,
         )
 
     async def _apply_pre_tool_lifecycle(

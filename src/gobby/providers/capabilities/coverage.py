@@ -10,16 +10,18 @@ from typing import Protocol
 
 from gobby.config.ai import ModelMetadataAlias, model_metadata_alias_source_key
 from gobby.llm.context_window_values import positive_context_window
+from gobby.providers.capabilities.local_context_store import is_local_provider_namespace
 from gobby.providers.capabilities.models import ProviderSnapshot
 
 logger = logging.getLogger(__name__)
 
 _WARNING_MODEL_LIMIT = 10
 RunDatabase = Callable[..., Awaitable[object]]
-ExcludedProviders = Callable[[], frozenset[str]]
+ModelIdentity = tuple[str, str]
+ExcludedModels = Callable[[], frozenset[ModelIdentity]]
 
 
-def _no_excluded_providers() -> frozenset[str]:
+def _no_excluded_models() -> frozenset[ModelIdentity]:
     return frozenset()
 
 
@@ -47,13 +49,13 @@ class ModelMetadataCoverageAuditor:
         model_metadata_aliases: list[ModelMetadataAlias],
         *,
         run_db: RunDatabase | None = None,
-        excluded_providers: ExcludedProviders | None = None,
+        excluded_models: ExcludedModels | None = None,
     ) -> None:
         self._capability_store = capability_store
         self._model_metadata_store = model_metadata_store
         self._model_metadata_aliases = tuple(model_metadata_aliases)
         self._run_db = run_db
-        self._excluded_providers = excluded_providers or _no_excluded_providers
+        self._excluded_models = excluded_models or _no_excluded_models
         self._lock = Lock()
         self._unresolved: dict[str, frozenset[str]] = {}
         self._missing_targets: dict[str, frozenset[str]] = {}
@@ -65,13 +67,14 @@ class ModelMetadataCoverageAuditor:
                 (alias.provider, alias.provider_model_id): alias.openrouter_model_id
                 for alias in self._model_metadata_aliases
             }
-            excluded_providers = {
-                provider.strip().lower() for provider in self._excluded_providers()
+            excluded_models = {
+                model_metadata_alias_source_key(provider, model)
+                for provider, model in self._excluded_models()
             }
             unresolved: dict[str, frozenset[str]] = {}
             missing_targets: dict[str, frozenset[str]] = {}
             for snapshot in self._capability_store.get_all_snapshots():
-                if snapshot.provider.strip().lower() in excluded_providers:
+                if is_local_provider_namespace(snapshot.provider):
                     continue
                 provider_unresolved: set[str] = set()
                 provider_missing_targets: set[str] = set()
@@ -80,6 +83,8 @@ class ModelMetadataCoverageAuditor:
                         snapshot.provider,
                         model.canonical_model,
                     )
+                    if source_key in excluded_models:
+                        continue
                     if positive_context_window(model.context_length) is not None:
                         continue
                     if (

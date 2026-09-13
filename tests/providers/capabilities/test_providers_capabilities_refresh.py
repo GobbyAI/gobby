@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import httpx
 import pytest
 
 from gobby.config.ai import ModelMetadataAlias
@@ -19,6 +20,14 @@ from gobby.providers.capabilities.collectors.claude import (
     ClaudeCollector,
 )
 from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
+from gobby.providers.capabilities.local_context import (
+    LocalContextIdentity,
+    LocalContextObservation,
+    build_context_observation,
+)
+from gobby.providers.capabilities.local_context_config import LocalContextRoute
+from gobby.providers.capabilities.local_context_refresh import LocalContextService
+from gobby.providers.capabilities.local_context_store import LocalContextStore
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -360,7 +369,7 @@ def test_coverage_audit_includes_unresolved_qwen_models(
 
 
 @pytest.mark.unit
-def test_coverage_audit_skips_provider_using_local_endpoint(
+def test_coverage_audit_skips_exact_local_model(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     store = _MemoryStore(_snapshot("synthetic", "local-model", context_length=None))
@@ -368,13 +377,100 @@ def test_coverage_audit_skips_provider_using_local_endpoint(
         store,
         _MetadataStore(),
         [],
-        excluded_providers=lambda: frozenset({"synthetic"}),
+        excluded_models=lambda: frozenset({("synthetic", "local-model")}),
     )
 
     with caplog.at_level(logging.WARNING, logger="gobby.providers.capabilities.coverage"):
         auditor.audit()
 
     assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_local_coverage_remote_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class MultiSnapshotStore:
+        def __init__(self, snapshot: ProviderSnapshot) -> None:
+            self.snapshots = {snapshot.provider: snapshot}
+
+        def get_all_snapshots(self) -> tuple[ProviderSnapshot, ...]:
+            return tuple(self.snapshots.values())
+
+        def replace_provider_snapshot(self, snapshot: ProviderSnapshot) -> None:
+            self.snapshots[snapshot.provider] = snapshot
+
+    store = MultiSnapshotStore(
+        _snapshot("qwen", "local-model", "remote-model", context_length=None)
+    )
+    metadata = _MetadataStore()
+    aliases = [
+        ModelMetadataAlias(
+            provider="qwen",
+            provider_model_id="remote-model",
+            openrouter_model_id="vendor/remote-model",
+        )
+    ]
+    auditor = ModelMetadataCoverageAuditor(
+        store,
+        metadata,
+        aliases,
+        excluded_models=lambda: frozenset({("qwen", "local-model")}),
+    )
+    route = LocalContextRoute(
+        machine_id="machine-1",
+        endpoint_id="cli:qwen:active",
+        configuration_fingerprint="fingerprint",
+        provider="qwen",
+        protocol="openai-compatible",
+        model_id="local-model",
+        api_base="http://localhost:1234/v1",
+        is_local=True,
+    )
+    attempts = 0
+
+    async def collect(
+        _client: httpx.AsyncClient,
+        identity: LocalContextIdentity,
+        model_id: str,
+        _instance_id: str | None,
+    ) -> LocalContextObservation:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("endpoint unavailable")
+        return build_context_observation(
+            machine_id=identity.machine_id,
+            endpoint_id=identity.endpoint_id,
+            configuration_fingerprint=identity.configuration_fingerprint,
+            provider="qwen",
+            model_id=model_id,
+            canonical_limit=32_768,
+        )
+
+    local_store = LocalContextStore(cast(ProviderCapabilityStore, store))
+    local_service = LocalContextService(
+        local_store,
+        client=cast(httpx.AsyncClient, object()),
+        collectors={"openai-compatible": collect},
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
+        failed = await local_service.refresh(route)
+        auditor.audit()
+        recovered = await local_service.refresh(route)
+        auditor.audit()
+        metadata.contexts["vendor/remote-model"] = 64_000
+        auditor.audit()
+
+    assert failed.canonical_limit is None
+    assert recovered.canonical_limit == 32_768
+    messages = [record.getMessage() for record in caplog.records]
+    unresolved = [message for message in messages if "models without context metadata" in message]
+    assert unresolved == ["Provider qwen has 1 models without context metadata: remote-model"]
+    assert sum("configured alias targets missing" in message for message in messages) == 1
+    assert "Provider qwen context metadata coverage recovered" in messages
+    assert "Provider qwen model metadata alias targets recovered" in messages
 
 
 @pytest.mark.unit
