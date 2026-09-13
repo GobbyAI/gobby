@@ -1,3 +1,40 @@
+# Direct native Ask verification
+
+User direction, 2026-09-13: run the fourteen questions against the existing Game
+Goblins checkout/index and ordinary daemon; fix failures until Ask answers them.
+No evaluation worktrees, separate services, or cohort index builds. This supersedes
+the unexecuted frozen-cohort apparatus retained below as historical preparation.
+
+Checkout: `/Users/josh/Projects/game-goblins` at
+`6f43eba0ab07f3921749705e63bdb9f175b5f45c`. Existing project:
+`1d7a5bc4-6530-4642-aec8-ff41025caaa2`. `gcode status` reports a healthy index,
+173 files and 2,914 symbols. These current-checkout results do not reproduce the
+historical frozen-commit benchmark.
+
+## Direct attempts
+
+- Q01 attempt 1, installed CLI before coordinated update:
+  `gcode ask "What is the shared platform, and which systems remain standalone?"
+  --project /Users/josh/Projects/game-goblins --timeout-seconds 600
+  --retrieval deterministic --format json`, with coordinator session identity.
+  Run `9388f171-a45b-43b5-afe1-c42836955a0c` failed at `bind_prepare`:
+  `authenticated session project path mismatch`. Binding selected the correct
+  existing project and commit. Raw output: `/tmp/ask-direct-13038-q01-attempt1.json`;
+  stderr: `/tmp/ask-direct-13038-q01-attempt1.stderr`.
+- Q01 attempt 2, invoked from the Game Goblins checkout without a session header:
+  HTTP 400, `X-Gobby-Session-Id is required`; no Ask run created.
+  Raw stderr: `/tmp/ask-direct-13038-q01-attempt2.stderr`.
+- Fix `9a03cf2` reuses the existing project-launcher helper for operator-authenticated
+  Ask calls, binding grants to the selected project and supporting ordinary CLI
+  calls without agent-session headers. Signed agent requests retain their verified
+  session and project restrictions. All 80 HTTP tests pass, including real
+  authentication, cross-project operator binding, and launcher reuse. Ruff,
+  scoped mypy, test type/quality audits and suppression checks pass.
+- Latest `gdaemon`, `ghook`, and `gterm` release builds passed. Session #12910 built
+  latest `gcode` and is coordinating installation/restart. Live retry is pending.
+
+## Historical unexecuted preparation — superseded
+
 # Native Ask frozen-cohort evidence
 
 Status: **UNRUN**. This preparation artifact contains no native Ask invocation,
