@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 # Leave five minutes of the cron budget for completion delivery and deterministic
 # task/report finalization after the reviewer finishes.
-DISTILL_TOTAL_DEADLINE_SECONDS = 1500.0
+DISTILL_TOTAL_DEADLINE_SECONDS = 7200.0
 
 
 class FeedbackReviewService:

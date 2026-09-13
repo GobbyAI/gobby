@@ -1,6 +1,6 @@
 .{
     .name = .simdutf,
-    .version = "5.2.8",
+    .version = "9.0.0",
     .fingerprint = 0x7494ad640528a0d,
     .paths = .{""},
     .dependencies = .{

@@ -435,7 +435,7 @@ async def test_run_review_files_tasks_marks_rows_and_renders_digest(
 
     # The reviewer receives a run reference and reads the immutable batch.
     call = llm.calls[0]
-    assert call["timeout_seconds"] == 1500.0
+    assert call["timeout_seconds"] == 7200.0
     assert result["run_id"] in call["prompt"]
     assert "close gate re-ran validation" not in call["prompt"]
     page = service.store.observations_page(result["run_id"])

@@ -106,7 +106,7 @@ def test_register_feedback_review_cron_creates_single_system_job() -> None:
     assert kwargs["cron_expr"] == "0 3 * * *"
     assert kwargs["action_config"] == {
         "handler": FEEDBACK_REVIEW_CRON_HANDLER,
-        "timeout_seconds": 1800.0,
+        "timeout_seconds": 7500.0,
         "restart_protected": False,
     }
     assert kwargs["is_system"] is True
@@ -175,7 +175,7 @@ def test_register_feedback_review_cron_repairs_existing_job_and_marks_system() -
     assert reconciled["cron_expr"] == "30 4 * * *"
     assert reconciled["action_config"] == {
         "handler": FEEDBACK_REVIEW_CRON_HANDLER,
-        "timeout_seconds": 1800.0,
+        "timeout_seconds": 7500.0,
         "restart_protected": False,
     }
     # The job was deliberately disabled, so reconcile must not wake it.

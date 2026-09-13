@@ -140,7 +140,7 @@ into `libghostty-vt.a`; both are marked below. Inventory:
 | `oniguruma` | Oniguruma |
 | `opengl` | OpenGL bindings |
 | `sentry` | sentry-native (getsentry); also pulls `breakpad` |
-| `simdutf` | simdutf 5.2.8 — **compiled in**: in-tree amalgamation `vendor/simdutf.cpp` and `vendor/simdutf.h`, no fetch. The amalgamation carries no SPDX header and no license file is vendored beside it; see #22228 |
+| `simdutf` | simdutf 9.0.0 — **compiled in**: in-tree amalgamation `vendor/simdutf.cpp` and `vendor/simdutf.h`, no fetch. Imported by Ghostty commit `e89cc0b3`; dual-licensed Apache-2.0 OR MIT, with upstream texts in `LICENSE-APACHE` and `LICENSE-MIT` |
 | `spirv-cross` | SPIRV-Cross |
 | `wuffs` | Wuffs; pixels |
 | `zlib` | zlib |
