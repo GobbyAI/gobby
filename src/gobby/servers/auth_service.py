@@ -90,6 +90,10 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/mcp/tools/recommend", True),
     _AgentRoute("POST", "/api/mcp/tools/search", True),
     _AgentRoute("POST", "/api/mcp/*/tools/*", True),
+    # Ask's HTTP MCP adapter exposes only the same three stage wrapper tools.
+    _AgentRoute("POST", "/api/ask/mcp", True),
+    _AgentRoute("GET", "/api/ask/mcp", True),
+    _AgentRoute("DELETE", "/api/ask/mcp", True),
     # Public Ask lifecycle. Managed Ask children must stay inside their
     # stage-scoped MCP capabilities and cannot recursively start or control runs.
     _AgentRoute("POST", "/api/ask/runs", True, False),

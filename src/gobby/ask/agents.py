@@ -87,53 +87,30 @@ _STAGE_MCP_TOOLS = {
     ),
 }
 _TERMINAL_AGENT_STATUSES = frozenset({"success", "error", "timeout", "cancelled"})
-_GOBBY_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def write_ask_mcp_config(scratch_root: Path) -> Path:
-    """Give an Ask agent the one MCP server its tool allowlist names.
+    """Connect the strict Ask tool surface without granting source-file access.
 
-    The launch profile passes ``--strict-mcp-config``, which tells Claude Code to
-    use only the servers declared by ``--mcp-config`` and to ignore every other
-    MCP configuration, the operator's own included. ``prepare_claude_spawn``
-    derives that ``--mcp-config`` from ``<cwd>/.mcp.json`` and the Ask cwd is this
-    scratch root, so without this file the allowlist names a ``gobby`` server that
-    was never configured: the agent launches with no evidence tools and no way to
-    submit, then invents a tool transcript instead of reporting the gap. The same
-    failure has been seen for isolated workspaces (#19097).
-
-    ``--project`` also earns the sandbox read grant for the Gobby checkout through
-    ``mcp_config_read_exceptions``, which parses exactly this file, and
-    ``--no-sync`` keeps ``uv`` from reinstalling the editable package into a
-    read-only tree and closing stdio before the MCP handshake completes.
-
-    ``alwaysLoad`` is what makes the bridge arrive in time. Claude Code connects
-    ``--mcp-config`` servers without blocking the session, so an investigator
-    reaches its first turn about two seconds in while ``uv`` is still starting the
-    Python server, and ``--tools ""`` leaves no built-in tool to occupy that turn:
-    the model answers once out of an empty tool list and the run ends with no
-    submission. Servers marked ``alwaysLoad`` are connected on the blocking path
-    instead, so the first turn waits for the handshake and sees the tools.
+    Claude expands the run's credentials from its environment at connection time.
+    The HTTP bridge reuses the authenticated daemon tool handlers. ``alwaysLoad``
+    waits for the MCP handshake before the investigator's first model turn.
     """
-    if not (_GOBBY_PROJECT_ROOT / "pyproject.toml").is_file():
-        raise UnsupportedAskRuntime(
-            f"Ask cannot resolve the Gobby project root for its MCP bridge: {_GOBBY_PROJECT_ROOT}"
-        )
     config_path = scratch_root / ".mcp.json"
     config_path.write_text(
         json.dumps(
             {
                 "mcpServers": {
                     "gobby": {
-                        "command": "uv",
-                        "args": [
-                            "run",
-                            "--no-sync",
-                            "--project",
-                            str(_GOBBY_PROJECT_ROOT),
-                            "gobby",
-                            "mcp-server",
-                        ],
+                        "type": "http",
+                        "url": "${GOBBY_DAEMON_URL}/api/ask/mcp",
+                        "headers": {
+                            "Authorization": "Bearer ${GOBBY_AGENT_API_TOKEN}",
+                            "X-Gobby-Agent-Run-Id": "${GOBBY_AGENT_RUN_ID}",
+                            "X-Gobby-Session-Id": "${GOBBY_SESSION_ID}",
+                            "X-Gobby-Caller-Project-Id": "${GOBBY_PROJECT_ID}",
+                            "X-Gobby-Project-Id": "${GOBBY_PROJECT_ID}",
+                        },
                         "alwaysLoad": True,
                     }
                 }

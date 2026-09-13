@@ -17,11 +17,10 @@ import pytest
 
 from gobby.agents import resume_executor, srt_runtime
 from gobby.agents.isolation import IsolationContext
-from gobby.agents.sandbox_policy import canonical_path, mcp_config_read_exceptions
+from gobby.agents.sandbox_policy import mcp_config_read_exceptions
 from gobby.agents.spawn_executor_support import _record_resume_launch_details
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
-from gobby.ask import agents as gobby_ask_agents
 from gobby.ask import runtime_profile, runtime_validation
 from gobby.ask.agents import write_ask_mcp_config
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
@@ -44,9 +43,11 @@ from gobby.ask.runtime_validation import (
 )
 from gobby.ask.stages import AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
+from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.hook_manager import HookManager
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.semantic_search import SearchResult
+from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.wait_tools import (
@@ -70,6 +71,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tool_results import ToolResultStore
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import (
     AGENT_RUN_ID_HEADER,
@@ -857,7 +859,7 @@ async def test_ask_agent_permission_boundary(
         "read_evidence",
         "Read run-scoped evidence",
         {"type": "object", "properties": {"run_id": {"type": "string"}}},
-        lambda **_arguments: {"evidence": []},
+        lambda **_arguments: {"evidence": ["x" * 20_000]},
     )
     ask_registry.register(
         "submit_review",
@@ -874,11 +876,15 @@ async def test_ask_agent_permission_boundary(
         HookManager,
         SimpleNamespace(_database=temp_db, _session_manager=sessions),
     )
+    offload_config = ToolResultOffloadConfig()
     proxy = ToolProxyService(
         manager,
         internal_manager=registries,
         hook_manager_resolver=lambda: hook_manager,
         validate_arguments=False,
+        result_offloader=ToolResultOffloader(
+            ToolResultStore(temp_db, offload_config), temp_db, offload_config, lambda: project_id
+        ),
     )
 
     async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
@@ -931,6 +937,17 @@ async def test_ask_agent_permission_boundary(
         tool_proxy=proxy,
     )
     server = cast("HTTPServer", server_namespace)
+    from tests.ask.http_mcp_support import exercise_http_mcp_boundary
+
+    await exercise_http_mcp_boundary(
+        server,
+        temp_db,
+        tmp_path,
+        project_id=project_id,
+        session_id=successor_child.id,
+        agent_run_id=successor_run_id,
+        ask_run_id=ask_run.run_id,
+    )
     request_kwargs = {
         "project_id": project_id,
         "session_id": successor_child.id,
@@ -1869,12 +1886,17 @@ def test_ask_scratch_root_declares_the_gobby_mcp_bridge(tmp_path: Path) -> None:
     servers = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]
     # The allowlist entries are `mcp__gobby__*`, so the server must be named `gobby`.
     assert set(servers) == {"gobby"}
-    assert servers["gobby"]["command"] == "uv"
-    args = servers["gobby"]["args"]
-    assert args[-2:] == ["gobby", "mcp-server"]
-    # Syncing would try to reinstall the editable package into a tree the sandbox
-    # denies writing, closing stdio before the MCP handshake finishes.
-    assert "--no-sync" in args
+    assert servers["gobby"]["type"] == "http"
+    assert servers["gobby"]["url"] == "${GOBBY_DAEMON_URL}/api/ask/mcp"
+    assert servers["gobby"]["headers"] == {
+        "Authorization": "Bearer ${GOBBY_AGENT_API_TOKEN}",
+        "X-Gobby-Agent-Run-Id": "${GOBBY_AGENT_RUN_ID}",
+        "X-Gobby-Session-Id": "${GOBBY_SESSION_ID}",
+        "X-Gobby-Caller-Project-Id": "${GOBBY_PROJECT_ID}",
+        "X-Gobby-Project-Id": "${GOBBY_PROJECT_ID}",
+    }
+    assert "command" not in servers["gobby"]
+    assert "args" not in servers["gobby"]
 
 
 def test_ask_mcp_bridge_blocks_the_first_turn_until_it_is_connected(tmp_path: Path) -> None:
@@ -1885,7 +1907,7 @@ def test_ask_mcp_bridge_blocks_the_first_turn_until_it_is_connected(tmp_path: Pa
     with `--tools ""`, so it owns no built-in tool to spend that first turn on:
     left unmarked it reaches the model about two seconds in with an empty tool
     list, answers out of it, and ends its only turn with no submission, while
-    `uv run ... gobby mcp-server` is still starting.
+    the MCP connection is still starting.
     """
     config_path = write_ask_mcp_config(tmp_path)
 
@@ -1894,16 +1916,10 @@ def test_ask_mcp_bridge_blocks_the_first_turn_until_it_is_connected(tmp_path: Pa
     assert server["alwaysLoad"] is True
 
 
-def test_ask_mcp_bridge_earns_its_own_sandbox_read_grant(tmp_path: Path) -> None:
-    """The sandbox denies the operator home, so `uv` needs an explicit read grant.
-
-    `mcp_config_read_exceptions` parses this exact file and grants read to the
-    absolute project directories its gobby entry names. If the two ever drift the
-    MCP subprocess dies at startup and the agent silently loses every tool.
-    """
+def test_ask_mcp_bridge_requires_no_source_read_grant(tmp_path: Path) -> None:
+    """Asking about Gobby must not grant the investigator access to its source."""
     write_ask_mcp_config(tmp_path)
 
     granted = mcp_config_read_exceptions(tmp_path)
 
-    project_root = Path(gobby_ask_agents.__file__).resolve().parents[3]
-    assert canonical_path(str(project_root)) in granted
+    assert granted == []

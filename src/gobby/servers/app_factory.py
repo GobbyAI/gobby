@@ -78,11 +78,15 @@ def create_app(server: "HTTPServer") -> FastAPI:
     Returns:
         Configured FastAPI app instance
     """
+    from gobby.servers.routes.ask_mcp import ASK_MCP_PATH, create_ask_mcp_app
+
     mcp_app = None
+    ask_mcp_app = None
     if server._mcp_server:
         # The SDK enables DNS-rebinding protection only for loopback hosts, so
         # the MCP app must see the same bind host uvicorn serves on.
         mcp_app = server._mcp_server.streamable_http_app(host=server.bootstrap_config.bind_host)
+        ask_mcp_app = create_ask_mcp_app(server, host=server.bootstrap_config.bind_host)
         logger.debug("MCP HTTP app created")
 
     app = FastAPI(
@@ -94,6 +98,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
             mcp_app,
             hook_manager_factory_getter=lambda: HookManager,
             codex_adapter_cls_getter=lambda: CodexAdapter,
+            additional_mcp_apps=(ask_mcp_app,) if ask_mcp_app is not None else (),
         ),
     )
 
@@ -141,6 +146,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
     if mcp_app is not None:
         _register_mcp_http_route(app, mcp_app)
         logger.debug("MCP server registered at /mcp")
+    if ask_mcp_app is not None:
+        app.router.routes.append(
+            Route(ASK_MCP_PATH, endpoint=ask_mcp_app, name="ask-mcp", include_in_schema=False)
+        )
 
     _mount_ws_endpoint(app, server)
 
