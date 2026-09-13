@@ -2,16 +2,21 @@
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{unix::OwnedReadHalf, UnixStream};
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinSet;
 
+use super::events::EventReceiver;
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
+const MAX_INFLIGHT_PER_CONNECTION: usize = 64;
 
 #[derive(Debug, Deserialize)]
 pub struct ControlRequest {
@@ -73,7 +78,8 @@ async fn read_request(
 async fn write_json(writer: &mut tokio::net::unix::OwnedWriteHalf, value: Value) -> io::Result<()> {
     let mut line = value.to_string();
     if line.len() >= 2 * 1024 * 1024 {
-        line = json!({"ok": false, "error": "response_too_large"}).to_string();
+        let id = value.get("id").cloned();
+        line = with_id(json!({"ok": false, "error": "response_too_large"}), &id).to_string();
     }
     line.push('\n');
     writer.write_all(line.as_bytes()).await?;
@@ -93,159 +99,262 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let mut reader = BufReader::new(reader);
     let mut request_buffer = Vec::new();
     let mut authed = false;
-    let mut ledger = OperationLedger::default();
-    let mut events_rx: Option<tokio::sync::mpsc::Receiver<Value>> = None;
-
-    loop {
-        tokio::select! {
-            request = read_request(&mut reader, &mut request_buffer) => {
-                let request = match request {
-                    Ok(RequestRead::Request(request)) => request,
-                    Ok(RequestRead::InvalidJson) => {
-                        let _ = write_json(
-                            &mut writer,
-                            json!({"ok": false, "error": "invalid_json"}),
-                        )
-                        .await;
-                        continue;
-                    }
-                    Ok(RequestRead::Overflow) => {
-                        let _ = write_json(
-                            &mut writer,
-                            json!({"ok": false, "error": "control_overflow"}),
-                        )
-                        .await;
-                        break;
-                    }
-                    Ok(RequestRead::Closed) | Err(_) => break,
-                };
-                if !authed {
-                    if request.method != "hello" {
-                        let _ = write_json(
-                            &mut writer,
-                            json!({"ok": false, "error": "unauthenticated"}),
-                        )
-                        .await;
-                        break;
-                    }
-                    let presented = request.control_token.as_deref().unwrap_or("");
-                    if presented != state.token.as_str() {
-                        let _ = write_json(
-                            &mut writer,
-                            with_id(json!({"ok": false, "error": "invalid_token"}), &request.id),
-                        )
-                        .await;
-                        continue;
-                    }
-                    let version_in = request.protocol_version.unwrap_or(0);
-                    if version_in != PROTOCOL_VERSION {
-                        let _ = write_json(
-                            &mut writer,
-                            with_id(
-                                json!({"ok": false, "error": "unsupported_protocol"}),
-                                &request.id,
-                            ),
-                        )
-                        .await;
-                        continue;
-                    }
-                    authed = true;
-                    state.claim_control_owner(conn_id).await;
-                    let _ = write_json(
-                        &mut writer,
-                        with_id(
-                            json!({
-                                "ok": true,
-                                "host_epoch": state.host_epoch.as_str(),
-                                "version": state.version.as_str(),
-                                "protocol_version": PROTOCOL_VERSION,
-                            }),
-                            &request.id,
-                        ),
-                    )
-                    .await;
-                    continue;
-                }
-
-                if request.method == "spawn"
-                    && state.draining.load(std::sync::atomic::Ordering::SeqCst)
-                {
-                    let _ = write_json(
-                        &mut writer,
-                        with_id(json!({"ok": false, "error": "host_draining"}), &request.id),
-                    )
-                    .await;
-                    continue;
-                }
-                let mutating = matches!(
-                    request.method.as_str(),
-                    "spawn" | "kill" | "resize" | "write" | "write_batch"
-                );
-                if mutating {
-                    let Some(seq) = request.operation_seq else {
-                        let _ = write_json(
-                            &mut writer,
-                            with_id(json!({"ok": false, "error": "operation_seq_required"}), &request.id),
-                        )
-                        .await;
-                        continue;
-                    };
-                    let fingerprint = fingerprint_json(&request.method, &Value::Object(request.extra.clone()));
-                    match ledger.decide(seq, fingerprint) {
-                        LedgerDecision::Gap => {
-                            let _ = write_json(
-                                &mut writer,
-                                with_id(json!({"ok": false, "error": "operation_gap"}), &request.id),
-                            )
-                            .await;
-                            continue;
-                        }
-                        LedgerDecision::Expired => {
-                            let _ = write_json(
-                                &mut writer,
-                                with_id(json!({"ok": false, "error": "operation_expired"}), &request.id),
-                            )
-                            .await;
-                            continue;
-                        }
-                        LedgerDecision::FingerprintMismatch => {
-                            let _ = write_json(
-                                &mut writer,
-                                with_id(json!({"ok": false, "error": "operation_conflict"}), &request.id),
-                            )
-                            .await;
-                            continue;
-                        }
-                        LedgerDecision::Replay(outcome) => {
-                            let _ = write_json(&mut writer, with_id(outcome, &request.id)).await;
-                            continue;
-                        }
-                        LedgerDecision::Execute => {
-                            let outcome = dispatch(&state, conn_id, &request, &mut events_rx).await;
-                            ledger.record(seq, fingerprint, outcome.clone());
-                            let _ = write_json(&mut writer, with_id(outcome, &request.id)).await;
-                            continue;
-                        }
-                    }
-                }
-
-                let outcome = dispatch(&state, conn_id, &request, &mut events_rx).await;
-                let _ = write_json(&mut writer, with_id(outcome, &request.id)).await;
-            }
-            event = recv_event(&mut events_rx) => {
-                if let Some(event) = event {
-                    let _ = write_json(&mut writer, event).await;
-                }
+    let in_flight = Arc::new(StdMutex::new(HashSet::<String>::new()));
+    let permits = Arc::new(Semaphore::new(MAX_INFLIGHT_PER_CONNECTION));
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Value>(MAX_INFLIGHT_PER_CONNECTION * 2);
+    let writer_task = tokio::spawn(async move {
+        while let Some(value) = outbound_rx.recv().await {
+            if write_json(&mut writer, value).await.is_err() {
+                break;
             }
         }
+    });
+    let event_tasks = Arc::new(StdMutex::new(Vec::new()));
+    let mut dispatch_tasks = JoinSet::new();
+    let (ordered_tx, mut ordered_rx) = mpsc::channel::<QueuedRequest>(MAX_INFLIGHT_PER_CONNECTION);
+    let ordered_state = state.clone();
+    let ordered_in_flight = in_flight.clone();
+    let ordered_outbound = outbound_tx.clone();
+    let ordered_task = tokio::spawn(async move {
+        let mut ledger = OperationLedger::default();
+        while let Some(QueuedRequest {
+            request,
+            _permit,
+            id_key,
+        }) = ordered_rx.recv().await
+        {
+            let result = dispatch_ordered(&ordered_state, conn_id, &request, &mut ledger).await;
+            let _ = ordered_outbound
+                .send(with_id(result.response, &request.id))
+                .await;
+            ordered_in_flight
+                .lock()
+                .expect("in-flight request lock poisoned")
+                .remove(&id_key);
+        }
+    });
+
+    loop {
+        let request = match read_request(&mut reader, &mut request_buffer).await {
+            Ok(RequestRead::Request(request)) => request,
+            Ok(RequestRead::InvalidJson) => {
+                let _ = outbound_tx
+                    .send(json!({"ok": false, "error": "invalid_json"}))
+                    .await;
+                continue;
+            }
+            Ok(RequestRead::Overflow) => {
+                let _ = outbound_tx
+                    .send(json!({"ok": false, "error": "control_overflow"}))
+                    .await;
+                break;
+            }
+            Ok(RequestRead::Closed) | Err(_) => break,
+        };
+        let Some(id) = request.id.clone() else {
+            let _ = outbound_tx
+                .send(json!({"ok": false, "error": "missing_id"}))
+                .await;
+            continue;
+        };
+        if !authed {
+            if request.method != "hello" {
+                let _ = outbound_tx
+                    .send(with_id(
+                        json!({"ok": false, "error": "unauthenticated"}),
+                        &request.id,
+                    ))
+                    .await;
+                break;
+            }
+            let presented = request.control_token.as_deref().unwrap_or("");
+            if presented != state.token.as_str() {
+                let _ = outbound_tx
+                    .send(with_id(
+                        json!({"ok": false, "error": "invalid_token"}),
+                        &request.id,
+                    ))
+                    .await;
+                continue;
+            }
+            let version_in = request.protocol_version.unwrap_or(0);
+            if version_in != PROTOCOL_VERSION {
+                let _ = outbound_tx
+                    .send(with_id(
+                        json!({"ok": false, "error": "unsupported_protocol"}),
+                        &request.id,
+                    ))
+                    .await;
+                continue;
+            }
+            authed = true;
+            state.claim_control_owner(conn_id).await;
+            let _ = outbound_tx
+                .send(with_id(
+                    json!({
+                        "ok": true,
+                        "host_epoch": state.host_epoch.as_str(),
+                        "version": state.version.as_str(),
+                        "protocol_version": PROTOCOL_VERSION,
+                    }),
+                    &request.id,
+                ))
+                .await;
+            continue;
+        }
+
+        let id_key = id.to_string();
+        let duplicate = in_flight
+            .lock()
+            .expect("in-flight request lock poisoned")
+            .contains(&id_key);
+        if duplicate {
+            let _ = outbound_tx
+                .send(with_id(
+                    json!({"ok": false, "error": "duplicate_id"}),
+                    &request.id,
+                ))
+                .await;
+            continue;
+        }
+        let Ok(permit) = permits.clone().try_acquire_owned() else {
+            let _ = outbound_tx
+                .send(with_id(
+                    json!({"ok": false, "error": "too_many_inflight"}),
+                    &request.id,
+                ))
+                .await;
+            continue;
+        };
+        in_flight
+            .lock()
+            .expect("in-flight request lock poisoned")
+            .insert(id_key.clone());
+        if is_mutating(&request.method) {
+            if ordered_tx
+                .send(QueuedRequest {
+                    request,
+                    _permit: permit,
+                    id_key: id_key.clone(),
+                })
+                .await
+                .is_err()
+            {
+                in_flight
+                    .lock()
+                    .expect("in-flight request lock poisoned")
+                    .remove(&id_key);
+            }
+            continue;
+        }
+        let task_state = state.clone();
+        let task_in_flight = in_flight.clone();
+        let task_outbound = outbound_tx.clone();
+        let task_event_tasks = event_tasks.clone();
+        dispatch_tasks.spawn(async move {
+            let _permit = permit;
+            let DispatchResult { response, events } =
+                dispatch(&task_state, conn_id, &request).await;
+            if let Some(events) = events {
+                let event_outbound = task_outbound.clone();
+                let event_task = tokio::spawn(recv_event(events, event_outbound));
+                task_event_tasks
+                    .lock()
+                    .expect("event task lock poisoned")
+                    .push(event_task);
+            }
+            let _ = task_outbound.send(with_id(response, &request.id)).await;
+            task_in_flight
+                .lock()
+                .expect("in-flight request lock poisoned")
+                .remove(&id_key);
+        });
+        while dispatch_tasks.try_join_next().is_some() {}
+    }
+    dispatch_tasks.abort_all();
+    while dispatch_tasks.join_next().await.is_some() {}
+    drop(ordered_tx);
+    ordered_task.abort();
+    let _ = ordered_task.await;
+    for task in event_tasks
+        .lock()
+        .expect("event task lock poisoned")
+        .drain(..)
+    {
+        task.abort();
     }
     state.on_control_disconnect(conn_id).await;
+    drop(outbound_tx);
+    let _ = writer_task.await;
 }
 
-async fn recv_event(rx: &mut Option<tokio::sync::mpsc::Receiver<Value>>) -> Option<Value> {
-    match rx.as_mut() {
-        Some(rx) => rx.recv().await,
-        None => std::future::pending().await,
+async fn recv_event(mut rx: EventReceiver, outbound: mpsc::Sender<Value>) {
+    while let Some(event) = rx.recv().await {
+        if outbound.send(event).await.is_err() {
+            break;
+        }
+    }
+}
+
+struct DispatchResult {
+    response: Value,
+    events: Option<EventReceiver>,
+}
+
+struct QueuedRequest {
+    request: ControlRequest,
+    _permit: OwnedSemaphorePermit,
+    id_key: String,
+}
+
+fn is_mutating(method: &str) -> bool {
+    matches!(
+        method,
+        "spawn" | "kill" | "resize" | "write" | "write_batch"
+    )
+}
+
+async fn dispatch_ordered(
+    state: &Arc<HostState>,
+    conn_id: u64,
+    request: &ControlRequest,
+    ledger: &mut OperationLedger,
+) -> DispatchResult {
+    if request.method == "spawn" && state.draining.load(std::sync::atomic::Ordering::SeqCst) {
+        return DispatchResult {
+            response: json!({"ok": false, "error": "host_draining"}),
+            events: None,
+        };
+    }
+    let Some(seq) = request.operation_seq else {
+        return DispatchResult {
+            response: json!({"ok": false, "error": "operation_seq_required"}),
+            events: None,
+        };
+    };
+    let fingerprint = fingerprint_json(&request.method, &Value::Object(request.extra.clone()));
+    match ledger.decide(seq, fingerprint) {
+        LedgerDecision::Gap => DispatchResult {
+            response: json!({"ok": false, "error": "operation_gap"}),
+            events: None,
+        },
+        LedgerDecision::Expired => DispatchResult {
+            response: json!({"ok": false, "error": "operation_expired"}),
+            events: None,
+        },
+        LedgerDecision::FingerprintMismatch => DispatchResult {
+            response: json!({"ok": false, "error": "operation_conflict"}),
+            events: None,
+        },
+        LedgerDecision::Replay(outcome) => DispatchResult {
+            response: outcome,
+            events: None,
+        },
+        LedgerDecision::Execute => {
+            let result = dispatch(state, conn_id, request).await;
+            ledger.record(seq, fingerprint, result.response.clone());
+            result
+        }
     }
 }
 
@@ -253,9 +362,8 @@ async fn dispatch(
     state: &Arc<HostState>,
     conn_id: u64,
     request: &ControlRequest,
-    events_rx: &mut Option<tokio::sync::mpsc::Receiver<Value>>,
-) -> Value {
-    match request.method.as_str() {
+) -> DispatchResult {
+    let response = match request.method.as_str() {
         "ping" => state.ping_json().await,
         "list" => {
             state.expire_prepared().await;
@@ -278,10 +386,18 @@ async fn dispatch(
         "write_batch" => state.write_batch(&request.extra).await,
         "snapshot" => state.snapshot(&request.extra).await,
         "subscribe_events" => {
-            let (ack, rx) = state.subscribe_events().await;
-            *events_rx = Some(rx);
-            ack
+            let (ack, rx) = state
+                .subscribe_events(request.extra.get("since").and_then(Value::as_u64))
+                .await;
+            return DispatchResult {
+                response: ack,
+                events: Some(rx),
+            };
         }
         other => json!({"ok": false, "error": format!("unknown_method:{other}")}),
+    };
+    DispatchResult {
+        response,
+        events: None,
     }
 }

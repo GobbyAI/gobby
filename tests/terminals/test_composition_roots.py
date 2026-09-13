@@ -107,24 +107,27 @@ def test_proxy_frame_opener_is_bound_on_the_websocket_server(tmp_path: Path) -> 
 
 def test_orchestration_builds_terminal_services_once() -> None:
     """One runner-owned instance feeds the monitor, the container, and every caller."""
-    from gobby.runner_init import orchestration
+    from gobby.runner_init import orchestration, terminal_wiring
 
-    source = Path(orchestration.__file__).read_text(encoding="utf-8")
-    assert source.count("TerminalServices(") == 1
-    assert "runner.terminal_services = TerminalServices(" in source
-    assert "terminal_services=runner.terminal_services," in source
+    orchestration_source = Path(orchestration.__file__).read_text(encoding="utf-8")
+    wiring_source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
+    assert orchestration_source.count("init_terminal_wiring(runner, config)") == 1
+    assert orchestration_source.count("TerminalServices(") == 0
+    assert wiring_source.count("TerminalServices(") == 1
+    assert "runner.terminal_services = TerminalServices(" in wiring_source
+    assert "terminal_services=runner.terminal_services," in orchestration_source
 
 
 def test_composition_roots_give_the_coordinator_the_registry() -> None:
     """Neither root may bind one runtime; the coordinator resolves per terminal."""
     from gobby.agents import lifecycle_monitor
-    from gobby.runner_init import orchestration
+    from gobby.runner_init import terminal_wiring
 
-    orchestration_source = Path(orchestration.__file__).read_text(encoding="utf-8")
-    flattened = " ".join(orchestration_source.split())
+    wiring_source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
+    flattened = " ".join(wiring_source.split())
     assert "WriteCoordinator(runner.terminal_manager, terminal_runtime_registry)" in flattened
     # The single-runtime resolve is what broke every write to a native terminal.
-    assert 'resolve("tmux")' not in orchestration_source
+    assert 'resolve("tmux")' not in wiring_source
 
     monitor_source = Path(lifecycle_monitor.__file__).read_text(encoding="utf-8")
     assert "WriteCoordinator(manager, registry)" in " ".join(monitor_source.split())
@@ -132,8 +135,8 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
 
 def test_orchestration_gives_the_wake_dispatcher_its_terminal_lookup() -> None:
     """Without the row lookup, every interactive wake falls back to a tmux pane."""
-    from gobby.runner_init import orchestration
+    from gobby.runner_init import terminal_wiring
 
-    source = Path(orchestration.__file__).read_text(encoding="utf-8")
+    source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
     flattened = " ".join(source.split())
     assert "runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)" in flattened

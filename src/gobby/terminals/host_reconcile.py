@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
@@ -16,12 +17,18 @@ logger = logging.getLogger(__name__)
 KillFn = Callable[[str], Awaitable[None]]
 
 
+class ReconcileError(RuntimeError):
+    """Expected inventory inconsistency that may be reported without hiding other failures."""
+
+
 class SupportsIdentityLookup(Protocol):
     def get(self, terminal_id: str) -> Terminal | None: ...
 
     def get_by_identity(self, terminal_id: str, spawn_key: str) -> Terminal | None: ...
 
     def list_live_by_machine(self, machine_id: str) -> list[Terminal]: ...
+
+    def settle_lock(self, terminal_id: str) -> AbstractAsyncContextManager[None]: ...
 
     def promote_to_live(
         self,
@@ -92,17 +99,12 @@ async def reconcile_host_inventory(
     run_manager: Any | None,
     kill: KillFn,
     unknown_grace_seconds: float = 0.0,
+    settle_indeterminate: bool = False,
 ) -> str | None:
     """Apply the 3.1.9 adoption matrix. Returns last error or None."""
-    try:
-        db_rows = [
-            row
-            for row in terminal_manager.list_live_by_machine(machine_id)
-            if row.backend == "native"
-        ]
-    except Exception as exc:
-        logger.warning("Terminal inventory read failed; skipping destructive reconcile: %s", exc)
-        return str(exc)
+    db_rows = [
+        row for row in terminal_manager.list_live_by_machine(machine_id) if row.backend == "native"
+    ]
 
     host_by_id = {(str(row.terminal_id), str(row.spawn_key)): row for row in host_rows}
     seen: set[str] = set()
@@ -127,13 +129,34 @@ async def reconcile_host_inventory(
         seen.add(durable.id)
         if durable.state == "pending" and commit_state == "committed":
             host_terminal_id = str(getattr(row, "host_terminal_id", terminal_id))
-            terminal_manager.promote_to_live(
-                durable.id,
-                locator={"host_terminal_id": host_terminal_id},
-                locator_key=native_locator_key(host_epoch, host_terminal_id),
-                host_epoch=host_epoch,
-            )
+            async with terminal_manager.settle_lock(durable.id):
+                current = terminal_manager.get(durable.id)
+                if current is not None and (
+                    current.attempt_generation == durable.attempt_generation
+                    and current.attempt_started_at == durable.attempt_started_at
+                ):
+                    terminal_manager.promote_to_live(
+                        durable.id,
+                        locator={"host_terminal_id": host_terminal_id},
+                        locator_key=native_locator_key(host_epoch, host_terminal_id),
+                        host_epoch=host_epoch,
+                    )
         elif durable.state == "pending" and commit_state == "prepared":
+            if settle_indeterminate:
+                async with terminal_manager.settle_lock(durable.id):
+                    current = terminal_manager.get(durable.id)
+                    if current is None or (
+                        current.attempt_generation != durable.attempt_generation
+                        or current.attempt_started_at != durable.attempt_started_at
+                    ):
+                        continue
+                    await kill(str(getattr(row, "host_terminal_id", terminal_id)))
+                    terminal_manager.fail_pending_attempt(
+                        durable.id,
+                        attempt_generation=durable.attempt_generation,
+                        attempt_started_at=durable.attempt_started_at,
+                    )
+                continue
             pgid = getattr(row, "pgid", None)
             start_time = getattr(row, "start_time", None)
             if isinstance(pgid, int):
@@ -150,13 +173,22 @@ async def reconcile_host_inventory(
         if host_row is not None:
             continue
         if durable.state == "pending":
-            if _age_seconds(durable.attempt_started_at) < spawn_in_doubt_seconds:
+            if (
+                not settle_indeterminate
+                and _age_seconds(durable.attempt_started_at) < spawn_in_doubt_seconds
+            ):
                 continue
-            terminal_manager.fail_pending_attempt(
-                durable.id,
-                attempt_generation=durable.attempt_generation,
-                attempt_started_at=durable.attempt_started_at,
-            )
+            async with terminal_manager.settle_lock(durable.id):
+                current = terminal_manager.get(durable.id)
+                if current is not None and (
+                    current.attempt_generation == durable.attempt_generation
+                    and current.attempt_started_at == durable.attempt_started_at
+                ):
+                    terminal_manager.fail_pending_attempt(
+                        durable.id,
+                        attempt_generation=durable.attempt_generation,
+                        attempt_started_at=durable.attempt_started_at,
+                    )
             continue
         if durable.state == "live" and durable.host_epoch == host_epoch:
             terminal_manager.mark_exited(durable.id)

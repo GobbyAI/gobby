@@ -46,6 +46,32 @@ pub(crate) fn trim_to_char_boundary(text: &str, max_bytes: usize) -> String {
     text[start..].to_string()
 }
 
+#[cfg(feature = "vt-engine")]
+fn commit_failure_json(outcome: CommitResult) -> Value {
+    match outcome {
+        CommitResult::ExecFailed(failure) => json!({
+            "ok": false,
+            "error": "exec_failed",
+            "code": failure.code,
+            "detail": failure.detail,
+            "stage": failure.stage,
+        }),
+        CommitResult::ExecTimeout => json!({
+            "ok": false,
+            "error": "exec_timeout",
+            "detail": "commit deadline expired",
+            "stage": "execve",
+        }),
+        CommitResult::MalformedStatus => json!({
+            "ok": false,
+            "error": "malformed_status",
+            "detail": "invalid exec-status JSON",
+            "stage": "status",
+        }),
+        CommitResult::Committed => unreachable!("committed is not a commit failure"),
+    }
+}
+
 fn targets_tmux(inner: &super::state::Inner, extra: &Map<String, Value>) -> bool {
     if let Some(host_id) = extra.get("host_terminal_id").and_then(Value::as_str) {
         if inner
@@ -239,7 +265,7 @@ impl HostState {
         json!({"ok": true, "released": true})
     }
 
-    pub async fn spawn_commit(&self, extra: &Map<String, Value>) -> Value {
+    pub async fn spawn_commit(self: &Arc<Self>, extra: &Map<String, Value>) -> Value {
         let identity = Identity {
             terminal_id: s(extra, "terminal_id"),
             spawn_key: s(extra, "spawn_key"),
@@ -263,43 +289,32 @@ impl HostState {
             });
         }
         #[cfg(feature = "vt-engine")]
-        let outcome = if let Some(child) = slot.child.as_mut() {
-            child.commit(Duration::from_millis(deadline_ms)).await
+        let commit = if let Some(child) = slot.child.as_mut() {
+            match child.begin_commit() {
+                Ok(commit) => Some(commit),
+                Err(outcome) => {
+                    remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+                    return commit_failure_json(outcome);
+                }
+            }
         } else {
-            CommitResult::Committed
+            None
         };
         #[cfg(not(feature = "vt-engine"))]
         let _ = deadline_ms;
+        drop(inner);
+        #[cfg(feature = "vt-engine")]
+        let outcome = match commit {
+            Some(commit) => commit.finish(Duration::from_millis(deadline_ms)).await,
+            None => CommitResult::Committed,
+        };
+        let mut inner = self.inner.lock().await;
         #[cfg(feature = "vt-engine")]
         match outcome {
             CommitResult::Committed => {}
-            CommitResult::ExecFailed(failure) => {
+            failure => {
                 remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
-                return json!({
-                    "ok": false,
-                    "error": "exec_failed",
-                    "code": failure.code,
-                    "detail": failure.detail,
-                    "stage": failure.stage,
-                });
-            }
-            CommitResult::ExecTimeout => {
-                remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
-                return json!({
-                    "ok": false,
-                    "error": "exec_timeout",
-                    "detail": "commit deadline expired",
-                    "stage": "execve",
-                });
-            }
-            CommitResult::MalformedStatus => {
-                remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
-                return json!({
-                    "ok": false,
-                    "error": "malformed_status",
-                    "detail": "invalid exec-status JSON",
-                    "stage": "status",
-                });
+                return commit_failure_json(failure);
             }
         }
         let Some(slot) = inner.terminals.get_mut(&identity) else {
@@ -314,6 +329,11 @@ impl HostState {
             .as_ref()
             .and_then(|child| child.runtime.child_exit())
             .map(|exit| (exit.exit_code, exit.signal));
+        #[cfg(feature = "vt-engine")]
+        let exit_watch = slot
+            .child
+            .as_ref()
+            .and_then(|child| child.runtime.child_exit_watch());
         #[cfg(not(feature = "vt-engine"))]
         let exit_status: Option<(Option<u32>, Option<String>)> = None;
         let already_exited = exit_status.is_some();
@@ -334,6 +354,36 @@ impl HostState {
         };
         if already_exited {
             remove_terminal_slot(&mut inner, &identity, None);
+        }
+        drop(inner);
+        #[cfg(feature = "vt-engine")]
+        if let Some(exit_watch) = exit_watch {
+            let watch_state = Arc::clone(self);
+            let watch_identity = identity.clone();
+            let watch_host_terminal_id = host_terminal_id.clone();
+            tokio::spawn(async move {
+                let Some(exit) = exit_watch.wait().await else {
+                    return;
+                };
+                {
+                    let mut inner = watch_state.inner.lock().await;
+                    let still_same_slot = inner
+                        .terminals
+                        .get(&watch_identity)
+                        .is_some_and(|slot| slot.host_terminal_id == watch_host_terminal_id);
+                    if still_same_slot {
+                        remove_terminal_slot(&mut inner, &watch_identity, None);
+                    }
+                }
+                watch_state
+                    .events
+                    .emit_terminal_exited(
+                        watch_identity.terminal_id,
+                        watch_host_terminal_id,
+                        exit.exit_code,
+                    )
+                    .await;
+            });
         }
         response
     }

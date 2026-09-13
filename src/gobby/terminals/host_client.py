@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from gobby.terminals.host_events import HostEventStream, HostInventorySnapshot
 from gobby.terminals.host_protocol import (
     CONTROL_PROTOCOL_VERSION,
     HostListRow,
@@ -52,6 +53,10 @@ class HostUnavailableError(HostCommandError):
     def __init__(self, message: str = "gterm host unavailable") -> None:
         super().__init__("host_unavailable", detail=message)
         self.message = message
+
+
+class HostConnectionLost(HostUnavailableError):
+    """The active control connection ended while requests were pending."""
 
 
 class CommitTransportError(HostUnavailableError):
@@ -133,16 +138,28 @@ class HostClient:
         self._reader = reader
         self._writer = writer
         self._pid_alive = pid_alive
-        self._lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._pending: dict[str, tuple[int, asyncio.Future[dict[str, Any]]]] = {}
+        self._generation = 1
+        self._next_request_id = 1
+        self._event_queue: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
+        self._reader_task: asyncio.Task[None] | None = asyncio.create_task(
+            self._reader_loop(self._generation)
+        )
         self.closed = False
         self.host_epoch: str | None = None
+        self._control_token: str | None = None
+        self._protocol_version = CONTROL_PROTOCOL_VERSION
         self.next_seq = 1
         self._commit_write_states: dict[asyncio.Task[Any], bool] = {}
 
     @classmethod
     async def connect(cls, socket_path: Path) -> HostClient:
         try:
-            reader, writer = await asyncio.open_unix_connection(path=str(socket_path))
+            reader, writer = await asyncio.open_unix_connection(
+                path=str(socket_path), limit=MAX_CONTROL_LINE + 1
+            )
         except (OSError, ConnectionError) as exc:
             raise HostUnavailableError("gterm host unavailable") from exc
         return cls(reader, writer)
@@ -169,53 +186,140 @@ class HostClient:
         return payload
 
     async def close(self) -> None:
-        if self.closed:
-            return
+        async with self._lifecycle_lock:
+            await self._close_generation("control closed")
+
+    async def read_payload(self) -> dict[str, Any]:
+        try:
+            raw = await self._reader.readline()
+        except (asyncio.LimitOverrunError, ValueError) as exc:
+            raise HostConnectionLost("control reply exceeds limit") from exc
+        if not raw:
+            raise HostConnectionLost("control closed")
+        if len(raw) > MAX_CONTROL_LINE:
+            raise HostConnectionLost("control reply exceeds limit")
+        try:
+            return decode_control_line(raw)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HostConnectionLost("invalid control reply") from exc
+
+    async def _reader_loop(self, generation: int) -> None:
+        try:
+            while generation == self._generation:
+                payload = await self.read_payload()
+                request_id = payload.get("id")
+                if request_id is None:
+                    self._event_queue.put_nowait(payload)
+                    continue
+                pending = self._pending.pop(str(request_id), None)
+                if pending is None or pending[0] != generation:
+                    continue
+                future = pending[1]
+                if not future.done():
+                    future.set_result(payload)
+        except asyncio.CancelledError:
+            raise
+        except (HostConnectionLost, ConnectionError, OSError, TimeoutError) as exc:
+            if generation == self._generation:
+                self.closed = True
+            self._fail_pending(generation, str(exc) or "control connection lost")
+            self._event_queue.put_nowait(HostConnectionLost(str(exc) or "control connection lost"))
+
+    def _fail_pending(self, generation: int, message: str) -> None:
+        for request_id, (pending_generation, future) in list(self._pending.items()):
+            if pending_generation != generation:
+                continue
+            self._pending.pop(request_id, None)
+            if not future.done():
+                future.set_exception(HostConnectionLost(message))
+
+    async def _close_generation(self, message: str) -> None:
+        generation = self._generation
+        self._generation += 1
         self.closed = True
+        self._fail_pending(generation, message)
+        reader_task = self._reader_task
+        self._reader_task = None
+        if reader_task is not None and reader_task is not asyncio.current_task():
+            reader_task.cancel()
+            await asyncio.gather(reader_task, return_exceptions=True)
         self._writer.close()
         try:
             await self._writer.wait_closed()
         except (OSError, ConnectionError):
-            return
+            pass
+        self._event_queue.put_nowait(None)
 
-    async def read_payload(self) -> dict[str, Any]:
-        try:
-            raw = await self._reader.readuntil(separator=b"\n")
-        except asyncio.LimitOverrunError as exc:
-            raise HostCommandError("request_too_large") from exc
-        except asyncio.IncompleteReadError as exc:
-            self.closed = True
-            raise ConnectionError("control closed") from exc
-        if not raw:
-            self.closed = True
-            raise ConnectionError("control closed")
-        if len(raw) >= MAX_CONTROL_LINE:
+    async def _next_event_payload(self) -> dict[str, Any] | None:
+        item = await self._event_queue.get()
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    async def _begin_request(self, request: dict[str, Any]) -> asyncio.Future[dict[str, Any]]:
+        if self.closed:
+            raise HostConnectionLost("control closed")
+        request = dict(request)
+        request_id = str(request.get("id") or self._next_request_id)
+        if "id" not in request:
+            self._next_request_id += 1
+            request["id"] = request_id
+        if request_id in self._pending:
+            raise HostCommandError("duplicate_id")
+        encoded = encode_control_line(request)
+        if len(encoded) >= MAX_CONTROL_LINE:
             raise HostCommandError("request_too_large")
-        payload = decode_control_line(raw)
-        self.raise_for_payload(payload)
-        return payload
+        future = asyncio.get_running_loop().create_future()
+        generation = self._generation
+        self._pending[request_id] = (generation, future)
+
+        def clear_cancelled(done: asyncio.Future[dict[str, Any]]) -> None:
+            current = self._pending.get(request_id)
+            if done.cancelled() and current == (generation, done):
+                self._pending.pop(request_id, None)
+
+        future.add_done_callback(clear_cancelled)
+        try:
+            async with self._write_lock:
+                self._writer.write(encoded)
+                task = asyncio.current_task()
+                if task is not None and task in self._commit_write_states:
+                    self._commit_write_states[task] = True
+                await self._writer.drain()
+        except BaseException:
+            current = self._pending.get(request_id)
+            if current == (generation, future):
+                self._pending.pop(request_id, None)
+            raise
+        return future
 
     async def _roundtrip(self, request: dict[str, Any]) -> dict[str, Any]:
         is_commit = request.get("method") == "spawn_commit"
-        request_written = False
         try:
-            if self.closed:
-                raise ConnectionError("control closed")
-            encoded = encode_control_line(request)
-            if len(encoded) >= MAX_CONTROL_LINE:
-                raise HostCommandError("request_too_large")
-            async with self._lock:
-                self._writer.write(encoded)
-                request_written = True
+            async with self._lifecycle_lock:
+                future = await self._begin_request(request)
+            payload = await future
+            self.raise_for_payload(payload)
+            return payload
+        except HostConnectionLost as exc:
+            if is_commit:
                 task = asyncio.current_task()
-                if is_commit and task is not None and task in self._commit_write_states:
-                    self._commit_write_states[task] = True
-                await self._writer.drain()
-                return await self.read_payload()
+                request_written = bool(
+                    task is not None and self._commit_write_states.get(task, False)
+                )
+                raise CommitTransportError(
+                    str(exc) or "commit transport failed",
+                    request_written=request_written,
+                ) from exc
+            raise
         except (asyncio.CancelledError, HostCommandError):
             raise
         except (ConnectionError, OSError, TimeoutError) as exc:
             if is_commit:
+                task = asyncio.current_task()
+                request_written = bool(
+                    task is not None and self._commit_write_states.get(task, False)
+                )
                 raise CommitTransportError(
                     str(exc) or "commit transport failed",
                     request_written=request_written,
@@ -230,6 +334,8 @@ class HostClient:
                 "control_token": control_token,
             }
         )
+        self._protocol_version = protocol_version
+        self._control_token = control_token
         self.host_epoch = str(payload.get("host_epoch", ""))
         return HelloResult(
             host_epoch=self.host_epoch,
@@ -247,11 +353,21 @@ class HostClient:
         )
 
     async def list_terminals(self) -> list[HostListRow]:
+        return list((await self.list_inventory()).rows)
+
+    async def list_inventory(self) -> HostInventorySnapshot:
         payload = await self._roundtrip({"method": "list"})
         raw_rows = payload.get("terminals")
-        if not isinstance(raw_rows, list):
-            return []
-        return [HostListRow.from_mapping(item) for item in raw_rows if isinstance(item, dict)]
+        rows = (
+            tuple(HostListRow.from_mapping(item) for item in raw_rows if isinstance(item, dict))
+            if isinstance(raw_rows, list)
+            else ()
+        )
+        return HostInventorySnapshot(
+            rows=rows,
+            epoch=str(payload.get("epoch", self.host_epoch or "")),
+            seq=int(payload.get("seq", 0)),
+        )
 
     async def host_shutdown(self, grace_ms: int) -> dict[str, bool]:
         try:
@@ -459,23 +575,67 @@ class HostClient:
             }
         )
 
-    async def subscribe_events(self) -> dict[str, Any]:
-        return await self._roundtrip({"method": "subscribe_events"})
+    async def subscribe_events(self, since: int | None = None) -> dict[str, Any]:
+        request: dict[str, Any] = {"method": "subscribe_events"}
+        if since is not None:
+            request["since"] = since
+        return await self._roundtrip(request)
+
+    @classmethod
+    async def open_event_stream(
+        cls,
+        socket_path: Path,
+        control_token: str,
+        *,
+        since: int | None = None,
+    ) -> HostEventStream:
+        client = await cls.connect(socket_path)
+        try:
+            await client.hello(CONTROL_PROTOCOL_VERSION, control_token)
+            subscribed = await client.subscribe_events(since)
+        except BaseException:
+            await client.close()
+            raise
+        return HostEventStream(
+            client,
+            epoch=str(subscribed["epoch"]),
+            seq=int(subscribed["seq"]),
+            gap=bool(subscribed.get("gap", False)),
+        )
 
     async def reconnect(self, socket_path: Path, expected_epoch: str | None = None) -> str:
-        await self.close()
-        replacement = await HostClient.connect(socket_path)
-        self._reader = replacement._reader
-        self._writer = replacement._writer
-        self.closed = False
-        self.next_seq = 1
-        ping = await self.ping()
-        epoch = str(ping.host_epoch)
-        if expected_epoch is not None and epoch != expected_epoch:
-            await self.close()
-            raise HostEpochChangedError("host epoch changed")
-        self.host_epoch = epoch
-        return epoch
+        async with self._lifecycle_lock:
+            await self._close_generation("control connection replaced")
+            try:
+                reader, writer = await asyncio.open_unix_connection(
+                    path=str(socket_path), limit=MAX_CONTROL_LINE + 1
+                )
+            except (OSError, ConnectionError) as exc:
+                raise HostUnavailableError("gterm host unavailable") from exc
+            self._reader = reader
+            self._writer = writer
+            self.closed = False
+            self.next_seq = 1
+            generation = self._generation
+            self._reader_task = asyncio.create_task(self._reader_loop(generation))
+            if self._control_token is not None:
+                hello_future = await self._begin_request(
+                    {
+                        "method": "hello",
+                        "protocol_version": self._protocol_version,
+                        "control_token": self._control_token,
+                    }
+                )
+                hello = await hello_future
+                self.raise_for_payload(hello)
+            ping_future = await self._begin_request({"method": "ping"})
+            ping = self.require_ping(await ping_future)
+            epoch = str(ping["host_epoch"])
+            if expected_epoch is not None and epoch != expected_epoch:
+                await self._close_generation("host epoch changed")
+                raise HostEpochChangedError("host epoch changed")
+            self.host_epoch = epoch
+            return epoch
 
 
 __all__ = [

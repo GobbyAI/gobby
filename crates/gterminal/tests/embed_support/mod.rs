@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub use crate::host_support::HostProc;
@@ -18,6 +19,7 @@ pub use crate::host_support::HostProc;
 pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
 pub const LOCAL: &str = "local-token";
+static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct TmuxPane {
     pub dir: tempfile::TempDir,
@@ -239,7 +241,16 @@ pub fn control(host: &HostProc) -> UnixStream {
 }
 
 pub fn send_json(stream: &mut UnixStream, value: &Value) {
-    let mut line = serde_json::to_string(value).unwrap();
+    let mut value = value.clone();
+    if let Some(object) = value.as_object_mut() {
+        object.entry("id").or_insert_with(|| {
+            Value::String(format!(
+                "embed-test-{}",
+                REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+        });
+    }
+    let mut line = serde_json::to_string(&value).unwrap();
     line.push('\n');
     stream.write_all(line.as_bytes()).unwrap();
     stream.flush().unwrap();

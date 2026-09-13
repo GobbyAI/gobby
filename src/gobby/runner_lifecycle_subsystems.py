@@ -285,8 +285,6 @@ async def _start_terminal_host(runner: GobbyRunner, tracker: StartupTracker | No
                     runtime = registry.resolve(backend)
                 except Exception:
                     continue
-                if hasattr(runtime, "_frame_host_epoch"):
-                    runtime._frame_host_epoch = str(epoch)
                 if hasattr(runtime, "_frame_host_socket"):
                     runtime._frame_host_socket = frame_host_socket
         if tracker:

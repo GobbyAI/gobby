@@ -10,13 +10,14 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, watch, Mutex};
 
 use super::config::HostConfig;
+use super::events::{EventReceiver, HostEvents};
 use super::helpers::{err, list_rows, s, spawn_fingerprint};
 #[cfg(feature = "vt-engine")]
 use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{
     validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
-    DELTA_QUEUE_ENTRIES, EVENT_QUEUE_BYTES, EVENT_QUEUE_ENTRIES, LIFECYCLE_RESERVED_SLOTS,
+    DELTA_QUEUE_ENTRIES, LIFECYCLE_RESERVED_SLOTS,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -110,12 +111,6 @@ pub struct Attachment {
     pub(crate) encoder: BlitEncoder,
 }
 
-struct EventSub {
-    tx: mpsc::Sender<Value>,
-    queued: usize,
-    queued_bytes: usize,
-}
-
 pub(crate) struct Inner {
     pub(crate) terminals: HashMap<Identity, TerminalSlot>,
     pub(crate) by_host_id: HashMap<String, Identity>,
@@ -123,7 +118,6 @@ pub(crate) struct Inner {
     pub(crate) reservations: HashMap<String, Reservation>,
     pub(crate) attachments: HashMap<u64, Attachment>,
     pub(crate) next_attachment: u64,
-    event_subs: Vec<EventSub>,
     control_owners: HashSet<u64>,
 }
 
@@ -138,6 +132,7 @@ pub struct HostState {
     pub socket_dir_removed: AtomicBool,
     pub shutdown: watch::Sender<bool>,
     pub next_conn: AtomicU64,
+    pub(crate) events: HostEvents,
     pub(crate) inner: Mutex<Inner>,
     pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
@@ -152,6 +147,7 @@ impl HostState {
         host_pid: u32,
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
+        let events = HostEvents::new(host_epoch.clone());
         Arc::new(Self {
             config,
             token,
@@ -163,6 +159,7 @@ impl HostState {
             socket_dir_removed: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
+            events,
             polls: Mutex::new(HashMap::new()),
             inner: Mutex::new(Inner {
                 terminals: HashMap::new(),
@@ -171,7 +168,6 @@ impl HostState {
                 reservations: HashMap::new(),
                 attachments: HashMap::new(),
                 next_attachment: 1,
-                event_subs: Vec::new(),
                 control_owners: HashSet::new(),
             }),
         })
@@ -197,7 +193,8 @@ impl HostState {
 
     pub async fn list_json(&self) -> Value {
         let inner = self.inner.lock().await;
-        json!({ "ok": true, "terminals": list_rows(&inner) })
+        let (epoch, seq) = self.events.cursor().await;
+        json!({ "ok": true, "terminals": list_rows(&inner), "epoch": epoch, "seq": seq })
     }
 
     pub async fn on_control_disconnect(&self, conn_id: u64) {
@@ -403,15 +400,8 @@ impl HostState {
         }
     }
 
-    pub async fn subscribe_events(&self) -> (Value, mpsc::Receiver<Value>) {
-        let (tx, rx) = mpsc::channel(EVENT_QUEUE_ENTRIES);
-        let mut inner = self.inner.lock().await;
-        inner.event_subs.push(EventSub {
-            tx,
-            queued: 0,
-            queued_bytes: 0,
-        });
-        (json!({"ok": true, "subscribed": true}), rx)
+    pub async fn subscribe_events(&self, since: Option<u64>) -> (Value, EventReceiver) {
+        self.events.subscribe(since).await
     }
 
     pub async fn attach(

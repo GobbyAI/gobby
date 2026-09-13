@@ -47,6 +47,7 @@ class HostControlClient:
     ) -> None:
         self._reader = reader
         self._writer = writer
+        self._next_request_id = 1
         self.closed = False
 
     @classmethod
@@ -128,6 +129,9 @@ class HostControlClient:
     async def _roundtrip(self, request: dict[str, Any]) -> dict[str, Any]:
         if self.closed:
             raise ConnectionError("control closed")
+        request = dict(request)
+        request.setdefault("id", f"legacy-{self._next_request_id}")
+        self._next_request_id += 1
         self._writer.write(encode_line(request))
         await self._writer.drain()
         raw = await asyncio.wait_for(self._reader.readline(), timeout=5.0)

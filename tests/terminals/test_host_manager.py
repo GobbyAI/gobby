@@ -6,11 +6,12 @@ import asyncio
 import os
 import signal
 import stat
+import threading
 import tomllib
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -18,7 +19,11 @@ import pytest
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
+from gobby.terminals import host_events
 from gobby.terminals.host_client import HostManagerStopped
+from gobby.terminals.host_events import HostInventorySnapshot, TerminalExitedEvent
+from gobby.terminals.host_protocol import HostListRow
+from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_condition
 from tests.terminals.host_fakes import (
@@ -130,6 +135,322 @@ class _ControlledSleep:
         self.calls.append(delay)
         self.started.set()
         await self.release.wait()
+
+
+@pytest.mark.asyncio
+async def test_gap_settles_indeterminate_from_list(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    class InventoryClient(FakeControlClient):
+        async def list_inventory(self) -> HostInventorySnapshot:
+            rows = tuple(cast(HostListRow, row) for row in self.terminals)
+            return HostInventorySnapshot(rows, self.host_epoch, 17)
+
+    class GapStream:
+        epoch = "epoch-gap"
+        seq = 4
+        gap = True
+
+        def __aiter__(self) -> GapStream:
+            return self
+
+        async def __anext__(self) -> Any:
+            await asyncio.Future()
+
+        async def aclose(self) -> None:
+            return None
+
+    terminals = TerminalManager(temp_db)
+    committed = _pending(terminals, sample_project["id"])
+    prepared = _pending(terminals, sample_project["id"])
+    absent = _pending(terminals, sample_project["id"])
+    client = InventoryClient(
+        host_epoch="epoch-gap",
+        terminals=[
+            FakeListRow(
+                terminal_id=committed.id,
+                spawn_key=committed.spawn_key or committed.id,
+                commit_state="committed",
+                host_terminal_id="ht-committed",
+            ),
+            FakeListRow(
+                terminal_id=prepared.id,
+                spawn_key=prepared.spawn_key or prepared.id,
+                commit_state="prepared",
+                host_terminal_id="ht-prepared",
+            ),
+        ],
+    )
+    client.authed = True
+    host = _host(tmp_path, terminals, client)
+    host._client = client
+
+    await host._recover_event_gap(GapStream())
+
+    assert _loaded(terminals, committed.id).state == "live"
+    assert _loaded(terminals, prepared.id).state == "exited"
+    assert _loaded(terminals, absent.id).state == "exited"
+    assert client.kill_calls == ["ht-prepared"]
+    assert (host.last_event_epoch, host.last_event_seq) == ("epoch-gap", 17)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_catches_only_typed_errors(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    terminals = TerminalManager(temp_db)
+    client = FakeControlClient(host_epoch="epoch-errors")
+    host = _host(tmp_path, terminals, client)
+    host._client = client
+
+    with patch(
+        "gobby.terminals.host_manager.reconcile_host_inventory",
+        new=AsyncMock(side_effect=ReconcileError("expected inventory race")),
+    ):
+        await host.reconcile(host_rows=[])
+    assert host.last_error == "expected inventory race"
+
+    with patch(
+        "gobby.terminals.host_manager.reconcile_host_inventory",
+        new=AsyncMock(side_effect=RuntimeError("database invariant")),
+    ):
+        with pytest.raises(RuntimeError, match="database invariant"):
+            await host.reconcile(host_rows=[])
+
+    with patch.object(
+        terminals,
+        "list_live_by_machine",
+        side_effect=RuntimeError("database read failed"),
+    ):
+        with pytest.raises(RuntimeError, match="database read failed"):
+            await reconcile_host_inventory(
+                terminal_manager=terminals,
+                machine_id=LOCAL_MACHINE_ID,
+                host_epoch="epoch-errors",
+                host_rows=[],
+                spawn_in_doubt_seconds=30.0,
+                run_manager=None,
+                kill=AsyncMock(),
+            )
+
+
+@pytest.mark.asyncio
+async def test_reap_runs_off_loop(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    terminals = TerminalManager(temp_db)
+    host = _host(tmp_path, terminals, FakeControlClient())
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_reap(process: dict[str, object], *, grace_seconds: float) -> None:
+        assert process["pgid"] == 42
+        assert grace_seconds == host.config.shutdown_grace_seconds
+        started.set()
+        release.wait(timeout=1.0)
+
+    loop_tick = asyncio.Event()
+    with patch("gobby.terminals.host_manager.reap_recorded_process", blocking_reap):
+        task = asyncio.create_task(host.reap_recorded_process({"pgid": 42, "start_time": 1}))
+        asyncio.get_running_loop().call_soon(loop_tick.set)
+        await loop_tick.wait()
+        assert task.done() is False
+        assert await asyncio.to_thread(started.wait, 1.0)
+        release.set()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_gap_recovery_converges_under_ring_churn(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    epoch = "epoch-churn"
+    terminals = TerminalManager(temp_db)
+    first = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-first")
+    second = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-second")
+    host_rows = [
+        FakeListRow(
+            terminal_id=first.id,
+            spawn_key=first.spawn_key or first.id,
+            host_terminal_id="ht-first",
+        ),
+        FakeListRow(
+            terminal_id=second.id,
+            spawn_key=second.spawn_key or second.id,
+            host_terminal_id="ht-second",
+        ),
+    ]
+
+    class InventoryClient(FakeControlClient):
+        async def list_inventory(self) -> HostInventorySnapshot:
+            rows = tuple(cast(HostListRow, row) for row in self.terminals)
+            return HostInventorySnapshot(rows, self.host_epoch, 10_000)
+
+    class ChurningStream:
+        epoch = "epoch-churn"
+        seq = 9_000
+        gap = True
+
+        def __init__(self) -> None:
+            self.events = [
+                TerminalExitedEvent(first.id, "ht-first", 0, epoch, 9_999),
+                TerminalExitedEvent(first.id, "ht-first", 0, epoch, 10_000),
+                TerminalExitedEvent(first.id, "ht-first", 0, epoch, 10_001),
+                TerminalExitedEvent(second.id, "ht-second", 7, epoch, 10_002),
+            ]
+            self.closed = False
+
+        def __aiter__(self) -> ChurningStream:
+            return self
+
+        async def __anext__(self) -> TerminalExitedEvent:
+            if self.events:
+                return self.events.pop(0)
+            raise HostManagerStopped()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    client = InventoryClient(host_epoch=epoch, terminals=host_rows)
+    client.authed = True
+    stream = ChurningStream()
+    subscriptions = 0
+
+    async def connect_events(since: int | None) -> Any:
+        nonlocal subscriptions
+        assert since is None
+        subscriptions += 1
+        return stream
+
+    host = _host(tmp_path, terminals, client)
+    host._client = client
+    host.host_epoch = epoch
+    host._event_connector = connect_events
+    settled: list[tuple[str, str]] = []
+    original_settle = terminals.settle_exit
+
+    def record_settle(terminal_id: str, host_terminal_id: str) -> Terminal | None:
+        settled.append((terminal_id, host_terminal_id))
+        return original_settle(terminal_id, host_terminal_id)
+
+    with patch.object(terminals, "settle_exit", side_effect=record_settle):
+        await host._event_reader_loop()
+
+    assert subscriptions == 1
+    assert settled == [(first.id, "ht-first"), (second.id, "ht-second")]
+    assert (host.last_event_epoch, host.last_event_seq) == (epoch, 10_002)
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_gap_buffer_overflow_repeats_cut(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    epoch = "epoch-overflow"
+
+    class OverflowStream:
+        epoch = "epoch-overflow"
+        seq = 0
+        gap = True
+
+        def __init__(self) -> None:
+            self.first_batch = asyncio.Event()
+            self.allow_second = asyncio.Event()
+            self.second_delivered = asyncio.Event()
+            self.events = [1, 2, 3, 5]
+            self.terminal_ids = {seq: str(uuid.uuid4()) for seq in self.events}
+
+        def __aiter__(self) -> OverflowStream:
+            return self
+
+        async def __anext__(self) -> TerminalExitedEvent:
+            if self.events[0] == 5:
+                await self.allow_second.wait()
+            seq = self.events.pop(0)
+            if seq == 3:
+                self.first_batch.set()
+            if seq == 5:
+                self.second_delivered.set()
+            return TerminalExitedEvent(self.terminal_ids[seq], f"host-{seq}", seq, epoch, seq)
+
+        async def aclose(self) -> None:
+            return None
+
+    stream = OverflowStream()
+
+    class InventoryClient(FakeControlClient):
+        list_calls = 0
+
+        async def list_inventory(self) -> HostInventorySnapshot:
+            self.list_calls += 1
+            if self.list_calls == 1:
+                await stream.first_batch.wait()
+                return HostInventorySnapshot((), epoch, 3)
+            stream.allow_second.set()
+            await stream.second_delivered.wait()
+            return HostInventorySnapshot((), epoch, 4)
+
+    client = InventoryClient(host_epoch=epoch)
+    client.authed = True
+    host = _host(tmp_path, TerminalManager(temp_db), client)
+    host._client = client
+    monkeypatch.setattr(host_events, "GAP_BUFFER_ENTRIES", 2)
+
+    await host._recover_event_gap(stream)
+
+    assert client.list_calls == 2
+    assert (host.last_event_epoch, host.last_event_seq) == (epoch, 5)
+
+
+@pytest.mark.asyncio
+async def test_event_reader_joins_singleflight_and_stops_cleanly(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    terminals = TerminalManager(temp_db)
+    client = FakeControlClient(host_epoch="epoch-reader")
+
+    async def crash_stream(_since: int | None) -> Any:
+        raise ConnectionError("host crashed")
+
+    host = _host(tmp_path, terminals, client, pid_ok=False)
+    host.host_epoch = client.host_epoch
+    host.host_pid = client.host_pid
+    host._event_connector = crash_stream
+    restart = AsyncMock(side_effect=HostManagerStopped())
+    with patch.object(host, "ensure_restart", new=restart):
+        host._arm_events()
+        event_task = host._event_task
+        host._arm_events()
+        assert host._event_task is event_task
+        assert event_task is not None
+        await event_task
+    restart.assert_awaited_once()
+
+    spawn = MagicMock()
+
+    async def stopped_stream(_since: int | None) -> Any:
+        raise HostManagerStopped()
+
+    stopped = _host(tmp_path, terminals, client, process=FakeHostProcess(pid=client.host_pid))
+    stopped._spawner = spawn
+    stopped._event_connector = stopped_stream
+    stopped.last_event_epoch = "epoch-before-stop"
+    stopped.last_event_seq = 23
+    stopped._arm_events()
+    assert stopped._event_task is not None
+    await stopped._event_task
+    assert (stopped.last_event_epoch, stopped.last_event_seq) == ("epoch-before-stop", 23)
+    spawn.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -647,9 +968,9 @@ async def test_adoption_reconciliation_matrix(
 
     client.kill_calls.clear()
     with patch.object(terminals, "list_live_by_machine", side_effect=RuntimeError("db down")):
-        await host.reconcile()
+        with pytest.raises(RuntimeError, match="db down"):
+            await host.reconcile()
     assert client.kill_calls == []
-    assert host.last_error
 
 
 @pytest.mark.asyncio
@@ -842,7 +1163,7 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
         write_pidfile(tmp_path, os.getpid())
         host = _host(tmp_path, terminals, client)
         await host.handle_host_death()
-        host.reap_recorded_process({"pgid": os.getpid(), "start_time": 0.0})
+        await host.reap_recorded_process({"pgid": os.getpid(), "start_time": 0.0})
 
         def leader_reaped() -> bool:
             try:

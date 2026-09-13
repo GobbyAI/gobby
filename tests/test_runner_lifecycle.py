@@ -2424,7 +2424,6 @@ class TestShutdownDaemonServices:
             SimpleNamespace(
                 id=f"run-{index}",
                 pid=10_000 + index,
-                tmux_session_name=f"agent-{index}",
             )
             for index in range(run_count)
         ]
@@ -2458,9 +2457,16 @@ class TestShutdownDaemonServices:
             ),
         )
 
-        with patch(
-            "gobby.agents.tmux.get_tmux_session_manager",
-            return_value=tmux_manager,
+        with (
+            patch.object(
+                runner_lifecycle_processes,
+                "_live_terminal_session_names",
+                return_value={f"run-{index}": f"agent-{index}" for index in range(run_count)},
+            ),
+            patch(
+                "gobby.agents.tmux.get_tmux_session_manager",
+                return_value=tmux_manager,
+            ),
         ):
             preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
 
@@ -5104,7 +5110,6 @@ async def test_restart_preserve_set_uses_and_caches_persisted_tmux_socket() -> N
         SimpleNamespace(
             id=f"run-{index}",
             pid=1_000 + index,
-            tmux_session_name=f"agent-{index}",
             resume_metadata_json={
                 "tmux_socket_name": "persisted",
                 "tmux_socket_path": "/tmp/persisted.sock",
@@ -5133,6 +5138,11 @@ async def test_restart_preserve_set_uses_and_caches_persisted_tmux_socket() -> N
     )
 
     with (
+        patch.object(
+            runner_lifecycle_processes,
+            "_live_terminal_session_names",
+            return_value={f"run-{index}": f"agent-{index}" for index in range(2)},
+        ),
         patch(
             "gobby.agents.tmux.get_tmux_session_manager",
             return_value=default_manager,
@@ -5163,13 +5173,11 @@ async def test_restart_preserve_set_falls_back_to_stored_pids() -> None:
         SimpleNamespace(
             id="lookup-failed",
             pid=1_001,
-            tmux_session_name="lookup-failed",
             resume_metadata_json={"tmux_socket_name": "failed"},
         ),
         SimpleNamespace(
             id="pane-pid-unusable",
             pid=1_002,
-            tmux_session_name="pane-pid-unusable",
             resume_metadata_json={"tmux_socket_name": "unusable"},
         ),
     ]
@@ -5178,21 +5186,32 @@ async def test_restart_preserve_set_falls_back_to_stored_pids() -> None:
         db_executor=SimpleNamespace(run=AsyncMock(return_value=runs)),
     )
 
-    with patch.object(
-        runner_lifecycle_processes,
-        "_agent_live_sessions_by_name",
-        AsyncMock(
-            side_effect=[
-                None,
-                {"pane-pid-unusable": SimpleNamespace(pane_pid=0)},
-            ]
+    with (
+        patch.object(
+            runner_lifecycle_processes,
+            "_live_terminal_session_names",
+            return_value={
+                "lookup-failed": "lookup-failed",
+                "pane-pid-unusable": "pane-pid-unusable",
+            },
         ),
+        patch.object(
+            runner_lifecycle_processes,
+            "_agent_live_sessions_by_name",
+            AsyncMock(
+                side_effect=[
+                    None,
+                    {"pane-pid-unusable": SimpleNamespace(pane_pid=0)},
+                ]
+            ),
+        ) as live_sessions,
     ):
         preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
             cast(GobbyRunner, runner)
         )
 
     assert preserved_pids == {1_001, 1_002}
+    assert live_sessions.await_args_list == [call("failed", None), call("unusable", None)]
 
 
 async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() -> None:

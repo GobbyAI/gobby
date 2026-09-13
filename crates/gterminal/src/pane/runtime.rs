@@ -28,6 +28,31 @@ pub struct ChildExit {
     pub signal: Option<String>,
 }
 
+/// Cloneable completion handle for the result retained by the runtime's child waiter.
+#[derive(Clone)]
+pub struct ChildExitWatch {
+    result: Arc<Mutex<Option<ChildExit>>>,
+    completed: Arc<AtomicBool>,
+    notify: Arc<Notify>,
+}
+
+impl ChildExitWatch {
+    pub async fn wait(&self) -> Option<ChildExit> {
+        loop {
+            let notified = self.notify.notified();
+            if let Ok(result) = self.result.lock() {
+                if result.is_some() {
+                    return result.clone();
+                }
+            }
+            if self.completed.load(Ordering::Acquire) {
+                return None;
+            }
+            notified.await;
+        }
+    }
+}
+
 /// PTY runtime for a pane. Owns the terminal, I/O channels, and background tasks.
 /// Dropping this shuts down background tasks and closes the PTY.
 pub struct PaneRuntime {
@@ -39,6 +64,7 @@ pub struct PaneRuntime {
     reported_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
     child_wait_completed: Option<Arc<AtomicBool>>,
     child_exit: Option<Arc<Mutex<Option<ChildExit>>>>,
+    child_exit_notify: Option<Arc<Notify>>,
     kitty_keyboard_flags: Arc<AtomicU16>,
     preserve_processes_on_drop: bool,
     render_notify: Arc<Notify>,
@@ -231,6 +257,15 @@ impl PaneRuntime {
             .and_then(|result| result.lock().ok()?.clone())
     }
 
+    /// Return a handle that awaits the existing child waiter's retained result.
+    pub fn child_exit_watch(&self) -> Option<ChildExitWatch> {
+        Some(ChildExitWatch {
+            result: self.child_exit.as_ref()?.clone(),
+            completed: self.child_wait_completed.as_ref()?.clone(),
+            notify: self.child_exit_notify.as_ref()?.clone(),
+        })
+    }
+
     pub fn shutdown(mut self) {
         self.io.shutdown();
         shutdown_pane_processes(
@@ -376,10 +411,12 @@ impl PaneRuntime {
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
         let child_exit = Arc::new(Mutex::new(None));
+        let child_exit_notify = Arc::new(Notify::new());
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
             let child_exit = child_exit.clone();
+            let child_exit_notify = child_exit_notify.clone();
             let mut child = spawned.child;
             if let Some(pid) = child.process_id() {
                 child_pid.store(pid, Ordering::Release);
@@ -400,6 +437,7 @@ impl PaneRuntime {
                     Err(err) => error!(pane = pane_id.raw(), err = %err, "pane child wait failed"),
                 }
                 child_wait_completed.store(true, Ordering::Release);
+                child_exit_notify.notify_waiters();
             });
         }
 
@@ -457,6 +495,7 @@ impl PaneRuntime {
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
             child_exit: Some(child_exit),
+            child_exit_notify: Some(child_exit_notify),
             kitty_keyboard_flags,
             preserve_processes_on_drop: false,
             render_notify,
@@ -493,9 +532,11 @@ impl PaneRuntime {
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
         let child_exit = Arc::new(Mutex::new(None));
+        let child_exit_notify = Arc::new(Notify::new());
         {
             let child_wait_completed = child_wait_completed.clone();
             let child_exit = child_exit.clone();
+            let child_exit_notify = child_exit_notify.clone();
             let pid = child_pid_value as i32;
             tokio::task::spawn_blocking(move || {
                 let mut status = 0;
@@ -537,6 +578,7 @@ impl PaneRuntime {
                     break;
                 }
                 child_wait_completed.store(true, Ordering::Release);
+                child_exit_notify.notify_waiters();
             });
         }
         let io = {
@@ -589,6 +631,7 @@ impl PaneRuntime {
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
             child_exit: Some(child_exit),
+            child_exit_notify: Some(child_exit_notify),
             kitty_keyboard_flags,
             preserve_processes_on_drop: false,
             render_notify,
@@ -632,6 +675,7 @@ impl PaneRuntime {
                 reported_cwd: Arc::new(Mutex::new(None)),
                 child_wait_completed: None,
                 child_exit: None,
+                child_exit_notify: None,
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 preserve_processes_on_drop: true,
                 render_notify: Arc::new(Notify::new()),
