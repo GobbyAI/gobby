@@ -370,6 +370,31 @@ class EnforcementCheckMixin:
                     reason=reason,
                 )
 
+        # Operator terminal channels bypass allow-lists for interactive sessions only;
+        # spawned agents and native subagents never drive or read terminals.
+        if (
+            (variables.get("is_spawned_agent") or variables.get("is_subagent"))
+            and is_gobby_call_tool(tool_name)
+            and isinstance(tool_input, dict)
+            and is_operator_tool(tool_input.get("tool_name"))
+        ):
+            mcp_key = f"{tool_input.get('server_name', '')}:{tool_input.get('tool_name')}"
+            reason = (
+                "Rule enforced by Gobby: [operator-tool-enforcement]\n"
+                f"MCP tool '{mcp_key}' is blocked for spawned agents and subagents: "
+                "terminal control belongs to interactive sessions.\n"
+                "Use gobby-agents:send_message for cross-session coordination. Do not "
+                "retry this call; repeating an identical denial three times ends an "
+                "autonomous run in a terminal blocked state."
+            )
+            reason = self._record_enforcement_denial(
+                session_id=session_id,
+                rule="agent-operator-tool-block",
+                target=f"mcp:{mcp_key.casefold()}",
+                reason=reason,
+            )
+            return HookResponse(decision="block", reason=reason)
+
         blocked_tools: list[str] = variables.get("_agent_blocked_tools") or []
         blocked_mcp_tools: list[str] = variables.get("_agent_blocked_mcp_tools") or []
         if not blocked_tools and not blocked_mcp_tools:

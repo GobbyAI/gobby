@@ -82,7 +82,8 @@ PROVIDER_DISCOVERY_TOOLS = frozenset({"ToolSearch", "search_tool"})
 # a session from the web app or CLI; they target a session whose workflow
 # they aren't bound by. These bypass step/agent allow-lists so a dev can
 # always interrogate a stuck agent (e.g. send_keys into a terminate step
-# whose allow-list only lists kill_agent).
+# whose allow-list only lists kill_agent). Agent enforcement blocks them
+# outright for spawned agents and subagents.
 OPERATOR_TOOLS = {
     "send_keys",
     "capture_output",
@@ -234,7 +235,7 @@ def is_operator_tool(tool_name: str | None) -> bool:
     Operator tools (e.g. send_keys) are invoked by humans from the web app
     or CLI to inspect or poke a running session. They are not agent actions
     and must bypass step/agent MCP allow-lists so an operator can always
-    reach a stuck agent.
+    reach a stuck agent. Spawned agents and subagents are blocked from them.
 
     Args:
         tool_name: The MCP tool name (from tool_input.tool_name)

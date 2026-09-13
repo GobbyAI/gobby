@@ -1688,6 +1688,76 @@ class TestStepTransitions:
         )
 
 
+def _operator_tool_event(tool: str) -> HookEvent:
+    return _make_event(
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": "gobby-sessions", "tool_name": tool, "arguments": {}},
+        },
+    )
+
+
+def _setup_operator_tool_session(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+    step: str | None,
+) -> None:
+    if step is None:
+        _create_session(db)
+    else:
+        _setup_step_workflow(db, manager, instance_mgr, current_step=step)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", [None, "terminate", "implement"])
+@pytest.mark.parametrize("flag", ["is_spawned_agent", "is_subagent"])
+@pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
+async def test_operator_tools_blocked_for_spawned_agents_and_subagents(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tool: str,
+    flag: str,
+    step: str | None,
+) -> None:
+    """Spawned agents and subagents cannot reach terminals from any step shape."""
+    _setup_operator_tool_session(db, manager, instance_mgr, step)
+
+    response = await engine.evaluate(
+        _operator_tool_event(tool), session_id=SESSION_ID, variables={flag: True}
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "[operator-tool-enforcement]" in response.reason
+    assert f"MCP tool 'gobby-sessions:{tool}' is blocked" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", [None, "terminate", "implement"])
+@pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
+async def test_operator_tools_allowed_for_interactive_sessions(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tool: str,
+    step: str | None,
+) -> None:
+    """Sessions that are neither spawned nor running a subagent keep the operator bypass."""
+    _setup_operator_tool_session(db, manager, instance_mgr, step)
+
+    response = await engine.evaluate(
+        _operator_tool_event(tool),
+        session_id=SESSION_ID,
+        variables={"is_spawned_agent": False, "is_subagent": False},
+    )
+
+    assert response.decision == "allow", response.reason
+
+
 # Workflow with on_mcp_error handlers for testing app-level failure routing
 _MERGE_WORKFLOW = {
     "name": "merge-workflow",
