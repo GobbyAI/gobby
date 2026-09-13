@@ -437,10 +437,71 @@ Tests use an isolated daemon/state and never the production database.
 - 4.7.2 - MCP authorization and discovery pass with real authority. test: `tests/mcp_proxy/tools/test_ask.py::test_ask_authorization_and_discovery`.
 - 4.7.3 - CLI lifecycle uses real service and rebuilt native executable. test: `crates/gcode/tests/ask.rs::test_ask_cli_lifecycle_contract`.
 
+### 4.8 Bind registered caller worktrees and prepare the runtime probe [category: code] (depends: 4.7)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/worktrees/creation.py::create_worktree`
+- `tests/worktrees/test_creation.py::*` — scope-reason: verify canonical registration with real Git and database identity derivation.
+- `src/gobby/storage/managed_credentials.py::ManagedCredentialManager.issue`
+- `src/gobby/storage/managed_credentials.py::ManagedCredentialManager.issue_tool_request`
+- `crates/gcore/assets/schema/migrations/435_bind_tool_grants_to_requested_checkout.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register the immutable numbered migration and checksum.
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: reconstruct the historical five-argument issuer before testing migration 432.
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: generate the checkout identity from rebuilt gdaemon.
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: verify numbered migration changes against the baseline catalog carrier.
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: verify grant bundle schema identity follows the embedded migration identity.
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: validate the derived native schema contract.
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: validate the rebuilt schema CLI identity.
+- `tests/storage/test_managed_credentials.py::*` — scope-reason: verify requested overlay authority and requested primary precedence over session workspace.
+- `src/gobby/ask/runtime_controls.py::*` — scope-reason: preserve the shared policy normalization and sealed runtime controls.
+- `tests/ask/test_runtime_validation.py::*` — scope-reason: normalize only the exact private grant lock and preserve foreign-write detection.
+- `tests/ask/native_probe_harness.py::*` — scope-reason: preserve fresh and resumed contained runtime preparation and receipts.
+- `src/gobby/storage/schema_divergence.py::binary_set_apply_refusal`
+- `tests/cli/test_install_setup_gdaemon.py::*` — scope-reason: keep the refusal remedy aligned with the three schema-bearing binary members.
+- `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`
+
+**Research context:** Live worktree admission exposed raw `/tmp` registration
+versus canonical `/private/tmp` index identity. Canonicalize shared creation.
+The subsequent Ask grant omitted overlay authority because SQL inferred the
+session workspace rather than the requested root. Pass the already-authorized
+registered spelling into issuance; SQL validates primary checkout or registered
+overlay against project and machine. Existing issuance without an operation root
+continues to derive its session workspace. Use a numbered migration and refresh
+the complete installed schema-bearing native set via new inodes.
+
+The contained probe never called its existing ordinary-index preparation helper.
+Call it once before fresh Ask admission, with a dedicated new private runtime
+directory; resumed runs reuse the index. The actual managed SRT launch adds the
+private grant lock. Normalize only that exact bound lock alongside the existing
+grant-read normalization, rejecting duplicate lock entries and retaining every
+other read/write path in the digest.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/worktrees/_create.py` — no-edit-reason: delegates creation to the shared function and receives its canonical path.
+- `src/gobby/servers/routes/source_control_worktrees.py` — no-edit-reason: delegates creation to the same shared function without deriving overlay identity itself.
+- `src/gobby/agents/spawn.py` — no-edit-reason: agent issuance keeps session-derived workspace authority with the optional requested path absent.
+- `src/gobby/runner_init/servers.py` — no-edit-reason: existing issuance omits the new optional requested path.
+- `tests/agents/test_spawn.py` — no-edit-reason: existing agent issuance contract is unchanged.
+- `tests/runner_init/test_grant_issuance.py` — no-edit-reason: the default issuance path remains session-derived.
+- `tests/runtime_grants/test_maintenance_launch.py` — no-edit-reason: maintenance launch does not request a caller checkout override.
+- `tests/runtime_grants/test_revocation.py` — no-edit-reason: revocation is independent of optional checkout selection.
+- `tests/storage/test_hub_auth_schema_isolation.py` — no-edit-reason: schema-isolated issuance retains its default authority derivation.
+- `src/gobby/ai/_managed_tool_chat_lease.py` — no-edit-reason: already passes the requested project path to the shared tool issuer.
+- `tests/ai/test_managed_tool_chat_lease.py` — no-edit-reason: existing lease tests exercise the unchanged public tool-issuance signature.
+- `src/gobby/cli/daemon.py` — no-edit-reason: displays the shared refusal string without assuming the number of binary members.
+
+**Acceptance:**
+
+- 4.8.1 - Canonical worktree registration agrees with native/database overlay identity. test: `tests/worktrees/test_creation.py::test_creation_registers_canonical_root_for_overlay_grants`.
+- 4.8.2 - A requested worktree receives overlay authority; an explicit primary root overrides a session overlay. test: `tests/storage/test_managed_credentials.py::test_issue_tool_request_accepts_registered_overlay_without_primary` and `tests/storage/test_managed_credentials.py::test_tool_request_primary_root_overrides_session_overlay`.
+- 4.8.3 - The private grant lock normalizes without concealing foreign writes or grant writes. test: `tests/ask/test_runtime_validation.py::test_policy_digest_normalizes_only_the_bound_grant_lock`.
+- 4.8.4 - Real worktree Ask cites its checkout; fresh/resumed contained probe records actual boundary receipts after ordinary index preparation. Record every failed diagnostic and cleanup outcome before normal-loader admission. file: `docs/evidence/wiki-bakeoff-code-2026-09/ask-pipeline.md`.
+
 ## P5: Record the frozen cohort and close acceptance
 `kind: framing`
 
-### 5.1 Evaluate all fourteen frozen questions [category: test] (depends: 4.7)
+### 5.1 Evaluate all fourteen frozen questions [category: test] (depends: 4.8)
 `kind: deliverable`
 
 Targets:
@@ -818,3 +879,84 @@ The answer cites the caller's `src/gobby/ask/snapshots.py`. Export receipt:
 `/tmp/ask-live-gobby-13038-retry9-export.json`. This is a diagnostic, not a cohort
 primary. Worktree smoke, contained runtime admission, fourteen primaries and
 criteria-gated task closure remain outstanding.
+
+## V9 Worktree and contained-probe diagnostics — 2026-09-13
+`kind: verification`
+
+Commit `beeada6` fixes canonical worktree registration. The red integration test
+reproduced the alias mismatch; 219 other worktree tests passed, and the corrected
+regression passed against the real auth function. The recreated worktree
+`214a1912-f0ff-4dde-8fd5-b157cd0c1b36` at
+`/private/tmp/gobby-ask-live-13038` indexed its overlay in 1.587 seconds.
+Ask diagnostic `c45d193f-231f-4613-9ae9-908375c362ce` then failed with a parent-row
+hash against worktree bytes. Its grant lacked the overlay project ID.
+
+Commit `5ce9929` repairs requested-root grant issuance with migration 435.
+Validation: 34 credential tests plus the new primary-precedence case passed;
+29 native schema cases and 356 Ask/HTTP/MCP cases passed. The historical migration
+432 test explicitly reconstructs its original issuer before replaying 432.
+
+Contained probe epoch 7 ended on a PostgreSQL backend termination. Concurrent
+pytest was observed, but causality is unproven. The schema sweeper is ruled out:
+its numeric six-part schema-name parser cannot accept the probe schema name.
+Epoch 8 spent most of its time in cold freshness/index import resolution because
+its preparation helper was orphaned, then failed on SRT policy identity at
+investigator launch. No child session or PID was recorded. Export and cleanup
+are incomplete, so the unique schema/runtime are retained for audit. Evidence:
+`/tmp/ask-native-probe-13038-epoch8/{raw-probe.json,cleanup.json,failure.json}`.
+Neither diagnostic is a cohort primary or a successful runtime admission.
+
+The first schema-435 promotion attempt copied two binaries before the protected
+memory-dream stop completed. Startup refused the mixed installed pin. Both
+binaries were restored from the captured schema-434 set, and the pending stop
+was interrupted. Main daemon and gterm remained running. The second protected
+stop completed normally. The complete gcode/gdaemon/ghook set and identity stamp
+were then promoted with the shared binary-set helper. Daemon health passed in
+13.9 seconds and installed main-checkout symbol search succeeded. Gterm was unchanged.
+
+The refusal's "all four" suffix was stale: the enforced set is gcode, gdaemon
+and ghook. Reuse the canonical three-member remedy. Gterm is excluded; its active
+owner will promote it separately after the terminal-control work lands. The
+protected memory-dream run finished before the successful normal stop.
+
+Task #22279 is now parented under #22010 at the user's direction. Commit
+`8cfb3ac0ec` already materializes the BM25 match set once. Before closure, verify
+the installed binary's fresh-process matching and no-match searches on both
+repositories against the unchanged two-second limit, confirm one scan execution,
+and rerun the scoped-role project-isolation regression. This remains an acceptance
+obligation of the epic; the Ask smoke timeout remains ten seconds.
+
+## V10 Installed worktree answer and content-scan acceptance — 2026-09-13
+`kind: verification`
+
+Commit `3e4835c` fixes contained-probe index preparation and exact private grant-lock
+normalization, and corrects the binary-set refusal remedy. Final focused validation:
+138 runtime/derivation/harness/schema-divergence/install tests passed in 4.80 seconds;
+Ruff passed. The five-file staged review covered every file and found no issues.
+
+Worktree diagnostic retry `3ed2e1d2-438c-40a4-945f-d89d790dce18` completed with
+outcome `complete`, independent review, and zero repairs. It cites
+`src/gobby/ask/snapshots.py:92-135` from the caller checkout at commit
+`2f04d100ed3d751127061fd89c79c3ed8e4403a2`. The evidence binding names overlay
+`69418746-dea0-5260-bccf-15d1c1d3fc39`; the run binding names its actual root
+`/private/tmp/gobby-ask-live-13038-epoch9`. Ordinary overlay indexing took 3.294
+seconds before Ask. Logged bind phases: grant 28.3 ms, config 392.6 ms, search
+551.1 ms, publication 833.1 ms. No run `source` directory exists. This is slower
+than the approximate 0.2-second target, but both fixed probe caps hold and Ask
+performs no snapshot indexing.
+
+Export: `/tmp/ask-worktree-epoch9-export/ask-3ed2e1d2-438c-40a4-945f-d89d790dce18.tar`.
+Publication SHA256: `07bd2fc164e452e29974c78a06c327190e3cff1a53de98d7e44a98090e9a0230`.
+Both epoch-8 and epoch-9 temporary managed worktrees were deleted through the
+worktree service after the export. The last historical root-path lock error is
+2026-09-12 19:24:56; no such error appears on September 13.
+
+Task #22279's installed fresh-process searches passed the unchanged two-second
+criterion: Gobby matching/no-match 0.31/0.24 seconds; game-goblins matching/no-match
+0.35/0.22 seconds. Matching terms were `AskSnapshotManager` and `Sleeves`; the
+no-match term was `zzzask22279nomatch9fdb62`. Each scoped-role EXPLAIN ANALYZE
+contains exactly one ParadeDB scan with `Actual Loops=1`. Database execution
+times were 61.860/32.191 and 52.140/30.763 ms respectively. Each role saw only its
+own project rows. Raw plans and measurements are in `/tmp/ask-22279-*`.
+The named scoped-content RLS regression passed in 0.63 seconds. These checks are
+diagnostics and acceptance evidence, not frozen cohort primaries.
