@@ -13,6 +13,11 @@ identity. Do not create evaluation worktrees, clones, private daemons, private
 database schemas, new project identities, or per-question/per-cohort indexes.
 Do not run an index build as evaluation preparation.
 
+Follow-up user instruction: stop limiting runs to 600 seconds; tune performance
+later. Use `--timeout-seconds 3600` for remaining questions and separately labeled
+retries. Existing 600-second failures stay in the record. The immediate goal is
+correct supported answers, not a latency acceptance threshold.
+
 This user instruction supersedes the historical sealed-probe admission gate,
 fresh/resumed probe prerequisite, pinned-commit worktree execution, and contained
 cohort apparatus described below and in the existing acceptance tasks. Those
@@ -58,7 +63,7 @@ The requested canonical artifact is `docs/plans/gcode-ask-fix.md`.
   direct investigator access to the repository. Scratch and repository are disjoint.
 - Bind probes retain the 5-second config and 10-second content-search caps.
 - Use the existing checkout/index for all fourteen questions, serially, with a
-  600-second run budget. Preserve errors and interruptions; separately label
+  generous 3,600-second run budget. Preserve errors and interruptions; separately label
   every retry. Keep answer keys out of agent prompts and the indexed corpus.
   Historical commit pins remain report context and do not trigger checkouts or indexing.
 - Preserve unrelated changes and coordinate native installation/restart through
