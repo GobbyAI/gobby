@@ -55,14 +55,11 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Read exact, commit-bound evidence without agent or model orchestration
+    /// Read indexed working-tree evidence without agent or model orchestration
     Evidence {
         /// Evidence request using the versioned JSON request contract
-        #[arg(long, value_name = "JSON", conflicts_with = "snapshot_json")]
-        request_json: Option<String>,
-        /// Canonical snapshot inspect/materialize/verify request
-        #[arg(long, value_name = "JSON", required_unless_present = "request_json")]
-        snapshot_json: Option<String>,
+        #[arg(long, value_name = "JSON")]
+        request_json: String,
     },
     /// Ask a source-bound question through the durable Gobby pipeline
     Ask(AskArgs),
@@ -72,9 +69,6 @@ pub(crate) enum Command {
     Init,
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
-        /// Index every eligible verified Git blob in an exact materialized snapshot
-        #[arg(long, conflicts_with_all = ["path", "files", "full", "require_cpp_semantics", "sync_projections", "skip_if_locked"])]
-        snapshot_commit: Option<String>,
         /// Path to index (default: project root)
         path: Option<String>,
         /// Index only specific files

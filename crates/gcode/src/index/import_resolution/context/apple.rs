@@ -34,16 +34,6 @@ pub(super) fn build_objc_indexes(root_path: &Path, candidate_files: &[PathBuf]) 
     collect_objc_indexes(observations)
 }
 
-pub(super) fn build_objc_indexes_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> ObjcIndex {
-    collect_objc_indexes(
-        sources
-            .iter()
-            .filter_map(|(rel, source)| observe_objc_source(rel, source)),
-    )
-}
-
 fn observe_objc_source(rel_str: &str, source: &[u8]) -> Option<ObjcObservation> {
     let rel = Path::new(rel_str);
     let ext = rel
@@ -270,29 +260,6 @@ pub(in crate::index::import_resolution) fn build_swift_module_files(
             }
             all
         });
-    for files in module_files.values_mut() {
-        files.sort();
-        files.dedup();
-    }
-    module_files
-}
-
-pub(super) fn build_swift_module_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    let mut module_files = HashMap::<String, Vec<String>>::new();
-    for (rel, _) in sources.iter() {
-        let path = Path::new(rel);
-        if path.extension().and_then(|ext| ext.to_str()) != Some("swift") {
-            continue;
-        }
-        for module in swift_modules_for_rel(path) {
-            module_files
-                .entry(module)
-                .or_default()
-                .push(rel.to_string());
-        }
-    }
     for files in module_files.values_mut() {
         files.sort();
         files.dedup();

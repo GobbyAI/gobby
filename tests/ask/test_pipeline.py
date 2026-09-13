@@ -61,7 +61,6 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
 class _PreparedSnapshot:
     generation: int
     binding: dict[str, Any]
-    inventory: dict[str, Any]
     source_root: Path
     manifest_pointer: dict[str, Any]
 
@@ -90,8 +89,7 @@ class _SnapshotManager:
             path.write_bytes(content)
         return _PreparedSnapshot(
             generation=1,
-            binding=evidence.snapshot_binding.model_dump(mode="json"),
-            inventory=evidence.inventory.model_dump(mode="json"),
+            binding=evidence.repository_binding.model_dump(mode="json"),
             source_root=source_root,
             manifest_pointer={
                 "kind": "snapshot-lifecycle",
@@ -108,8 +106,7 @@ class _SnapshotManager:
         evidence = self.by_run[run_id]
         return _PreparedSnapshot(
             generation=2,
-            binding=evidence.snapshot_binding.model_dump(mode="json"),
-            inventory=evidence.inventory.model_dump(mode="json"),
+            binding=evidence.repository_binding.model_dump(mode="json"),
             source_root=self.root / run_id / "source",
             manifest_pointer={
                 "kind": "snapshot-lifecycle",
@@ -331,7 +328,6 @@ class _AskToolProxy:
             return await self.service.prepare(
                 run_id=run_id,
                 project_id=project_id,
-                project_root=self.project_root,
             )
         if tool == "seed":
             return await self.service.seed(run_id=run_id, project_id=project_id)

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import socket
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -11,6 +14,7 @@ from unittest.mock import patch
 
 import httpx2
 import pytest
+import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
@@ -22,12 +26,14 @@ from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.ask import create_ask_router
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
 from tests.ask.service_support import (
     CompletingPipelineExecutor,
     RecordingCompletionRegistry,
     build_ask_service,
 )
+from tests.fixtures.isolated_checkout import insert_isolated_machine, insert_overlay
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -282,6 +288,7 @@ class _RealAskHarness:
     completions: RecordingCompletionRegistry
     headers: dict[str, str]
     project_id: str
+    app: FastAPI
 
 
 @pytest.fixture
@@ -297,6 +304,8 @@ async def real_ask_harness(
     AuthStore(temp_db).set_local_api_token_hash(hash_token("operator-token"))
     auth_service = AuthService(lambda: temp_db, token_file=token_file)
     ask = build_ask_service(temp_db, project_id=project_id, state_root=tmp_path / "state")
+    insert_isolated_machine(temp_db, LOCAL_MACHINE_ID)
+    LocalProjectCheckoutManager(temp_db).register(LOCAL_MACHINE_ID, project_id, str(tmp_path))
 
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         parent = session_manager.register(
@@ -321,6 +330,7 @@ async def real_ask_harness(
             services=SimpleNamespace(
                 get_ask_service=lambda _project_id: ask.service,
                 http_admission_closed=False,
+                database=temp_db,
             ),
             run_db=_run_db,
         )
@@ -328,7 +338,6 @@ async def real_ask_harness(
         app.include_router(
             create_ask_router(
                 cast("HTTPServer", server),
-                project_root_resolver=lambda _project_id: tmp_path,
             )
         )
         app.add_middleware(AuthMiddleware, server=cast("HTTPServer", server))
@@ -345,6 +354,7 @@ async def real_ask_harness(
                     "X-Gobby-Caller-Project-Id": project_id,
                 },
                 project_id=project_id,
+                app=app,
             )
 
 
@@ -378,7 +388,6 @@ async def _start_gated_run(harness: _RealAskHarness, question: str) -> dict[str,
         json={
             "question": question,
             "project_id": harness.project_id,
-            "commit_ref": "HEAD",
             "timeout_seconds": 600,
             "retrieval_mode": "deterministic",
         },
@@ -389,6 +398,159 @@ async def _start_gated_run(harness: _RealAskHarness, question: str) -> dict[str,
     await asyncio.wait_for(harness.executor.running.wait(), timeout=10)
     payload: dict[str, Any] = response.json()
     return payload
+
+
+@pytest.mark.parametrize("location", ["primary", "worktree", "foreign", "unregistered"])
+async def test_start_binds_only_to_authorized_caller_checkout(
+    real_ask_harness: _RealAskHarness,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    location: str,
+) -> None:
+    harness = real_ask_harness
+    root = tmp_path if location == "primary" else tmp_path / location
+    root.mkdir(exist_ok=True)
+    if location in {"worktree", "foreign"}:
+        machine = LOCAL_MACHINE_ID if location == "worktree" else insert_isolated_machine(temp_db)
+        insert_overlay(
+            temp_db,
+            project_id=harness.project_id,
+            machine_id=machine,
+            path=str(root),
+            kind="worktree",
+        )
+    response = await harness.client.post(
+        "/api/ask/runs",
+        headers=harness.headers,
+        json={
+            "question": "Which checkout supplies the evidence?",
+            "project_id": harness.project_id,
+            "project_path": str(root),
+        },
+    )
+    if location in {"foreign", "unregistered"}:
+        assert response.status_code == 403
+        assert "not a registered worktree or clone" in response.json()["detail"]
+        return
+    assert response.status_code == 202
+    run_id = response.json()["run_id"]
+    record = harness.service.storage.get(run_id)
+    assert record is not None
+    assert record.binding.repository_root == str(root.resolve())
+    assert record.binding.project_id == harness.project_id
+    await harness.service.wait(run_id, project_id=harness.project_id, timeout=5)
+
+
+async def test_installed_cli_lifecycle_against_authenticated_service(
+    real_ask_harness: _RealAskHarness, tmp_path: Path
+) -> None:
+    harness = real_ask_harness
+    binary = Path(os.environ.get("GOBBY_GCODE_BIN", "target/debug/gcode")).resolve(strict=True)
+    home = tmp_path / "cli-home"
+    home.mkdir()
+    marker = tmp_path / ".gobby"
+    marker.mkdir()
+    (marker / "project.json").write_text(
+        json.dumps({"id": harness.project_id, "name": "ask-service-test"})
+    )
+    git = await asyncio.create_subprocess_exec("git", "init", "--quiet", str(tmp_path))
+    assert await git.wait() == 0
+    ready = asyncio.Event()
+
+    class Server(uvicorn.Server):
+        async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+            await super().startup(sockets)
+            ready.set()
+
+    server = Server(uvicorn.Config(harness.app, log_level="error", lifespan="off", ws="none"))
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    serving = asyncio.create_task(server.serve(sockets=[listener]))
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith(("GOBBY_", "GIT_"))
+    }
+    env.update(
+        GOBBY_HOME=str(home),
+        GOBBY_DAEMON_URL=url,
+        GOBBY_SESSION_ID=harness.headers["X-Gobby-Session-Id"],
+        GOBBY_AGENT_RUN_ID=harness.headers["X-Gobby-Agent-Run-Id"],
+        GOBBY_AGENT_API_TOKEN=harness.headers["Authorization"].removeprefix("Bearer "),
+    )
+
+    async def cli(*args: str) -> tuple[int, dict[str, Any], str]:
+        process = await asyncio.create_subprocess_exec(
+            str(binary),
+            "--format",
+            "json",
+            "--project",
+            str(tmp_path),
+            "ask",
+            *args,
+            cwd=tmp_path,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
+        assert process.returncode is not None
+        return process.returncode, json.loads(stdout), stderr.decode()
+
+    try:
+        await asyncio.wait_for(ready.wait(), 5)
+        code, completed, stderr = await cli("Which service owns Ask?")
+        assert code == 0, stderr
+        assert completed["status"] == "completed"
+        # The controlled executor completes without publishing an answer; the
+        # lifecycle adapter must preserve the service's null outcome verbatim.
+        assert completed["answer_outcome"] is None
+        run_id = completed["run_id"]
+        code, fetched, stderr = await cli("--status", run_id)
+        assert code == 0, stderr
+        assert fetched == harness.service.get(run_id, project_id=harness.project_id).model_dump(
+            mode="json"
+        )
+
+        release = asyncio.Event()
+        harness.executor.gate(release)
+        code, started, stderr = await cli("Hold this run for cancellation", "--background")
+        assert code == 0, stderr
+        pending_id = started["run_id"]
+        await asyncio.wait_for(harness.executor.running.wait(), 5)
+        async with AsyncClient(base_url=url, headers=harness.headers) as client:
+            timed_out = await client.get(
+                f"/api/ask/runs/{pending_id}/wait",
+                params={"project_id": harness.project_id, "timeout_seconds": 0.01},
+            )
+            assert timed_out.status_code == 408
+            missing = await client.get(
+                "/api/ask/runs/not-a-run", params={"project_id": harness.project_id}
+            )
+            assert missing.status_code == 404
+            denied = await client.get(
+                f"/api/ask/runs/{pending_id}", params={"project_id": PROJECT_ID}
+            )
+            assert denied.status_code == 403
+            removed_flag = await client.post(
+                "/api/ask/runs",
+                json={"project_id": harness.project_id, "question": "Where?", "commit_ref": "HEAD"},
+            )
+            assert removed_flag.status_code == 422
+        code, cancelled, stderr = await cli("--cancel", pending_id)
+        assert code == 2
+        assert cancelled["status"] == "cancelled"
+        assert "ask_cancelled" in stderr
+        release.set()
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(serving, 5)
+        listener.close()
 
 
 async def test_shared_run_contract_and_event_driven_wait(

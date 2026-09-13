@@ -464,7 +464,7 @@ def test_probe_new_runs_keep_their_own_ask_budget(
         request = harness._probe_ask_request(arguments)
 
         assert request.timeout_seconds == 600
-        assert request.commit_ref == arguments.source_commit
+        assert "commit_ref" not in request.model_dump()
         assert request.question.endswith(f"Probe phase: {phase}.")
 
 
@@ -844,7 +844,6 @@ async def test_contained_machine_identity_reaches_actual_ask_prepare_and_seed(
             {
                 "run_id": "ask-run",
                 "project_id": project_id,
-                "project_root": project_root.resolve(),
             },
         ),
         ("seed", {"run_id": "ask-run", "project_id": project_id}),

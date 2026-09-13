@@ -815,7 +815,6 @@ def _provision_private_parent_index(
 ) -> dict[str, object]:
     """Seed the owned probe schema from the exact commit used by Ask."""
     from gobby.agents.code_index import _prepare_gcode_runtime
-    from gobby.ask.snapshots import _safe_process_env
 
     if (
         not database_scope.startswith("gobby_test_")
@@ -839,10 +838,8 @@ def _provision_private_parent_index(
     remaining_at_start = _remaining_seconds(deadline_monotonic)
     started_at = datetime.now(UTC)
     started_monotonic = time.monotonic()
-    seed_root = owned_root / "source"
     launch_root = owned_root / "launch"
     owned_root.mkdir(parents=True, exist_ok=False, mode=0o700)
-    seed_root.mkdir(mode=0o700)
     launch_root.mkdir(mode=0o700)
     commands: list[dict[str, object]] = []
     evidence: dict[str, object] = {
@@ -854,7 +851,6 @@ def _provision_private_parent_index(
         "session_id": str(session_id),
         "source_root": str(source_root),
         "source_commit": source_commit,
-        "seed_root": str(seed_root),
         "gcode": {"path": str(gcode_bin), "sha256": gcode_sha256},
         "started_at": started_at.isoformat(),
         "deadline_budget_seconds": remaining_at_start,
@@ -863,7 +859,6 @@ def _provision_private_parent_index(
     issued: Any | None = None
     primary_error: BaseException | None = None
     source_status_before: str | None = None
-    checkout_rebound = False
 
     def output_hash(value: object) -> str | None:
         if value is None:
@@ -977,63 +972,9 @@ def _provision_private_parent_index(
     command_env = dict(os.environ)
     try:
         source_status_before = source_status("source_status_before")
-        snapshot_request = {
-            "action": "materialize",
-            "commit_oid": source_commit,
-            "project_id": project_id,
-            "schema_version": 1,
-            "target_root": str(seed_root),
-        }
-        snapshot_request_json = json.dumps(
-            snapshot_request,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        snapshot_command = [
-            str(gcode_bin),
-            "--quiet",
-            "--format",
-            "json",
-            "--project",
-            str(source_root),
-            "evidence",
-            "--snapshot-json",
-            snapshot_request_json,
-        ]
-        try:
-            materialized = run_command(
-                "snapshot_materialize",
-                snapshot_command,
-                cwd=source_root,
-                env=_safe_process_env(),
-            )
-        finally:
-            if commands and commands[-1].get("name") == "snapshot_materialize":
-                commands[-1]["request_sha256"] = hashlib.sha256(
-                    snapshot_request_json.encode()
-                ).hexdigest()
-        response = json.loads(materialized.stdout)
-        if not isinstance(response, dict) or response.get("schema_version") != 1:
-            raise RuntimeError("private parent snapshot returned an unsupported contract")
-        binding = response.get("binding")
-        inventory = response.get("inventory")
-        if not isinstance(binding, dict) or not isinstance(inventory, dict):
-            raise RuntimeError("private parent snapshot omitted binding or inventory")
-        if binding.get("project_id") != project_id or binding.get("commit_oid") != source_commit:
-            raise RuntimeError("private parent snapshot identity changed")
-        if inventory.get("complete") is not True or (
-            inventory.get("digest") != binding.get("inventory_digest")
-        ):
-            raise RuntimeError("private parent snapshot inventory is incomplete or mismatched")
-        source_project_json = source_root / ".gobby" / "project.json"
-        project_metadata = json.loads(source_project_json.read_bytes())
-        if not isinstance(project_metadata, dict) or project_metadata.get("id") != project_id:
-            raise RuntimeError("private parent seed project identity changed")
-        seed_project_json = seed_root / ".gobby" / "project.json"
-        seed_project_json.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_project_json, seed_project_json)
-        if (seed_root / ".gobby" / "isolation.json").exists():
-            raise RuntimeError("private parent seed unexpectedly retained isolation metadata")
+        resolved_head = run_command("source_head", ["git", "rev-parse", "HEAD"], cwd=source_root).stdout.decode().strip()
+        if resolved_head != source_commit:
+            raise RuntimeError("probe caller HEAD differs from its required source commit")
         issued = manager.issue_tool_request(
             session_id=session_id,
             requested_project_path=str(source_root),
@@ -1066,12 +1007,6 @@ def _provision_private_parent_index(
         checkout = checkout_manager.get(machine_id, project_id)
         if checkout is None or Path(checkout.root_path).resolve() != source_root:
             raise RuntimeError("private parent index source checkout binding changed")
-        rebound = checkout_manager.rebind(machine_id, project_id, str(seed_root))
-        checkout_rebound = True
-        if Path(rebound.root_path).resolve() != seed_root:
-            raise RuntimeError("private parent index checkout rebind was not durable")
-        evidence["checkout_root_before"] = str(source_root)
-        evidence["checkout_root_during_index"] = str(Path(rebound.root_path).resolve())
         identity_env = {
             "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
             "GOBBY_MACHINE_ID": machine_id,
@@ -1098,15 +1033,15 @@ def _provision_private_parent_index(
             "json",
             "--allow-stale",
             "--project",
-            str(seed_root),
+            str(source_root),
         ]
-        run_command("status_before", status_command, cwd=seed_root)
+        run_command("status_before", status_command, cwd=source_root)
         run_command(
             "index",
-            [str(gcode_bin), "index", "--quiet", "--project", str(seed_root)],
-            cwd=seed_root,
+            [str(gcode_bin), "index", "--quiet", "--project", str(source_root)],
+            cwd=source_root,
         )
-        final_status = run_command("status_after", status_command, cwd=seed_root)
+        final_status = run_command("status_after", status_command, cwd=source_root)
         status_body = json.loads(final_status.stdout)
         if not isinstance(status_body, dict) or status_body.get("id") != project_id:
             raise RuntimeError("private parent index status reported a different project")
@@ -1115,14 +1050,11 @@ def _provision_private_parent_index(
             WHERE machine_id = %s AND project_id = %s""",
             (machine_id, project_id),
         )
-        if indexed_project is None or Path(indexed_project["root_path"]).resolve() != seed_root:
+        if indexed_project is None or Path(indexed_project["root_path"]).resolve() != source_root:
             raise RuntimeError("private parent index did not persist the canonical seed root")
         source_status_after = source_status("source_status_after")
         evidence.update(
             {
-                "tree_oid": binding["tree_oid"],
-                "inventory_digest": binding["inventory_digest"],
-                "inventory_entry_count": len(inventory["entries"]),
                 "indexed_root": str(Path(indexed_project["root_path"]).resolve()),
                 "indexed_file_count": int(indexed_project["total_files"]),
                 "source_status_before": source_status_before,
@@ -1137,28 +1069,6 @@ def _provision_private_parent_index(
         evidence["status"] = "failed"
         evidence["error"] = {"error_type": type(error).__name__, "message": str(error)}
     finally:
-        if checkout_rebound:
-            try:
-                with database.transaction() as connection:
-                    restored = connection.execute(
-                        """UPDATE project_checkouts
-                        SET root_path = %s, updated_at = now()
-                        WHERE machine_id = %s AND project_id = %s AND root_path = %s
-                        RETURNING root_path""",
-                        (str(source_root), machine_id, project_id, str(seed_root)),
-                    ).fetchone()
-                if restored is None or Path(restored["root_path"]).resolve() != source_root:
-                    raise RuntimeError("private parent index checkout restoration failed")
-                evidence["checkout_root_after"] = str(source_root)
-            except BaseException as restore_error:
-                evidence["checkout_restore_error"] = {
-                    "error_type": type(restore_error).__name__,
-                    "message": str(restore_error),
-                }
-                if primary_error is None:
-                    primary_error = restore_error
-                    evidence["status"] = "failed"
-                    evidence["error"] = evidence["checkout_restore_error"]
         if issued is not None:
             try:
                 manager.revoke(
@@ -1365,7 +1275,6 @@ def _probe_ask_request(arguments: argparse.Namespace) -> AskRequest:
     return AskRequest(
         question=f"{_probe_question(arguments.project_root)}\nProbe phase: {arguments.phase}.",
         project_id=arguments.project_id,
-        commit_ref=arguments.source_commit,
         investigator_profile="ask-investigator",
         reviewer_profile="ask-reviewer",
     )

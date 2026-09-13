@@ -47,7 +47,7 @@ def _current_project_id() -> str:
 def create_ask_registry(
     service_resolver: Callable[[str], Any | None],
     *,
-    project_root_resolver: Callable[[str], Path],
+    project_root_resolver: Callable[[str, str | None], Path],
 ) -> InternalToolRegistry:
     """Create public, pipeline-stage, and agent-facing Ask tools."""
     registry = InternalToolRegistry(
@@ -67,7 +67,7 @@ def create_ask_registry(
     @registry.tool(description="Start a durable Ask run for the current project.")
     async def start_ask_run(
         question: str,
-        commit_ref: str = "HEAD",
+        project_path: str | None = None,
         timeout_seconds: float = 600.0,
         retrieval_mode: Literal["deterministic", "hybrid"] = "deterministic",
         idempotency_key: str | None = None,
@@ -76,14 +76,15 @@ def create_ask_registry(
         request = AskRequest(
             question=question,
             project_id=project_id,
-            commit_ref=commit_ref,
             timeout_seconds=timeout_seconds,
             retrieval_mode=_retrieval_mode(retrieval_mode),
             investigator_profile=_INVESTIGATOR_PROFILE,
             reviewer_profile=_REVIEWER_PROFILE,
             idempotency_key=idempotency_key,
         )
-        project_root = await asyncio.to_thread(project_root_resolver, project_id)
+        context = get_project_context() or {}
+        caller_path = project_path or context.get("project_path")
+        project_root = await asyncio.to_thread(project_root_resolver, project_id, caller_path)
         result = await ask_service.start(
             request,
             project_root=project_root,
@@ -144,13 +145,10 @@ def create_ask_registry(
             "download_url": f"/api/ask/runs/{run_id}/export?project_id={project_id}",
         }
 
-    @registry.tool(description="Prepare the immutable source snapshot for an owning Ask pipeline.")
+    @registry.tool(description="Bind the caller index for an owning Ask pipeline.")
     async def prepare(run_id: str, project_id: str) -> dict[str, Any]:
         project_id, ask_service = binding(project_id)
-        root = await asyncio.to_thread(project_root_resolver, project_id)
-        return _payload(
-            await ask_service.prepare(run_id=run_id, project_id=project_id, project_root=root)
-        )
+        return _payload(await ask_service.prepare(run_id=run_id, project_id=project_id))
 
     @registry.tool(description="Seed deterministic evidence for an owning Ask pipeline.")
     async def seed(run_id: str, project_id: str) -> dict[str, Any]:

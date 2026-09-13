@@ -121,7 +121,7 @@ fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
     };
     let machine_placeholder = push_param(params, machine_id);
     match &ctx.index_scope {
-        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+        ProjectIndexScope::Single => {
             let project_placeholder = push_id_param(params, &ctx.project_id);
             let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
             format!(

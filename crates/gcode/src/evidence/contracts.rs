@@ -5,31 +5,6 @@ pub const DEFAULT_MAX_BYTES: usize = 16_384;
 pub const DEFAULT_GRAPH_DEPTH: usize = 2;
 pub const DEFAULT_RESULT_LIMIT: usize = 1_000;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SnapshotRequest {
-    pub schema_version: u32,
-    pub project_id: String,
-    pub commit_oid: String,
-    #[serde(flatten)]
-    pub action: SnapshotAction,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-pub enum SnapshotAction {
-    Inspect,
-    Materialize { target_root: String },
-    Verify { target_root: String },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SnapshotResponse {
-    pub schema_version: u32,
-    pub binding: SnapshotBinding,
-    pub inventory: SnapshotInventory,
-}
-
 fn default_max_bytes() -> usize {
     DEFAULT_MAX_BYTES
 }
@@ -44,12 +19,10 @@ fn default_result_limit() -> usize {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SnapshotBinding {
+pub struct RepositoryBinding {
     pub project_id: String,
     pub commit_oid: String,
     pub tree_oid: String,
-    pub inventory_digest: String,
-    pub commit: CommitBinding,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -95,57 +68,16 @@ pub enum ChangeStatus {
     TypeChanged,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SnapshotInventory {
-    pub schema_version: u32,
-    pub complete: bool,
-    pub digest: String,
-    pub entries: Vec<InventoryEntry>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InventoryEntry {
-    pub path: String,
-    pub mode: String,
-    pub kind: TrackedFileKind,
-    pub object_oid: String,
-    pub blob_oid: Option<String>,
-    pub size_bytes: Option<u64>,
-    pub content_hash: Option<String>,
-    pub language: Option<String>,
-    pub exclusion: Option<ExclusionReason>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrackedFileKind {
-    File,
-    Executable,
-    Symlink,
-    Gitlink,
-    Unsupported,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExclusionReason {
-    Binary,
-    Gitlink,
-    Oversized,
-    SensitiveContent,
-    SensitivePath,
-    Symlink,
     UnsafePath,
-    UnsupportedEncoding,
-    UnsupportedObject,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceRequest {
     pub schema_version: u32,
-    pub binding: SnapshotBinding,
+    pub binding: RepositoryBinding,
     #[serde(flatten)]
     pub operation: EvidenceOperation,
     #[serde(default = "default_max_bytes")]
@@ -333,7 +265,6 @@ impl EvidenceItem {
 pub struct SourceEvidence {
     pub evidence_id: String,
     pub path: String,
-    pub blob_oid: String,
     pub content_hash: String,
     pub excerpt_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -402,13 +333,12 @@ pub struct CommitMetadataEvidence {
 pub struct EvidenceResponse {
     pub request: EvidenceRequest,
     pub request_fingerprint: String,
-    pub binding: SnapshotBinding,
+    pub binding: RepositoryBinding,
     pub contract: ContractIdentity,
     pub items: Vec<EvidenceItem>,
     pub complete: bool,
     pub completeness: Completeness,
     pub bounds: AppliedBounds,
-    pub exclusions: Vec<InventoryEntry>,
     pub warnings: Vec<EvidenceWarning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation: Option<String>,

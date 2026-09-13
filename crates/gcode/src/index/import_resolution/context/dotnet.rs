@@ -34,16 +34,6 @@ pub(super) fn build_csharp_index(root_path: &Path, candidate_files: &[PathBuf]) 
     collect_csharp_index(observations)
 }
 
-pub(super) fn build_csharp_index_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> CsharpIndex {
-    collect_csharp_index(
-        sources
-            .iter()
-            .map(|(rel, source)| observe_csharp_source(rel, source)),
-    )
-}
-
 fn observe_csharp_source(
     rel: &str,
     source: &[u8],

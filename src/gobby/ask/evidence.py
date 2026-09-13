@@ -20,7 +20,7 @@ from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import EvidenceReference, RetrievalMode
 from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
-from gobby.code_index.eligibility import code_index_id_for_root
+from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
 from gobby.runtime_grants.signing import payload_checksum
 from gobby.storage.hub.operation_deadline import database_operation_deadline
@@ -101,48 +101,20 @@ def _credential_text(value: str, *, source_references: bool = False) -> bool:
     )
 
 
-def _contains_credential(
-    value: object,
-    *,
-    source_languages: Mapping[str, str | None] | None = None,
-    source_references: bool = False,
-) -> bool:
+def _contains_credential(value: object, *, source_references: bool = False) -> bool:
     if isinstance(value, str):
         return _credential_text(value, source_references=source_references)
     if isinstance(value, Mapping):
-        path = value.get("path")
-        language = (
-            source_languages.get(path)
-            if source_languages is not None and isinstance(path, str)
-            else None
-        )
-        for key, child in value.items():
-            if _credential_text(str(key)):
-                return True
-            if key in {"path", "paths"}:
-                continue
-            child_source_references = key == "query" or (
-                key == "excerpt"
-                and (
-                    source_languages is None
-                    or (
-                        isinstance(path, str)
-                        and path in source_languages
-                        and language not in {None, "bash", "json", "yaml"}
-                    )
-                )
-            )
-            if _contains_credential(
-                child,
-                source_languages=source_languages,
-                source_references=child_source_references,
-            ):
-                return True
-        return False
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return any(
-            _contains_credential(child, source_languages=source_languages) for child in value
+            _credential_text(str(key))
+            or (
+                key not in {"path", "paths", "excerpt"}
+                and _contains_credential(child, source_references=key == "query")
+            )
+            for key, child in value.items()
         )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return any(_contains_credential(child) for child in value)
     return False
 
 
@@ -199,11 +171,9 @@ class EvidenceAdmission:
             raise EvidenceAdmissionError(f"Ask run does not exist: {self.run_id}")
         if self.artifacts.project_id != record.binding.project_id:
             raise EvidenceAdmissionError("artifact store does not belong to the Ask project")
-        current = self.storage.get_snapshot_generation(self.run_id)
+        current = record.generation
         if current is None:
             raise EvidenceAdmissionError("Ask run has no current snapshot generation")
-        if record.binding.snapshot_artifact is None or record.binding.inventory_digest is None:
-            raise EvidenceAdmissionError("Ask run has no persisted snapshot identity")
         try:
             self.artifacts.verify_manifest()
             lifecycle = self.artifacts.read_body(current.lifecycle_artifact)
@@ -219,65 +189,32 @@ class EvidenceAdmission:
         remaining = (deadline_at - datetime.now(UTC)).total_seconds()
         if not math.isfinite(remaining):
             raise EvidenceAdmissionError("persisted evidence deadline is not finite")
+        source_root = Path(record.binding.repository_root).resolve(strict=True)
+        if not source_root.is_dir():
+            raise EvidenceAdmissionError("current repository root is unavailable")
+        scratch_root = self.artifacts.run_root.resolve()
+        if source_root.is_relative_to(scratch_root) or scratch_root.is_relative_to(source_root):
+            raise EvidenceAdmissionError("repository and scratch roots must be disjoint")
+        binding = {
+            "project_id": overlay_project_id_for_root(source_root) or record.binding.project_id,
+            "commit_oid": record.binding.commit_oid,
+            "tree_oid": record.binding.tree_oid,
+        }
         expected = {
             "generation": current.generation,
             "run_id": record.run_id,
             "project_id": record.binding.project_id,
-            "commit_oid": record.binding.commit_oid,
+            "binding": binding,
+            "repository_root": str(source_root),
             "deadline_at": deadline_at.isoformat().replace("+00:00", "Z"),
             "retrieval_mode": record.binding.retrieval_mode.value,
-            "inventory_digest": record.binding.inventory_digest,
-            "snapshot_artifact": record.binding.snapshot_artifact,
         }
         for key, value in expected.items():
             if lifecycle.get(key) != value:
                 raise EvidenceAdmissionError(
-                    f"current snapshot lifecycle {key} differs from the persisted Ask run"
+                    f"current binding lifecycle {key} differs from the persisted Ask run"
                 )
-        try:
-            identity = self.artifacts.read_body(record.binding.snapshot_artifact)
-        except (OSError, ValueError, RuntimeError) as error:
-            raise EvidenceAdmissionError(
-                "persisted snapshot identity artifact is invalid"
-            ) from error
-        for key in ("run_id", "project_id", "commit_oid", "deadline_at", "retrieval_mode"):
-            if identity.get(key) != expected[key]:
-                raise EvidenceAdmissionError(
-                    f"snapshot identity {key} differs from the persisted Ask run"
-                )
-        binding = identity.get("binding")
-        inventory = identity.get("inventory")
-        if not isinstance(binding, dict) or not isinstance(inventory, dict):
-            raise EvidenceAdmissionError("snapshot identity is missing its native payload")
-        entries = inventory.get("entries")
-        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
-            raise EvidenceAdmissionError("snapshot identity inventory is invalid")
-        self.source_languages = {
-            entry["path"]: entry.get("language")
-            for entry in entries
-            if isinstance(entry.get("path"), str)
-            and (entry.get("language") is None or isinstance(entry.get("language"), str))
-            and entry.get("exclusion") is None
-        }
-        if binding.get("commit_oid") != record.binding.commit_oid:
-            raise EvidenceAdmissionError(
-                "native snapshot binding differs from the persisted Ask run"
-            )
-        if binding.get("inventory_digest") != record.binding.inventory_digest or (
-            inventory.get("digest") != record.binding.inventory_digest
-        ):
-            raise EvidenceAdmissionError("native snapshot inventory identity changed")
-
-        source_value = lifecycle.get("source_root")
-        runtime_value = lifecycle.get("index_runtime")
-        if not isinstance(source_value, str) or not isinstance(runtime_value, dict):
-            raise EvidenceAdmissionError("current snapshot lifecycle is incomplete")
-        source_root = Path(source_value).resolve()
-        expected_source = (self.artifacts.run_root / "source").resolve()
-        if source_root != expected_source or not source_root.is_dir():
-            raise EvidenceAdmissionError("current snapshot source root is unavailable")
-        if binding.get("project_id") != code_index_id_for_root(source_root):
-            raise EvidenceAdmissionError("native snapshot index scope identity changed")
+        runtime_value = lifecycle
         executable_value = runtime_value.get("executable")
         argv_prefix_value = runtime_value.get("argv_prefix")
         if (
@@ -486,7 +423,7 @@ class EvidenceAdmission:
             "operation": operation,
             "request": stored_request,
             "request_hash": _content_hash(request),
-            "snapshot_inventory_digest": self.snapshot_binding["inventory_digest"],
+            "binding_digest": _content_hash(self.snapshot_binding),
             "retrieval_mode": self.retrieval_mode.value,
             "deadline_at": self.deadline_at.isoformat().replace("+00:00", "Z"),
             "argv": stored_argv,
@@ -851,8 +788,7 @@ class EvidenceAdmission:
             {key: value for key, value in result.items() if key != "response"}
         )
         if response is not None:
-            # Admission established that the response contains no credentials. Keep its
-            # source bytes exact so persisted citation hashes still name the Git evidence.
+            # Keep indexed source bytes exact so persisted citation hashes remain valid.
             stored_result["response"] = response
         result_pointer = await self._write_artifact(
             "evidence-result",
@@ -880,7 +816,7 @@ class EvidenceAdmission:
             evidence_ids=evidence_ids,
             request_hash=_content_hash(request),
             response_hash=_content_hash(response) if response is not None else None,
-            snapshot_inventory_digest=str(self.snapshot_binding["inventory_digest"]),
+            binding_digest=_content_hash(self.snapshot_binding),
             contract=contract,
             usage=usage,
         )
@@ -957,7 +893,7 @@ class EvidenceAdmission:
         total_items = bounds.get("total_items")
         if not isinstance(total_items, int) or total_items < len(items):
             raise EvidenceAdmissionError("response total item bound is invalid")
-        if _contains_credential(response, source_languages=self.source_languages):
+        if _contains_credential(response):
             raise EvidenceAdmissionError("response contains credential-bearing content")
         return response
 

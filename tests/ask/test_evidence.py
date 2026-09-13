@@ -24,7 +24,6 @@ from gobby.ask.contracts import (
 from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError, _contains_credential
 from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
-from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.runtime_grants.schema import GrantBundle
 from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.hub.protocol import HubDatabase
@@ -35,77 +34,25 @@ _TEST_LITERAL_VALUE = "01234567" + "89abcdef"
 
 
 @pytest.mark.parametrize(
-    ("value", "source_languages", "expected"),
+    "value, expected",
     [
-        ({"excerpt": str(Path.home()) + "/example.py"}, None, False),
-        (
-            {"path": "settings.yaml", "excerpt": f"token = {Path.home()}/x"},
-            {"settings.yaml": "yaml"},
-            True,
-        ),
-        ({"excerpt": "token = runtime_token_reference"}, None, False),
-        (
-            {"path": "src/runtime.py", "excerpt": "token = runtime_token_reference"},
-            {"src/runtime.py": "python"},
-            False,
-        ),
-        (
-            {"path": "src/runtime.py", "excerpt": "token = " + repr(_TEST_LITERAL_VALUE)},
-            {"src/runtime.py": "python"},
-            True,
-        ),
-        (
-            {"path": "settings.yaml", "excerpt": "token = runtime_token_reference"},
-            {"settings.yaml": "yaml"},
-            True,
-        ),
-        (
-            {"path": "settings.json", "excerpt": json.dumps({"token": _TEST_LITERAL_VALUE})},
-            {"settings.json": "json"},
-            True,
-        ),
-        (
-            {"path": "docs/task-native-source-reference.md", "excerpt": "safe evidence"},
-            {"docs/task-native-source-reference.md": None},
-            False,
-        ),
-        ({"excerpt": "postgresql://worker:real-secret@127.0.0.1/db"}, None, True),
-        # The snapshot binding echoes the pinned commit's changed paths, and those
-        # fields are not the skipped "path"/"paths" keys, so an ordinary repository
-        # path is classified as response content. Both spellings below embed "sk-"
-        # inside a longer word; only a real key stands alone at a word boundary.
         (
             {
-                "commit": {
-                    "changed_paths": [
-                        {
-                            "old_path": "docs/evidence/ask-snapshot-preparation.md",
-                            "new_path": "docs/evidence/ask-snapshot-preparation.md",
-                        }
-                    ]
-                }
+                "path": "docs/guides/cli-commands.md",
+                "excerpt": "postgresql://gobby:gobby@localhost",
             },
-            None,
             False,
         ),
-        (
-            {"path": "rules/close.yaml", "excerpt": "name: queue-task-memory-review-after-close"},
-            {"rules/close.yaml": "yaml"},
-            False,
-        ),
-        (
-            {"path": "src/runtime.py", "excerpt": 'key = "sk-' + "0123456789abcdefghij" + '"'},
-            {"src/runtime.py": "python"},
-            True,
-        ),
+        ({"path": "tests/fixture.py", "excerpt": "token = 'fixture-value'"}, False),
+        ({"query": "token = runtime_token_reference"}, False),
+        ({"query": "postgresql://worker:request-secret@127.0.0.1/db"}, True),
+        ({"error": "postgresql://worker:runtime-secret@127.0.0.1/db"}, True),
     ],
 )
-def test_credential_classifier_matches_snapshot_source_semantics(
-    value: dict[str, object],
-    source_languages: dict[str, str | None] | None,
-    expected: bool,
+def test_indexed_excerpts_are_exact_and_runtime_credentials_are_rejected(
+    value: dict[str, object], expected: bool
 ) -> None:
-    assert _contains_credential(value, source_languages=source_languages) is expected
+    assert _contains_credential(value) is expected
 
 
 def _write_gcode_fixture(path: Path) -> None:
@@ -151,15 +98,11 @@ response = {
         'total_items': 1,
         'result_limit': request.get('search', {}).get('limit', 1000),
     },
-    'exclusions': [],
     'warnings': [],
     'continuation': None,
 }
 if query == 'credential-response':
-    response['items'][0].update({
-        'path': 'src/public.py',
-        'excerpt': 'postgresql://worker:successful-secret@127.0.0.1/db',
-    })
+    response['warnings'] = [{'code': 'runtime', 'message': 'postgresql://worker:successful-secret@127.0.0.1/db'}]
 if query == 'token = runtime_token_reference':
     excerpt = f'source = {Path.home()}/example.py\\ntoken = runtime_token_reference'
     excerpt_hash = hashlib.sha256(excerpt.encode()).hexdigest()
@@ -167,7 +110,6 @@ if query == 'token = runtime_token_reference':
         'item_type': 'source',
         'evidence_id': 'src:source-reference-response',
         'path': 'src/runtime.py',
-        'blob_oid': 'f' * 40,
         'content_hash': excerpt_hash,
         'excerpt_hash': excerpt_hash,
         'line_start': 1,
@@ -225,6 +167,8 @@ def _persist_authority(
         commit_resolver=resolve_commit,
         profile_resolver=_profile,
     )
+    source_root = state_root.parent / f"repository-{suffix}"
+    source_root.mkdir(parents=True, exist_ok=True)
     record = storage.start(
         AskRequest(
             question="Where is the source of truth?",
@@ -234,51 +178,15 @@ def _persist_authority(
             reviewer_profile="reviewer",
             idempotency_key=f"evidence-{suffix}",
         ),
-        state_root,
+        source_root,
     )
     artifacts = AskArtifactStore(state_root, project_id, record.run_id)
-    source_root = artifacts.run_root / "source"
-    source_root.mkdir()
     binding = {
-        "project_id": code_index_id_for_root(source_root),
-        "commit_oid": record.binding.commit_oid,
-        "tree_oid": record.binding.tree_oid,
-        "inventory_digest": "c" * 64,
-        "commit": {
-            "parent_oids": [],
-            "comparison_parent_oid": "d" * 40,
-            "comparison_kind": "empty_tree",
-            "changed_paths_digest": "e" * 64,
-            "changed_paths": [],
-        },
-    }
-    deadline_at = record.binding.deadline_at.isoformat().replace("+00:00", "Z")
-    identity = {
-        "schema_version": 1,
-        "run_id": record.run_id,
         "project_id": project_id,
         "commit_oid": record.binding.commit_oid,
-        "deadline_at": deadline_at,
-        "retrieval_mode": record.binding.retrieval_mode.value,
-        "binding": binding,
-        "inventory": {
-            "digest": binding["inventory_digest"],
-            "entries": [
-                {
-                    "path": "src/runtime.py",
-                    "language": "python",
-                    "exclusion": None,
-                }
-            ],
-        },
+        "tree_oid": record.binding.tree_oid,
     }
-    identity_pointer = artifacts.write_body("snapshot-identity", identity)
-    record = storage.attach_snapshot(
-        record.run_id,
-        inventory_digest=str(binding["inventory_digest"]),
-        snapshot_artifact=identity_pointer,
-        deadline_at=record.binding.deadline_at,
-    )
+    deadline_at = record.binding.deadline_at.isoformat().replace("+00:00", "Z")
     managed_execution_id = f"managed-{suffix}"
     grant = sign_grant(
         GrantBundle.model_validate(
@@ -344,20 +252,14 @@ def _persist_authority(
         "generation": 1,
         "run_id": record.run_id,
         "project_id": project_id,
-        "commit_oid": record.binding.commit_oid,
+        "binding": binding,
         "deadline_at": deadline_at,
         "retrieval_mode": record.binding.retrieval_mode.value,
-        "inventory_digest": binding["inventory_digest"],
-        "snapshot_artifact": identity_pointer,
-        "repository_root": str(state_root),
-        "source_root": str(source_root),
-        "worktree_id": f"worktree-{suffix}",
-        "index_runtime": {
-            "executable": str(executable),
-            "argv_prefix": list(argv_prefix),
-            "managed_execution_id": runtime.managed_execution_id,
-            "credential_generation": runtime.credential_generation,
-        },
+        "repository_root": str(source_root.resolve()),
+        "executable": str(executable.resolve()),
+        "argv_prefix": list(argv_prefix),
+        "managed_execution_id": runtime.managed_execution_id,
+        "credential_generation": runtime.credential_generation,
     }
     lifecycle_pointer = artifacts.write_body("snapshot-lifecycle", lifecycle)
     storage.publish_snapshot_generation(
@@ -586,7 +488,11 @@ async def test_durable_scoped_evidence_admission(
     assert any(item["status"] == "invalid_response" for item in checkpoint)
     assert all(item["usage"] is None for item in checkpoint)
     assert all(
-        item["snapshot_inventory_digest"] == binding["inventory_digest"] for item in checkpoint
+        item["binding_digest"]
+        == hashlib.sha256(
+            json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        for item in checkpoint
     )
     assert all(len(item["request_hash"]) == 64 for item in checkpoint)
 
@@ -608,7 +514,7 @@ async def test_durable_scoped_evidence_admission(
     )
 
     manifest = json.loads(artifacts.manifest_path.read_text(encoding="utf-8"))
-    assert len(manifest["artifacts"]) == 92
+    assert len(manifest["artifacts"]) == 91
     assert oct(artifacts.run_root.stat().st_mode & 0o777) == "0o700"
     assert all(
         oct((artifacts.run_root / item["relative_path"]).stat().st_mode & 0o777) == "0o600"
@@ -681,7 +587,11 @@ def test_evidence_checkpoint_row_lock_obeys_deadline(
         evidence_ids=(),
         request_hash="a" * 64,
         response_hash="b" * 64,
-        snapshot_inventory_digest=str(binding["inventory_digest"]),
+        binding_digest=str(
+            hashlib.sha256(
+                json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        ),
     )
 
     with psycopg.connect(temp_db.conninfo) as holder:

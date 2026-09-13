@@ -1,5 +1,4 @@
 mod bash;
-mod captured;
 mod common;
 mod go_rust_java_csharp;
 mod heritage;

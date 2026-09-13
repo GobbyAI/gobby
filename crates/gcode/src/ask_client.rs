@@ -18,7 +18,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) struct StartAskRequest<'a> {
     pub(crate) question: &'a str,
     pub(crate) project_id: &'a str,
-    pub(crate) commit_ref: &'a str,
+    pub(crate) project_path: &'a std::path::Path,
     pub(crate) timeout_seconds: u64,
     pub(crate) retrieval_mode: &'a str,
 }

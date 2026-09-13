@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 mod calls;
 
-pub(crate) use crate::index::indexer::index_snapshot;
 use calls::insert_call;
 pub use calls::upsert_calls;
 

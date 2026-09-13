@@ -143,7 +143,7 @@ async def test_ask_authorization_and_discovery(
     ask = build_ask_service(temp_db, project_id=project_id, state_root=tmp_path / "state")
     resolved_roots: list[str] = []
 
-    def resolve_root(resolved_project_id: str) -> Path:
+    def resolve_root(resolved_project_id: str, project_path: str | None) -> Path:
         resolved_roots.append(resolved_project_id)
         return tmp_path
 
@@ -229,7 +229,7 @@ async def test_ask_registry_requires_request_project_context(
     monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
     registry = create_ask_registry(
         resolve_service,
-        project_root_resolver=lambda _project_id: tmp_path,
+        project_root_resolver=lambda _project_id, _project_path: tmp_path,
     )
 
     with pytest.raises(RuntimeError, match="project context is unavailable"):
@@ -394,7 +394,7 @@ async def test_native_executor_can_execute_stage_through_real_proxy_registry(
             lambda requested_project_id: (
                 services.get("ask") if requested_project_id == project_id else None
             ),
-            project_root_resolver=lambda _project_id: tmp_path,
+            project_root_resolver=lambda _project_id, _project_path: tmp_path,
         )
     )
     mcp_manager = MagicMock()
@@ -527,7 +527,7 @@ async def test_ordinary_same_project_caller_cannot_execute_internal_stage_throug
     registries.add_registry(
         create_ask_registry(
             lambda requested_project_id: service if requested_project_id == project_id else None,
-            project_root_resolver=lambda _project_id: tmp_path,
+            project_root_resolver=lambda _project_id, _project_path: tmp_path,
         )
     )
     registry = registries.get_registry("gobby-ask")

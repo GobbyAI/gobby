@@ -13,13 +13,12 @@ pub(crate) fn run(
     project_override: Option<&str>,
     format: output::Format,
 ) -> anyhow::Result<()> {
-    let project_id = resolve_project_id(project_override)?;
+    let (project_id, project_root) = resolve_project_scope(project_override)?;
     let client = AskClient::new(project_id)?;
 
     match args.action() {
         AskAction::Start {
             question,
-            commit_ref,
             timeout_seconds,
             retrieval,
             background,
@@ -27,7 +26,7 @@ pub(crate) fn run(
             let request = StartAskRequest {
                 question,
                 project_id: client.project_id(),
-                commit_ref,
+                project_path: &project_root,
                 timeout_seconds,
                 retrieval_mode: retrieval.as_str(),
             };
@@ -75,7 +74,7 @@ pub(crate) fn run(
     }
 }
 
-fn resolve_project_id(project_override: Option<&str>) -> anyhow::Result<String> {
+fn resolve_project_scope(project_override: Option<&str>) -> anyhow::Result<(String, PathBuf)> {
     let root = match project_override {
         Some(value) => {
             let path = PathBuf::from(value);
@@ -83,12 +82,19 @@ fn resolve_project_id(project_override: Option<&str>) -> anyhow::Result<String> 
                 path.canonicalize()?
             } else {
                 let project = daemon::lookup_project_by_name(value)?;
-                return Ok(project.id);
+                return Ok((project.id, project.root));
             }
         }
         None => config::detect_project_root()?,
     };
-    Ok(config::resolve_project_identity(&root)?.project_id)
+    let identity = config::resolve_project_identity(&root)?;
+    let project_id = match identity.index_scope {
+        config::ProjectIndexScope::Overlay {
+            parent_project_id, ..
+        } => parent_project_id,
+        config::ProjectIndexScope::Single => identity.project_id,
+    };
+    Ok((project_id, identity.root))
 }
 
 fn wait_for_run(

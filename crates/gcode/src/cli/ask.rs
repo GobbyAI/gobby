@@ -25,13 +25,9 @@ impl AskRetrieval {
         .args(["question", "status", "resume", "cancel", "export"])
 ))]
 pub(crate) struct AskArgs {
-    /// Question to answer from immutable repository evidence
+    /// Question to answer from the current repository index
     #[arg(value_name = "QUESTION")]
     question: Option<String>,
-
-    /// Commit or tree to snapshot for a new run
-    #[arg(long, value_name = "REF", requires = "question")]
-    commit: Option<String>,
 
     /// Absolute run deadline in seconds from start
     #[arg(
@@ -75,7 +71,6 @@ pub(crate) struct AskArgs {
 pub(crate) enum AskAction<'a> {
     Start {
         question: &'a str,
-        commit_ref: &'a str,
         timeout_seconds: u64,
         retrieval: AskRetrieval,
         background: bool,
@@ -100,7 +95,6 @@ impl AskArgs {
         if let Some(question) = self.question.as_deref() {
             return AskAction::Start {
                 question,
-                commit_ref: self.commit.as_deref().unwrap_or("HEAD"),
                 timeout_seconds: self.timeout_seconds.unwrap_or(600),
                 retrieval: self.retrieval.unwrap_or(AskRetrieval::Deterministic),
                 background: self.background,

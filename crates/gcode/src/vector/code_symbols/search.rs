@@ -236,7 +236,7 @@ mod post_filter_tests {
 
 fn visible_vector_project_ids(ctx: &Context) -> Vec<&str> {
     match &ctx.index_scope {
-        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+        ProjectIndexScope::Single => {
             vec![ctx.project_id.as_str()]
         }
         ProjectIndexScope::Overlay {

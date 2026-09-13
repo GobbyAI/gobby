@@ -40,23 +40,6 @@ pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> Ha
         })
 }
 
-pub(super) fn build_elixir_local_module_roots_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashSet<String> {
-    sources
-        .iter()
-        .filter(|(rel, _)| {
-            matches!(
-                Path::new(rel).extension().and_then(|ext| ext.to_str()),
-                Some("ex" | "exs")
-            )
-        })
-        .flat_map(|(_, source)| elixir_module_names(source))
-        .filter_map(|module| module.split('.').next().map(ToOwned::to_owned))
-        .filter(|root| is_elixir_alias(root))
-        .collect()
-}
-
 /// Maps each locally-declared Elixir module's fully-qualified name to the
 /// project-relative `.ex`/`.exs` files that declare it. Built by scanning
 /// `defmodule` headers because Elixir modules do not have to follow the
@@ -106,31 +89,6 @@ pub(in crate::index::import_resolution) fn build_elixir_local_module_files(
     module_files
 }
 
-pub(super) fn build_elixir_local_module_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    let mut module_files = HashMap::<String, Vec<String>>::new();
-    for (rel, source) in sources.iter() {
-        if !matches!(
-            Path::new(rel).extension().and_then(|ext| ext.to_str()),
-            Some("ex" | "exs")
-        ) {
-            continue;
-        }
-        for module in elixir_module_names(source) {
-            module_files
-                .entry(module)
-                .or_default()
-                .push(rel.to_string());
-        }
-    }
-    for files in module_files.values_mut() {
-        files.sort();
-        files.dedup();
-    }
-    module_files
-}
-
 fn elixir_module_names(source: &[u8]) -> Vec<String> {
     BufReader::new(source)
         .lines()
@@ -149,15 +107,6 @@ fn elixir_module_names(source: &[u8]) -> Vec<String> {
 pub(super) fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, String> {
     let deps = load_elixir_dependency_names(root_path);
     elixir_external_roots(deps)
-}
-
-pub(super) fn load_elixir_external_roots_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, String> {
-    elixir_external_roots(elixir_dependency_names(
-        sources.get("mix.exs"),
-        sources.get("mix.lock"),
-    ))
 }
 
 fn elixir_external_roots(deps: HashSet<String>) -> HashMap<String, String> {

@@ -274,7 +274,7 @@ class AskStageRuntime:
             deterministic,
             review,
             request=record.request.model_dump(mode="json"),
-            binding=evidence.snapshot_binding.model_dump(mode="json"),
+            binding=evidence.repository_binding.model_dump(mode="json"),
             profiles={
                 "investigator": record.investigator.model_dump(mode="json"),
                 "reviewer": record.reviewer.model_dump(mode="json"),
@@ -316,10 +316,10 @@ class AskStageRuntime:
         if existing is not None:
             return existing
         artifacts = AskArtifactStore(self.state_root, record.binding.project_id, record.run_id)
-        generation = await asyncio.to_thread(
-            self.storage.get_snapshot_generation,
-            record.run_id,
-        )
+        current = await asyncio.to_thread(self.storage.get, record.run_id)
+        if current is None:
+            raise RuntimeError("Ask run disappeared during resource preparation")
+        generation = current.generation
         if generation is None:
             if project_root is None:
                 inputs = await asyncio.to_thread(self.storage.execution_inputs, record.run_id)

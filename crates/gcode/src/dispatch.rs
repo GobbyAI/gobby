@@ -349,40 +349,14 @@ fn run() -> anyhow::Result<()> {
     init_logger(cli.quiet);
     let format = cli::effective_format(cli.format, &cli.command);
     let effective_token_budget = cli::effective_token_budget(format, &cli.command);
-    let (evidence_request, snapshot_request) = match &cli.command {
-        Command::Evidence {
-            request_json: Some(request_json),
-            snapshot_json: None,
-        } => (
-            Some(commands::evidence::preflight(
-                request_json,
-                format,
-                cli.allow_stale,
-            )?),
-            None,
-        ),
-        Command::Evidence {
-            request_json: None,
-            snapshot_json: Some(snapshot_json),
-        } => (
-            None,
-            Some(commands::evidence::preflight_snapshot(
-                snapshot_json,
-                format,
-                cli.allow_stale,
-            )?),
-        ),
-        Command::Evidence { .. } => unreachable!("clap enforces one evidence input"),
-        _ => (None, None),
+    let evidence_request = match &cli.command {
+        Command::Evidence { request_json } => Some(commands::evidence::preflight(
+            request_json,
+            format,
+            cli.allow_stale,
+        )?),
+        _ => None,
     };
-
-    if let Some(request) = snapshot_request {
-        let root = match &cli.project {
-            Some(project) => std::path::PathBuf::from(project).canonicalize()?,
-            None => config::detect_project_root()?,
-        };
-        return commands::evidence::run_snapshot(&root, request);
-    }
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, format)? {
@@ -439,11 +413,6 @@ fn run() -> anyhow::Result<()> {
             receipt.as_deref().map(std::path::Path::new),
         ),
         Command::Index {
-            snapshot_commit: Some(commit_oid),
-            ..
-        } => commands::index::run_snapshot(&ctx, &commit_oid, format),
-        Command::Index {
-            snapshot_commit: None,
             path,
             files,
             full,

@@ -42,51 +42,12 @@ def _valid_case(
 
     content = b"def alpha():\n    return 1\n"
     excerpt = b"    return 1\n"
-    blob_oid = _blob_oid(content)
     content_hash = hashlib.sha256(content).hexdigest()
     excerpt_hash = hashlib.sha256(excerpt).hexdigest()
-    changed_path = {
-        "status": "modified",
-        "similarity": None,
-        "old_path": "src/app.py",
-        "new_path": "src/app.py",
-        "old_exclusion": None,
-        "new_exclusion": None,
-        "old_mode": "100644",
-        "new_mode": "100644",
-        "old_blob_oid": "c" * 40,
-        "new_blob_oid": blob_oid,
-    }
-    changed_paths = [changed_path]
-    binding = {
-        "project_id": project_id,
-        "commit_oid": "a" * 40,
-        "tree_oid": "d" * 40,
-        "inventory_digest": "",
-        "commit": {
-            "parent_oids": ["b" * 40],
-            "comparison_parent_oid": "b" * 40,
-            "comparison_kind": "first_parent",
-            "changed_paths_digest": _json_hash(changed_paths, sort_keys=False),
-            "changed_paths": changed_paths,
-        },
-    }
-    entry = {
-        "path": "src/app.py",
-        "mode": "100644",
-        "kind": "file",
-        "object_oid": blob_oid,
-        "blob_oid": blob_oid,
-        "size_bytes": len(content),
-        "content_hash": content_hash,
-        "language": "python",
-        "exclusion": None,
-    }
-    binding["inventory_digest"] = _json_hash([entry], sort_keys=False)
+    binding = {"project_id": project_id, "commit_oid": "a" * 40, "tree_oid": "d" * 40}
     source_identity = [
         binding,
         "src/app.py",
-        blob_oid,
         len(b"def alpha():\n"),
         len(content),
         content_hash,
@@ -98,7 +59,6 @@ def _valid_case(
         "item_type": "source",
         "evidence_id": source_id,
         "path": "src/app.py",
-        "blob_oid": blob_oid,
         "content_hash": content_hash,
         "excerpt_hash": excerpt_hash,
         "line_start": 2,
@@ -140,24 +100,18 @@ def _valid_case(
             "total_items": 1,
             "result_limit": 1,
         },
-        "exclusions": [],
         "warnings": [],
     }
     evidence = EvidenceManifest.model_validate(
         {
             "run_id": run_id,
-            "snapshot_binding": binding,
-            "inventory": {
-                "schema_version": 1,
-                "complete": True,
-                "digest": binding["inventory_digest"],
-                "entries": [entry],
-            },
+            "repository_binding": binding,
+            "project_id": project_id,
             "records": [
                 {
                     "run_id": run_id,
                     "invocation_id": "invocation-1",
-                    "snapshot_inventory_digest": binding["inventory_digest"],
+                    "binding_digest": _json_hash(binding),
                     "request_hash": _json_hash(request),
                     "response_hash": _json_hash(response),
                     "response": response,
@@ -169,7 +123,6 @@ def _valid_case(
         run_id=run_id,
         evidence_id=source_id,
         path="src/app.py",
-        blob_oid=blob_oid,
         content_hash=content_hash,
         excerpt_hash=excerpt_hash,
         line_start=2,
@@ -225,7 +178,7 @@ def _valid_case(
         ),
         rationale="All question parts are supported.",
     )
-    return draft, evidence, {("src/app.py", blob_oid): content}, review
+    return draft, evidence, {("src/app.py", content_hash): content}, review
 
 
 def test_repeated_canonical_evidence_retains_complete_invocation_provenance() -> None:
@@ -452,16 +405,33 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
 
     draft, evidence, blobs, _review = _valid_case()
     body = evidence.model_dump(mode="json")
-    binding = body["snapshot_binding"]
-    changed_path = binding["commit"]["changed_paths"][0]
+    binding = body["repository_binding"]
+    changed_path = {
+        "status": "modified",
+        "similarity": None,
+        "old_path": "src/app.py",
+        "new_path": "src/app.py",
+        "old_exclusion": None,
+        "new_exclusion": None,
+        "old_mode": "100644",
+        "new_mode": "100644",
+        "old_blob_oid": "c" * 40,
+        "new_blob_oid": "f" * 40,
+    }
+    commit = {
+        "parent_oids": ["b" * 40],
+        "comparison_parent_oid": "b" * 40,
+        "comparison_kind": "first_parent",
+        "changed_paths_digest": _json_hash([changed_path], sort_keys=False),
+    }
     record_hash = _json_hash(changed_path, sort_keys=False)
     evidence_id = "commit:" + _json_hash(
         [
             binding["commit_oid"],
-            binding["commit"]["parent_oids"],
-            binding["commit"]["comparison_parent_oid"],
-            binding["commit"]["comparison_kind"],
-            binding["commit"]["changed_paths_digest"],
+            commit["parent_oids"],
+            commit["comparison_parent_oid"],
+            commit["comparison_kind"],
+            commit["changed_paths_digest"],
             record_hash,
         ],
         sort_keys=False,
@@ -470,10 +440,10 @@ def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
         "item_type": "commit_metadata",
         "evidence_id": evidence_id,
         "commit_oid": binding["commit_oid"],
-        "parent_oids": binding["commit"]["parent_oids"],
-        "comparison_parent_oid": binding["commit"]["comparison_parent_oid"],
-        "comparison_kind": binding["commit"]["comparison_kind"],
-        "changed_paths_digest": binding["commit"]["changed_paths_digest"],
+        "parent_oids": commit["parent_oids"],
+        "comparison_parent_oid": commit["comparison_parent_oid"],
+        "comparison_kind": commit["comparison_kind"],
+        "changed_paths_digest": commit["changed_paths_digest"],
         "changed_path_count": 1,
         "changed_path": changed_path,
         "record_hash": record_hash,
@@ -619,7 +589,7 @@ def test_graph_citation_validates_canonical_owner_and_requires_inference() -> No
     owner = {"path": "src/app.py", "content_hash": source["content_hash"]}
     graph_id = "graph:" + _json_hash(
         [
-            body["snapshot_binding"],
+            body["repository_binding"],
             source["evidence_id"],
             "call",
             "outgoing",

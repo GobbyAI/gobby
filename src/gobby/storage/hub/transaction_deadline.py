@@ -116,6 +116,9 @@ class TransactionDeadline:
             deadline.remaining_seconds()
 
     def _set_timeouts(self, values: tuple[int, ...]) -> None:
+        # PostgreSQL timeout GUCs use signed 32-bit milliseconds. A distant
+        # application deadline must not overflow the server setting.
+        values = tuple(min(value, 2**31 - 1) for value in values)
         self._conn.execute(
             f"SET LOCAL statement_timeout = '{values[0]}ms'; "
             f"SET LOCAL lock_timeout = '{values[1]}ms'"

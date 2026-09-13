@@ -314,3 +314,12 @@ def test_deadline_settings_do_not_leak_on_ambient_cancellation_or_pool_reuse(
     for value in scoped[1:]:
         assert value.endswith("ms")
         assert 0 < int(value.removesuffix("ms")) <= 250
+
+
+def test_distant_deadline_fits_postgres_timeout_range(database: PostgresHubDatabase) -> None:
+    with database.transaction() as txn:
+        txn.execute("SET LOCAL statement_timeout = 0; SET LOCAL lock_timeout = 0")
+        with database_operation_deadline(timeout_seconds=10**10, operation_timeout_seconds=10**10):
+            row = txn.execute("SELECT current_setting('statement_timeout') AS value").fetchone()
+            assert row is not None
+            assert row["value"] == "2147483647ms"

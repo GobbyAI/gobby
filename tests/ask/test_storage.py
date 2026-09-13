@@ -113,7 +113,6 @@ def test_pinned_idempotent_run_persistence(
         reviewer_profile="reviewer",
         idempotency_key="same-request",
     )
-    assert request.commit_ref == "HEAD"
     assert request.timeout_seconds == 600
     assert request.retrieval_mode is RetrievalMode.DETERMINISTIC
 
@@ -141,22 +140,6 @@ def test_pinned_idempotent_run_persistence(
     )
     assert json.loads(persisted.definition_json or "{}") == {"name": "native-ask", "version": 1}
     assert record.investigator.content_hash is not None
-    snapshot_pointer = {
-        "kind": "snapshot",
-        "project_id": project_id,
-        "run_id": record.run_id,
-        "sha256": "d" * 64,
-        "relative_path": "bodies/snapshot.json",
-        "size_bytes": 123,
-    }
-    attached = storage.attach_snapshot(
-        record.run_id,
-        inventory_digest="c" * 64,
-        snapshot_artifact=snapshot_pointer,
-        deadline_at=record.binding.deadline_at,
-    )
-    assert attached.binding.inventory_digest == "c" * 64
-    assert attached.binding.snapshot_artifact == snapshot_pointer
     lifecycle_pointer = {
         "kind": "snapshot-lifecycle",
         "project_id": project_id,
@@ -172,15 +155,19 @@ def test_pinned_idempotent_run_persistence(
         expected_previous_generation=None,
         deadline_at=record.binding.deadline_at,
     )
-    current = storage.get_snapshot_generation(record.run_id)
+    current_record = storage.get(record.run_id)
+    assert current_record is not None
+    current = current_record.generation
     assert current is not None
     assert current.generation == 1
     assert current.lifecycle_artifact == lifecycle_pointer
-    with pytest.raises(ValueError, match="immutable"):
-        storage.attach_snapshot(
+    assert current_record.binding.repository_root == str(tmp_path.resolve())
+    with pytest.raises(ValueError, match="generation changed"):
+        storage.publish_snapshot_generation(
             record.run_id,
-            inventory_digest="e" * 64,
-            snapshot_artifact=snapshot_pointer,
+            generation=2,
+            lifecycle_artifact=lifecycle_pointer,
+            expected_previous_generation=None,
             deadline_at=record.binding.deadline_at,
         )
     relation = temp_db.fetchone("SELECT to_regclass('public.ask_runs') AS relation")
@@ -303,7 +290,7 @@ def test_runtime_metadata_survives_executor_outputs_and_concurrent_evidence(
                 result_artifact={"kind": "result", "index": index},
                 request_hash=f"{index:064x}",
                 response_hash=f"{index + 10:064x}",
-                snapshot_inventory_digest="c" * 64,
+                binding_digest="c" * 64,
             ),
             deadline_at=record.binding.deadline_at,
         )
@@ -317,7 +304,9 @@ def test_runtime_metadata_survives_executor_outputs_and_concurrent_evidence(
         outputs_json=json.dumps({"result": {"status": "completed"}}),
     )
 
-    generation = storage.get_snapshot_generation(record.run_id)
+    refreshed = storage.get(record.run_id)
+    assert refreshed is not None
+    generation = refreshed.generation
     assert generation is not None and generation.lifecycle_artifact == lifecycle
     assert {item.invocation_id for item in storage.evidence_references(record.run_id)} == {
         "invocation-1",

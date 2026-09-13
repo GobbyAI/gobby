@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 
+from gobby.agents.code_index import ensure_isolation_code_index
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.claims import (
     AnswerDraft,
@@ -27,7 +28,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.worktrees import LocalWorktreeManager
 from tests.ask.test_native_integration import (
     _branch_gcode,
     _commit,
@@ -56,7 +56,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
     source_path.write_text("def answer():\n    return 41\n", encoding="utf-8")
     _commit(repo, "root")
     source_path.write_text("def answer():\n    return 42\n", encoding="utf-8")
-    commit_oid = _commit(repo, "pin answer")
+    _commit(repo, "pin answer")
 
     project_id = isolated.project.id
     session = SessionManager(temp_db).register(
@@ -74,7 +74,6 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         AskRequest(
             question="What does answer return and which commit changed it?",
             project_id=project_id,
-            commit_ref=commit_oid,
             investigator_profile="investigator",
             reviewer_profile="reviewer",
         ),
@@ -109,8 +108,32 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         lambda _name: (_ for _ in ()).throw(AssertionError("global gcode lookup")),
     )
     gcode_bin = _branch_gcode()
+    grant = credentials.issue_tool_request(
+        session_id=UUID(session.id),
+        requested_project_path=str(repo),
+        expires_at=record.binding.deadline_at,
+    )
+    try:
+        await ensure_isolation_code_index(
+            str(repo),
+            gcode_bin=gcode_bin,
+            credential=grant.credential,
+            principal_kind="tool_chat",
+            runtime_root=runtime_root / "fixture-index",
+            identity_env={
+                "GOBBY_AGENT_RUN_ID": str(grant.credential.managed_execution_id),
+                "GOBBY_MACHINE_ID": isolated.machine_id,
+                "GOBBY_PROJECT_ID": project_id,
+                "GOBBY_SESSION_ID": session.id,
+            },
+        )
+    finally:
+        credentials.revoke(
+            grant.credential.managed_execution_id,
+            generation=grant.credential.credential_generation,
+            reason="fixture_indexed",
+        )
     manager = AskSnapshotManager(
-        worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
         snapshot_executable=gcode_bin,
         credential_manager=credentials,
@@ -145,13 +168,13 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         manifest = EvidenceManifest.model_validate(
             {
                 "run_id": record.run_id,
-                "snapshot_binding": snapshot.binding,
-                "inventory": snapshot.inventory,
+                "repository_binding": snapshot.binding,
+                "project_id": project_id,
                 "records": [
                     {
                         "run_id": record.run_id,
                         "invocation_id": reference.invocation_id,
-                        "snapshot_inventory_digest": reference.snapshot_inventory_digest,
+                        "binding_digest": reference.binding_digest,
                         "request_hash": reference.request_hash,
                         "response_hash": reference.response_hash,
                         "response": response,
@@ -214,7 +237,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
             ),
         )
         pinned_blobs = {
-            (source_item["path"], source_item["blob_oid"]): (
+            (source_item["path"], source_item["content_hash"]): (
                 snapshot.source_root / source_item["path"]
             ).read_bytes()
         }

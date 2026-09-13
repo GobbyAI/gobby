@@ -14,15 +14,6 @@ pub(in crate::index::import_resolution) fn build_python_module_index(
     modules
 }
 
-pub(super) fn build_python_module_index_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashSet<String> {
-    sources
-        .iter()
-        .flat_map(|(rel, _)| python_module_names_for_rel(rel))
-        .collect()
-}
-
 /// Project-relative files a Python dotted `module` could be defined in, derived
 /// by inverting [`python_module_names_for_path`] — no file reads. Covers both
 /// `pkg/mod.py` and the package form `pkg/mod/__init__.py`, the `.pyi` stub

@@ -33,7 +33,6 @@ def build_ask_service(
     if (
         executor is None
         or services.workflow_loader is None
-        or services.worktree_storage is None
         or services.managed_credential_manager is None
         or services.agent_runner is None
         or services.session_manager is None
@@ -75,7 +74,6 @@ def build_ask_service(
         snapshot_manager=cast(
             "AskSnapshotManagerProtocol",
             AskSnapshotManager(
-                worktree_storage=services.worktree_storage,
                 run_storage=storage,
                 credential_manager=services.managed_credential_manager,
             ),

@@ -15,12 +15,16 @@ from gobby.ask.permissions import AskAgentStage
 from gobby.ask.snapshots import SnapshotDriftError
 from gobby.ask.stages import AskAttemptStatus, AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
-from gobby.ask.validation import EvidenceManifest, RecordedEvidence
+from gobby.ask.validation import (
+    EvidenceManifest,
+    GraphEvidenceItem,
+    RecordedEvidence,
+    SourceEvidence,
+)
 
 
 class PreparedAskSnapshot(Protocol):
     binding: dict[str, Any]
-    inventory: dict[str, Any]
     source_root: Path
 
 
@@ -264,7 +268,7 @@ def build_evidence_manifest(
                 {
                     "run_id": record.run_id,
                     "invocation_id": reference.invocation_id,
-                    "snapshot_inventory_digest": reference.snapshot_inventory_digest,
+                    "binding_digest": reference.binding_digest,
                     "request_hash": reference.request_hash,
                     "response_hash": reference.response_hash,
                     "response": response,
@@ -274,8 +278,8 @@ def build_evidence_manifest(
     return EvidenceManifest.model_validate(
         {
             "run_id": record.run_id,
-            "snapshot_binding": snapshot.binding,
-            "inventory": snapshot.inventory,
+            "project_id": record.binding.project_id,
+            "repository_binding": snapshot.binding,
             "records": records,
         }
     )
@@ -287,11 +291,17 @@ def pinned_blobs(
 ) -> dict[tuple[str, str], bytes]:
     source_root = snapshot.source_root.resolve()
     blobs: dict[tuple[str, str], bytes] = {}
-    for entry in evidence.inventory.entries:
-        if entry.kind != "file" or entry.blob_oid is None or entry.exclusion is not None:
-            continue
-        path = (source_root / entry.path).resolve()
-        if not path.is_relative_to(source_root):
-            raise SnapshotDriftError("Ask inventory path escaped the snapshot")
-        blobs[(entry.path, entry.blob_oid)] = path.read_bytes()
+    for record in evidence.records:
+        for item in record.response.items:
+            source = item.source if isinstance(item, GraphEvidenceItem) else item
+            if not isinstance(source, SourceEvidence):
+                continue
+            path = (source_root / source.path).resolve()
+            if not path.is_relative_to(source_root):
+                raise SnapshotDriftError("Ask evidence path escaped the repository")
+            with path.open("rb") as stream:
+                content = stream.read(10 * 1024 * 1024 + 1)
+            if len(content) > 10 * 1024 * 1024:
+                raise SnapshotDriftError("Ask evidence source exceeds its byte bound")
+            blobs[(source.path, source.content_hash)] = content
     return blobs

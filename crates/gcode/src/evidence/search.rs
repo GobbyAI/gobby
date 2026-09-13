@@ -4,33 +4,14 @@ use regex::Regex;
 
 use crate::codewiki_facts::{GrepQuery, ScopeSelector, SearchQuery, SymbolFact};
 
-use super::contracts::{
-    Completeness, EvidenceItem, EvidenceWarning, InventoryEntry, SearchLane, SearchSelector,
-};
+use super::contracts::{Completeness, EvidenceItem, EvidenceWarning, SearchLane, SearchSelector};
 use super::read::{source_for_lines, source_for_symbol};
-use super::snapshot::validate_repo_path;
+use super::source::validate_repo_path;
 use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 
 pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> Result<QueryResult> {
     validate_selector(selector)?;
-    let (eligible, exclusions) = scoped_inventory(library, selector)?;
-    if eligible.is_empty() && !exclusions.is_empty() {
-        return Ok(QueryResult {
-            items: Vec::new(),
-            completeness: Completeness::ExcludedScope,
-            lane: lane_name(selector.lane).to_string(),
-            hybrid: None,
-            exclusions,
-            warnings: vec![EvidenceWarning {
-                code: "excluded_scope".to_string(),
-                message: "every tracked path in the requested scope is excluded".to_string(),
-                path: None,
-            }],
-            result_limit: selector.limit,
-            graph_depth: None,
-        });
-    }
-    library.validate_index_inventory()?;
+    let eligible = scoped_files(library, selector);
     let (mut items, truncated, hybrid) = match selector.lane {
         SearchLane::Symbol | SearchLane::LexicalSymbol => {
             let page = symbol_search(library, selector)?;
@@ -79,7 +60,6 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> R
         completeness,
         lane: lane_name(selector.lane).to_string(),
         hybrid,
-        exclusions,
         warnings,
         result_limit: selector.limit,
         graph_depth: None,
@@ -136,28 +116,19 @@ pub(super) fn validate_selector(selector: &SearchSelector) -> Result<()> {
     Ok(())
 }
 
-fn scoped_inventory(
-    library: &EvidenceLibrary,
-    selector: &SearchSelector,
-) -> Result<(BTreeSet<String>, Vec<InventoryEntry>)> {
-    let mut eligible = BTreeSet::new();
-    let mut exclusions = Vec::new();
-    for entry in &library.snapshot.inventory().entries {
-        if !matches_paths(&entry.path, &selector.paths)
-            || selector
-                .language
-                .as_ref()
-                .is_some_and(|language| entry.language.as_ref() != Some(language))
-        {
-            continue;
-        }
-        if entry.exclusion.is_some() {
-            exclusions.push(entry.clone());
-        } else {
-            eligible.insert(entry.path.clone());
-        }
-    }
-    Ok((eligible, exclusions))
+fn scoped_files(library: &EvidenceLibrary, selector: &SearchSelector) -> BTreeSet<String> {
+    library
+        .files
+        .values()
+        .filter(|entry| {
+            matches_paths(&entry.path, &selector.paths)
+                && selector
+                    .language
+                    .as_ref()
+                    .is_none_or(|language| &entry.language == language)
+        })
+        .map(|entry| entry.path.clone())
+        .collect()
 }
 
 fn matches_paths(path: &str, selectors: &[String]) -> bool {

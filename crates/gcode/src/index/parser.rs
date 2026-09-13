@@ -114,31 +114,6 @@ pub(crate) fn parse_source_with_semantic(
     )
 }
 
-pub(crate) fn parse_captured_source(
-    rel_path: &str,
-    language: &str,
-    project_id: &str,
-    source: Vec<u8>,
-    import_context: &ImportResolutionContext,
-) -> anyhow::Result<Option<ParseResult>> {
-    anyhow::ensure!(
-        crate::index::captured_sources::is_valid_logical_path(rel_path),
-        "unsafe captured path: {rel_path}"
-    );
-    parse_source_with_identity(
-        SourceIdentity {
-            rel_path,
-            language,
-            project_id,
-            file_path: Path::new(rel_path),
-            root_path: Path::new(""),
-        },
-        source,
-        import_context,
-        None,
-    )
-}
-
 struct SourceIdentity<'a> {
     rel_path: &'a str,
     language: &'a str,

@@ -82,7 +82,7 @@ impl CodewikiFacts {
             .map(|file| file.as_str().to_string())
             .collect::<Vec<_>>();
         let project_ids = match &self.context().index_scope {
-            ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+            ProjectIndexScope::Single => {
                 vec![self.context().project_id.clone()]
             }
             ProjectIndexScope::Overlay {

@@ -51,7 +51,7 @@ pub fn contract() -> CliContract {
                 json_output_keys: evidence_keys(),
                 ..CommandContract::new(
                     "evidence",
-                    "Read exact commit-bound evidence without agent or model orchestration.",
+                    "Read indexed working-tree evidence with recorded Git provenance.",
                 )
             },
             CommandContract {
@@ -62,7 +62,6 @@ pub fn contract() -> CliContract {
                     repeatable: false,
                 }],
                 flags: vec![
-                    FlagContract::value("--commit", "REF"),
                     FlagContract::value("--timeout-seconds", "SECONDS"),
                     FlagContract::value("--retrieval", "MODE")
                         .allowed(vec!["deterministic", "hybrid"]),
@@ -633,21 +632,14 @@ pub fn contract() -> CliContract {
             "invalid_evidence_request",
             "unsupported_evidence_format",
             "stale_admission_bypass_forbidden",
-            "snapshot_binding_mismatch",
+            "repository_binding_mismatch",
             "continuation_mismatch",
             "contract_error",
-            "excluded_path",
-            "fact_snapshot_mismatch",
+            "fact_index_mismatch",
             "git_error",
             "graph_unavailable",
-            "index_incomplete",
-            "inventory_incomplete",
-            "inventory_mismatch",
-            "invalid_object_id",
             "invalid_selector",
-            "missing_git_object",
             "narrowing_required",
-            "path_not_tracked",
             "semantic_failure",
             "semantic_identity_mismatch",
             "semantic_identity_required",

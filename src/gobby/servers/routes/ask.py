@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from gobby.ask.contracts import AskRequest, RetrievalMode
 from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.servers.http import HTTPServer
+from gobby.storage.project_checkouts import CheckoutNotFoundError, OverlayRegistrationRejectedError
 from gobby.utils.local_token import AgentApiTokenClaims
 
 _INVESTIGATOR_PROFILE = "ask-investigator"
@@ -28,12 +29,12 @@ class StartAskRunRequest(BaseModel):
 
     question: str
     project_id: str
-    commit_ref: str = "HEAD"
+    project_path: str | None = None
     timeout_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
     retrieval_mode: Literal["deterministic", "hybrid"] = "deterministic"
     idempotency_key: str | None = None
 
-    @field_validator("question", "project_id", "commit_ref")
+    @field_validator("question", "project_id")
     @classmethod
     def _non_empty(cls, value: str) -> str:
         if not value.strip():
@@ -70,20 +71,27 @@ async def _authorize_project(
 
 
 def _ask_http_exception(error: Exception) -> HTTPException:
-    if isinstance(error, AskRunNotFound):
+    if isinstance(error, (AskRunNotFound, CheckoutNotFoundError)):
         status_code = 404
     elif isinstance(error, AskLifecycleConflict):
         status_code = 409
     elif isinstance(error, TimeoutError):
         status_code = 408
-    elif isinstance(error, PermissionError):
+    elif isinstance(error, (PermissionError, OverlayRegistrationRejectedError)):
         status_code = 403
     else:
         raise error
     return HTTPException(status_code=status_code, detail=str(error))
 
 
-_TRANSLATED_ASK_ERRORS = (AskRunNotFound, AskLifecycleConflict, TimeoutError, PermissionError)
+_TRANSLATED_ASK_ERRORS = (
+    AskRunNotFound,
+    AskLifecycleConflict,
+    TimeoutError,
+    PermissionError,
+    CheckoutNotFoundError,
+    OverlayRegistrationRejectedError,
+)
 
 
 def _tar_stream(root: Path) -> Generator[bytes]:
@@ -132,10 +140,10 @@ def create_ask_router(
             raise HTTPException(status_code=503, detail="Ask service is unavailable")
         return resolved
 
-    async def project_root(project_id: str) -> Path:
-        if project_root_resolver is not None:
+    async def project_root(project_id: str, project_path: str | None) -> Path:
+        if project_root_resolver is not None and project_path is None:
             return project_root_resolver(project_id)
-        from gobby.storage.project_checkouts import require_root
+        from gobby.storage.project_checkouts import require_root, resolve_operation_root
         from gobby.storage.workspace_machine_scope import require_local_machine_id
 
         machine_id = require_local_machine_id(
@@ -143,7 +151,18 @@ def create_ask_router(
             resource_kind="project_checkout",
             resource_id=project_id,
         )
-        root = await server.run_db(require_root, server.services.database, project_id, machine_id)
+        primary = await server.run_db(
+            require_root, server.services.database, project_id, machine_id
+        )
+        if project_path is None or Path(project_path).resolve() == Path(primary).resolve():
+            return Path(primary)
+        root = await server.run_db(
+            resolve_operation_root,
+            server.services.database,
+            project_id,
+            machine_id,
+            overlay_path=project_path,
+        )
         return Path(root)
 
     @router.post("", status_code=202)
@@ -157,7 +176,6 @@ def create_ask_router(
         ask_request = AskRequest(
             question=body.question,
             project_id=body.project_id,
-            commit_ref=body.commit_ref,
             timeout_seconds=body.timeout_seconds,
             retrieval_mode=retrieval_mode,
             investigator_profile=_INVESTIGATOR_PROFILE,
@@ -167,7 +185,7 @@ def create_ask_router(
         try:
             result = await service(body.project_id).start(
                 ask_request,
-                project_root=await project_root(body.project_id),
+                project_root=await project_root(body.project_id, body.project_path),
                 caller_session_id=_caller_session_id(request, claims),
             )
         except _TRANSLATED_ASK_ERRORS as error:

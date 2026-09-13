@@ -40,45 +40,15 @@ class _FrozenModel(BaseModel):
     )
 
 
-class CommitBinding(_FrozenModel):
-    parent_oids: tuple[GitObjectId, ...]
-    comparison_parent_oid: GitObjectId
-    comparison_kind: ComparisonKind
-    changed_paths_digest: Sha256Digest
-    changed_paths: tuple[ChangedPathSelector, ...]
-
-
-class SnapshotBinding(_FrozenModel):
+class RepositoryBinding(_FrozenModel):
     project_id: str
     commit_oid: GitObjectId
     tree_oid: GitObjectId
-    inventory_digest: Sha256Digest
-    commit: CommitBinding
-
-
-class InventoryEntry(_FrozenModel):
-    path: str
-    mode: str
-    kind: str
-    object_oid: GitObjectId
-    blob_oid: GitObjectId | None = None
-    size_bytes: int | None = Field(default=None, ge=0)
-    content_hash: Sha256Digest | None = None
-    language: str | None = None
-    exclusion: str | None = None
-
-
-class SnapshotInventory(_FrozenModel):
-    schema_version: Literal[1]
-    complete: bool
-    digest: Sha256Digest
-    entries: tuple[InventoryEntry, ...]
 
 
 class SourceEvidence(_FrozenModel):
     evidence_id: str
     path: str
-    blob_oid: GitObjectId
     content_hash: Sha256Digest
     excerpt_hash: Sha256Digest
     qualified_name: str | None = None
@@ -163,13 +133,12 @@ class EvidenceWarning(_FrozenModel):
 class GcodeEvidenceResponse(_FrozenModel):
     request: dict[str, Any]
     request_fingerprint: str
-    binding: SnapshotBinding
+    binding: RepositoryBinding
     contract: ContractIdentity
     items: tuple[EvidenceItem, ...]
     complete: bool
     completeness: str
     bounds: AppliedBounds
-    exclusions: tuple[InventoryEntry, ...]
     warnings: tuple[EvidenceWarning, ...]
     continuation: str | None = None
 
@@ -177,7 +146,7 @@ class GcodeEvidenceResponse(_FrozenModel):
 class RecordedEvidence(_FrozenModel):
     run_id: str
     invocation_id: str
-    snapshot_inventory_digest: Sha256Digest
+    binding_digest: Sha256Digest
     request_hash: Sha256Digest
     response_hash: Sha256Digest
     response: GcodeEvidenceResponse
@@ -186,8 +155,8 @@ class RecordedEvidence(_FrozenModel):
 class EvidenceManifest(_FrozenModel):
     schema_version: Literal[1] = 1
     run_id: str
-    snapshot_binding: SnapshotBinding
-    inventory: SnapshotInventory
+    project_id: str
+    repository_binding: RepositoryBinding
     records: tuple[RecordedEvidence, ...]
 
     @property
@@ -294,23 +263,16 @@ def _safe_path(path: str) -> bool:
     )
 
 
-def _git_blob_oid(content: bytes, expected: str) -> str:
-    algorithm = "sha256" if len(expected) == 64 else "sha1"
-    header = b"blob " + str(len(content)).encode() + b"\0"
-    return hashlib.new(algorithm, header + content).hexdigest()
-
-
 def _line_range(content: bytes, start: int, end: int) -> tuple[int, int]:
     start_line = content[:start].count(b"\n") + 1
     end_line = content[: max(start, end - 1)].count(b"\n") + 1
     return start_line, end_line
 
 
-def _source_identity(binding: SnapshotBinding, source: SourceEvidence) -> str:
+def _source_identity(binding: RepositoryBinding, source: SourceEvidence) -> str:
     identity = [
         binding.model_dump(mode="json"),
         source.path,
-        source.blob_oid,
         source.byte_start,
         source.byte_end,
         source.content_hash,
@@ -322,8 +284,7 @@ def _source_identity(binding: SnapshotBinding, source: SourceEvidence) -> str:
 
 def _validate_source(
     source: SourceEvidence,
-    binding: SnapshotBinding,
-    inventory: Mapping[str, InventoryEntry],
+    binding: RepositoryBinding,
     pinned_blobs: Mapping[tuple[str, str], bytes],
 ) -> list[ValidationDiagnostic]:
     diagnostics: list[ValidationDiagnostic] = []
@@ -332,28 +293,14 @@ def _validate_source(
             _diagnostic("invalid_evidence_path", "source evidence path is not canonical")
         )
         return diagnostics
-    entry = inventory.get(source.path)
-    if entry is None or entry.exclusion is not None:
-        diagnostics.append(
-            _diagnostic("path_not_in_snapshot", "source path is not citeable in the inventory")
-        )
-        return diagnostics
-    if entry.blob_oid != source.blob_oid or entry.content_hash != source.content_hash:
-        diagnostics.append(
-            _diagnostic("source_inventory_mismatch", "source identity differs from the inventory")
-        )
-    content = pinned_blobs.get((source.path, source.blob_oid))
+    content = pinned_blobs.get((source.path, source.content_hash))
     if content is None:
         diagnostics.append(
-            _diagnostic("pinned_blob_missing", "the exact cited blob was not supplied")
+            _diagnostic("source_content_missing", "the exact indexed source was not supplied")
         )
         return diagnostics
-    if _git_blob_oid(content, source.blob_oid) != source.blob_oid:
-        diagnostics.append(_diagnostic("blob_hash_mismatch", "pinned blob oid is invalid"))
     if hashlib.sha256(content).hexdigest() != source.content_hash:
         diagnostics.append(_diagnostic("content_hash_mismatch", "pinned source hash is invalid"))
-    if entry.size_bytes != len(content):
-        diagnostics.append(_diagnostic("source_size_mismatch", "pinned source size is invalid"))
     if not 0 <= source.byte_start < source.byte_end <= len(content):
         diagnostics.append(_diagnostic("stale_source_range", "source byte range is invalid"))
         return diagnostics
@@ -381,40 +328,17 @@ def _validate_source(
 
 def _validate_git_metadata(
     item: CommitMetadataEvidenceItem,
-    binding: SnapshotBinding,
+    binding: RepositoryBinding,
 ) -> list[ValidationDiagnostic]:
     diagnostics: list[ValidationDiagnostic] = []
-    commit = binding.commit
-    changed_paths = [path.model_dump(mode="json") for path in commit.changed_paths]
-    changed_paths_digest = _rust_json_hash(changed_paths)
-    if changed_paths_digest != commit.changed_paths_digest:
+    if item.commit_oid != binding.commit_oid:
         diagnostics.append(
-            _diagnostic("changed_paths_hash_mismatch", "binding changed-path digest is invalid")
+            _diagnostic("git_metadata_mismatch", "commit differs from recorded provenance")
         )
-    expected = (
-        binding.commit_oid,
-        commit.parent_oids,
-        commit.comparison_parent_oid,
-        commit.comparison_kind,
-        commit.changed_paths_digest,
-        len(commit.changed_paths),
-    )
-    actual = (
-        item.commit_oid,
-        item.parent_oids,
-        item.comparison_parent_oid,
-        item.comparison_kind,
-        item.changed_paths_digest,
-        item.changed_path_count,
-    )
-    if actual != expected:
-        diagnostics.append(
-            _diagnostic("git_metadata_mismatch", "commit comparison differs from the snapshot")
-        )
-    if commit.parent_oids:
+    if item.parent_oids:
         if (
-            commit.comparison_kind != "first_parent"
-            or commit.comparison_parent_oid != commit.parent_oids[0]
+            item.comparison_kind != "first_parent"
+            or item.comparison_parent_oid != item.parent_oids[0]
         ):
             diagnostics.append(
                 _diagnostic(
@@ -422,7 +346,7 @@ def _validate_git_metadata(
                     "commit metadata is not bound to the exact first parent",
                 )
             )
-    elif commit.comparison_kind != "empty_tree" or not commit.comparison_parent_oid:
+    elif item.comparison_kind != "empty_tree" or not item.comparison_parent_oid:
         diagnostics.append(
             _diagnostic(
                 "git_comparison_mismatch",
@@ -434,9 +358,9 @@ def _validate_git_metadata(
             diagnostics.append(
                 _diagnostic("git_metadata_mismatch", "empty comparison includes a changed path")
             )
-    elif item.changed_path is None or item.changed_path not in commit.changed_paths:
+    elif item.changed_path is None:
         diagnostics.append(
-            _diagnostic("git_metadata_mismatch", "changed path is not in the canonical comparison")
+            _diagnostic("git_metadata_mismatch", "nonempty comparison is missing a changed path")
         )
     record_body = None if item.changed_path is None else item.changed_path.model_dump(mode="json")
     expected_record_hash = _rust_json_hash(record_body)
@@ -463,16 +387,12 @@ def _validate_git_metadata(
 
 def _validate_graph(
     item: GraphEvidenceItem,
-    binding: SnapshotBinding,
-    inventory: Mapping[str, InventoryEntry],
+    binding: RepositoryBinding,
     pinned_blobs: Mapping[tuple[str, str], bytes],
 ) -> list[ValidationDiagnostic]:
-    diagnostics = _validate_source(item.source, binding, inventory, pinned_blobs)
-    owner = inventory.get(item.owner.path)
+    diagnostics = _validate_source(item.source, binding, pinned_blobs)
     if (
         not _safe_path(item.owner.path)
-        or owner is None
-        or owner.content_hash != item.owner.content_hash
         or item.owner.path != item.source.path
         or item.owner.content_hash != item.source.content_hash
     ):
@@ -498,9 +418,7 @@ def _validate_graph(
 
 def _record_supports_exhaustive_scope(record: RecordedEvidence) -> bool:
     response = record.response
-    return response.complete and (
-        response.completeness in {"complete", "complete_empty"} and not response.exclusions
-    )
+    return response.complete and (response.completeness in {"complete", "complete_empty"})
 
 
 def _validate_evidence_manifest(
@@ -509,17 +427,7 @@ def _validate_evidence_manifest(
 ) -> tuple[list[ValidationDiagnostic], dict[str, EvidenceItem], dict[str, list[RecordedEvidence]]]:
     diagnostics: list[ValidationDiagnostic] = []
     add = diagnostics.append
-    binding = manifest.snapshot_binding
-    entries = [entry.model_dump(mode="json") for entry in manifest.inventory.entries]
-    if (
-        not manifest.inventory.complete
-        or manifest.inventory.digest != binding.inventory_digest
-        or _rust_json_hash(entries) != manifest.inventory.digest
-    ):
-        add(_diagnostic("snapshot_inventory_mismatch", "snapshot inventory identity is invalid"))
-    inventory = {entry.path: entry for entry in manifest.inventory.entries}
-    if len(inventory) != len(manifest.inventory.entries):
-        add(_diagnostic("snapshot_inventory_mismatch", "snapshot inventory paths are duplicated"))
+    binding = manifest.repository_binding
     items: dict[str, EvidenceItem] = {}
     item_records: dict[str, list[RecordedEvidence]] = {}
     invocation_ids: set[str] = set()
@@ -530,8 +438,12 @@ def _validate_evidence_manifest(
         invocation_ids.add(record.invocation_id)
         if record.run_id != manifest.run_id:
             diagnostics.append(_diagnostic("cross_run_evidence", "evidence record has another run"))
-        if record.snapshot_inventory_digest != binding.inventory_digest:
-            add(_diagnostic("snapshot_inventory_mismatch", "evidence has another snapshot"))
+        if record.binding_digest != canonical_hash(binding.model_dump(mode="json")):
+            add(
+                _diagnostic(
+                    "repository_binding_mismatch", "evidence has another repository binding"
+                )
+            )
         response_body = _response_body(response)
         if canonical_hash(response_body) != record.response_hash:
             add(_diagnostic("response_hash_mismatch", "evidence response hash is invalid"))
@@ -543,7 +455,11 @@ def _validate_evidence_manifest(
         request_binding = response.request.get("binding")
         binding_body = binding.model_dump(mode="json")
         if response.binding != binding or request_binding != binding_body:
-            add(_diagnostic("snapshot_binding_mismatch", "gcode response has another snapshot"))
+            add(
+                _diagnostic(
+                    "repository_binding_mismatch", "gcode response has another repository binding"
+                )
+            )
         if (
             response.contract.name != "gcode-evidence"
             or response.contract.schema_version != 1
@@ -599,9 +515,9 @@ def _validate_evidence_manifest(
             items[item.evidence_id] = item
             item_records[item.evidence_id] = [record]
             if isinstance(item, SourceEvidenceItem):
-                item_diagnostics = _validate_source(item, binding, inventory, pinned_blobs)
+                item_diagnostics = _validate_source(item, binding, pinned_blobs)
             elif isinstance(item, GraphEvidenceItem):
-                item_diagnostics = _validate_graph(item, binding, inventory, pinned_blobs)
+                item_diagnostics = _validate_graph(item, binding, pinned_blobs)
             else:
                 item_diagnostics = _validate_git_metadata(item, binding)
             diagnostics.extend(
@@ -710,7 +626,6 @@ def _citation_diagnostics(
         else:
             source_selector = (
                 citation.path,
-                citation.blob_oid,
                 citation.content_hash,
                 citation.excerpt_hash,
                 citation.qualified_name,
@@ -721,7 +636,6 @@ def _citation_diagnostics(
             )
             recorded_source = (
                 item.path,
-                item.blob_oid,
                 item.content_hash,
                 item.excerpt_hash,
                 item.qualified_name,

@@ -13,15 +13,6 @@ pub(in crate::index::import_resolution) fn load_js_external_packages(
     js_external_packages(&contents)
 }
 
-pub(super) fn load_js_external_packages_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashSet<String> {
-    sources
-        .get("package.json")
-        .map(js_external_packages)
-        .unwrap_or_default()
-}
-
 fn js_external_packages(contents: &[u8]) -> HashSet<String> {
     let Ok(json) = serde_json::from_slice::<serde_json::Value>(contents) else {
         return HashSet::new();
@@ -59,12 +50,6 @@ pub(in crate::index::import_resolution) fn load_js_self_package_name(
     js_self_package_name(&std::fs::read(package_json).ok()?)
 }
 
-pub(super) fn load_js_self_package_name_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> Option<String> {
-    js_self_package_name(sources.get("package.json")?)
-}
-
 fn js_self_package_name(contents: &[u8]) -> Option<String> {
     let json = serde_json::from_slice::<serde_json::Value>(contents).ok()?;
     json.get("name")
@@ -74,12 +59,6 @@ fn js_self_package_name(contents: &[u8]) -> Option<String> {
 
 pub(in crate::index::import_resolution) fn load_go_module_path(root_path: &Path) -> Option<String> {
     go_module_path(&std::fs::read(root_path.join("go.mod")).ok()?)
-}
-
-pub(super) fn load_go_module_path_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> Option<String> {
-    go_module_path(sources.get("go.mod")?)
 }
 
 fn go_module_path(contents: &[u8]) -> Option<String> {
@@ -129,28 +108,6 @@ pub(in crate::index::import_resolution) fn build_go_package_files(
     packages
 }
 
-pub(super) fn build_go_package_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    let mut packages: HashMap<String, Vec<String>> = HashMap::new();
-    for (rel, _) in sources.iter() {
-        let path = Path::new(rel);
-        if path.extension().and_then(|ext| ext.to_str()) != Some("go") {
-            continue;
-        }
-        let dir = path
-            .parent()
-            .map(normalize_storage_path)
-            .unwrap_or_default();
-        packages.entry(dir).or_default().push(rel.to_string());
-    }
-    for files in packages.values_mut() {
-        files.sort();
-        files.dedup();
-    }
-    packages
-}
-
 fn canonical_relative_path(path: &Path, root_abs: &Path) -> Option<PathBuf> {
     let abs = path.canonicalize().ok()?;
     abs.strip_prefix(root_abs).ok().map(Path::to_path_buf)
@@ -167,18 +124,6 @@ pub(in crate::index::import_resolution) fn load_rust_external_crates(
         collect_rust_manifest_dependencies(&contents, &mut crates);
     }
 
-    crates
-}
-
-pub(super) fn load_rust_external_crates_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashSet<String> {
-    let mut crates = HashSet::new();
-    for manifest in rust_manifest_paths_from_sources(sources) {
-        if let Some(contents) = sources.get(&manifest) {
-            collect_rust_manifest_dependencies(contents, &mut crates);
-        }
-    }
     crates
 }
 
@@ -243,48 +188,6 @@ fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
     manifests
 }
 
-fn rust_manifest_paths_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> Vec<String> {
-    let Some(root_source) = sources.get("Cargo.toml") else {
-        return Vec::new();
-    };
-    let mut manifests = vec!["Cargo.toml".to_string()];
-    let Ok(root_source) = std::str::from_utf8(root_source) else {
-        return manifests;
-    };
-    let Ok(cargo_toml) = toml::from_str::<toml::Table>(root_source) else {
-        return manifests;
-    };
-    let Some(members) = cargo_toml
-        .get("workspace")
-        .and_then(|workspace| workspace.get("members"))
-        .and_then(toml::Value::as_array)
-    else {
-        return manifests;
-    };
-    for member in members.iter().filter_map(toml::Value::as_str) {
-        let member = member.trim_start_matches("./");
-        if !crate::index::captured_sources::is_valid_logical_path(member) {
-            continue;
-        }
-        let manifest = format!("{}/Cargo.toml", member.trim_end_matches('/'));
-        let Ok(pattern) = glob::Pattern::new(&manifest) else {
-            continue;
-        };
-        manifests.extend(
-            sources
-                .iter()
-                .map(|(path, _)| path)
-                .filter(|path| pattern.matches(path))
-                .map(ToOwned::to_owned),
-        );
-    }
-    manifests.sort();
-    manifests.dedup();
-    manifests
-}
-
 /// Map of project-relative source roots to normalized `[package].name`.
 /// `crates/gwiki/src` → `gobby_wiki`; a single-crate repo maps `src` → name.
 pub(in crate::index::import_resolution) fn load_rust_self_crate_names(
@@ -300,28 +203,6 @@ pub(in crate::index::import_resolution) fn load_rust_self_crate_names(
         };
         let Some(key) = rust_source_root_key(root_path, &manifest) else {
             continue;
-        };
-        names.insert(key, name);
-    }
-    names
-}
-
-pub(super) fn load_rust_self_crate_names_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, String> {
-    let mut names = HashMap::new();
-    for manifest in rust_manifest_paths_from_sources(sources) {
-        let Some(name) = sources.get(&manifest).and_then(rust_package_name) else {
-            continue;
-        };
-        let Some(parent) = Path::new(&manifest).parent() else {
-            continue;
-        };
-        let parent = normalize_storage_path(parent);
-        let key = if parent.is_empty() {
-            "src".to_string()
-        } else {
-            format!("{parent}/src")
         };
         names.insert(key, name);
     }
@@ -381,15 +262,6 @@ pub(in crate::index::import_resolution) fn load_dart_external_packages(
     dart_external_packages(&contents)
 }
 
-pub(super) fn load_dart_external_packages_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashSet<String> {
-    sources
-        .get("pubspec.yaml")
-        .map(dart_external_packages)
-        .unwrap_or_default()
-}
-
 fn dart_external_packages(contents: &[u8]) -> HashSet<String> {
     let Ok(yaml) = serde_yaml::from_slice::<serde_yaml::Value>(contents) else {
         return HashSet::new();
@@ -412,12 +284,6 @@ pub(in crate::index::import_resolution) fn load_dart_self_package_name(
     root_path: &Path,
 ) -> Option<String> {
     dart_self_package_name(&std::fs::read(root_path.join("pubspec.yaml")).ok()?)
-}
-
-pub(super) fn load_dart_self_package_name_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> Option<String> {
-    dart_self_package_name(sources.get("pubspec.yaml")?)
 }
 
 fn dart_self_package_name(contents: &[u8]) -> Option<String> {

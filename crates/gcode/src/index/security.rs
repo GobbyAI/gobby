@@ -2,9 +2,6 @@
 //! Ports logic from src/gobby/code_index/security.py.
 
 use std::path::Path;
-use std::sync::OnceLock;
-
-use regex::Regex;
 
 const SECRET_EXTENSIONS: &[&str] = &[
     ".env",
@@ -21,16 +18,6 @@ const SECRET_EXTENSIONS: &[&str] = &[
 ];
 
 const PRIVATE_KEY_NAMES: &[&str] = &["id_rsa", "id_ed25519"];
-
-const SENSITIVE_PATH_COMPONENTS: &[&str] = &[
-    ".git",
-    ".gobby",
-    "credential",
-    "credentials",
-    "private_key",
-    "secret",
-    "secrets",
-];
 
 const PLAINTEXT_SECRET_EXTENSIONS: &[&str] = &[
     "",
@@ -171,67 +158,6 @@ pub fn has_secret_extension(path: &Path) -> bool {
         && is_plaintext_secret_name(plaintext_stem)
 }
 
-/// Return whether evidence extraction must exclude a repository-relative path.
-pub fn is_sensitive_evidence_path(path: &Path) -> bool {
-    has_secret_extension(path)
-        || path.components().any(|component| {
-            let name = component.as_os_str().to_string_lossy().to_lowercase();
-            SENSITIVE_PATH_COMPONENTS.contains(&name.as_str()) || name.starts_with(".env.")
-        })
-}
-
-/// Return whether source bytes contain a credential shape that must never be evidence.
-///
-/// Evidence excludes the whole blob instead of rewriting it, preserving the invariant
-/// that every citeable source ID and hash names exact Git bytes.
-pub fn contains_known_credential(path: &str, content: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(content) else {
-        return false;
-    };
-    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
-    let known_signature = PATTERNS
-        .get_or_init(|| {
-            [
-                r"(?i)[a-z][a-z0-9+.-]*://[^:/\s]+:[^@\s]+@",
-                // Anchored: without the boundary this matches inside ordinary
-                // repository identifiers such as "ask-" and "task-" slugs.
-                r"\bsk-[A-Za-z0-9][A-Za-z0-9_-]{15,}",
-                r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})",
-                r"\bAKIA[0-9A-Z]{16}\b",
-                r"(?i)\bbearer\s+[A-Za-z0-9._-]{16,}",
-            ]
-            .into_iter()
-            .map(|pattern| Regex::new(pattern).expect("credential patterns are valid"))
-            .collect()
-        })
-        .iter()
-        .any(|pattern| pattern.is_match(text));
-    if known_signature {
-        return true;
-    }
-
-    // Bare identifiers in source code are references, not literal credentials.
-    // Config files and shell assignments can contain unquoted string literals.
-    let bare_literals = super::languages::detect_language_from_content(path, content)
-        .is_none_or(|language| language == "bash" || super::languages::is_data_language(language));
-    static ASSIGNMENT: OnceLock<Regex> = OnceLock::new();
-    ASSIGNMENT
-        .get_or_init(|| {
-            Regex::new(
-                r#"(?i)\b(?:api[_-]?key|secret|token|password|passwd)[\"']?\s*[:=]\s*([\"'`]?[^\s\"'`]{12,})"#,
-            )
-            .expect("credential assignment pattern is valid")
-        })
-        .captures_iter(text)
-        .any(|capture| {
-            capture.get(1).is_some_and(|value| {
-                bare_literals
-                    || value.as_str().starts_with(['\"', '\'', '`'])
-                    || value.as_str().starts_with(|c: char| c.is_ascii_digit())
-            })
-        })
-}
-
 fn is_plaintext_secret_name(stem: &str) -> bool {
     stem == "token"
         || stem.starts_with("token_")
@@ -270,35 +196,8 @@ fn glob_inner(pattern: &[char], text: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_known_credential, has_secret_extension};
+    use super::has_secret_extension;
     use std::path::Path;
-
-    #[test]
-    fn anchors_the_openai_key_signature_at_a_word_boundary() {
-        // Split so this file does not match its own signature and exclude itself
-        // from evidence, the same reason tests/ask/test_evidence.py splits its literal.
-        let key = format!("sk-{}", "0123456789abcdefghij");
-        let cases = [
-            (
-                "docs/evidence/ask-snapshot-preparation.md\n".to_string(),
-                false,
-            ),
-            (
-                "name: queue-task-memory-review-after-close\n".to_string(),
-                false,
-            ),
-            (format!("const KEY: &str = \"{key}\";\n"), true),
-            (format!("{key}\n"), true),
-        ];
-
-        for (content, expected) in cases {
-            assert_eq!(
-                contains_known_credential("notes.md", content.as_bytes()),
-                expected,
-                "unexpected credential classification for {content:?}"
-            );
-        }
-    }
 
     #[test]
     fn classifies_secret_names_by_boundary_and_container_extension() {

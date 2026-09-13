@@ -101,7 +101,6 @@ fn ask_command_contract_is_complete() {
     assert_eq!(
         flags,
         [
-            "--commit",
             "--timeout-seconds",
             "--retrieval",
             "--background",
@@ -247,7 +246,6 @@ fn evidence_command_contract_is_complete() {
         "complete",
         "completeness",
         "bounds",
-        "exclusions",
         "warnings",
         "continuation",
         "evidence_id",
@@ -258,8 +256,8 @@ fn evidence_command_contract_is_complete() {
     }
     for code in [
         "invalid_evidence_request",
-        "snapshot_binding_mismatch",
-        "fact_snapshot_mismatch",
+        "repository_binding_mismatch",
+        "fact_index_mismatch",
         "narrowing_required",
         "semantic_failure",
         "unsafe_path",

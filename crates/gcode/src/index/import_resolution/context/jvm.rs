@@ -37,16 +37,6 @@ pub(super) fn build_java_class_index(
     collect_java_index(observations)
 }
 
-pub(super) fn build_java_class_index_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> JavaClassIndex {
-    collect_java_index(
-        sources
-            .iter()
-            .map(|(rel, source)| observe_java_source(rel, source)),
-    )
-}
-
 fn observe_java_source(
     rel: &str,
     source: &[u8],
@@ -124,16 +114,6 @@ pub(super) fn build_kotlin_package_files(
     collect_package_files(observations)
 }
 
-pub(super) fn build_kotlin_package_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    collect_package_files(
-        sources
-            .iter()
-            .filter_map(|(rel, source)| observe_kotlin_source(rel, source)),
-    )
-}
-
 fn observe_kotlin_source(rel: &str, source: &[u8]) -> Option<(String, String)> {
     let ext = Path::new(rel).extension().and_then(|ext| ext.to_str())?;
     if !matches!(ext, "kt" | "kts") {
@@ -180,16 +160,6 @@ pub(super) fn build_scala_package_files(
         })
         .collect::<Vec<_>>();
     collect_package_files(observations)
-}
-
-pub(super) fn build_scala_package_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    collect_package_files(
-        sources
-            .iter()
-            .filter_map(|(rel, source)| observe_scala_source(rel, source)),
-    )
 }
 
 fn observe_scala_source(rel: &str, source: &[u8]) -> Option<(String, String)> {

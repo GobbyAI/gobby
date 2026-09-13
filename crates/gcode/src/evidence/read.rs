@@ -4,7 +4,7 @@ use super::contracts::{
     CommitMetadataEvidence, Completeness, EvidenceItem, EvidenceWarning, ReadSelector,
     SourceEvidence,
 };
-use super::snapshot::{canonical_hash, validate_repo_path};
+use super::source::{canonical_hash, validate_repo_path};
 use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 
 pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Result<QueryResult> {
@@ -25,7 +25,6 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
             path,
             qualified_name,
         } => {
-            library.validate_index_inventory()?;
             let matches = library
                 .facts
                 .symbols_for_file(path)
@@ -65,7 +64,6 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
         }
         .to_string(),
         hybrid: None,
-        exclusions: Vec::new(),
         warnings: Vec::<EvidenceWarning>::new(),
         result_limit,
         graph_depth: None,
@@ -106,10 +104,8 @@ pub(super) fn source_for_symbol(
     library: &EvidenceLibrary,
     symbol: &SymbolFact,
 ) -> Result<SourceEvidence> {
-    library
-        .snapshot
-        .verify_fact(&symbol.file_path, &symbol.file_content_hash)?;
-    let bytes = library.snapshot.read_blob(&symbol.file_path)?;
+    library.verify_fact(&symbol.file_path, &symbol.file_content_hash)?;
+    let bytes = library.read_file(&symbol.file_path)?;
     if symbol.byte_start >= symbol.byte_end || symbol.byte_end > bytes.len() {
         return Err(EvidenceError::StaleRange {
             path: symbol.file_path.clone(),
@@ -176,7 +172,7 @@ pub(super) fn source_for_lines(
             detail: "line ranges are one-based, inclusive, and non-empty".to_string(),
         });
     }
-    let bytes = library.snapshot.read_blob(path)?;
+    let bytes = library.read_file(path)?;
     let starts = line_starts(&bytes);
     if end_line > starts.len() {
         return Err(EvidenceError::StaleRange {
@@ -229,32 +225,14 @@ fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<Sou
         excerpt,
         qualified_name,
     } = source;
-    let entry = library.snapshot.entry(path)?;
-    let blob_oid = entry
-        .blob_oid
-        .clone()
-        .ok_or_else(|| EvidenceError::ExcludedPath {
-            path: path.to_string(),
-            reason: entry
-                .exclusion
-                .unwrap_or(super::ExclusionReason::UnsupportedObject),
-        })?;
-    let content_hash = entry
-        .content_hash
-        .clone()
-        .ok_or_else(|| EvidenceError::ExcludedPath {
-            path: path.to_string(),
-            reason: entry
-                .exclusion
-                .unwrap_or(super::ExclusionReason::UnsupportedObject),
-        })?;
+    let entry = library.entry(path)?;
+    let content_hash = entry.content_hash.clone();
     let excerpt_hash = gobby_core::indexing::content_hash(excerpt.as_bytes());
     let evidence_id = format!(
         "src:{}",
         canonical_hash(&(
-            library.snapshot.binding(),
+            &library.binding,
             path,
-            &blob_oid,
             byte_start,
             byte_end,
             &content_hash,
@@ -265,7 +243,6 @@ fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<Sou
     Ok(SourceEvidence {
         evidence_id,
         path: path.to_string(),
-        blob_oid,
         content_hash,
         excerpt_hash,
         qualified_name,
@@ -278,17 +255,13 @@ fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<Sou
 }
 
 fn commit_items(library: &EvidenceLibrary) -> Result<Vec<EvidenceItem>> {
-    let binding = library.snapshot.binding();
-    let records = if binding.commit.changed_paths.is_empty() {
+    let binding = &library.binding;
+    let commit =
+        super::provenance::load_commit_binding(&library.repository_root, &binding.commit_oid)?;
+    let records = if commit.changed_paths.is_empty() {
         vec![None]
     } else {
-        binding
-            .commit
-            .changed_paths
-            .iter()
-            .cloned()
-            .map(Some)
-            .collect()
+        commit.changed_paths.iter().cloned().map(Some).collect()
     };
     records
         .into_iter()
@@ -298,21 +271,21 @@ fn commit_items(library: &EvidenceLibrary) -> Result<Vec<EvidenceItem>> {
                 "commit:{}",
                 canonical_hash(&(
                     &binding.commit_oid,
-                    &binding.commit.parent_oids,
-                    &binding.commit.comparison_parent_oid,
-                    &binding.commit.comparison_kind,
-                    &binding.commit.changed_paths_digest,
+                    &commit.parent_oids,
+                    &commit.comparison_parent_oid,
+                    &commit.comparison_kind,
+                    &commit.changed_paths_digest,
                     &record_hash,
                 ))?
             );
             Ok(EvidenceItem::CommitMetadata(CommitMetadataEvidence {
                 evidence_id,
                 commit_oid: binding.commit_oid.clone(),
-                parent_oids: binding.commit.parent_oids.clone(),
-                comparison_parent_oid: binding.commit.comparison_parent_oid.clone(),
-                comparison_kind: binding.commit.comparison_kind,
-                changed_paths_digest: binding.commit.changed_paths_digest.clone(),
-                changed_path_count: binding.commit.changed_paths.len(),
+                parent_oids: commit.parent_oids.clone(),
+                comparison_parent_oid: commit.comparison_parent_oid.clone(),
+                comparison_kind: commit.comparison_kind,
+                changed_paths_digest: commit.changed_paths_digest.clone(),
+                changed_path_count: commit.changed_paths.len(),
                 changed_path,
                 record_hash,
             }))

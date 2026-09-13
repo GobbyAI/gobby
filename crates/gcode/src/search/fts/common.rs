@@ -153,7 +153,7 @@ pub(super) fn push_visible_project_file_filter(
     ));
 
     match &ctx.index_scope {
-        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+        ProjectIndexScope::Single => {
             let project = push_id_param(params, &ctx.project_id);
             conditions.push(format!("{row_alias}.project_id = {project}"));
         }

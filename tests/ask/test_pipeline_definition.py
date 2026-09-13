@@ -28,7 +28,7 @@ def test_bundled_ask_pipeline_arguments_match_registered_stage_schemas() -> None
     pipeline = _bundled_pipeline()
     registry = create_ask_registry(
         lambda _project_id: None,
-        project_root_resolver=lambda _project_id: Path("/unused"),
+        project_root_resolver=lambda _project_id, _project_path: Path("/unused"),
     )
     mismatches: list[str] = []
 

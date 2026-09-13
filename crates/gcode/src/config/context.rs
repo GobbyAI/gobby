@@ -277,8 +277,7 @@ fn resolve_services(
 pub enum ProjectIndexScope {
     #[default]
     Single,
-    /// Complete pinned index: isolated writes, with no parent read fallback.
-    Snapshot { commit_oid: String },
+    /// Isolated writes with visibility over unchanged parent index entries.
     Overlay {
         overlay_project_id: String,
         overlay_root: PathBuf,
@@ -500,29 +499,6 @@ pub fn resolve_project_identity(project_root: &Path) -> anyhow::Result<ProjectId
         .unwrap_or_else(|_| absolute_fallback(project_root));
 
     if let Some(marker) = crate::project::read_isolation_marker(&root) {
-        if let Some(commit_oid) = &marker.snapshot_commit {
-            anyhow::ensure!(
-                matches!(commit_oid.len(), 40 | 64)
-                    && commit_oid.bytes().all(|byte| byte.is_ascii_hexdigit()),
-                "invalid snapshot commit in isolation marker"
-            );
-            anyhow::ensure!(
-                marker.parent_project_path.is_some()
-                    && marker.parent_project_id.is_some()
-                    && !is_self_referential_isolation_marker(&marker, &root),
-                "snapshot isolation marker requires a distinct parent project"
-            );
-            normalize_project_id(marker.parent_project_id.as_deref().unwrap_or_default())?;
-            return Ok(ProjectIdentity {
-                project_id: crate::project::code_index_id_for_root(&root),
-                root,
-                source: ProjectIdentitySource::IsolatedOverlay,
-                warning: None,
-                index_scope: ProjectIndexScope::Snapshot {
-                    commit_oid: commit_oid.to_ascii_lowercase(),
-                },
-            });
-        }
         if marker.parent_project_path.is_some() ^ marker.parent_project_id.is_some() {
             anyhow::bail!(
                 "invalid isolation marker in {}: parent_project_path and parent_project_id must be set together",

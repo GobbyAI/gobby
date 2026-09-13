@@ -392,8 +392,6 @@ async def _restore_generated_tracked_project_json(
 async def ensure_project_json_for_isolation(
     source_repo_path: str | Path,
     isolated_path: str | Path,
-    *,
-    snapshot_commit: str | None = None,
 ) -> None:
     """Write the isolation sidecar without rewriting tracked project metadata.
 
@@ -420,8 +418,6 @@ async def ensure_project_json_for_isolation(
             _PARENT_PROJECT_PATH_KEY: str(source_root.resolve()),
             _PARENT_PROJECT_ID_KEY: parent_project_id,
         }
-        if snapshot_commit is not None:
-            marker["snapshot_commit"] = snapshot_commit
         marker_bytes = (json.dumps(marker, indent=2) + "\n").encode()
 
         target_project_json = isolated_root / PROJECT_JSON_RELATIVE_PATH
@@ -434,12 +430,7 @@ async def ensure_project_json_for_isolation(
 
         _atomic_write_bytes(isolated_root / ISOLATION_MARKER_RELATIVE_PATH, marker_bytes)
         await _restore_generated_tracked_project_json(isolated_root, source_root)
-        if snapshot_commit is None:
-            # A commit-bound snapshot root holds exactly the files of its commit and
-            # nothing else: gcode's inventory verification rejects any other entry,
-            # a shared build-directory symlink included. Ordinary isolation roots
-            # still get the link, which is what keeps their cargo builds shared.
-            link_checkout_cargo_target(isolated_root, parent_project_id)
+        link_checkout_cargo_target(isolated_root, parent_project_id)
         logger.info("Wrote isolation sidecar in %s", isolated_root)
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         raise IsolationProjectJsonError(

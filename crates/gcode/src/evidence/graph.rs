@@ -7,7 +7,7 @@ use super::contracts::{
     GraphOwner, GraphProvenance, GraphQuery, GraphRelation, GraphSelector,
 };
 use super::read::{source_for_lines, source_for_symbol};
-use super::snapshot::{canonical_hash, validate_repo_path};
+use super::source::{canonical_hash, validate_repo_path};
 use super::{
     EvidenceError, EvidenceLibrary, QueryResult, Result, fact_graph_bounds, graph_outcome,
 };
@@ -17,12 +17,12 @@ const MAX_GRAPH_DEPTH: usize = 16;
 pub(super) fn execute(library: &EvidenceLibrary, selector: &GraphSelector) -> Result<QueryResult> {
     validate_selector(selector)?;
     if let Some(source) = &selector.source {
-        validate_snapshot_selector(library, source)?;
+        validate_index_selector(library, source)?;
     }
     if let Some(target) = &selector.target {
-        validate_snapshot_selector(library, target)?;
+        validate_index_selector(library, target)?;
     }
-    library.validate_index_inventory()?;
+
     let direction = effective_direction(selector);
     let (edges, truncated) = match selector.query {
         GraphQuery::Callers => one_hop(
@@ -77,7 +77,6 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &GraphSelector) -> Re
         items,
         lane: format!("graph_{:?}", selector.query).to_lowercase(),
         hybrid: None,
-        exclusions: Vec::new(),
         warnings: Vec::new(),
         result_limit: selector.limit,
         graph_depth: Some(selector.depth),
@@ -205,18 +204,12 @@ fn validate_entity_selector(selector: &EntitySelector) -> Result<()> {
     }
 }
 
-fn validate_snapshot_selector(library: &EvidenceLibrary, selector: &EntitySelector) -> Result<()> {
+fn validate_index_selector(library: &EvidenceLibrary, selector: &EntitySelector) -> Result<()> {
     let path = match selector {
         EntitySelector::Symbol { path, .. } | EntitySelector::Path { path } => path,
         EntitySelector::SymbolId { .. } => return Ok(()),
     };
-    let entry = library.snapshot.entry(path)?;
-    if let Some(reason) = entry.exclusion {
-        return Err(EvidenceError::ExcludedPath {
-            path: path.clone(),
-            reason,
-        });
-    }
+    library.entry(path)?;
     Ok(())
 }
 
@@ -290,9 +283,7 @@ fn resolve_selector(
                     ),
                 });
             }
-            library
-                .snapshot
-                .verify_fact(path, &matches[0].file_content_hash)?;
+            library.verify_fact(path, &matches[0].file_content_hash)?;
             Ok(ResolvedSelector {
                 scope: ScopeSelector::symbols([matches[0].id.clone()]),
                 symbol_ids: BTreeSet::from([matches[0].id.clone()]),
@@ -300,7 +291,7 @@ fn resolve_selector(
         }
         EntitySelector::Path { path } => {
             validate_repo_path(path)?;
-            library.snapshot.entry(path)?;
+            library.entry(path)?;
             Ok(ResolvedSelector {
                 scope: ScopeSelector::paths([path.clone()]),
                 symbol_ids: BTreeSet::new(),
@@ -319,9 +310,7 @@ fn exact_symbol_by_id(library: &EvidenceLibrary, id: &str) -> Result<SymbolFact>
         .ok_or_else(|| EvidenceError::InvalidSelector {
             detail: format!("symbol ID is not visible: {id}"),
         })?;
-    library
-        .snapshot
-        .verify_fact(&symbol.file_path, &symbol.file_content_hash)?;
+    library.verify_fact(&symbol.file_path, &symbol.file_content_hash)?;
     Ok(symbol)
 }
 
@@ -573,9 +562,7 @@ fn graph_item(
     relation_override: Option<GraphRelation>,
     direction: GraphDirection,
 ) -> Result<GraphEvidence> {
-    library
-        .snapshot
-        .verify_fact(&edge.owner_path, &edge.owner_hash)?;
+    library.verify_fact(&edge.owner_path, &edge.owner_hash)?;
     let source = owner_source(library, &edge)?;
     let relation = relation_override.unwrap_or_else(|| relation_from_edge(&edge));
     let provenance = if edge.source_kind == "unresolved" || edge.target_kind == "unresolved" {
@@ -606,7 +593,7 @@ fn graph_item(
     let evidence_id = format!(
         "graph:{}",
         canonical_hash(&(
-            library.snapshot.binding(),
+            &library.binding,
             &source.evidence_id,
             relation,
             direction,
@@ -638,7 +625,7 @@ fn owner_source(library: &EvidenceLibrary, edge: &GraphEdge) -> Result<super::So
     {
         return source_for_symbol(library, &symbol);
     }
-    let bytes = library.snapshot.read_blob(&edge.owner_path)?;
+    let bytes = library.read_file(&edge.owner_path)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| EvidenceError::FactMismatch {
         path: edge.owner_path.clone(),
         expected: "UTF-8 owner blob".to_string(),

@@ -63,7 +63,6 @@ class SourceCitation(BaseModel):
     run_id: str
     evidence_id: str
     path: str
-    blob_oid: GitObjectId
     content_hash: Sha256Digest
     excerpt_hash: Sha256Digest
     qualified_name: str | None = None

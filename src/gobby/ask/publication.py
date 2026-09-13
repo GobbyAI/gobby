@@ -377,9 +377,9 @@ def publish_answer(
     check_deadline()
     if (
         store.run_id != draft.run_id
-        or store.project_id != evidence.snapshot_binding.project_id
+        or store.project_id != evidence.project_id
         or draft.run_id != evidence.run_id
-        or dict(binding) != evidence.snapshot_binding.model_dump(mode="json")
+        or dict(binding) != evidence.repository_binding.model_dump(mode="json")
         or request.get("question") != draft.question
         or not profiles
         or not tool_identities

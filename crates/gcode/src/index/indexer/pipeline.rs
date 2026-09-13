@@ -33,17 +33,6 @@ pub fn index_files(
     ctx: &Context,
     options: IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
-    if let ProjectIndexScope::Snapshot { commit_oid } = &ctx.index_scope {
-        anyhow::ensure!(
-            request.path_filter.is_none()
-                && request.explicit_files.is_empty()
-                && !request.require_cpp_semantics
-                && !request.full
-                && !request.sync_projections,
-            "pinned snapshot indexing requires its complete captured inventory"
-        );
-        return super::index_snapshot(ctx, commit_oid);
-    }
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     index_files_with_connection(&mut conn, request, ctx, options)
 }

@@ -655,63 +655,6 @@ fn isolated_marker_without_complete_parent_metadata_is_rejected() {
 }
 
 #[test]
-fn snapshot_marker_seals_parent_index_visibility() -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let parent = tmp.path().join("parent");
-    let snapshot = tmp.path().join("snapshot");
-    std::fs::create_dir(&parent)?;
-    std::fs::create_dir(&snapshot)?;
-    let commit_oid = "a".repeat(40);
-    write_isolation_json(
-        &snapshot,
-        serde_json::json!({
-            "parent_project_path": parent,
-            "parent_project_id": "0f1f5df6-7f37-4a7f-9115-5b473f22934e",
-            "snapshot_commit": commit_oid,
-        }),
-    );
-    let identity = resolve_project_identity(&snapshot)?;
-    assert_eq!(
-        identity.project_id,
-        crate::project::code_index_id_for_root(&snapshot)
-    );
-    assert_eq!(identity.source, ProjectIdentitySource::IsolatedOverlay);
-    assert_eq!(
-        identity.index_scope,
-        ProjectIndexScope::Snapshot { commit_oid },
-        "a complete snapshot must never fall through to mutable parent index rows"
-    );
-    Ok(())
-}
-
-#[test]
-fn snapshot_marker_rejects_unbound_commits() -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    for commit in [
-        serde_json::Value::Null,
-        serde_json::json!(false),
-        serde_json::json!("HEAD"),
-        serde_json::json!("g".repeat(40)),
-    ] {
-        write_isolation_json(
-            tmp.path(),
-            serde_json::json!({
-                "parent_project_path": "/different-parent",
-                "parent_project_id": "0f1f5df6-7f37-4a7f-9115-5b473f22934e",
-                "snapshot_commit": commit,
-            }),
-        );
-        assert!(
-            resolve_project_identity(tmp.path())
-                .unwrap_err()
-                .to_string()
-                .contains("invalid snapshot commit")
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn isolated_marker_rejects_missing_parent_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
     write_project_json(

@@ -1,6 +1,6 @@
 # Ask Guide
 
-Ask answers repository questions from an immutable Git snapshot and leaves a
+Ask answers repository questions from the caller’s existing code index and leaves a
 durable, reviewable run behind. It is appropriate when an answer needs citations
 and replayable provenance rather than a best-effort conversational response.
 
@@ -12,7 +12,7 @@ From a registered project checkout:
 gcode ask "Where is session authorization enforced?"
 ```
 
-The defaults are the current `HEAD`, a 600-second absolute deadline,
+The defaults are the current checkout’s live index, a 600-second absolute deadline,
 deterministic retrieval, and foreground waiting. Select another registered
 project with the global option:
 
@@ -20,14 +20,17 @@ project with the global option:
 gcode --project /path/to/project ask "How are task dependencies validated?"
 ```
 
-Pin a ref or opt into audited hybrid retrieval explicitly:
+Opt into audited hybrid retrieval explicitly:
 
 ```bash
 gcode ask "What calls the publication verifier?" \
-  --commit release-candidate \
   --timeout-seconds 900 \
   --retrieval hybrid
 ```
+
+To ask about a historical commit, create and register a worktree at that commit,
+index it once with ordinary `gcode index`, then run Ask from that worktree. Ask
+has no `--commit` flag and does not create worktrees or rebuild indexes.
 
 Hybrid retrieval requires a healthy, identity-matched embedding and vector
 configuration. It never silently falls back to deterministic retrieval.
@@ -115,7 +118,7 @@ GET /api/ask/runs/<RUN_ID>/export?project_id=<PROJECT_ID>
 
 The public MCP surface is:
 
-- `start_ask_run(question, commit_ref="HEAD", timeout_seconds=600,
+- `start_ask_run(question, project_path=null, timeout_seconds=600,
   retrieval_mode="deterministic", idempotency_key=null)`
 - `get_ask_run(run_id)`
 - `wait_for_ask_run(run_id, timeout_seconds=null)`
@@ -134,7 +137,10 @@ ordinary discovery and require the owning pipeline's live authority. Their
 names are not a public recovery interface.
 
 HTTP start uses `POST /api/ask/runs` with `question`, `project_id`, and optional
-`commit_ref`, `timeout_seconds`, `retrieval_mode`, and `idempotency_key` fields.
+`project_path`, `timeout_seconds`, `retrieval_mode`, and `idempotency_key` fields.
+An explicit path must be the project’s primary checkout or a registered worktree
+or clone on this machine; a foreign or unregistered path is denied. Requests
+carrying `commit_ref` are rejected.
 Status, wait, resume, cancel, and export use the routes documented in
 [`../contracts/ask.md`](../contracts/ask.md). All calls use the existing local
 daemon authentication transport.
@@ -147,9 +153,11 @@ than inventing support. Negative and exhaustive claims also record the searched
 evidence scope; an empty search by itself is not proof that the repository lacks
 something.
 
-The answer is bound to the recorded commit, not the current working tree. If the
-code changes afterward, start a new run against the desired ref instead of
-reusing the old answer as current evidence.
+Citations use working-tree bytes verified against their indexed content hashes.
+Dirty files and untracked nonignored files can be cited after ordinary indexing.
+The recorded HEAD commit and tree identify admission-time provenance, not an
+immutable source snapshot. If a cited file changes before validation, refresh the
+index and start a new run; do not treat an older answer as current evidence.
 
 ## Installation Check
 

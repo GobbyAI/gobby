@@ -1,6 +1,5 @@
 //! Thin CLI adapter for exact, model-independent evidence reads.
 
-use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use crate::cli_error::CliError;
@@ -8,8 +7,7 @@ use crate::codewiki_facts::CodewikiFacts;
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context, ServiceConfigSelection};
 use crate::evidence::{
     EvidenceError, EvidenceLibrary, EvidenceOperation, EvidenceRequest, FactPage, HybridIdentity,
-    HybridSearch, SearchLane, SearchSelector, Snapshot, SnapshotAction, SnapshotRequest,
-    SnapshotResponse, validate_request_shape,
+    HybridSearch, SearchLane, SearchSelector, validate_request_shape,
 };
 use crate::output::{self, Format};
 use crate::vector::code_symbols::{audited_semantic_search, collection_name};
@@ -55,75 +53,6 @@ pub(crate) fn preflight(
     Ok(request)
 }
 
-pub(crate) fn preflight_snapshot(
-    request_json: &str,
-    format: Format,
-    allow_stale: bool,
-) -> anyhow::Result<SnapshotRequest> {
-    let request: SnapshotRequest =
-        serde_json::from_str(request_json).map_err(|error| CliError {
-            code: "invalid_snapshot_request",
-            message: format!("invalid snapshot request JSON: {error}"),
-            recovery: Some(
-                "provide one complete snapshot schema v1 request with --snapshot-json".to_string(),
-            ),
-            exit_status: 2,
-        })?;
-    if !matches!(format, Format::Json) {
-        return Err(CliError {
-            code: "unsupported_evidence_format",
-            message: "snapshot output is available only as JSON".to_string(),
-            recovery: Some("remove --format text or pass --format json".to_string()),
-            exit_status: 2,
-        }
-        .into());
-    }
-    if allow_stale {
-        return Err(CliError {
-            code: "stale_admission_bypass_forbidden",
-            message: "--allow-stale cannot be used with canonical snapshots".to_string(),
-            recovery: Some("remove --allow-stale before retrying".to_string()),
-            exit_status: 2,
-        }
-        .into());
-    }
-    if request.schema_version != crate::evidence::EVIDENCE_SCHEMA_VERSION {
-        return Err(cli_error(EvidenceError::UnsupportedSchema {
-            found: request.schema_version,
-        })
-        .into());
-    }
-    if request.project_id.trim().is_empty() || request.commit_oid.trim().is_empty() {
-        return Err(CliError {
-            code: "invalid_snapshot_request",
-            message: "snapshot project_id and commit_oid must not be empty".to_string(),
-            recovery: Some("provide the pinned Ask project and full commit OID".to_string()),
-            exit_status: 2,
-        }
-        .into());
-    }
-    Ok(request)
-}
-
-pub(crate) fn run_snapshot(repo_root: &Path, request: SnapshotRequest) -> anyhow::Result<()> {
-    let snapshot = Snapshot::prepare(repo_root, &request.project_id, &request.commit_oid)
-        .map_err(cli_error)?;
-    match &request.action {
-        SnapshotAction::Inspect => {}
-        SnapshotAction::Materialize { target_root } => snapshot
-            .materialize(Path::new(target_root))
-            .map_err(cli_error)?,
-        SnapshotAction::Verify { target_root } => snapshot
-            .verify_materialized(Path::new(target_root))
-            .map_err(cli_error)?,
-    }
-    output::print_json(&SnapshotResponse {
-        schema_version: crate::evidence::EVIDENCE_SCHEMA_VERSION,
-        binding: snapshot.binding().clone(),
-        inventory: snapshot.inventory().clone(),
-    })
-}
-
 pub(crate) fn service_config_selection(request: &EvidenceRequest) -> ServiceConfigSelection {
     match request.operation {
         EvidenceOperation::Graph { .. } => ServiceConfigSelection::falkordb_only(),
@@ -156,14 +85,10 @@ pub(crate) fn classify_context_error(error: anyhow::Error) -> anyhow::Error {
 }
 
 pub(crate) fn run(ctx: &Context, request: EvidenceRequest) -> anyhow::Result<()> {
-    let snapshot = Snapshot::prepare(
-        &ctx.project_root,
-        &ctx.project_id,
-        &request.binding.commit_oid,
-    )
-    .map_err(cli_error)?;
+    crate::freshness::ensure_fresh(ctx, crate::freshness::FreshnessScope::Project)?;
     let facts = Arc::new(CodewikiFacts::from_context(ctx.clone()));
-    let mut library = EvidenceLibrary::new(snapshot, facts).map_err(cli_error)?;
+    let mut library = EvidenceLibrary::new(&ctx.project_root, request.binding.clone(), facts)
+        .map_err(cli_error)?;
     if matches!(
         request.operation,
         EvidenceOperation::Search {
@@ -265,25 +190,15 @@ impl HybridSearch for NativeHybridSearch {
 
 fn cli_error(error: EvidenceError) -> CliError {
     let recovery = match &error {
-        EvidenceError::BindingMismatch { .. }
-        | EvidenceError::InventoryIncomplete
-        | EvidenceError::InventoryMismatch { .. } => {
-            "rebuild the request binding from the exact managed Git snapshot"
-        }
+        EvidenceError::BindingMismatch { .. } => "use the persisted caller repository binding",
         EvidenceError::ContinuationMismatch => {
             "reuse a continuation only with the canonical request that produced it"
         }
-        EvidenceError::ExcludedPath { .. }
-        | EvidenceError::InvalidSelector { .. }
-        | EvidenceError::PathNotTracked { .. }
+        EvidenceError::InvalidSelector { .. }
         | EvidenceError::StaleRange { .. }
         | EvidenceError::UnsafePath { .. } => "correct or narrow the request selector and retry",
-        EvidenceError::FactMismatch { .. } | EvidenceError::IndexIncomplete { .. } => {
-            "repair or rebuild index facts for the exact requested snapshot before retrying"
-        }
-        EvidenceError::Git { .. }
-        | EvidenceError::InvalidObjectId { .. }
-        | EvidenceError::MissingGitObject { .. } => {
+        EvidenceError::FactMismatch { .. } => "refresh the caller index before retrying",
+        EvidenceError::Git { .. } => {
             "fetch or select the exact Git commit object, then rebuild the request binding"
         }
         EvidenceError::GraphUnavailable { .. } => {

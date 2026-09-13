@@ -11,6 +11,35 @@ const PROJECT_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 #[test]
 fn test_ask_cli_lifecycle_contract() -> anyhow::Result<()> {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crate belongs to workspace");
+    let database = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test".into());
+    let output = Command::new("uv")
+        .current_dir(repository)
+        .args([
+            "run",
+            "pytest",
+            "tests/servers/routes/test_ask.py::test_installed_cli_lifecycle_against_authenticated_service",
+            "-q",
+        ])
+        .env("GOBBY_GCODE_BIN", AskCliFixture::binary())
+        .env("DATABASE_URL", database)
+        .env("GOBBY_TEST_PROTECT", "1")
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "real authenticated Ask service acceptance failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn test_ask_cli_scripted_transport_contract() -> anyhow::Result<()> {
     let fixture = AskCliFixture::new()?;
     let running = run_payload("running", None, None);
     let completed = run_payload("completed", Some("unknown"), None);
@@ -33,7 +62,8 @@ fn test_ask_cli_lifecycle_contract() -> anyhow::Result<()> {
     assert!(requests[0].starts_with("POST /api/ask/runs HTTP/1.1"));
     assert!(requests[0].contains("Authorization: Bearer ask-test-token"));
     assert!(requests[0].contains("X-Gobby-Project-Id: 11111111-1111-4111-8111-111111111111"));
-    assert!(requests[0].contains("\"commit_ref\":\"HEAD\""));
+    assert!(!requests[0].contains("commit_ref"));
+    assert!(requests[0].contains("\"project_path\":"));
     assert!(requests[0].contains("\"timeout_seconds\":600"));
     assert!(requests[0].contains("\"retrieval_mode\":\"deterministic\""));
     assert!(requests[1].starts_with("GET /api/ask/runs/ask-run-1/wait?"));

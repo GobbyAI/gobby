@@ -22,7 +22,6 @@ pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
 pub struct IsolationMarker {
     pub parent_project_path: Option<String>,
     pub parent_project_id: Option<String>,
-    pub snapshot_commit: Option<String>,
 }
 
 /// Walk up from `start` looking for a `.gobby` directory containing either
@@ -97,14 +96,10 @@ pub fn read_isolation_marker(project_root: &Path) -> Option<IsolationMarker> {
         .filter(|s| !s.is_empty())
         .map(ToOwned::to_owned);
 
-    let snapshot_commit = json
-        .get("snapshot_commit")
-        .map(|value| value.as_str().unwrap_or_default().to_owned());
-    if parent_project_path.is_some() || parent_project_id.is_some() || snapshot_commit.is_some() {
+    if parent_project_path.is_some() || parent_project_id.is_some() {
         Some(IsolationMarker {
             parent_project_path,
             parent_project_id,
-            snapshot_commit,
         })
     } else {
         None

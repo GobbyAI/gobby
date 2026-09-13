@@ -291,16 +291,21 @@ def setup_internal_registries(
 
     if ask_service_resolver is not None and db is not None:
         from gobby.mcp_proxy.tools.ask import create_ask_registry
-        from gobby.storage.project_checkouts import require_root
+        from gobby.storage.project_checkouts import require_root, resolve_operation_root
         from gobby.storage.workspace_machine_scope import require_local_machine_id
 
-        def resolve_ask_project_root(target_project_id: str) -> Path:
+        def resolve_ask_project_root(target_project_id: str, project_path: str | None) -> Path:
             machine_id = require_local_machine_id(
                 None,
                 resource_kind="project_checkout",
                 resource_id=target_project_id,
             )
-            return Path(require_root(db, target_project_id, machine_id))
+            primary = Path(require_root(db, target_project_id, machine_id))
+            if project_path is None or Path(project_path).resolve() == primary.resolve():
+                return primary
+            return Path(
+                resolve_operation_root(db, target_project_id, machine_id, overlay_path=project_path)
+            )
 
         manager.add_registry(
             create_ask_registry(

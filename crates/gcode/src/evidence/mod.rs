@@ -1,4 +1,4 @@
-//! Deterministic, model-independent evidence bound to exact Git objects.
+//! Deterministic, model-independent evidence from the caller's live index.
 
 use std::fmt;
 use std::sync::Arc;
@@ -11,12 +11,12 @@ use crate::codewiki_facts::{
 
 mod contracts;
 mod graph;
+mod provenance;
 mod read;
 mod search;
-mod snapshot;
+mod source;
 
 pub use contracts::*;
-pub use snapshot::Snapshot;
 
 pub type Result<T> = std::result::Result<T, EvidenceError>;
 
@@ -31,6 +31,17 @@ pub fn validate_request_shape(request: &EvidenceRequest) -> Result<()> {
         return Err(EvidenceError::InvalidSelector {
             detail: "max_bytes must be positive".to_string(),
         });
+    }
+    for oid in [&request.binding.commit_oid, &request.binding.tree_oid] {
+        if !matches!(oid.len(), 40 | 64)
+            || !oid
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(EvidenceError::InvalidSelector {
+                detail: "repository provenance requires full lowercase Git object ids".to_string(),
+            });
+        }
     }
     match &request.operation {
         EvidenceOperation::Search { search } => search::validate_selector(search),
@@ -48,10 +59,6 @@ pub enum EvidenceError {
     Contract {
         detail: String,
     },
-    ExcludedPath {
-        path: String,
-        reason: ExclusionReason,
-    },
     FactMismatch {
         path: String,
         expected: String,
@@ -64,33 +71,16 @@ pub enum EvidenceError {
     GraphUnavailable {
         reason: String,
     },
-    IndexIncomplete {
-        detail: String,
-    },
     IndexUnavailable {
         reason: String,
     },
-    InvalidObjectId {
-        oid: String,
-    },
     InvalidSelector {
-        detail: String,
-    },
-    InventoryIncomplete,
-    InventoryMismatch {
-        detail: String,
-    },
-    MissingGitObject {
-        oid: String,
         detail: String,
     },
     NarrowingRequired {
         evidence_id: String,
         item_bytes: usize,
         max_bytes: usize,
-    },
-    PathNotTracked {
-        path: String,
     },
     SemanticFailure {
         reason: String,
@@ -115,22 +105,15 @@ pub enum EvidenceError {
 impl EvidenceError {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::BindingMismatch { .. } => "snapshot_binding_mismatch",
+            Self::BindingMismatch { .. } => "repository_binding_mismatch",
             Self::ContinuationMismatch => "continuation_mismatch",
             Self::Contract { .. } => "contract_error",
-            Self::ExcludedPath { .. } => "excluded_path",
-            Self::FactMismatch { .. } => "fact_snapshot_mismatch",
+            Self::FactMismatch { .. } => "fact_index_mismatch",
             Self::Git { .. } => "git_error",
             Self::GraphUnavailable { .. } => "graph_unavailable",
-            Self::IndexIncomplete { .. } => "index_incomplete",
             Self::IndexUnavailable { .. } => "index_unavailable",
-            Self::InvalidObjectId { .. } => "invalid_object_id",
             Self::InvalidSelector { .. } => "invalid_selector",
-            Self::InventoryIncomplete => "inventory_incomplete",
-            Self::InventoryMismatch { .. } => "inventory_mismatch",
-            Self::MissingGitObject { .. } => "missing_git_object",
             Self::NarrowingRequired { .. } => "narrowing_required",
-            Self::PathNotTracked { .. } => "path_not_tracked",
             Self::SemanticFailure { .. } => "semantic_failure",
             Self::SemanticIdentityMismatch { .. } => "semantic_identity_mismatch",
             Self::SemanticIdentityRequired => "semantic_identity_required",
@@ -144,15 +127,11 @@ impl EvidenceError {
 impl fmt::Display for EvidenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BindingMismatch { detail }
-            | Self::Contract { detail }
-            | Self::IndexIncomplete { detail }
-            | Self::InventoryMismatch { detail } => formatter.write_str(detail),
+            Self::BindingMismatch { detail } | Self::Contract { detail } => {
+                formatter.write_str(detail)
+            }
             Self::ContinuationMismatch => {
                 formatter.write_str("continuation does not match request")
-            }
-            Self::ExcludedPath { path, reason } => {
-                write!(formatter, "{path} is excluded: {reason:?}")
             }
             Self::FactMismatch {
                 path,
@@ -165,14 +144,7 @@ impl fmt::Display for EvidenceError {
             Self::Git { operation, message } => write!(formatter, "{operation} failed: {message}"),
             Self::GraphUnavailable { reason } => write!(formatter, "graph unavailable: {reason}"),
             Self::IndexUnavailable { reason } => write!(formatter, "index unavailable: {reason}"),
-            Self::InvalidObjectId { oid } => {
-                write!(formatter, "invalid exact Git object ID: {oid}")
-            }
             Self::InvalidSelector { detail } => write!(formatter, "invalid selector: {detail}"),
-            Self::InventoryIncomplete => formatter.write_str("snapshot inventory is incomplete"),
-            Self::MissingGitObject { oid, detail } => {
-                write!(formatter, "missing Git object {oid}: {detail}")
-            }
             Self::NarrowingRequired {
                 evidence_id,
                 item_bytes,
@@ -181,9 +153,6 @@ impl fmt::Display for EvidenceError {
                 formatter,
                 "evidence item {evidence_id} requires {item_bytes} bytes, above max_bytes {max_bytes}"
             ),
-            Self::PathNotTracked { path } => {
-                write!(formatter, "path is absent from snapshot: {path}")
-            }
             Self::SemanticFailure { reason } => {
                 write!(formatter, "semantic search failed: {reason}")
             }
@@ -293,24 +262,42 @@ pub trait HybridSearch {
 }
 
 pub struct EvidenceLibrary {
-    snapshot: Snapshot,
+    repository_root: std::path::PathBuf,
+    binding: RepositoryBinding,
+    files: std::collections::BTreeMap<String, FileFact>,
     facts: Arc<dyn EvidenceFacts>,
     hybrid: Option<Arc<dyn HybridSearch>>,
 }
 
 impl EvidenceLibrary {
-    pub fn new(snapshot: Snapshot, facts: Arc<dyn EvidenceFacts>) -> Result<Self> {
-        if facts.project_id() != snapshot.binding().project_id {
+    pub fn new(
+        repository_root: &std::path::Path,
+        binding: RepositoryBinding,
+        facts: Arc<dyn EvidenceFacts>,
+    ) -> Result<Self> {
+        if facts.project_id() != binding.project_id {
             return Err(EvidenceError::BindingMismatch {
-                detail: format!(
-                    "fact project {} differs from snapshot project {}",
-                    facts.project_id(),
-                    snapshot.binding().project_id
-                ),
+                detail: "fact project differs from caller project".to_string(),
             });
         }
+        let repository_root =
+            repository_root
+                .canonicalize()
+                .map_err(|error| EvidenceError::IndexUnavailable {
+                    reason: error.to_string(),
+                })?;
+        let files = facts
+            .files()
+            .map_err(|error| EvidenceError::IndexUnavailable {
+                reason: format!("{error:#}"),
+            })?
+            .into_iter()
+            .map(|file| (file.path.clone(), file))
+            .collect();
         Ok(Self {
-            snapshot,
+            repository_root,
+            binding,
+            files,
             facts,
             hybrid: None,
         })
@@ -321,14 +308,10 @@ impl EvidenceLibrary {
         self
     }
 
-    pub fn snapshot(&self) -> &Snapshot {
-        &self.snapshot
-    }
-
     pub fn query(&self, request: EvidenceRequest) -> Result<EvidenceResponse> {
         self.validate_request(&request)?;
         let canonical = request.canonical();
-        let request_fingerprint = snapshot::canonical_hash(&canonical)?;
+        let request_fingerprint = source::canonical_hash(&canonical)?;
         let query_result = match &canonical.operation {
             EvidenceOperation::Search { search } => search::execute(self, search)?,
             EvidenceOperation::Read { read } => read::execute(self, read)?,
@@ -344,55 +327,10 @@ impl EvidenceLibrary {
 
     fn validate_request(&self, request: &EvidenceRequest) -> Result<()> {
         validate_request_shape(request)?;
-        if request.binding != *self.snapshot.binding() {
+        if request.binding != self.binding {
             return Err(EvidenceError::BindingMismatch {
-                detail: "request binding differs from verified snapshot".to_string(),
+                detail: "request binding differs from caller binding".to_string(),
             });
-        }
-        Ok(())
-    }
-
-    fn validate_index_inventory(&self) -> Result<()> {
-        let files = self
-            .facts
-            .files()
-            .map_err(|error| EvidenceError::IndexUnavailable {
-                reason: format!("{error:#}"),
-            })?;
-        let indexed = files
-            .into_iter()
-            .map(|file| (file.path, file.content_hash))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        for entry in self.snapshot.eligible_entries() {
-            match indexed.get(&entry.path) {
-                Some(hash) if Some(hash) == entry.content_hash.as_ref() => {}
-                Some(hash) => {
-                    return Err(EvidenceError::FactMismatch {
-                        path: entry.path.clone(),
-                        expected: entry.content_hash.clone().unwrap_or_default(),
-                        found: hash.clone(),
-                    });
-                }
-                None => {
-                    let is_blank = if entry.size_bytes == Some(0) {
-                        true
-                    } else {
-                        let content = self.snapshot.read_blob(&entry.path)?;
-                        std::str::from_utf8(&content).is_ok_and(|text| text.trim().is_empty())
-                    };
-                    if !is_blank {
-                        return Err(EvidenceError::IndexIncomplete {
-                            detail: format!(
-                                "eligible snapshot path is not indexed: {}",
-                                entry.path
-                            ),
-                        });
-                    }
-                }
-            }
-        }
-        for (path, hash) in indexed {
-            self.snapshot.verify_fact(&path, &hash)?;
         }
         Ok(())
     }
@@ -462,7 +400,7 @@ impl EvidenceLibrary {
         Ok(EvidenceResponse {
             request,
             request_fingerprint,
-            binding: self.snapshot.binding().clone(),
+            binding: self.binding.clone(),
             contract: ContractIdentity {
                 name: "gcode-evidence".to_string(),
                 schema_version: EVIDENCE_SCHEMA_VERSION,
@@ -482,7 +420,6 @@ impl EvidenceLibrary {
                 result_limit: result.result_limit,
                 graph_depth: result.graph_depth,
             },
-            exclusions: result.exclusions,
             warnings: result.warnings,
             continuation: next,
         })
@@ -494,7 +431,6 @@ struct QueryResult {
     completeness: Completeness,
     lane: String,
     hybrid: Option<HybridIdentity>,
-    exclusions: Vec<InventoryEntry>,
     warnings: Vec<EvidenceWarning>,
     result_limit: usize,
     graph_depth: Option<usize>,

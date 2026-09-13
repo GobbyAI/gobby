@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from gobby.ask.agents import AskAgentRuntime
 from gobby.ask.artifacts import AskArtifactStore
@@ -489,12 +489,11 @@ class AskService:
         *,
         run_id: str,
         project_id: str,
-        project_root: Path,
     ) -> dict[str, Any]:
         self._authorize_stage("prepare", run_id=run_id, project_id=project_id)
+        record = self._record(run_id, project_id)
         return await self.stage_runtime.prepare(
-            self._record(run_id, project_id),
-            project_root=project_root,
+            record, project_root=Path(record.binding.repository_root)
         )
 
     async def seed(self, *, run_id: str, project_id: str) -> dict[str, Any]:
@@ -629,6 +628,10 @@ class AskService:
         )
 
     def _record(self, run_id: str, project_id: str) -> AskRunRecord:
+        try:
+            UUID(run_id)
+        except ValueError as error:
+            raise AskRunNotFound(f"Ask run not found: {run_id}") from error
         record = self.storage.get(run_id)
         if record is None or record.binding.project_id != project_id:
             raise AskRunNotFound(f"Ask run not found: {run_id}")

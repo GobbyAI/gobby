@@ -54,28 +54,6 @@ pub(super) fn build_lua_module_files(
     module_files
 }
 
-pub(super) fn build_lua_module_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    let mut module_files = HashMap::<String, Vec<String>>::new();
-    for (rel, _) in sources.iter() {
-        if Path::new(rel).extension().and_then(|ext| ext.to_str()) != Some("lua") {
-            continue;
-        }
-        let Some(without_ext) = rel.strip_suffix(".lua") else {
-            continue;
-        };
-        for module in lua_module_names_for_path(without_ext) {
-            module_files
-                .entry(module)
-                .or_default()
-                .push(rel.to_string());
-        }
-    }
-    sort_file_map(&mut module_files);
-    module_files
-}
-
 fn lua_module_names_for_path(without_ext: &str) -> HashSet<String> {
     let mut modules = HashSet::new();
     add_lua_module_names(&mut modules, without_ext);
@@ -123,16 +101,6 @@ pub(in crate::index::import_resolution) fn build_php_symbol_files(
     collect_named_files(observations)
 }
 
-pub(super) fn build_php_symbol_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    collect_named_files(
-        sources
-            .iter()
-            .filter_map(|(rel, source)| observe_php_source(rel, source)),
-    )
-}
-
 fn observe_php_source(rel: &str, source: &[u8]) -> Option<(String, HashSet<String>)> {
     if Path::new(rel).extension().and_then(|ext| ext.to_str()) != Some("php") {
         return None;
@@ -175,16 +143,6 @@ pub(super) fn build_ruby_constant_files(
         })
         .collect::<Vec<_>>();
     collect_named_files(observations)
-}
-
-pub(super) fn build_ruby_constant_files_from_sources(
-    sources: &crate::index::captured_sources::CapturedSources<'_>,
-) -> HashMap<String, Vec<String>> {
-    collect_named_files(
-        sources
-            .iter()
-            .filter_map(|(rel, source)| observe_ruby_source(rel, source)),
-    )
 }
 
 fn observe_ruby_source(rel: &str, source: &[u8]) -> Option<(String, HashSet<String>)> {

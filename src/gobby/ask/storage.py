@@ -124,6 +124,7 @@ class AskRunStorage:
         request_body = request.model_dump(mode="json")
         fingerprint_body = dict(request_body)
         fingerprint_body.pop("idempotency_key", None)
+        fingerprint_body["repository_root"] = str(project_root.resolve())
         request_fingerprint = _fingerprint(fingerprint_body)
 
         with database_operation_deadline(
@@ -162,13 +163,13 @@ class AskRunStorage:
                 if self.commit_resolver is None:
                     commit_oid, tree_oid = self._resolve_commit(
                         project_root,
-                        request.commit_ref,
+                        "HEAD",
                         timeout=_remaining_seconds(cutoff),
                     )
                 else:
                     commit_oid, tree_oid = self.commit_resolver(
                         project_root,
-                        request.commit_ref,
+                        "HEAD",
                         _remaining_seconds(cutoff),
                     )
                 _remaining_seconds(cutoff)
@@ -190,6 +191,7 @@ class AskRunStorage:
                 _remaining_seconds(cutoff)
                 binding = AskBinding(
                     project_id=request.project_id,
+                    repository_root=str(project_root.resolve()),
                     commit_oid=commit_oid,
                     tree_oid=tree_oid,
                     deadline_at=deadline_at,
@@ -334,59 +336,6 @@ class AskRunStorage:
             return None
         return self._record_from_inputs(run_id, self._decode_inputs(execution.inputs_json))
 
-    def attach_snapshot(
-        self,
-        run_id: str,
-        *,
-        inventory_digest: str,
-        snapshot_artifact: dict[str, Any],
-        deadline_at: datetime,
-    ) -> AskRunRecord:
-        """Persist the prepared source snapshot before an investigator is admitted."""
-        remaining = _remaining_until(deadline_at)
-        with (
-            database_operation_deadline(
-                timeout_seconds=remaining,
-                operation_timeout_seconds=remaining,
-            ),
-            self.manager.db.transaction() as connection,
-        ):
-            row = connection.execute(
-                """
-                SELECT inputs_json, project_id FROM pipeline_executions
-                WHERE id = %s AND pipeline_name = %s
-                FOR UPDATE
-                """,
-                (run_id, self.pipeline_name),
-            ).fetchone()
-            if row is None or (
-                self.manager.project_id is not None
-                and str(row["project_id"]) != self.manager.project_id
-            ):
-                raise ValueError(f"Ask run not found: {run_id}")
-            if snapshot_artifact.get("project_id") != str(row["project_id"]) or (
-                snapshot_artifact.get("run_id") != run_id
-            ):
-                raise ValueError("Ask snapshot artifact does not belong to this run")
-            document = json.loads(row["inputs_json"] or "{}")
-            ask_inputs = self._narrow_ask(document)
-            binding = dict(ask_inputs["binding"])
-            existing_digest = binding.get("inventory_digest")
-            existing_artifact = binding.get("snapshot_artifact")
-            if existing_digest not in {None, inventory_digest} or (
-                existing_artifact is not None and existing_artifact != snapshot_artifact
-            ):
-                raise ValueError("Ask run snapshot binding is immutable")
-            binding["inventory_digest"] = inventory_digest
-            binding["snapshot_artifact"] = snapshot_artifact
-            ask_inputs["binding"] = binding
-            document["ask"] = ask_inputs
-            connection.execute(
-                "UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW() WHERE id = %s",
-                (_canonical_json(document), run_id),
-            )
-        return self._record_from_inputs(run_id, ask_inputs)
-
     def publish_snapshot_generation(
         self,
         run_id: str,
@@ -450,16 +399,6 @@ class AskRunStorage:
                 (_canonical_json(document), run_id),
             )
         return candidate
-
-    def get_snapshot_generation(self, run_id: str) -> SnapshotGeneration | None:
-        execution = self.manager.get_execution(run_id)
-        if execution is None:
-            return None
-        document = self._decode_document(execution.inputs_json)
-        runtime = self._runtime(self._narrow_ask(document))
-        if runtime.get("snapshot") is None:
-            return None
-        return SnapshotGeneration.model_validate(runtime["snapshot"])
 
     def append_evidence_reference(
         self,
@@ -617,4 +556,5 @@ class AskRunStorage:
             binding=AskBinding.model_validate(inputs["binding"]),
             investigator=ProfileSnapshot.model_validate(inputs["investigator"]),
             reviewer=ProfileSnapshot.model_validate(inputs["reviewer"]),
+            generation=inputs.get("runtime", {}).get("snapshot"),
         )

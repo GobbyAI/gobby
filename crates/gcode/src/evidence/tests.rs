@@ -73,151 +73,7 @@ fn initialize_repo(repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-#[test]
-fn snapshot_blob_reads_use_bounded_git_processes() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let (repository, _) = source_repo()?;
-    for index in 0..32 {
-        std::fs::write(
-            repository.path().join(format!("file-{index}.txt")),
-            "shared blob\n",
-        )?;
-    }
-    let large_content = "verified source\n".repeat(10_000);
-    std::fs::write(repository.path().join("large.txt"), &large_content)?;
-    git(repository.path(), &["add", "."])?;
-    let commit_oid = commit(repository.path(), "batch-sized snapshot")?;
-    let expected = Snapshot::prepare(repository.path(), "batch-project", &commit_oid)?;
-
-    let wrapper = tempfile::tempdir()?;
-    let real_git = Command::new("which").arg("git").output()?;
-    anyhow::ensure!(real_git.status.success(), "find git executable");
-    let real_git = String::from_utf8(real_git.stdout)?.trim().to_owned();
-    let log = wrapper.path().join("calls.log");
-    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
-    let wrapper_path = wrapper.path().join("git");
-    std::fs::write(
-        &wrapper_path,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n\
-             case \"$*\" in *'cat-file --batch'*) \
-             dd if=/dev/zero bs=65536 count=32 >&2 2>/dev/null;; esac\n\
-             exec {} \"$@\"\n",
-            quote(&log.to_string_lossy()),
-            quote(&real_git),
-        ),
-    )?;
-    std::fs::set_permissions(&wrapper_path, std::fs::Permissions::from_mode(0o700))?;
-    let original_path = std::env::var("PATH")?;
-    let path = format!("{}:{original_path}", wrapper.path().display());
-    let materialized = tempfile::tempdir()?;
-    let actual = temp_env::with_var("PATH", Some(path), || -> anyhow::Result<Snapshot> {
-        let snapshot = Snapshot::prepare(repository.path(), "batch-project", &commit_oid)?;
-        snapshot.materialize(materialized.path())?;
-        let captured = snapshot.read_eligible_blobs()?;
-        assert_eq!(captured.len(), snapshot.eligible_entries().count());
-        assert_eq!(captured["large.txt"], large_content.as_bytes());
-        assert!(!captured.contains_key("binary.bin"));
-        assert!(!captured.contains_key("source-link"));
-        Ok(snapshot)
-    })?;
-
-    assert_eq!(actual.binding(), expected.binding());
-    assert_eq!(actual.inventory(), expected.inventory());
-    assert_eq!(
-        std::fs::read_to_string(materialized.path().join("large.txt"))?,
-        large_content
-    );
-    assert!(!materialized.path().join("binary.bin").exists());
-    assert!(!materialized.path().join("source-link").exists());
-    let calls = std::fs::read_to_string(log)?;
-    let blob_processes = calls
-        .lines()
-        .filter(|line| line.contains("cat-file blob ") || line.contains("cat-file --batch"))
-        .count();
-    assert_eq!(
-        blob_processes, 3,
-        "snapshot blob processes must not grow with file count: {calls}"
-    );
-    Ok(())
-}
-
-#[test]
-fn snapshot_language_uses_committed_inventory() -> anyhow::Result<()> {
-    if let Ok(repo) = std::env::var("GOBBY_TEST_HEADER_REPO") {
-        let commit_oid = std::env::var("GOBBY_TEST_HEADER_COMMIT")?;
-        return assert_snapshot_header_languages(Path::new(&repo), &commit_oid);
-    }
-    let repo = tempfile::tempdir()?;
-    initialize_repo(repo.path())?;
-    for (path, content) in [
-        ("paired.h", "int pair(void);\n"),
-        (
-            "paired.m",
-            "postgresql://worker:excluded-secret@127.0.0.1/db\n",
-        ),
-        ("plain.h", "#define PLAIN 1\n"),
-        ("modern.h", "namespace example { class Modern {}; }\n"),
-        ("binary.h", "\0binary\n"),
-    ] {
-        std::fs::write(repo.path().join(path), content)?;
-    }
-    git(repo.path(), &["add", "."])?;
-    let commit_oid = commit(repo.path(), "captured headers")?;
-    assert_snapshot_header_languages(repo.path(), &commit_oid)?;
-
-    // A child process varies CWD without changing the test runner's global CWD.
-    let hostile_cwd = tempfile::tempdir()?;
-    for path in ["plain.h", "plain.m", "binary.h", "binary.m"] {
-        std::fs::write(hostile_cwd.path().join(path), "@interface Ambient\n@end\n")?;
-    }
-    let child = Command::new(std::env::current_exe()?)
-        .args([
-            "--exact",
-            "evidence::tests::snapshot_language_uses_committed_inventory",
-            "--nocapture",
-        ])
-        .env("GOBBY_TEST_HEADER_REPO", repo.path())
-        .env("GOBBY_TEST_HEADER_COMMIT", &commit_oid)
-        .current_dir(hostile_cwd.path())
-        .output()?;
-    anyhow::ensure!(
-        child.status.success(),
-        "header classification changed with CWD: {} {}",
-        String::from_utf8_lossy(&child.stdout),
-        String::from_utf8_lossy(&child.stderr)
-    );
-    Ok(())
-}
-
-fn assert_snapshot_header_languages(repo: &Path, commit_oid: &str) -> anyhow::Result<()> {
-    let snapshot = Snapshot::prepare(repo, "header-inventory", commit_oid)?;
-    for (path, expected) in [
-        ("paired.h", "objc"),
-        ("plain.h", "c"),
-        ("modern.h", "cpp"),
-        ("binary.h", "c"),
-    ] {
-        assert_eq!(
-            snapshot.entry(path)?.language.as_deref(),
-            Some(expected),
-            "{path}"
-        );
-    }
-    assert_eq!(
-        snapshot.entry("paired.m")?.exclusion,
-        Some(ExclusionReason::SensitiveContent)
-    );
-    assert_eq!(
-        snapshot.entry("binary.h")?.exclusion,
-        Some(ExclusionReason::Binary)
-    );
-    Ok(())
-}
-
-fn request(binding: &SnapshotBinding, operation: EvidenceOperation) -> EvidenceRequest {
+fn request(binding: &RepositoryBinding, operation: EvidenceOperation) -> EvidenceRequest {
     EvidenceRequest {
         schema_version: EVIDENCE_SCHEMA_VERSION,
         binding: binding.clone(),
@@ -260,23 +116,15 @@ struct FakeFacts {
 }
 
 impl FakeFacts {
-    fn from_snapshot(snapshot: &Snapshot) -> Self {
-        let files = snapshot
-            .eligible_entries()
-            .map(|entry| FileFact {
-                id: FileId::new(&entry.path),
-                path: entry.path.clone(),
-                language: entry.language.clone().unwrap_or_else(|| "text".to_string()),
-                symbol_count: i64::from(entry.path == "src/lib.rs") * 3,
-                content_hash: entry.content_hash.clone().expect("eligible content hash"),
-            })
-            .collect::<Vec<_>>();
-        let hash = snapshot
-            .entry("src/lib.rs")
-            .expect("source entry")
-            .content_hash
-            .clone()
-            .expect("source hash");
+    fn for_source(binding: &RepositoryBinding) -> Self {
+        let hash = gobby_core::indexing::content_hash(SOURCE.as_bytes());
+        let files = vec![FileFact {
+            id: FileId::new("src/lib.rs"),
+            path: "src/lib.rs".to_string(),
+            language: "rust".to_string(),
+            symbol_count: 3,
+            content_hash: hash.clone(),
+        }];
         let symbols = ["alpha", "beta", "gamma"]
             .into_iter()
             .map(|name| symbol(name, &hash))
@@ -302,7 +150,7 @@ impl FakeFacts {
             },
         ];
         Self {
-            project_id: snapshot.binding().project_id.clone(),
+            project_id: binding.project_id.clone(),
             files,
             symbols,
             edges,
@@ -568,7 +416,7 @@ fn graph_edge(
     }
 }
 
-fn source_repo() -> anyhow::Result<(tempfile::TempDir, Snapshot)> {
+fn source_repo() -> anyhow::Result<(tempfile::TempDir, RepositoryBinding)> {
     let temporary = tempfile::tempdir()?;
     let repo = temporary.path();
     initialize_repo(repo)?;
@@ -599,45 +447,23 @@ fn source_repo() -> anyhow::Result<(tempfile::TempDir, Snapshot)> {
         ],
     )?;
     let commit_oid = commit(repo, "tracked exclusions")?;
-    let snapshot = Snapshot::prepare(repo, "project-1", &commit_oid)?;
-    Ok((temporary, snapshot))
+    let binding = RepositoryBinding {
+        project_id: "project-1".to_string(),
+        tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
+        commit_oid,
+    };
+    Ok((temporary, binding))
 }
 
 #[test]
 #[serial_test::serial(evidence_git)]
-fn test_pinned_evidence_contract() -> anyhow::Result<()> {
-    let (temporary, snapshot) = source_repo()?;
-    let repo = temporary.path();
-    let facts = FakeFacts::from_snapshot(&snapshot);
-    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts.clone()))?;
+fn test_live_evidence_contract() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let facts = FakeFacts::for_source(&binding);
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts.clone()))?;
 
-    let verified = Snapshot::verify(
-        repo,
-        snapshot.binding().clone(),
-        snapshot.inventory().clone(),
-    )?;
-    assert_eq!(verified.binding(), snapshot.binding());
-
-    let exclusions = snapshot.exclusions();
-    assert!(
-        exclusions
-            .iter()
-            .any(|entry| entry.exclusion == Some(ExclusionReason::Binary))
-    );
-    assert!(
-        exclusions
-            .iter()
-            .any(|entry| entry.exclusion == Some(ExclusionReason::Symlink))
-    );
-    assert!(
-        exclusions
-            .iter()
-            .any(|entry| entry.exclusion == Some(ExclusionReason::Gitlink))
-    );
-
-    std::fs::write(repo.join("src/lib.rs"), "fn dirty_live_parent() {}\n")?;
     let range_request = request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Read {
             read: ReadSelector::Range {
                 path: "src/lib.rs".to_string(),
@@ -671,7 +497,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     );
 
     let symbol_response = library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Read {
             read: ReadSelector::Symbol {
                 path: "src/lib.rs".to_string(),
@@ -694,7 +520,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
             "beta"
         };
         let response = library.query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Search {
                 search: search_selector(lane, query),
             },
@@ -708,7 +534,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     };
     for graph_query in [GraphQuery::Callees, GraphQuery::ScopedView] {
         let response = library.query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Graph {
                 graph: graph_selector(graph_query, source_symbol.clone()),
             },
@@ -734,7 +560,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     }
     for graph_query in [GraphQuery::Callers, GraphQuery::Usages] {
         let response = library.query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Graph {
                 graph: graph_selector(
                     graph_query,
@@ -753,7 +579,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
         }));
     }
     let imports = library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Graph {
             graph: graph_selector(
                 GraphQuery::Imports,
@@ -770,7 +596,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     ));
     let excluded_graph = library
         .query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Graph {
                 graph: graph_selector(
                     GraphQuery::Imports,
@@ -781,14 +607,14 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
             },
         ))
         .expect_err("excluded graph roots cannot reach indexed facts");
-    assert_eq!(excluded_graph.code(), "excluded_path");
+    assert_eq!(excluded_graph.code(), "invalid_selector");
 
     let mut path_selector = graph_selector(GraphQuery::DirectedPath, source_symbol);
     path_selector.target = Some(EntitySelector::SymbolId {
         id: "beta".to_string(),
     });
     let path = library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Graph {
             graph: path_selector,
         },
@@ -803,7 +629,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     );
     truncated_selector.limit = 1;
     let truncated = library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Graph {
             graph: truncated_selector,
         },
@@ -821,7 +647,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     assert_eq!(
         library
             .query(request(
-                snapshot.binding(),
+                &binding,
                 EvidenceOperation::Graph {
                     graph: contradictory_direction
                 },
@@ -839,7 +665,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     );
     bounded_view.limit = 3;
     let bounded_view = library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Graph {
             graph: bounded_view,
         },
@@ -847,11 +673,12 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     assert_eq!(bounded_view.items.len(), 3);
     assert_eq!(bounded_view.completeness, Completeness::Complete);
 
-    let mut ambiguous_facts = FakeFacts::from_snapshot(&snapshot);
+    let mut ambiguous_facts = FakeFacts::for_source(&binding);
     ambiguous_facts.edges[0].provenance = "AMBIGUOUS".to_string();
-    let ambiguous_library = EvidenceLibrary::new(snapshot.clone(), Arc::new(ambiguous_facts))?;
+    let ambiguous_library =
+        EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(ambiguous_facts))?;
     let ambiguous = ambiguous_library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Graph {
             graph: graph_selector(
                 GraphQuery::Callees,
@@ -872,16 +699,15 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
         dimension: 768,
         index_id: "index-7".to_string(),
     };
-    let hybrid_library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?.with_hybrid(
-        Arc::new(FailingHybrid {
+    let hybrid_library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?
+        .with_hybrid(Arc::new(FailingHybrid {
             identity: hybrid_identity.clone(),
-        }),
-    );
+        }));
     let mut hybrid_selector = search_selector(SearchLane::Hybrid, "alpha");
     hybrid_selector.hybrid_identity = Some(hybrid_identity);
     let error = hybrid_library
         .query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Search {
                 search: hybrid_selector,
             },
@@ -889,12 +715,13 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
         .expect_err("semantic failure must not fall back");
     assert_eq!(error.code(), "semantic_failure");
 
-    let mut stale_facts = FakeFacts::from_snapshot(&snapshot);
+    let mut stale_facts = FakeFacts::for_source(&binding);
     stale_facts.symbols[0].byte_end = SOURCE.len() + 1;
-    let stale_library = EvidenceLibrary::new(snapshot.clone(), Arc::new(stale_facts))?;
+    let stale_library =
+        EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(stale_facts))?;
     let error = stale_library
         .query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Read {
                 read: ReadSelector::Symbol {
                     path: "src/lib.rs".to_string(),
@@ -905,12 +732,13 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
         .expect_err("stale symbol offsets must fail");
     assert_eq!(error.code(), "stale_range");
 
-    let mut shifted_facts = FakeFacts::from_snapshot(&snapshot);
+    let mut shifted_facts = FakeFacts::for_source(&binding);
     shifted_facts.symbols[1].byte_start += 1;
-    let shifted_library = EvidenceLibrary::new(snapshot.clone(), Arc::new(shifted_facts))?;
+    let shifted_library =
+        EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(shifted_facts))?;
     let error = shifted_library
         .query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Read {
                 read: ReadSelector::Symbol {
                     path: "src/lib.rs".to_string(),
@@ -923,7 +751,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
 
     let error = library
         .query(request(
-            snapshot.binding(),
+            &binding,
             EvidenceOperation::Read {
                 read: ReadSelector::Range {
                     path: "../outside".to_string(),
@@ -936,7 +764,7 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
     assert_eq!(error.code(), "unsafe_path");
 
     let mut narrow = request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Read {
             read: ReadSelector::Range {
                 path: "src/lib.rs".to_string(),
@@ -956,13 +784,12 @@ fn test_pinned_evidence_contract() -> anyhow::Result<()> {
 
     assert_commit_metadata_contract()?;
     assert_continuation_binding(&library)?;
-    assert_missing_blob_is_typed()?;
     Ok(())
 }
 
 fn assert_continuation_binding(library: &EvidenceLibrary) -> anyhow::Result<()> {
     let mut metadata = request(
-        library.snapshot().binding(),
+        &library.binding,
         EvidenceOperation::Read {
             read: ReadSelector::CommitMetadata,
         },
@@ -986,7 +813,7 @@ fn assert_continuation_binding(library: &EvidenceLibrary) -> anyhow::Result<()> 
     assert_ne!(first.items, second.items);
 
     let mut changed = request(
-        library.snapshot().binding(),
+        &library.binding,
         EvidenceOperation::Read {
             read: ReadSelector::Range {
                 path: "src/lib.rs".to_string(),
@@ -1010,73 +837,28 @@ fn assert_commit_metadata_contract() -> anyhow::Result<()> {
     std::fs::write(repo.join("old.txt"), "root\n")?;
     git(repo, &["add", "old.txt"])?;
     let root = commit(repo, "root")?;
-    let root_snapshot = Snapshot::prepare(repo, "metadata-project", &root)?;
-    assert!(root_snapshot.binding().commit.parent_oids.is_empty());
-    assert_eq!(
-        root_snapshot.binding().commit.comparison_kind,
-        ComparisonKind::EmptyTree
-    );
-    assert!(
-        root_snapshot
-            .binding()
-            .commit
-            .changed_paths
-            .iter()
-            .any(|change| {
-                change.status == ChangeStatus::Added
-                    && change.new_path.as_deref() == Some("old.txt")
-            })
-    );
-    git(
-        repo,
-        &[
-            "-c",
-            "user.name=Evidence Test",
-            "-c",
-            "user.email=evidence@example.invalid",
-            "tag",
-            "-a",
-            "pinned-root",
-            &root,
-            "-m",
-            "pinned root",
-        ],
-    )?;
-    let tag_oid = git(repo, &["rev-parse", "pinned-root^{tag}"])?;
-    let tagged_snapshot = Snapshot::prepare(repo, "metadata-project", &tag_oid)?;
-    assert_eq!(tagged_snapshot.binding().commit_oid, root);
-
+    let root_snapshot = provenance::load_commit_binding(repo, &root)?;
+    assert!(root_snapshot.parent_oids.is_empty());
+    assert_eq!(root_snapshot.comparison_kind, ComparisonKind::EmptyTree);
+    assert!(root_snapshot.changed_paths.iter().any(|change| {
+        change.status == ChangeStatus::Added && change.new_path.as_deref() == Some("old.txt")
+    }));
     git(repo, &["mv", "old.txt", "renamed.txt"])?;
     let renamed = commit(repo, "rename")?;
-    let rename_snapshot = Snapshot::prepare(repo, "metadata-project", &renamed)?;
-    assert!(
-        rename_snapshot
-            .binding()
-            .commit
-            .changed_paths
-            .iter()
-            .any(|change| {
-                change.status == ChangeStatus::Renamed
-                    && change.old_path.as_deref() == Some("old.txt")
-                    && change.new_path.as_deref() == Some("renamed.txt")
-                    && change.old_blob_oid == change.new_blob_oid
-            })
-    );
+    let rename_snapshot = provenance::load_commit_binding(repo, &renamed)?;
+    assert!(rename_snapshot.changed_paths.iter().any(|change| {
+        change.status == ChangeStatus::Renamed
+            && change.old_path.as_deref() == Some("old.txt")
+            && change.new_path.as_deref() == Some("renamed.txt")
+            && change.old_blob_oid == change.new_blob_oid
+    }));
 
     git(repo, &["rm", "--quiet", "renamed.txt"])?;
     let deleted = commit(repo, "delete")?;
-    let delete_snapshot = Snapshot::prepare(repo, "metadata-project", &deleted)?;
-    assert!(
-        delete_snapshot
-            .binding()
-            .commit
-            .changed_paths
-            .iter()
-            .any(|change| {
-                change.status == ChangeStatus::Deleted
-                    && change.old_path.as_deref() == Some("renamed.txt")
-            })
-    );
+    let delete_snapshot = provenance::load_commit_binding(repo, &deleted)?;
+    assert!(delete_snapshot.changed_paths.iter().any(|change| {
+        change.status == ChangeStatus::Deleted && change.old_path.as_deref() == Some("renamed.txt")
+    }));
 
     std::fs::write(repo.join("shared.txt"), "base\n")?;
     git(repo, &["add", "shared.txt"])?;
@@ -1106,434 +888,18 @@ fn assert_commit_metadata_contract() -> anyhow::Result<()> {
         ],
     )?;
     let merge = git(repo, &["rev-parse", "HEAD"])?;
-    let merge_snapshot = Snapshot::prepare(repo, "metadata-project", &merge)?;
-    assert_eq!(merge_snapshot.binding().commit.parent_oids.len(), 2);
-    assert_eq!(
-        merge_snapshot.binding().commit.comparison_parent_oid,
-        first_parent
-    );
-    assert!(
-        merge_snapshot
-            .binding()
-            .commit
-            .changed_paths
-            .iter()
-            .any(|change| {
-                change.status == ChangeStatus::Modified
-                    && change.new_path.as_deref() == Some("shared.txt")
-            })
-    );
-    Ok(())
-}
-
-fn assert_missing_blob_is_typed() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-    std::fs::write(repo.join("only.txt"), "only\n")?;
-    git(repo, &["add", "only.txt"])?;
-    let commit_oid = commit(repo, "only")?;
-    let snapshot = Snapshot::prepare(repo, "missing-project", &commit_oid)?;
-    let blob = snapshot
-        .entry("only.txt")?
-        .blob_oid
-        .as_ref()
-        .expect("blob oid")
-        .clone();
-    let object = repo.join(".git/objects").join(&blob[..2]).join(&blob[2..]);
-    std::fs::remove_file(object)?;
-    let error = snapshot
-        .read_blob("only.txt")
-        .expect_err("missing blob must fail");
-    assert_eq!(error.code(), "missing_git_object");
-    let materialized = tempfile::tempdir()?;
-    let error = snapshot
-        .materialize(materialized.path())
-        .expect_err("missing batch object must fail materialization");
-    assert_eq!(error.code(), "missing_git_object");
-    Ok(())
-}
-
-#[test]
-#[serial_test::serial(evidence_git)]
-fn snapshot_verification_rejects_changed_inventory() -> anyhow::Result<()> {
-    let (temporary, snapshot) = source_repo()?;
-    let mut inventory = snapshot.inventory().clone();
-    inventory.entries[0].mode = "100755".to_string();
-    let error = Snapshot::verify(temporary.path(), snapshot.binding().clone(), inventory)
-        .expect_err("changed manifest must fail");
-    assert_eq!(error.code(), "inventory_mismatch");
-    Ok(())
-}
-
-#[test]
-#[serial_test::serial(evidence_git)]
-fn incomplete_index_is_not_reported_as_empty_repository() -> anyhow::Result<()> {
-    let (_temporary, snapshot) = source_repo()?;
-    let facts = FakeFacts {
-        project_id: snapshot.binding().project_id.clone(),
-        files: Vec::new(),
-        symbols: Vec::new(),
-        edges: Vec::new(),
-    };
-    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?;
-    let error = library
-        .query(request(
-            snapshot.binding(),
-            EvidenceOperation::Search {
-                search: search_selector(SearchLane::Literal, "missing"),
-            },
-        ))
-        .expect_err("incomplete index must fail");
-    assert_eq!(error.code(), "index_incomplete");
-    Ok(())
-}
-
-#[test]
-#[serial_test::serial(evidence_git)]
-fn blank_snapshot_paths_need_no_index_rows() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-    std::fs::create_dir(repo.join("src"))?;
-    std::fs::write(repo.join("src/lib.rs"), SOURCE)?;
-    std::fs::write(repo.join("empty.txt"), "")?;
-    std::fs::write(repo.join("whitespace.txt"), "\u{2003}\n")?;
-    git(repo, &["add", "."])?;
-    let commit_oid = commit(repo, "blank paths")?;
-    let snapshot = Snapshot::prepare(repo, "blank-project", &commit_oid)?;
-    let mut facts = FakeFacts::from_snapshot(&snapshot);
-    facts
-        .files
-        .retain(|file| !matches!(file.path.as_str(), "empty.txt" | "whitespace.txt"));
-    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?;
-
-    let response = library.query(request(
-        snapshot.binding(),
-        EvidenceOperation::Search {
-            search: search_selector(SearchLane::Literal, "missing"),
-        },
-    ))?;
-    assert_eq!(response.completeness, Completeness::CompleteEmpty);
-    assert!(response.items.is_empty());
-    Ok(())
-}
-
-#[test]
-fn snapshot_ignores_commit_and_blob_replacement_refs() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-
-    std::fs::write(repo.join("source.txt"), "original source\n")?;
-    git(repo, &["add", "source.txt"])?;
-    let original_commit = commit(repo, "original")?;
-    let original_tree = git(repo, &["rev-parse", &format!("{original_commit}^{{tree}}")])?;
-    let original_blob = git(
-        repo,
-        &["rev-parse", &format!("{original_commit}:source.txt")],
-    )?;
-
-    std::fs::write(repo.join("source.txt"), "replacement source\n")?;
-    git(repo, &["add", "source.txt"])?;
-    let replacement_commit = commit(repo, "replacement")?;
-    let replacement_blob = git(
-        repo,
-        &["rev-parse", &format!("{replacement_commit}:source.txt")],
-    )?;
-    git(repo, &["replace", &original_commit, &replacement_commit])?;
-    git(repo, &["replace", &original_blob, &replacement_blob])?;
-
-    let snapshot = Snapshot::prepare(repo, "project-replacements", &original_commit)?;
-    assert_eq!(snapshot.binding().commit_oid, original_commit);
-    assert_eq!(snapshot.binding().tree_oid, original_tree);
-    assert!(snapshot.binding().commit.parent_oids.is_empty());
-    assert_eq!(
-        snapshot.binding().commit.comparison_kind,
-        ComparisonKind::EmptyTree
-    );
-    assert_eq!(snapshot.binding().commit.changed_paths.len(), 1);
-    assert_eq!(
-        snapshot.binding().commit.changed_paths[0]
-            .new_blob_oid
-            .as_deref(),
-        Some(original_blob.as_str())
-    );
-    assert_eq!(
-        snapshot.entry("source.txt")?.blob_oid.as_deref(),
-        Some(original_blob.as_str())
-    );
-    assert_eq!(snapshot.read_blob("source.txt")?, b"original source\n");
-    Ok(())
-}
-
-#[test]
-#[serial_test::serial(evidence_git)]
-fn snapshot_ignores_ambient_git_repository_and_config_overrides() -> anyhow::Result<()> {
-    let source = tempfile::tempdir()?;
-    initialize_repo(source.path())?;
-    std::fs::write(source.path().join("source.txt"), "trusted source\n")?;
-    git(source.path(), &["add", "source.txt"])?;
-    let commit_oid = commit(source.path(), "trusted")?;
-
-    let contaminant = tempfile::tempdir()?;
-    initialize_repo(contaminant.path())?;
-    std::fs::write(contaminant.path().join("source.txt"), "ambient source\n")?;
-    git(contaminant.path(), &["add", "source.txt"])?;
-    commit(contaminant.path(), "ambient")?;
-    let git_dir = contaminant.path().join(".git");
-    let object_dir = git_dir.join("objects");
-    let index_file = git_dir.join("index");
-    let marker = contaminant.path().join("external-diff-ran");
-
-    let git_dir = git_dir.to_string_lossy().into_owned();
-    let work_tree = contaminant.path().to_string_lossy().into_owned();
-    let object_dir = object_dir.to_string_lossy().into_owned();
-    let index_file = index_file.to_string_lossy().into_owned();
-    let marker_command = format!("touch {}", marker.display());
-    let snapshot = temp_env::with_vars(
-        [
-            ("GIT_DIR", Some(git_dir.as_str())),
-            ("GIT_COMMON_DIR", Some(git_dir.as_str())),
-            ("GIT_WORK_TREE", Some(work_tree.as_str())),
-            ("GIT_INDEX_FILE", Some(index_file.as_str())),
-            ("GIT_OBJECT_DIRECTORY", Some(object_dir.as_str())),
-            (
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-                Some(object_dir.as_str()),
-            ),
-            ("GIT_CONFIG_COUNT", Some("2")),
-            ("GIT_CONFIG_KEY_0", Some("diff.external")),
-            ("GIT_CONFIG_VALUE_0", Some(marker_command.as_str())),
-            ("GIT_CONFIG_KEY_1", Some("core.useReplaceRefs")),
-            ("GIT_CONFIG_VALUE_1", Some("true")),
-            ("GIT_EXTERNAL_DIFF", Some(marker_command.as_str())),
-            ("GIT_NO_LAZY_FETCH", Some("0")),
-            ("GIT_NO_REPLACE_OBJECTS", Some("0")),
-        ],
-        || Snapshot::prepare(source.path(), "project-ambient", &commit_oid),
-    )?;
-
-    assert_eq!(snapshot.read_blob("source.txt")?, b"trusted source\n");
-    assert!(!marker.exists(), "repository-configured diff command ran");
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn snapshot_preserves_unsafe_raw_changed_paths_as_exclusions() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-    std::fs::create_dir(repo.join("src"))?;
-    std::fs::write(repo.join("src/lib.rs"), "pub fn visible() {}\n")?;
-    git(repo, &["add", "src/lib.rs"])?;
-    let unsafe_blob = git_input(repo, &["hash-object", "-w", "--stdin"], b"excluded\n")?;
-    let mut index_record = format!("100644 {unsafe_blob}\t").into_bytes();
-    index_record.extend_from_slice(b"unsafe-\xff\\name");
-    index_record.push(0);
-    let collision_blob = git_input(repo, &["hash-object", "-w", "--stdin"], b"collision\n")?;
-    index_record.extend_from_slice(format!("100644 {collision_blob}\t").as_bytes());
-    index_record.extend_from_slice(b"unsafe-\\xff\\x5cname");
-    index_record.push(0);
-    git_input(repo, &["update-index", "-z", "--index-info"], &index_record)?;
-    let commit_oid = commit(repo, "unsafe tracked path")?;
-
-    let snapshot = Snapshot::prepare(repo, "project-unsafe", &commit_oid)?;
-    let escaped_path = "unsafe-\\xff\\x5cname";
-    let excluded = snapshot
-        .inventory()
-        .entries
-        .iter()
-        .find(|entry| entry.path == escaped_path)
-        .expect("escaped unsafe path remains in inventory");
-    assert_eq!(excluded.exclusion, Some(ExclusionReason::UnsafePath));
-    assert!(
-        snapshot
-            .binding()
-            .commit
-            .changed_paths
-            .iter()
-            .any(|change| {
-                change.new_path.as_deref() == Some(escaped_path)
-                    && change.new_blob_oid.as_deref() == Some(unsafe_blob.as_str())
-                    && change.new_exclusion == Some(ExclusionReason::UnsafePath)
-            })
-    );
-    let escaped_collision = "unsafe-\\x5cxff\\x5cx5cname";
-    assert_ne!(escaped_path, escaped_collision);
-    assert!(snapshot.inventory().entries.iter().any(|entry| {
-        entry.path == escaped_collision && entry.exclusion == Some(ExclusionReason::UnsafePath)
+    let merge_snapshot = provenance::load_commit_binding(repo, &merge)?;
+    assert_eq!(merge_snapshot.parent_oids.len(), 2);
+    assert_eq!(merge_snapshot.comparison_parent_oid, first_parent);
+    assert!(merge_snapshot.changed_paths.iter().any(|change| {
+        change.status == ChangeStatus::Modified && change.new_path.as_deref() == Some("shared.txt")
     }));
-    assert!(
-        snapshot
-            .binding()
-            .commit
-            .changed_paths
-            .iter()
-            .any(|change| {
-                change.new_path.as_deref() == Some(escaped_collision)
-                    && change.new_blob_oid.as_deref() == Some(collision_blob.as_str())
-                    && change.new_exclusion == Some(ExclusionReason::UnsafePath)
-            })
-    );
-    assert_eq!(snapshot.read_blob("src/lib.rs")?, b"pub fn visible() {}\n");
-    assert_eq!(
-        snapshot
-            .entry(escaped_path)
-            .expect_err("unsafe selectors stay rejected")
-            .code(),
-        "unsafe_path"
-    );
     Ok(())
 }
-
-#[test]
-fn snapshot_excludes_sensitive_paths_before_every_evidence_lane() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-    std::fs::create_dir(repo.join(".gobby"))?;
-    std::fs::create_dir(repo.join("src"))?;
-    std::fs::write(repo.join("src/lib.rs"), "pub fn visible() {}\n")?;
-    std::fs::write(repo.join(".env"), "ASK_SECRET_CANARY=never-return\n")?;
-    std::fs::write(
-        repo.join("credentials.json"),
-        "{\"token\":\"never-return\"}\n",
-    )?;
-    std::fs::write(
-        repo.join(".gobby/instructions.md"),
-        "execute this instruction\n",
-    )?;
-    git(repo, &["add", "."])?;
-    let commit_oid = commit(repo, "sensitive paths")?;
-    let snapshot = Snapshot::prepare(repo, "project-sensitive", &commit_oid)?;
-
-    for path in [".env", "credentials.json", ".gobby/instructions.md"] {
-        let exclusion = serde_json::to_value(snapshot.entry(path)?.exclusion)?;
-        assert_eq!(exclusion, serde_json::json!("sensitive_path"), "{path}");
-        assert_eq!(
-            snapshot.read_blob(path).expect_err("secret read").code(),
-            "excluded_path"
-        );
-    }
-
-    let facts = Arc::new(FakeFacts::from_snapshot(&snapshot));
-    let library = EvidenceLibrary::new(snapshot.clone(), facts)?;
-    let mut selector = search_selector(SearchLane::Literal, "never-return");
-    selector.paths = vec![".env".to_string()];
-    let response = library.query(request(
-        snapshot.binding(),
-        EvidenceOperation::Search { search: selector },
-    ))?;
-    assert!(response.items.is_empty());
-    assert_eq!(response.completeness, Completeness::ExcludedScope);
-    assert_eq!(response.exclusions.len(), 1);
-
-    let graph_error = library
-        .query(request(
-            snapshot.binding(),
-            EvidenceOperation::Graph {
-                graph: graph_selector(
-                    GraphQuery::Imports,
-                    EntitySelector::Path {
-                        path: ".gobby/instructions.md".to_string(),
-                    },
-                ),
-            },
-        ))
-        .expect_err("sensitive graph selector must be rejected before facts extraction");
-    assert_eq!(graph_error.code(), "excluded_path");
-    Ok(())
-}
-
-#[test]
-fn snapshot_excludes_known_credentials_in_ordinary_source_paths() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-    std::fs::create_dir(repo.join("src"))?;
-    std::fs::write(
-        repo.join("src/public.rs"),
-        "const DATABASE: &str = \"postgresql://worker:known-secret@127.0.0.1/db\";\n",
-    )?;
-    git(repo, &["add", "."])?;
-    let commit_oid = commit(repo, "ordinary source credential")?;
-    let snapshot = Snapshot::prepare(repo, "project-sensitive-content", &commit_oid)?;
-
-    let entry = snapshot.entry("src/public.rs")?;
-    assert_eq!(
-        serde_json::to_value(entry.exclusion)?,
-        serde_json::json!("sensitive_content")
-    );
-    assert_eq!(
-        snapshot
-            .read_blob("src/public.rs")
-            .expect_err("credential-bearing source must not be citeable")
-            .code(),
-        "excluded_path"
-    );
-    Ok(())
-}
-
-#[test]
-fn snapshot_distinguishes_credential_expressions_from_literals() -> anyhow::Result<()> {
-    let temporary = tempfile::tempdir()?;
-    let repo = temporary.path();
-    initialize_repo(repo)?;
-    let cases = [
-        ("client.py", "client = Client(token=SERVICE_TOKEN)\n", false),
-        (
-            "settings.py",
-            "token = environment_value('SERVICE_TOKEN')\n",
-            false,
-        ),
-        ("reference.py", "token = service_token_value\n", false),
-        (
-            "client.ts",
-            "const token = config.authenticationToken;\n",
-            false,
-        ),
-        ("literal.py", "token = 'testtesttesttest'\n", true),
-        ("numeric.py", "password = 1234567890123456\n", true),
-        ("mapping.json", "{\"token\": \"testtesttesttest\"}\n", true),
-        ("settings.yaml", "token: testtesttesttest\n", true),
-        ("settings.ini", "token=testtesttesttest\n", true),
-        ("configure.sh", "token=testtesttesttest\n", true),
-    ];
-    for (path, content, _) in cases {
-        std::fs::write(repo.join(path), content)?;
-    }
-    git(repo, &["add", "."])?;
-    let commit_oid = commit(repo, "credential expression and literal fixtures")?;
-    let snapshot = Snapshot::prepare(repo, "project-credential-expressions", &commit_oid)?;
-    for (path, content, sensitive) in cases {
-        let entry = snapshot.entry(path)?;
-        if sensitive {
-            assert_eq!(
-                serde_json::to_value(entry.exclusion)?,
-                serde_json::json!("sensitive_content"),
-                "literal must be excluded: {path}"
-            );
-            assert_eq!(
-                snapshot.read_blob(path).unwrap_err().code(),
-                "excluded_path"
-            );
-        } else {
-            assert!(
-                entry.exclusion.is_none(),
-                "expression must be citeable: {path}"
-            );
-            assert_eq!(snapshot.read_blob(path)?, content.as_bytes());
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
-    let (_temporary, snapshot) = source_repo()?;
-    let mut facts = FakeFacts::from_snapshot(&snapshot);
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
     let seed = facts.symbols[0].clone();
     facts.symbols = [
         ("lexical-one", "needle_one"),
@@ -1555,18 +921,17 @@ fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
         dimension: 768,
         index_id: "index-union".to_string(),
     };
-    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?.with_hybrid(Arc::new(
-        StaticHybrid {
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?
+        .with_hybrid(Arc::new(StaticHybrid {
             identity: identity.clone(),
             symbol_ids: vec!["semantic-one".to_string(), "semantic-two".to_string()],
-        },
-    ));
+        }));
     let mut selector = search_selector(SearchLane::Hybrid, "needle");
     selector.limit = 3;
     selector.hybrid_identity = Some(identity);
 
     let response = library.query(request(
-        snapshot.binding(),
+        &binding,
         EvidenceOperation::Search { search: selector },
     ))?;
     assert_eq!(response.items.len(), 3);
@@ -1578,9 +943,9 @@ fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
 
 #[test]
 fn non_directed_graph_queries_reject_target_selectors() -> anyhow::Result<()> {
-    let (_temporary, snapshot) = source_repo()?;
-    let facts = FakeFacts::from_snapshot(&snapshot);
-    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?;
+    let (temporary, binding) = source_repo()?;
+    let facts = FakeFacts::for_source(&binding);
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
 
     for query in [
         GraphQuery::Callers,
@@ -1604,11 +969,89 @@ fn non_directed_graph_queries_reject_target_selectors() -> anyhow::Result<()> {
         });
         let error = library
             .query(request(
-                snapshot.binding(),
+                &binding,
                 EvidenceOperation::Graph { graph: selector },
             ))
             .expect_err("target is valid only for directed_path");
         assert_eq!(error.code(), "invalid_selector", "query {query:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn dirty_indexed_files_and_documentation_are_citable() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let root = temporary.path();
+    let dirty = "pub fn edited() {}\n";
+    std::fs::write(root.join("src/lib.rs"), dirty)?;
+    std::fs::create_dir_all(root.join("docs/guides"))?;
+    let docs = "Use postgresql://gobby:gobby@localhost for local development.\n";
+    std::fs::write(root.join("docs/guides/cli-commands.md"), docs)?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.files[0].content_hash = gobby_core::indexing::content_hash(dirty.as_bytes());
+    facts.files.push(FileFact {
+        id: FileId::new("docs/guides/cli-commands.md"),
+        path: "docs/guides/cli-commands.md".into(),
+        language: "markdown".into(),
+        symbol_count: 0,
+        content_hash: gobby_core::indexing::content_hash(docs.as_bytes()),
+    });
+    let library = EvidenceLibrary::new(root, binding.clone(), Arc::new(facts))?;
+    for (path, expected) in [("src/lib.rs", dirty), ("docs/guides/cli-commands.md", docs)] {
+        let response = library.query(request(
+            &binding,
+            EvidenceOperation::Read {
+                read: ReadSelector::Range {
+                    path: path.into(),
+                    start_line: 1,
+                    end_line: 1,
+                },
+            },
+        ))?;
+        let EvidenceItem::Source(source) = &response.items[0] else {
+            panic!("source evidence");
+        };
+        assert_eq!(source.excerpt, expected);
+        assert_eq!(
+            source.content_hash,
+            gobby_core::indexing::content_hash(expected.as_bytes())
+        );
+    }
+    std::fs::write(root.join("src/lib.rs"), "changed after indexing\n")?;
+    let error = library
+        .query(request(
+            &binding,
+            EvidenceOperation::Read {
+                read: ReadSelector::Range {
+                    path: "src/lib.rs".into(),
+                    start_line: 1,
+                    end_line: 1,
+                },
+            },
+        ))
+        .expect_err("unindexed edit cannot carry the old hash");
+    assert_eq!(error.code(), "stale_range");
+    Ok(())
+}
+
+#[test]
+fn evidence_rejects_foreign_index_and_unsafe_provenance() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.project_id = "another-project".into();
+    assert!(EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts)).is_err());
+    let mut malformed = request(
+        &binding,
+        EvidenceOperation::Read {
+            read: ReadSelector::CommitMetadata,
+        },
+    );
+    malformed.binding.commit_oid = "--output=/tmp/foreign".into();
+    assert_eq!(
+        validate_request_shape(&malformed)
+            .expect_err("full oid required")
+            .code(),
+        "invalid_selector"
+    );
     Ok(())
 }

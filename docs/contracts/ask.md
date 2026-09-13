@@ -9,19 +9,23 @@ run a model directly or implement a second workflow engine.
 A start request contains:
 
 - `question` and `project_id`
-- `commit_ref`, default `HEAD`
+- optional `project_path`, selecting the registered caller checkout or worktree
 - `timeout_seconds`, default `600`
 - `retrieval_mode`, either `deterministic` or user-facing `hybrid`
 - the fixed profile identifiers `ask-investigator` and `ask-reviewer`
 - an optional `idempotency_key`
 
 The service resolves the request once and records an immutable binding. The
-binding contains the authorized project, exact commit and tree OIDs, absolute
-`deadline_at`, canonical retrieval mode, source inventory digest, and snapshot
-artifact reference. User-facing `hybrid` maps to canonical
-`audited_hybrid`. Resume, retries, review, and repair retain this original
-binding and deadline; they never silently switch to a newer checkout, HEAD, or
-retrieval identity.
+binding contains the authorized project, canonical repository root, HEAD commit and
+tree OIDs recorded at admission, absolute `deadline_at`, and canonical retrieval
+mode. Commit and tree OIDs are provenance; they do not create a checkout or index.
+Ask uses the caller’s existing live index, including ordinary worktree overlay
+visibility. User-facing `hybrid` maps to `audited_hybrid`. Resume, retries, review,
+and repair retain the root, recorded provenance, retrieval identity, and deadline.
+Recovery advances a generation with compare-and-swap fencing and rotates managed
+credentials; stale generations cannot admit evidence. Binding probes are bounded
+to five seconds for configuration and ten seconds for search. Ask never invokes
+the indexer during binding.
 
 Each profile is snapshotted at admission. A profile identity records its
 registry identifier, definition ID and update time, effective merged content,
@@ -51,15 +55,16 @@ and do not infer an outcome from prose.
 
 ## Evidence And Provenance
 
-An `EvidenceManifest` is versioned and bound to one run and source snapshot. It
-records the source inventory and every admitted evidence request and response,
+An `EvidenceManifest` is versioned and bound to one run and repository binding.
+It records the authorized project separately from the caller’s index identity
+(which may be an overlay), and every admitted evidence request and response,
 including invocation, request, response, and record hashes. Pagination uses an
 opaque continuation bound to the canonical request. There is no hidden query,
 turn, or item-count cap; byte and traversal bounds are explicit in evidence
 responses.
 
 Source evidence citations contain the run and evidence IDs, safe repository
-path, exact blob/content/excerpt hashes, and line and byte bounds. They may also
+path, exact content/excerpt hashes, and line and byte bounds. They may also
 carry a qualified symbol name. Graph citations additionally record the source
 evidence, relation, direction, endpoints, owner path and content hash, and
 extraction provenance. Git metadata citations record the commit, parents,
@@ -67,7 +72,11 @@ comparison, changed-path digest/count, optional changed path, and record hash;
 they deliberately do not pretend to have source line bounds.
 
 Indexed facts locate evidence but are not publication authority. Source bytes
-are read from the bound Git object and hashes are revalidated before admission.
+are read from the caller’s working tree and checked against the indexed content
+hash before admission. Ordinary freshness checks govern the index; changes after
+indexing produce a stale-range error instead of a mismatched citation. Indexed
+dirty and untracked nonignored files are citable. Git metadata queries use the
+recorded commit for provenance.
 Deterministic retrieval does not use embeddings. Audited hybrid retrieval is an
 explicit opt-in and records the verified semantic model, dimension, endpoint,
 and vector-index identity; failure never falls back silently to lexical output.
@@ -145,7 +154,7 @@ the binding, evidence, submissions, and other durable artifacts for audit.
 ### CLI
 
 ```text
-gcode ask "<QUESTION>" [--commit REF] [--timeout-seconds N]
+gcode ask "<QUESTION>" [--timeout-seconds N]
   [--retrieval deterministic|hybrid] [--background]
 gcode ask --status RUN_ID
 gcode ask --resume RUN_ID
@@ -188,7 +197,8 @@ Authenticated local-daemon routes are:
 - `GET /api/ask/runs/{run_id}/export?project_id=...`
 
 Start accepts the public request fields and resolves the registered checkout
-for its project. Mutating calls pass the verified caller session to the service.
+for its project. An explicit `project_path` must be that primary checkout or a
+registered worktree/clone owned by the same project and machine. Mutating calls pass the verified caller session to the service.
 Export streams `application/x-tar` from the service-verified immutable
 publication root and does not create a server-local export copy.
 
@@ -200,11 +210,16 @@ operations additionally validate the owning pipeline, active stage and attempt,
 and active child principal. Adapters delegate these guards to the shared service
 and never trust a caller-supplied project identity over ambient authorization.
 
-Source paths are snapshot-relative and safe; source and evidence hashes,
+Source paths are repository-relative and safe; source and evidence hashes,
 profile/tool identities, submissions, and publication artifacts are verified at
-their boundaries. Credential-like source and derived evidence are excluded by
-the shared admission policy. There is no direct model fallback and no adapter
-path that mutates the source checkout.
+their boundaries. The ordinary index’s ignore policy controls which files are
+searchable. Indexed excerpts remain exact, including documentation and credential
+fixtures; runtime credentials are rejected or redacted. The investigator cannot
+read or write the repository directly: its sandbox denies the source root and
+uses disjoint runtime scratch, with evidence as the only source access. Managed
+grants bind to the real repository root and subprocesses use an isolated
+`GOBBY_HOME`, per-run identity, and a scrubbed environment. There is no direct
+model fallback or adapter path that mutates the source checkout.
 
 End-to-end acceptance requires the shared runtime service, installed native
 binary, and installed database-backed workflow/profile definitions. Unit tests

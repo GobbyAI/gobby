@@ -19,7 +19,6 @@ class AskRequest(BaseModel):
 
     question: str
     project_id: str
-    commit_ref: str = "HEAD"
     timeout_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
     retrieval_mode: RetrievalMode = RetrievalMode.DETERMINISTIC
     investigator_profile: str
@@ -29,7 +28,6 @@ class AskRequest(BaseModel):
     @field_validator(
         "question",
         "project_id",
-        "commit_ref",
         "investigator_profile",
         "reviewer_profile",
     )
@@ -58,8 +56,7 @@ class AskBinding(BaseModel):
     tree_oid: str
     deadline_at: datetime
     retrieval_mode: RetrievalMode
-    inventory_digest: str | None = None
-    snapshot_artifact: dict[str, Any] | None = None
+    repository_root: str
 
 
 class EvidenceReference(BaseModel):
@@ -73,7 +70,7 @@ class EvidenceReference(BaseModel):
     evidence_ids: tuple[str, ...] = ()
     request_hash: str
     response_hash: str | None = None
-    snapshot_inventory_digest: str
+    binding_digest: str
     contract: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
 
@@ -86,6 +83,7 @@ class AskRunRecord(BaseModel):
     binding: AskBinding
     investigator: ProfileSnapshot
     reviewer: ProfileSnapshot
+    generation: SnapshotGeneration | None = None
 
 
 class SnapshotGeneration(BaseModel):
