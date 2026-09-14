@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -45,11 +46,24 @@ pytestmark = pytest.mark.unit
 
 
 def _iter_scan_files() -> list[Path]:
+    """Tracked files only.
+
+    Ignored build output (`src/gobby/ui`, `web/dist`) and `node_modules` are not
+    source; a stale local bundle must not fail the source scan.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--", *(str(root.relative_to(ROOT)) for root in SCAN_ROOTS)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
     files: list[Path] = []
-    for root in SCAN_ROOTS:
-        for path in root.rglob("*"):
-            if path.is_file() and path.suffix in SCAN_SUFFIXES and "__pycache__" not in path.parts:
-                files.append(path)
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        path = ROOT / entry.decode("utf-8")
+        if path.is_file() and path.suffix in SCAN_SUFFIXES:
+            files.append(path)
     return files
 
 
