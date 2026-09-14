@@ -56,11 +56,16 @@ def read_current_user_prompt(transcript_path: object) -> str | None:
                 return None
             if record.get("source") == "USER_EXPLICIT":
                 content = record.get("content")
-                return (
-                    content
-                    if record.get("type") == "USER_INPUT" and isinstance(content, str)
-                    else None
-                )
+                if record.get("type") != "USER_INPUT" or not isinstance(content, str):
+                    return None
+                # Native slash expansion wraps the request before appending the
+                # router and other metadata. Only the user's request is a command.
+                if content.startswith("<USER_REQUEST>"):
+                    request, closing, _metadata = content.removeprefix("<USER_REQUEST>").partition(
+                        "</USER_REQUEST>"
+                    )
+                    return request.strip() if closing else None
+                return content
     except (OSError, ValueError):
         return None
     return None

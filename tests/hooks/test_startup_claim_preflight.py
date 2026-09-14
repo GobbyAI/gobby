@@ -97,12 +97,14 @@ def _rows_for_conversation(db: HubDatabase, conversation_id: str) -> list[dict[s
 
 class TestResolveOrAdoptOrRegister:
     @pytest.mark.parametrize("prompt", ["/gobby", "/gobby help"])
+    @pytest.mark.parametrize("wrapped", [False, True])
     def test_help_leaves_startup_claim_for_next_work(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         tmp_path: Path,
         prompt: str,
+        wrapped: bool,
     ) -> None:
         project_id = _project(isolated_checkout_factory, temp_db, "help-preflight")
         workspace = _workspace(tmp_path, "ws", project_id)
@@ -112,7 +114,13 @@ class TestResolveOrAdoptOrRegister:
                 {
                     "source": "USER_EXPLICIT",
                     "type": "USER_INPUT",
-                    "content": prompt,
+                    "content": (
+                        f"<USER_REQUEST>\n{prompt}\n</USER_REQUEST>\n"
+                        "<ADDITIONAL_METADATA>\n<SKILL>Gobby router</SKILL>\n"
+                        "</ADDITIONAL_METADATA>"
+                        if wrapped
+                        else prompt
+                    ),
                 }
             )
             + "\n"

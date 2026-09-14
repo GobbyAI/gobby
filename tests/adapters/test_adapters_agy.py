@@ -440,8 +440,9 @@ class TestAgyCamelCasePayload:
 
 class TestAgyHandleNativeSynthesis:
     @pytest.mark.parametrize("prompt", ["/gobby", "/gobby help"])
+    @pytest.mark.parametrize("wrapped", [False, True])
     def test_help_reads_native_transcript_without_synthetic_startup(
-        self, tmp_path: Path, prompt: str
+        self, tmp_path: Path, prompt: str, wrapped: bool
     ) -> None:
         transcript = tmp_path / "transcript_full.jsonl"
         transcript.write_text(
@@ -449,7 +450,13 @@ class TestAgyHandleNativeSynthesis:
                 {
                     "source": "USER_EXPLICIT",
                     "type": "USER_INPUT",
-                    "content": prompt,
+                    "content": (
+                        f"<USER_REQUEST>\n{prompt}\n</USER_REQUEST>\n"
+                        "<ADDITIONAL_METADATA>\n<SKILL>Gobby router</SKILL>\n"
+                        "</ADDITIONAL_METADATA>"
+                        if wrapped
+                        else prompt
+                    ),
                 }
             )
             + "\n"
