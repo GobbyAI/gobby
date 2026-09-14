@@ -966,6 +966,7 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
         lifecycle_refresh=refresh,
     )
     monkeypatch.setattr(dispatcher, "_dispatch_live_wake_unlocked", dispatch_stub)
+    dispatcher.bind_owner_loop(owner_loop)
     db = DurableDb(["session-a"])
     handler = _handler(
         db, completion_registry=CompletionEventRegistry(wake_callback=dispatcher.wake)

@@ -749,63 +749,38 @@ class TestWakeDispatch:
         assert result["error_code"] == "session_not_found"
         assert not dispatcher._live_wake_locks
 
-    def test_live_wake_lock_is_scoped_to_running_loop(
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("entry", "args"),
+        [
+            ("wake", (WAKE_SESSION_ID, "done", {})),
+            ("dispatch_live_wake", (WAKE_SESSION_ID,)),
+            ("dispatch_live_wakes", ([WAKE_SESSION_ID],)),
+        ],
+    )
+    async def test_wake_off_the_owner_loop_raises_before_touching_state(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
+        entry: str,
+        args: tuple[object, ...],
     ) -> None:
-        """A lock bound by contention on one loop is never reused on another."""
+        """Every wake entry rejects a foreign loop before reading, persisting, or locking."""
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
-        first_started = asyncio.Event()
-        release_first = asyncio.Event()
-        dispatch_count = 0
-
-        async def dispatch_stub(
-            session_id: str,
-            *,
-            session: object | None = None,
-            priority: str = "normal",
-        ) -> dict[str, object]:
-            del session, priority
-            nonlocal dispatch_count
-            dispatch_count += 1
-            if dispatch_count == 1:
-                first_started.set()
-                await release_first.wait()
-            return {"session_id": session_id, "delivered": True}
-
-        monkeypatch.setattr(dispatcher, "_dispatch_live_wake_unlocked", dispatch_stub)
-
-        async def bind_cached_lock() -> asyncio.Lock:
-            first = asyncio.create_task(dispatcher.dispatch_live_wake(WAKE_SESSION_ID))
-            await first_started.wait()
-            lock = next(iter(dispatcher._live_wake_locks.values()))
-            second = asyncio.create_task(dispatcher.dispatch_live_wake(WAKE_SESSION_ID))
-            await drain_asyncio_tasks(cycles=2)
-            release_first.set()
-            await asyncio.gather(first, second)
-            await lock.acquire()
-            return lock
-
-        first_loop = asyncio.new_event_loop()
+        owner_loop = asyncio.new_event_loop()
+        dispatcher.bind_owner_loop(owner_loop)
         try:
-            stale_lock = first_loop.run_until_complete(bind_cached_lock())
+            with pytest.raises(RuntimeError, match="daemon event loop"):
+                await getattr(dispatcher, entry)(*args)
         finally:
-            first_loop.close()
+            owner_loop.close()
 
-        second_loop = asyncio.new_event_loop()
-        try:
-            result = second_loop.run_until_complete(dispatcher.dispatch_live_wake(WAKE_SESSION_ID))
-        finally:
-            stale_lock.release()
-            second_loop.close()
-
-        assert result == {"session_id": WAKE_SESSION_ID, "delivered": True}
-        assert dispatch_count == 3
+        assert not dispatcher._live_wake_locks
+        session_manager.get.assert_not_called()
+        ism_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_lifecycle_refresh_failure_does_not_abort_live_wake(
@@ -1193,18 +1168,13 @@ class TestWakeDispatch:
         await locked.acquire()
         stale_lock = asyncio.Lock()
         fresh_lock = asyncio.Lock()
-        loop = asyncio.get_running_loop()
         dispatcher._last_live_wake = {
             "stale": (1, 900.0),
             "locked": (1, 900.0),
             "fresh": (1, 990.0),
         }
         dispatcher._live_wake_locks = weakref.WeakValueDictionary(
-            {
-                (weakref.ref(loop), "stale"): stale_lock,
-                (weakref.ref(loop), "locked"): locked,
-                (weakref.ref(loop), "fresh"): fresh_lock,
-            }
+            {"stale": stale_lock, "locked": locked, "fresh": fresh_lock}
         )
         monkeypatch.setattr("gobby.events.wake.time.monotonic", lambda: 1000.0)
 
@@ -1214,11 +1184,11 @@ class TestWakeDispatch:
             locked.release()
 
         assert "stale" not in dispatcher._last_live_wake
-        assert (weakref.ref(loop), "stale") not in dispatcher._live_wake_locks
+        assert "stale" not in dispatcher._live_wake_locks
         assert "locked" in dispatcher._last_live_wake
-        assert (weakref.ref(loop), "locked") in dispatcher._live_wake_locks
+        assert "locked" in dispatcher._live_wake_locks
         assert "fresh" in dispatcher._last_live_wake
-        assert (weakref.ref(loop), "fresh") in dispatcher._live_wake_locks
+        assert "fresh" in dispatcher._live_wake_locks
 
     @pytest.mark.asyncio
     async def test_pane_wake_failure_does_not_record_timestamp(
