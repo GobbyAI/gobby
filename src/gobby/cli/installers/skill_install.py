@@ -35,6 +35,7 @@ def _router_carrier(source: Path) -> str:
 # Exact historical bundled bytes identify ownership; names and prefixes do not.
 _BUNDLED_GOBBY_HASHES = frozenset(
     {
+        "9740f72188791597c412804217455ca6c6c003ffd8a0ca97bcfe26469f819dc6",  # 3.1.0 router
         "3dcb20b02e4007f57b42a8f7f4bfa859588b900ba5121a349558efbc44dec743",  # pre-immediate-help router
         "64c78a0ff3c56ee133672d2cbc6f23a756c1bebcd3a4b9b07875cf77faa98ee2",  # pre-immediate-help carrier
         "619531082d1317fbc0b42e8b13ba92df4ae4ee21e88e786b12c9cf72039b7f4e",  # dc1a751129

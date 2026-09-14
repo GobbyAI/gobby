@@ -1,7 +1,7 @@
 ---
 name: gobby
 description: "Router contract for provider-aware Gobby help and installed skill dispatch."
-version: "3.1.0"
+version: "3.1.1"
 category: core
 triggers: help
 metadata:
@@ -76,3 +76,5 @@ remaining arguments and complete every content page before continuing.
 The router does not inline skill bodies. Trailing command arguments remain in the original user prompt
 and must not be duplicated into `<gobby-context>`. Native Skill calls preserve
 their arguments in the returned directive because the blocked call will not run.
+
+<!-- gobby-router:end -->

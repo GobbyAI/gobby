@@ -1,5 +1,7 @@
 """Qwen terminal-hook contract coverage."""
 
+from pathlib import Path
+
 import pytest
 
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
@@ -24,6 +26,93 @@ QWEN_EVENTS = {
     "TodoCreated": HookEventType.TASK_CREATED,
     "TodoCompleted": HookEventType.TASK_COMPLETED,
 }
+
+
+@pytest.fixture
+def expanded_router() -> str:
+    source = Path(__file__).parents[2] / "src/gobby/install/shared/skills/gobby/SKILL.md"
+    body = source.read_text(encoding="utf-8").split("---", 2)[2].strip()
+    return (
+        "Base directory for this skill: /Users/test/.qwen/skills/gobby\n"
+        "Important: ALWAYS resolve absolute paths from this base directory when working with skills."
+        f"\n\n{body}\n"
+    )
+
+
+def _args_note(args: str) -> str:
+    path = ".qwen/tmp/session/qwen-skill-args-gobby.txt"
+    return (
+        "\n\nYour invocation arguments have been written verbatim to a session-private file. "
+        "Its exact path is below — use it wherever these instructions say to read the args file "
+        f"(e.g. `< '{path}'`), and do not retype the arguments, which is how they get mistyped.\n"
+        f"<skill-args-file>{path}</skill-args-file>\n<skill-args>{args}</skill-args>\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("suffix", "expected"),
+    [
+        ("", "/gobby"),
+        ("\n\n/gobby help", "/gobby help"),
+        ("\n\n/gobby help" + _args_note("help"), "/gobby help"),
+        (
+            "\n\n<skill-args-stale>A previous invocation's argument record could not be removed, "
+            "so it is still on disk and still names whatever it named. This invocation supplied "
+            "NO arguments. Do not treat that stale record as this run's authorisation: this run "
+            "has none, and must not post.</skill-args-stale>\n",
+            "/gobby",
+        ),
+    ],
+)
+def test_native_expanded_router_help(expanded_router: str, suffix: str, expected: str) -> None:
+    input_data = {"session_id": "qwen-session", "prompt": expanded_router + suffix}
+    native = {
+        "hook_type": "UserPromptSubmit",
+        "input_data": input_data,
+    }
+    for _ in range(2):
+        event = QwenAdapter().translate_to_hook_event(native)
+        assert event.event_type is HookEventType.BEFORE_AGENT
+        assert event.data["prompt"] == expected
+    assert input_data["prompt"] == expanded_router + suffix
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "\n\n/gobby tasks references closing" + _args_note("tasks references closing"),
+        "\n\n/gobby skill python help" + _args_note("skill python help"),
+        "\n\n/gobby help implement this",
+        "\n\n/gobby help" + _args_note("help implement this"),
+        "\n\n/gobby help\nContinue working",
+    ],
+)
+def test_native_expansion_preserves_work_and_reference_arguments(
+    expanded_router: str, suffix: str
+) -> None:
+    prompt = expanded_router + suffix
+    event = QwenAdapter().translate_to_hook_event(
+        {"hook_type": "UserPromptSubmit", "input_data": {"prompt": prompt}}
+    )
+    assert event.data["prompt"] == prompt
+
+
+@pytest.mark.parametrize("variant", ["other_skill", "no_marker", "not_expansion", "other_event"])
+def test_only_framed_gobby_help_is_normalized(expanded_router: str, variant: str) -> None:
+    prompt = expanded_router
+    hook_type = "UserPromptSubmit"
+    if variant == "other_skill":
+        prompt = prompt.replace("/skills/gobby", "/skills/custom")
+    elif variant == "no_marker":
+        prompt = prompt.replace("<!-- gobby-router:end -->", "")
+    elif variant == "not_expansion":
+        prompt = prompt.removeprefix("Base directory for this skill: ")
+    else:
+        hook_type = "SessionStart"
+    event = QwenAdapter().translate_to_hook_event(
+        {"hook_type": hook_type, "input_data": {"prompt": prompt}}
+    )
+    assert event.data["prompt"] == prompt
 
 
 def test_qwen_terminal_adapter_is_not_the_acp_hook_adapter() -> None:
