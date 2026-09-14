@@ -33,6 +33,10 @@ from gobby.storage.tasks import (
 from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
+from gobby.tasks.criterion_commands import (
+    criterion_command_authoring_payload,
+    malformed_criterion_command_findings,
+)
 from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
@@ -57,7 +61,10 @@ def _task_invariant_error(
     except TaskCriteriaError as exc:
         return str(exc)
     if supplied_validation_criteria is not None:
-        findings = malformed_test_reference_findings(supplied_validation_criteria)
+        findings = (
+            *malformed_test_reference_findings(supplied_validation_criteria),
+            *malformed_criterion_command_findings(supplied_validation_criteria),
+        )
         if findings:
             return "\n".join(findings)
     if category == "code" and implementation_domain is None:
@@ -345,6 +352,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "ref": f"#{task.seq_num}",
             }
 
+        if validation_criteria:
+            result.update(criterion_command_authoring_payload(validation_criteria))
+
         if claim_warning:
             result["warning"] = claim_warning
 
@@ -416,7 +426,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`.",
+                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
                     "default": None,
                 },
                 "implementation_domain": {
@@ -665,6 +675,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         result: dict[str, Any] = {}
         if target_check:
             result["targets_not_found"] = target_check
+        if validation_criteria:
+            result.update(criterion_command_authoring_payload(validation_criteria))
         return result
 
     registry.register(
@@ -692,7 +704,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`.",
+                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
                     "default": None,
                 },
                 "parent_task_id": {

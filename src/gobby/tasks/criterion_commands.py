@@ -23,6 +23,33 @@ from gobby.tasks.transcript_evidence import (
 from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence
 
 _CRITERIA_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+CRITERION_COMMAND_CONTRACT = (
+    "Backticked command spans are mandatory exact close commands. "
+    "Run each listed command directly after the final edit; pipelines, wrappers, "
+    "redirections, and trailing output are not credited."
+)
+_PLACEHOLDER_RE = re.compile(r"<[^>\s]+>|\{[^{}\s]+\}")
+_TRAILING_PUNCTUATION = frozenset(".,;!?")
+_CONDITIONAL_TOKENS = frozenset({"if", "for", "while", "case", "until"})
+_INCOMPLETE_PACKAGE_PREFIXES = frozenset(
+    {
+        "bun",
+        "bunx",
+        "cargo",
+        "gobby",
+        "git",
+        "go",
+        "just",
+        "make",
+        "npm",
+        "npx",
+        "pnpm",
+        "python",
+        "python3",
+        "uv",
+        "yarn",
+    }
+)
 _CRITERION_COMMAND_PREFIXES = frozenset(
     {
         "bash",
@@ -227,6 +254,92 @@ def _looks_like_criterion_command(
     if not tokens:
         return False
     return posixpath.basename(tokens[0]).casefold() in _CRITERION_COMMAND_PREFIXES
+
+
+def authored_criterion_commands(criteria: str) -> list[str]:
+    """Well-formed command-shaped backtick spans that close will require exactly."""
+    commands: list[str] = []
+    seen: set[str] = set()
+    for command in _command_shaped_spans(criteria):
+        if _malformed_command_reason(command) is not None or command in seen:
+            continue
+        seen.add(command)
+        commands.append(command)
+    return commands
+
+
+def malformed_criterion_command_findings(criteria: str) -> tuple[str, ...]:
+    """Reject command-shaped spans that cannot be an exact close command."""
+    findings: list[str] = []
+    seen: set[str] = set()
+    for command in _command_shaped_spans(criteria):
+        reason = _malformed_command_reason(command)
+        if reason is None or command in seen:
+            continue
+        seen.add(command)
+        findings.append(
+            f"`{command}`: {reason} Backticked command spans become mandatory exact "
+            "close commands; write one direct command or remove the backticks."
+        )
+    return tuple(findings)
+
+
+def criterion_command_authoring_payload(criteria: str) -> dict[str, object]:
+    """Explain stored exact-command close spans so they are not silent."""
+    commands = authored_criterion_commands(criteria)
+    if not commands:
+        return {}
+    return {
+        "criterion_commands": commands,
+        "criterion_command_contract": CRITERION_COMMAND_CONTRACT,
+    }
+
+
+def _command_shaped_spans(criteria: str) -> list[str]:
+    spans: list[str] = []
+    for match in _CRITERIA_CODE_SPAN_RE.finditer(criteria):
+        if _command_is_excluded(criteria, match):
+            continue
+        command = match.group(1).strip()
+        if command and _is_command_shaped_span(command):
+            spans.append(command)
+    return spans
+
+
+def _is_command_shaped_span(command: str) -> bool:
+    equivalence = classify_validation_command_equivalence(command)
+    if _looks_like_criterion_command(command, equivalence.core_command, set()):
+        return True
+    tokens = safe_split(command)
+    if not tokens:
+        return False
+    names = {posixpath.basename(token).casefold() for token in tokens}
+    return bool(names & _CRITERION_COMMAND_PREFIXES) or tokens[0].casefold() in _CONDITIONAL_TOKENS
+
+
+def _malformed_command_reason(command: str) -> str | None:
+    if _PLACEHOLDER_RE.search(command):
+        return "placeholders are not an exact close command."
+    stripped = command.rstrip()
+    if stripped and stripped[-1] in _TRAILING_PUNCTUATION:
+        return "trailing punctuation is not part of an exact close command."
+    parsed = parse_shell_command(command)
+    if any(op in {"|", "||", "|&"} for op in parsed.operators):
+        return "pipelines are not an exact close command."
+    if _has_redirection(command):
+        return "redirections are not an exact close command."
+    tokens = safe_split(command)
+    if tokens and tokens[0].casefold() in _CONDITIONAL_TOKENS:
+        return "conditional commands are not an exact close command."
+    prefix = posixpath.basename(tokens[0]).casefold() if tokens else ""
+    if prefix in _INCOMPLETE_PACKAGE_PREFIXES and len(tokens) < 2:
+        return "incomplete package command is not an exact close command."
+    return None
+
+
+def _has_redirection(command: str) -> bool:
+    remainder = _PLACEHOLDER_RE.sub("", command)
+    return bool(re.search(r"(?:>>?|[12]>|<)", remainder))
 
 
 def execution_details(run: TranscriptValidationRun) -> dict[str, object]:
