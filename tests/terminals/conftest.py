@@ -10,6 +10,21 @@ from pathlib import Path
 import psutil
 import pytest
 
+from tests.native_binary_selection import (
+    NativeBinarySelectionError,
+    select_native_binary,
+)
+
+
+def pytest_report_header(config: pytest.Config) -> list[str]:
+    """Name the exact gterm used by the runtime contract suite."""
+    del config
+    try:
+        selected = select_native_binary("gterm", required=False)
+    except NativeBinarySelectionError as exc:
+        raise pytest.UsageError(f"terminal binary selection failed: {exc}") from exc
+    return [selected.header()] if selected is not None else []
+
 
 def _gterm_socket_dir(cmdline: list[str]) -> Path | None:
     if len(cmdline) < 2 or Path(cmdline[0]).name != "gterm" or cmdline[1] != "host":
@@ -95,23 +110,9 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
 
 
 def gterm_binary() -> Path | None:
-    """Return the first gterm binary on the isolated native-bin search path."""
-    env = os.environ.get("GOBBY_NATIVE_BIN_DIR")
-    if env:
-        candidate = Path(env) / "gterm"
-        if candidate.is_file():
-            return candidate
-    worktree = Path(__file__).resolve().parents[2]
-    for directory in (
-        worktree / "target" / "debug",
-        worktree / ".gobby-native-bin",
-        Path.home() / ".gobby" / "bin",
-    ):
-        candidate = directory / "gterm"
-        if candidate.is_file():
-            return candidate
-    which = shutil.which("gterm")
-    return Path(which) if which else None
+    """Return the explicit or installed gterm, if the default is absent."""
+    selected = select_native_binary("gterm", required=False)
+    return selected.path if selected is not None else None
 
 
 def require_backend(backend: str) -> None:

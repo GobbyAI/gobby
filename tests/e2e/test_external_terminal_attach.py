@@ -34,6 +34,7 @@ from tests.e2e.conftest import (
     daemon_token,
     terminate_process_tree,
 )
+from tests.native_binary_selection import select_native_binary
 
 pytestmark = pytest.mark.e2e
 
@@ -89,18 +90,9 @@ while True:
 
 
 def _gterm_bin_dir() -> Path:
-    env = os.environ.get("GOBBY_NATIVE_BIN_DIR")
-    if env:
-        return Path(env)
-    worktree = Path(__file__).resolve().parents[2]
-    for candidate in (
-        worktree / "target" / "debug",
-        worktree / ".gobby-native-bin",
-        Path.home() / ".gobby" / "bin",
-    ):
-        if (candidate / "gterm").is_file():
-            return candidate
-    pytest.skip("gterm binary is not available")
+    selected = select_native_binary("gterm", required=True)
+    assert selected is not None
+    return selected.path.parent
 
 
 def _short_socket_dir() -> Path:
@@ -115,10 +107,18 @@ def _short_socket_dir() -> Path:
 @pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
+    e2e_config: tuple[Path, int, int],
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
     socket_dir = _short_socket_dir()
+    token = uuid.uuid4().hex
+    daemon_home = e2e_config[0].parent
+    for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
+        directory.mkdir(exist_ok=True)
+        token_path = directory / "local_cli_token"
+        token_path.write_text(token)
+        token_path.chmod(0o600)
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
     try:
@@ -652,7 +652,7 @@ async def test_external_discovery_attach_respond(
         raise AssertionError(
             f"{exc}; item={item}; sessions={sessions.text[:1500]}; "
             f"roster={roster.text[:1500]}; "
-            f"pane_tail={isolated_tmux.capture()[-800]!r}; "
+            f"pane_tail={isolated_tmux.capture()[-800:]!r}; "
             f"logs={daemon_instance.read_logs()[-2500:]}"
         ) from exc
     raw_attention = entry.get("attention")
@@ -663,7 +663,7 @@ async def test_external_discovery_attach_respond(
         json={
             "attention_id": raw_attention["attention_id"],
             "fingerprint": raw_attention["fingerprint"],
-            "answer": {"option": 1},
+            "answer": {"text": "1"},
         },
     )
     assert respond.status_code == 200, respond.text

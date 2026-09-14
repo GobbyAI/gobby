@@ -35,9 +35,39 @@ from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
+from tests.native_binary_selection import (
+    NativeBinarySelectionError,
+    select_native_binaries,
+)
 
 # Mark all tests in this directory as e2e tests
 pytestmark = pytest.mark.e2e
+
+_TERMINAL_E2E_BINARIES = {
+    "test_external_terminal_attach.py": ("gterm",),
+    "test_terminal_client_stack.py": ("gterm", "gclient"),
+}
+
+
+def terminal_native_binary_headers(requested_paths: tuple[str, ...]) -> list[str]:
+    """Return provenance headers for terminal e2e files in this run."""
+    requested: set[str] = set()
+    for raw_path in requested_paths:
+        path = Path(raw_path.split("::", maxsplit=1)[0]).resolve()
+        for filename, binaries in _TERMINAL_E2E_BINARIES.items():
+            target = Path(__file__).with_name(filename).resolve()
+            if path == target or (path.is_dir() and target.is_relative_to(path)):
+                requested.update(binaries)
+    ordered = tuple(name for name in ("gterm", "gclient") if name in requested)
+    return [binary.header() for binary in select_native_binaries(ordered, required=True)]
+
+
+def pytest_report_header(config: pytest.Config) -> list[str]:
+    """Expose terminal e2e binary identity before qualifying tests run."""
+    try:
+        return terminal_native_binary_headers(tuple(config.args))
+    except NativeBinarySelectionError as exc:
+        raise pytest.UsageError(f"terminal e2e binary selection failed: {exc}") from exc
 
 
 class ValidationLLMServer(ThreadingHTTPServer):
