@@ -13,6 +13,7 @@ from gobby.hooks.receipt_effects import (
     peek_worker_staging,
 )
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
+from gobby.skills.instruction_requirements import is_instruction_call_line
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
@@ -74,13 +75,16 @@ class BlockGate:
 
 def _repeat_block_reason(rule_name: str, reason: str) -> str:
     """Collapse repeated detail while retaining its precise scope and recovery."""
-    first_line = reason.partition("\n")[0]
+    first_line, _, remainder = reason.partition("\n")
     default_header = f"Rule enforced by Gobby: [{rule_name}]"
     header = first_line if first_line.startswith("Rule enforced by Gobby: [") else default_header
-    return (
-        f"{header} (full reason shown earlier this turn — scroll up)."
-        + recovery_directive_suffix(reason)
-    )
+    collapse_note = "(full reason shown earlier this turn — scroll up)."
+    lead = remainder.partition("\n")[0]
+    if is_instruction_call_line(lead):
+        # A provider that clips the reason showed the earlier full text clipped
+        # too, so the unloaded targets stay directly under the header.
+        return f"{header}\n{lead}\n{collapse_note}{recovery_directive_suffix(reason)}"
+    return f"{header} {collapse_note}{recovery_directive_suffix(reason)}"
 
 
 def _apply_staged_effects_metadata(meta: dict[str, Any], evaluation: EvaluationContext) -> None:

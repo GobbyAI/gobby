@@ -79,3 +79,21 @@ def instruction_fetch_directive(value: str) -> str:
         f"{call}. Follow page.next_cursor using get_skill_file with only cursor until null; "
         "partial pages, listings and the router do not satisfy this requirement. Then continue."
     )
+
+
+INSTRUCTION_CALL_PREFIXES = ("get_skill(", "get_skill_file(")
+
+
+def instruction_call_form(value: str) -> str:
+    """Render the bare keyword call: the fewest characters that still name a target exactly."""
+    if ":" not in value:
+        return f"get_skill(name={json.dumps(value)})"
+    requirement = parse_instruction_requirement(value)
+    return (
+        f"get_skill_file(name={json.dumps(requirement.skill)}, path={json.dumps(requirement.path)})"
+    )
+
+
+def is_instruction_call_line(line: str) -> bool:
+    """Report whether a reason line is the bare call list a skill-step denial leads with."""
+    return line.startswith(INSTRUCTION_CALL_PREFIXES)

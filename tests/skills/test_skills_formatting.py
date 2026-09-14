@@ -35,6 +35,18 @@ def test_non_skill_block_keeps_its_reason() -> None:
     assert format_skill_block_reason("Claim a task first.") == "Claim a task first."
 
 
+def test_block_notice_follows_leading_load_calls() -> None:
+    header = "Rule enforced by Gobby: [step-enforcement:backend-developer/load_required_skills]"
+    lead = 'get_skill(name="restraint")'
+    detail = "Tool 'Bash' is not allowed in the 'load_required_skills' step."
+    reason = f"{header}\n{lead}\n{detail}\n{skill_fetch_directive('restraint')}"
+
+    assert format_skill_block_reason(reason) == (
+        f"{header}\n{lead}\n{SKILL_BLOCK_ATOMICITY_NOTICE}\n{detail}\n"
+        f"{skill_fetch_directive('restraint')}"
+    )
+
+
 def test_reference_contract_1_1_3() -> None:
     reference = "gobby:references/tasks/closing.md"
     directive = skill_fetch_batch_directive(["brevity", reference, reference])

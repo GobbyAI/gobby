@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
-from gobby.skills.instruction_requirements import instruction_is_loaded
+from gobby.skills.instruction_requirements import instruction_call_form, instruction_is_loaded
 from gobby.workflows.definitions import WorkflowStep
 
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
@@ -33,6 +33,28 @@ def skill_load_block_guidance(
     else:
         directive = skill_fetch_directive("<skill-name>")
     return f"\nDuring this skill-loading step:\n{directive}"
+
+
+def skill_load_call_lead(
+    step: WorkflowStep,
+    variables: dict[str, object] | None = None,
+) -> str:
+    """Return the bare load calls for the still-unloaded targets, newline-terminated.
+
+    A skill-step denial places this line directly under its rule header so the
+    actionable text survives a provider that clips the reason (Grok shows the
+    model only GROK_MODEL_REASON_WINDOW_CHARS); the boilerplate follows it.
+    """
+    if not _is_skill_load_step(step):
+        return ""
+    targets, _ = _skill_load_targets(step, variables or {})
+    calls: list[str] = []
+    for target in targets:
+        try:
+            calls.append(instruction_call_form(target))
+        except ValueError:
+            continue  # skill_load_block_guidance reports the invalid requirement
+    return f"{'; '.join(calls)}\n" if calls else ""
 
 
 def _is_skill_load_step(step: WorkflowStep) -> bool:

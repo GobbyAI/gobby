@@ -17,7 +17,10 @@ from gobby.workflows.enforcement.blocking import (
     is_operator_tool,
     is_provider_discovery_tool,
 )
-from gobby.workflows.engine.skill_load_guidance import skill_load_block_guidance
+from gobby.workflows.engine.skill_load_guidance import (
+    skill_load_block_guidance,
+    skill_load_call_lead,
+)
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
@@ -44,6 +47,22 @@ def _step_tool_block_guidance(step_name: str) -> str:
         "Abandon this call, continue with an allowed operation, and do not retry "
         "the same blocked tool in this step. Repeating an identical denial three "
         "times ends an autonomous run in a terminal blocked state."
+    )
+
+
+def _step_tool_denial_reason(
+    wf_name: str,
+    step: WorkflowStep,
+    variables: dict[str, Any],
+    detail: str,
+) -> str:
+    """Lead a skill-step denial with its unloaded targets; the boilerplate follows."""
+    return (
+        f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+        f"{skill_load_call_lead(step, variables)}"
+        f"{detail}"
+        f"{skill_load_block_guidance(step, variables)}"
+        f"{_step_tool_block_guidance(step.name)}"
     )
 
 
@@ -584,15 +603,12 @@ class EnforcementCheckMixin:
             if canonical_tool not in {
                 canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools
             }:
-                guidance = skill_load_block_guidance(
+                reason = _step_tool_denial_reason(
+                    wf_name,
                     step,
                     {**variables, **instance.variables},
-                )
-                reason = (
-                    f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
-                    f"Allowed tools: {', '.join(step.allowed_tools)}{guidance}"
-                    f"{_step_tool_block_guidance(step.name)}"
+                    f"Allowed tools: {', '.join(step.allowed_tools)}",
                 )
                 reason = self._record_enforcement_denial(
                     session_id=session_id,
@@ -726,15 +742,12 @@ class EnforcementCheckMixin:
 
                 if mcp_key and step.allowed_mcp_tools != "all":
                     if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
-                        guidance = skill_load_block_guidance(
+                        reason = _step_tool_denial_reason(
+                            wf_name,
                             step,
                             {**variables, **instance.variables},
-                        )
-                        reason = (
-                            f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
-                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}{guidance}"
-                            f"{_step_tool_block_guidance(step.name)}"
+                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}",
                         )
                         reason = self._record_enforcement_denial(
                             session_id=session_id,
