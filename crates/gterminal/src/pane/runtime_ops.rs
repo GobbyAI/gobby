@@ -50,11 +50,6 @@ impl PaneRuntime {
             .write_terminal_response(|| self.terminal.apply_host_terminal_appearance(appearance));
     }
 
-    pub(crate) fn current_size(&self) -> (u16, u16) {
-        let (rows, cols, _, _) = self.current_size.get();
-        (rows, cols)
-    }
-
     pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
         let rows = rows.max(2);
         let cols = cols.max(4);
@@ -303,7 +298,7 @@ impl PaneRuntime {
         true
     }
 
-    pub fn wheel_routing(&self) -> Option<super::WheelRouting> {
+    pub(crate) fn wheel_routing(&self) -> Option<super::WheelRouting> {
         self.terminal.wheel_routing()
     }
 

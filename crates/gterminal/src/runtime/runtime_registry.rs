@@ -21,67 +21,25 @@ impl TerminalRuntimeRegistry {
         self.runtimes.get(terminal_id)
     }
 
-    pub(crate) fn insert(
-        &mut self,
-        terminal_id: TerminalId,
-        runtime: TerminalRuntime,
-    ) -> Option<TerminalRuntime> {
-        self.runtimes.insert(terminal_id, runtime)
-    }
-
-    pub(crate) fn remove(&mut self, terminal_id: &TerminalId) -> Option<TerminalRuntime> {
-        self.runtimes.remove(terminal_id)
-    }
-
-    pub(crate) fn values(&self) -> impl Iterator<Item = &TerminalRuntime> {
-        self.runtimes.values()
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&TerminalId, &TerminalRuntime)> {
-        self.runtimes.iter()
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn set_handoff_readers_paused(&self, paused: bool) {
-        for runtime in self.runtimes.values() {
-            runtime.set_handoff_reader_paused(paused);
-        }
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn assume_handoff_ownership(&mut self) {
-        for runtime in self.runtimes.values_mut() {
-            runtime.assume_handoff_ownership();
-        }
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.runtimes.len()
     }
 
-    #[cfg(unix)]
-    pub(crate) fn nudge_child_redraw_after_handoff(&self) {
-        for runtime in self.runtimes.values() {
-            runtime.nudge_child_redraw_after_handoff();
-        }
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn drain_for_handoff(
-        &mut self,
-    ) -> impl Iterator<Item = (TerminalId, TerminalRuntime)> + '_ {
-        self.runtimes.drain()
-    }
-
-    #[cfg(test)]
     pub(crate) fn drain(&mut self) -> impl Iterator<Item = (TerminalId, TerminalRuntime)> + '_ {
         self.runtimes.drain()
     }
 }
 
-impl From<HashMap<TerminalId, TerminalRuntime>> for TerminalRuntimeRegistry {
-    fn from(runtimes: HashMap<TerminalId, TerminalRuntime>) -> Self {
-        Self { runtimes }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::TerminalId;
+
+    #[test]
+    fn registry_inserts_and_reports_len() {
+        let mut registry = TerminalRuntimeRegistry::new();
+        assert_eq!(registry.len(), 0);
+        assert!(registry.get(&TerminalId::alloc()).is_none());
+        let _ = registry.drain();
     }
 }

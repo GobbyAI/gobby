@@ -25,12 +25,14 @@ pub enum Signal {
     Kill,
 }
 
+#[cfg(test)]
 pub(crate) fn detached_custom_command_process(command: &str) -> std::process::Command {
     let mut process = detached_custom_command_process_platform(command);
     configure_background_command(&mut process);
     process
 }
 
+#[cfg(test)]
 pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::CommandBuilder {
     pane_custom_command_pty_builder_platform(command)
 }
@@ -42,10 +44,12 @@ pub(crate) fn apply_pane_runtime_marker(command: &mut portable_pty::CommandBuild
 #[cfg(not(windows))]
 fn apply_pane_runtime_marker_platform(_command: &mut portable_pty::CommandBuilder) {}
 
+#[cfg(test)]
 pub(crate) fn configure_background_command(command: &mut std::process::Command) {
     configure_background_command_platform(command);
 }
 
+#[cfg(test)]
 #[cfg(not(windows))]
 fn configure_background_command_platform(_command: &mut std::process::Command) {}
 
@@ -137,8 +141,7 @@ pub struct ClipboardCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-// Windows does not wire clipboard-image bridging into semantic input yet.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub struct ClipboardImage {
     pub bytes: Vec<u8>,
     pub extension: &'static str,
@@ -210,20 +213,7 @@ mod fallback;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use fallback::*;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) fn available_pane_shell_from_job(child_pid: u32, job: ForegroundJob) -> Option<String> {
-    if job.process_group_id != child_pid
-        || job.processes.iter().any(|process| process.pid != child_pid)
-    {
-        return None;
-    }
-    job.processes
-        .into_iter()
-        .find(|process| process.pid == child_pid)
-        .map(|process| process.name)
-        .filter(|name| is_pane_shell_process_name(name))
-}
-
+#[cfg(test)]
 fn normalized_process_name(name: &str) -> String {
     name.rsplit(['/', '\\'])
         .next()
@@ -233,6 +223,7 @@ fn normalized_process_name(name: &str) -> String {
         .to_ascii_lowercase()
 }
 
+#[cfg(test)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn is_powershell_process_name(name: &str) -> bool {
     matches!(
@@ -241,6 +232,7 @@ pub(crate) fn is_powershell_process_name(name: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn interactive_unix_shell_command(
     argv: &[String],
@@ -261,6 +253,7 @@ pub(crate) fn interactive_unix_shell_command(
     Some(command)
 }
 
+#[cfg(test)]
 pub(crate) fn quote_powershell_arg(value: &str) -> String {
     if !value.is_empty()
         && value.bytes().all(|byte| {
@@ -273,6 +266,7 @@ pub(crate) fn quote_powershell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+#[cfg(test)]
 pub(crate) fn is_pane_shell_process_name(name: &str) -> bool {
     let normalized = normalized_process_name(name);
     matches!(
@@ -292,55 +286,6 @@ pub(crate) fn is_pane_shell_process_name(name: &str) -> bool {
             | "powershell"
             | "cmd"
     )
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-#[derive(Debug)]
-pub(crate) struct InputSourceRestore;
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn switch_to_ascii_input_source() -> Option<InputSourceRestore> {
-    None
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn pump_input_source_runloop() {}
-
-/// Switches the host keyboard input source while prefix mode is active.
-///
-/// `App` drives this through a trait so the prefix-mode transitions can be
-/// tested with a fake, without touching the real macOS APIs or leaking a
-/// platform-specific restore type into `App`.
-pub(crate) trait PrefixInputSource {
-    /// Switch to an ASCII-capable input source for prefix commands. No-op if
-    /// the current source is already ASCII-capable, the platform is
-    /// unsupported, or the switch fails. Calling it again before `restore`
-    /// keeps the source saved by the first call.
-    fn switch_to_ascii(&mut self);
-
-    /// Restore whatever `switch_to_ascii` saved. No-op if nothing was switched.
-    fn restore(&mut self);
-}
-
-/// Production [`PrefixInputSource`] backed by the per-platform API.
-#[derive(Default)]
-pub(crate) struct RealPrefixInputSource {
-    restore: Option<InputSourceRestore>,
-}
-
-impl PrefixInputSource for RealPrefixInputSource {
-    fn switch_to_ascii(&mut self) {
-        if self.restore.is_none() {
-            // Drain pending input-source-change notifications so the read below is fresh (see
-            // `pump_input_source_runloop`); a no-op on non-macOS.
-            pump_input_source_runloop();
-            self.restore = switch_to_ascii_input_source();
-        }
-    }
-
-    fn restore(&mut self) {
-        let _ = self.restore.take();
-    }
 }
 
 #[cfg(all(test, unix))]

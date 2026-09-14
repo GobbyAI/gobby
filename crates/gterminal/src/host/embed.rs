@@ -23,6 +23,8 @@ pub struct AttachOutcome {
     pub rx: FrameMailbox,
 }
 
+// reason: attach takes an explicit locator/identity/geometry list rather than a bag struct.
+#[allow(clippy::too_many_arguments)]
 pub async fn attach_frame(
     state: &Arc<HostState>,
     host_terminal_id: &str,

@@ -12,6 +12,7 @@ use super::{
     LimitedRead, Signal,
 };
 
+#[cfg(test)]
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
 const PROCESS_DETECTION_ENV_VAR: &str = "GTERM_PROCESS_DETECTION";
 const CHILD_GROUPS_SCAN_LIMIT: usize = 64;
@@ -30,10 +31,12 @@ struct ProcGroupMember {
 
 pub fn raise_server_nofile_limit() {}
 
+#[cfg(test)]
 pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     running_inside_wsl()
 }
 
+#[cfg(test)]
 fn running_inside_wsl() -> bool {
     proc_file_indicates_wsl("/proc/sys/kernel/osrelease")
         || proc_file_indicates_wsl("/proc/version")
@@ -43,6 +46,7 @@ fn running_inside_wsl() -> bool {
         || std::path::Path::new("/run/WSL").exists()
 }
 
+#[cfg(test)]
 fn proc_file_indicates_wsl(path: &str) -> bool {
     std::fs::read_to_string(path)
         .map(|text| text_indicates_wsl(&text))
@@ -77,10 +81,12 @@ fn process_detection_mode() -> ProcessDetectionMode {
     })
 }
 
+#[cfg(test)]
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
     vec!["/bin/sh".into(), flag.into(), command.into()]
 }
 
+#[cfg(test)]
 pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::process::Command {
     let argv = raw_command_argv(command, "-lc");
     let mut command = std::process::Command::new(&argv[0]);
@@ -88,12 +94,14 @@ pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::pr
     command
 }
 
+#[cfg(test)]
 pub(crate) fn pane_custom_command_pty_builder_platform(
     command: &str,
 ) -> portable_pty::CommandBuilder {
     portable_pty::CommandBuilder::from_argv(raw_command_argv(command, "-c"))
 }
 
+#[cfg(test)]
 pub(crate) fn scrollback_editor_argv(path: &std::path::Path) -> std::io::Result<Vec<String>> {
     let quoted_path = shell_quote(&path.display().to_string());
     let command = format!(
@@ -102,10 +110,12 @@ pub(crate) fn scrollback_editor_argv(path: &std::path::Path) -> std::io::Result<
     Ok(vec!["/bin/sh".to_string(), "-c".to_string(), command])
 }
 
+#[cfg(test)]
 pub(crate) fn interactive_shell_command(argv: &[String], shell_name: &str) -> Option<String> {
     super::interactive_unix_shell_command(argv, shell_name, shell_quote)
 }
 
+#[cfg(test)]
 fn shell_quote(value: &str) -> String {
     if !value.is_empty()
         && value.chars().all(|ch| {
@@ -120,10 +130,6 @@ fn shell_quote(value: &str) -> String {
     }
 
     format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-pub(crate) fn available_pane_shell(_child_pid: u32) -> Option<String> {
-    None
 }
 
 fn foreground_job_for_group(child_pid: u32, process_group_id: u32) -> Option<ForegroundJob> {

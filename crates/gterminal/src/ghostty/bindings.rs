@@ -1,3 +1,4 @@
+// reason: generated libghostty-vt bindings are not hand-maintained.
 #![allow(
     dead_code,
     non_camel_case_types,

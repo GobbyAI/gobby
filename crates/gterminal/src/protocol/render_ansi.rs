@@ -34,13 +34,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::protocol::{underline_style_from_modifier, CellData, FrameData};
 
 const REVERSED_MODIFIER: u16 = 1 << 6;
-const SYNC_OUTPUT_END: &[u8] = b"\x1b[?2026l";
-
-pub(crate) fn final_sync_output_end(bytes: &[u8]) -> Option<usize> {
-    bytes
-        .windows(SYNC_OUTPUT_END.len())
-        .rposition(|window| window == SYNC_OUTPUT_END)
-}
 
 /// Bytes produced by a [`BlitEncoder`] for one terminal frame.
 pub(crate) struct EncodedBlit {
@@ -69,6 +62,7 @@ impl BlitEncoder {
         self.encode_inner(frame, repaint, false)
     }
 
+    #[cfg(test)]
     pub(crate) fn encode_with_suppressed_visible_cursor(
         &self,
         frame: &FrameData,
@@ -117,6 +111,7 @@ impl BlitEncoder {
                 crate::render_prof::event("ansi_encode.partial");
             }
         }
+        crate::render_prof::flush_if_due();
         EncodedBlit {
             bytes,
             full,
@@ -133,10 +128,6 @@ impl BlitEncoder {
 
     pub(crate) fn is_current(&self, frame: &FrameData) -> bool {
         self.last_frame.as_ref() == Some(frame)
-    }
-
-    pub(crate) fn last_frame(&self) -> Option<&FrameData> {
-        self.last_frame.as_ref()
     }
 }
 

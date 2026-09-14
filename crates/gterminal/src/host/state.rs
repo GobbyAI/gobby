@@ -247,7 +247,7 @@ impl HostState {
             .get("cwd")
             .and_then(Value::as_str)
             .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir());
+            .unwrap_or_else(std::env::temp_dir);
         let env = extra
             .get("env")
             .and_then(Value::as_object)

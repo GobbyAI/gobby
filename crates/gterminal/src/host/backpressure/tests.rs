@@ -49,6 +49,10 @@ async fn control_deadline_and_event_overflow() {
     queue.push(json!({"id": 1, "ok": true})).expect("first");
     queue.push(json!({"id": 2, "ok": true})).expect("second");
     queue.push(json!({"id": 3, "ok": true})).expect("third");
+    assert!(
+        !queue.deadline_exceeded(),
+        "fresh control entries have not exceeded the deadline"
+    );
     let first = queue.pop().expect("pop first");
     let second = queue.pop().expect("pop second");
     let third = queue.pop().expect("pop third");

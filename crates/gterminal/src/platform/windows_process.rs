@@ -1,3 +1,32 @@
+#[derive(Debug)]
+struct CachedProcessSnapshot {
+    built_at: Instant,
+    entries: Arc<Vec<WindowsProcessEntry>>,
+}
+
+#[derive(Debug)]
+struct ProcessSnapshotCache {
+    cached: Option<CachedProcessSnapshot>,
+}
+
+#[derive(Debug)]
+struct CachedProcessRuntimeMarker {
+    creation_time: u64,
+    marker: Option<String>,
+    cached_at: Instant,
+    last_used: Instant,
+}
+
+#[derive(Debug)]
+struct CachedGitBashProcess {
+    creation_time: u64,
+    is_git_bash: bool,
+    last_used: Instant,
+}
+
+static FOREGROUND_PROCESS_SNAPSHOT_CACHE: Mutex<ProcessSnapshotCache> =
+    Mutex::new(ProcessSnapshotCache { cached: None });
+
 fn process_creation_time(process: HANDLE) -> Option<u64> {
     let mut creation_time = FILETIME::default();
     let mut exit_time = FILETIME::default();
@@ -16,6 +45,48 @@ fn process_creation_time(process: HANDLE) -> Option<u64> {
         return None;
     }
     Some((u64::from(creation_time.dwHighDateTime) << 32) | u64::from(creation_time.dwLowDateTime))
+}
+
+fn process_runtime_marker(pid: u32) -> Option<String> {
+    let process = ProcessHandle::open(pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)?;
+    let creation_time = process_creation_time(process.0)?;
+    {
+        let mut cache = PROCESS_RUNTIME_MARKER_CACHE
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if let Some(cached) = cache.get_mut(&pid) {
+            if cached.creation_time == creation_time
+                && (cached.marker.is_some()
+                    || cached.cached_at.elapsed() < PROCESS_RUNTIME_MARKER_NEGATIVE_TTL)
+            {
+                cached.last_used = Instant::now();
+                return cached.marker.clone();
+            }
+        }
+    }
+
+    let marker = process_runtime_marker_from_handle(process.0)?;
+    let mut cache = PROCESS_RUNTIME_MARKER_CACHE
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    if cache.len() >= PROCESS_RUNTIME_MARKER_CACHE_CAPACITY {
+        cache.retain(|_, cached| {
+            cached.last_used.elapsed() < PROCESS_RUNTIME_MARKER_CACHE_RETENTION
+        });
+        if cache.len() >= PROCESS_RUNTIME_MARKER_CACHE_CAPACITY {
+            cache.clear();
+        }
+    }
+    cache.insert(
+        pid,
+        CachedProcessRuntimeMarker {
+            creation_time,
+            marker: marker.clone(),
+            cached_at: Instant::now(),
+            last_used: Instant::now(),
+        },
+    );
+    marker
 }
 
 fn process_runtime_marker_from_handle(process: HANDLE) -> Option<Option<String>> {
@@ -304,8 +375,7 @@ pub fn open_url(url: &str) -> std::io::Result<()> {
     }
 }
 
-// Windows does not wire clipboard-image bridging into semantic input yet.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub fn read_clipboard_image() -> Option<ClipboardImage> {
     None
 }
@@ -552,18 +622,15 @@ fn read_unicode_string(process: HANDLE, unicode: UNICODE_STRING) -> Option<Strin
 // keyboard layout's language id. Only Korean is mapped today; other IMEs are
 // detected and left untouched (a no-op) rather than toggled with the wrong key.
 
-/// `WM_IME_CONTROL` sub-command that reads whether the IME is open, i.e.
-/// composing native characters. This is `IMC_GETOPENSTATUS` (0x0005); for the
-/// Korean IME "open" is exactly the Hangul state and "closed" is English/ASCII
-/// direct input, which is the state we detect and toggle.
-const IMC_GETOPENSTATUS: usize = 0x0005;
-
 /// Virtual key that toggles Hangul/English on Korean IMEs.
+#[cfg(test)]
 const VK_HANGUL: u16 = 0x15;
 
 /// Primary language id (low 10 bits of a LANGID) for Korean.
+#[cfg(test)]
 const LANG_KOREAN: u32 = 0x12;
 
+#[cfg(test)]
 /// Whether the IME reports itself open, i.e. composing native characters
 /// (Hangul for the Korean IME). `IMC_GETOPENSTATUS` returns nonzero when the
 /// IME is open and zero when it is in direct English/ASCII input.
@@ -571,39 +638,7 @@ fn ime_open(open_status: isize) -> bool {
     open_status != 0
 }
 
-/// Timeout (ms) for the cross-process IME open-status read. Short enough that a
-/// hung terminal never freezes prefix-mode entry/exit.
-const IME_STATUS_READ_TIMEOUT_MS: u32 = 200;
-
-/// Reads the IME open status (`IMC_GETOPENSTATUS`) with a bounded timeout.
-///
-/// `WM_IME_CONTROL` crosses into the terminal-emulator process, and a plain
-/// `SendMessageW` would block gterm's client thread until that process responds
-/// (indefinitely if it is hung). `SendMessageTimeoutW` with `SMTO_ABORTIFHUNG`
-/// caps the wait; on timeout or failure this returns `None` and callers leave
-/// the IME untouched rather than blocking or guessing.
-fn read_ime_open_status(ime_hwnd: HWND) -> Option<isize> {
-    let mut result: usize = 0;
-    // SAFETY: `ime_hwnd` is a non-null IME window from `ImmGetDefaultIMEWnd`, and
-    // `result` is a valid out-pointer for the message's `DWORD_PTR` result.
-    let ret = unsafe {
-        SendMessageTimeoutW(
-            ime_hwnd,
-            WM_IME_CONTROL,
-            IMC_GETOPENSTATUS,
-            0,
-            SMTO_ABORTIFHUNG,
-            IME_STATUS_READ_TIMEOUT_MS,
-            &mut result,
-        )
-    };
-    if ret == 0 {
-        // Timed out or failed; do not block or assume a state.
-        return None;
-    }
-    Some(result as isize)
-}
-
+#[cfg(test)]
 /// The IME toggle key for a keyboard layout language id, or `None` when the
 /// language's toggle key is not known. `langid` is the full LANGID (LOWORD of
 /// an `HKL`); the primary language is its low 10 bits.
@@ -619,6 +654,7 @@ fn toggle_key_for_language(langid: u32) -> Option<u16> {
 }
 
 /// Builds the key-down then key-up `INPUT` pair for `vk`.
+#[cfg(test)]
 fn key_tap_inputs(vk: u16) -> [INPUT; 2] {
     let key_event = |flags| INPUT {
         r#type: INPUT_KEYBOARD,
@@ -635,27 +671,7 @@ fn key_tap_inputs(vk: u16) -> [INPUT; 2] {
     [key_event(0), key_event(KEYEVENTF_KEYUP)]
 }
 
-/// Injects a key-down then key-up for `vk` via `SendInput`.
-///
-/// Returns `true` when the key-down was queued and the IME may have toggled.
-/// Thin wrapper over [`send_vk_tap_with`] that plugs in the real `SendInput`;
-/// the injection policy lives there so it can be unit-tested without the OS.
-fn send_vk_tap(vk: u16) -> bool {
-    send_vk_tap_with(vk, |events| {
-        // SAFETY: `events` outlives the call; its `INPUT_KEYBOARD` entries have
-        // the `ki` union variant fully initialized, which is the variant
-        // SendInput reads for keyboard input. `size_of::<INPUT>()` is the
-        // required `cbSize`.
-        unsafe {
-            SendInput(
-                events.len() as u32,
-                events.as_ptr(),
-                size_of::<INPUT>() as i32,
-            )
-        }
-    })
-}
-
+#[cfg(test)]
 /// Core key-tap logic with the raw event injector abstracted behind `inject`,
 /// which returns how many of the passed events it actually queued. This keeps
 /// the success / partial-injection / total-failure branches unit-testable
@@ -695,142 +711,4 @@ fn send_vk_tap_with(vk: u16, mut inject: impl FnMut(&[INPUT]) -> u32) -> bool {
         "SendInput did not inject the IME toggle key tap"
     );
     false
-}
-
-pub(crate) fn pump_input_source_runloop() {}
-
-/// Switch the foreground window's IME to ASCII-capable input for prefix mode.
-///
-/// Returns `None` (nothing to restore) when there is no foreground IME, the
-/// keyboard language has no known toggle key, or the IME is already
-/// ASCII-capable, matching the macOS contract.
-pub(crate) fn switch_to_ascii_input_source() -> Option<InputSourceRestore> {
-    // SAFETY: all calls are Win32 UI functions invoked on the client's main
-    // thread. Every HWND is null-checked before use; `fg_thread` is a thread id
-    // (not a handle) used only as `GetKeyboardLayout` input, where 0 harmlessly
-    // falls back to the calling thread's layout.
-    unsafe {
-        let fg = GetForegroundWindow();
-        if fg.is_null() {
-            return None;
-        }
-
-        // Pick the toggle key for the foreground keyboard language. Unknown
-        // languages (Japanese, Chinese, ...) are left untouched.
-        let fg_thread = GetWindowThreadProcessId(fg, null_mut());
-        let langid = (GetKeyboardLayout(fg_thread) as usize as u32) & 0xFFFF;
-        let Some(toggle_vk) = toggle_key_for_language(langid) else {
-            tracing::debug!(
-                langid = format!("{langid:#06x}"),
-                "prefix IME switch: no toggle key for keyboard language, leaving IME as-is"
-            );
-            return None;
-        };
-
-        // Detect the open (Hangul) state via the bounded read path.
-        let ime_hwnd = ImmGetDefaultIMEWnd(fg);
-        if ime_hwnd.is_null() {
-            return None;
-        }
-        let Some(open) = read_ime_open_status(ime_hwnd) else {
-            tracing::debug!("prefix IME switch skipped: IME open-status read timed out");
-            return None;
-        };
-        if !ime_open(open) {
-            // Already in English/ASCII input; nothing to switch or restore.
-            return None;
-        }
-
-        // The bounded cross-process status read can take long enough for focus
-        // to change. Recheck immediately before using the global input queue.
-        if GetForegroundWindow() != fg {
-            tracing::debug!("prefix IME switch skipped: foreground window changed");
-            return None;
-        }
-
-        // Toggle to ASCII by injecting the language's IME toggle key. Only arm
-        // restoration when the toggle actually landed, so we never try to
-        // restore a switch that never happened.
-        if !send_vk_tap(toggle_vk) {
-            tracing::warn!(
-                langid = format!("{langid:#06x}"),
-                "prefix IME switch: toggle injection failed, leaving IME as-is"
-            );
-            return None;
-        }
-        tracing::debug!(
-            langid = format!("{langid:#06x}"),
-            "switched host IME to ASCII for prefix mode"
-        );
-        Some(InputSourceRestore {
-            toggle_vk,
-            origin_hwnd: fg as isize,
-        })
-    }
-}
-
-/// Restores the native (Hangul) IME state that was active before prefix mode.
-///
-/// Only constructed by [`switch_to_ascii_input_source`] after it successfully
-/// toggled the IME to English/ASCII. Dropping it re-injects the same toggle key
-/// to go back, but only after two guards, so restoration never fights the user
-/// or another application:
-///   - the same window that was switched must still be focused, otherwise the
-///     toggle would land on whatever app the user moved to;
-///   - the IME must still be in English (our switch still in effect), otherwise
-///     the user manually returned to Hangul during prefix mode and we must leave
-///     their choice alone.
-///
-/// `origin_hwnd` stores the foreground window at switch time as raw pointer bits
-/// (`isize`, not `HWND`) so the guard stays `Send` when parked in the client's
-/// prefix-input state across `.await` points.
-#[derive(Debug)]
-pub(crate) struct InputSourceRestore {
-    toggle_vk: u16,
-    origin_hwnd: isize,
-}
-
-impl Drop for InputSourceRestore {
-    fn drop(&mut self) {
-        // SAFETY: all calls are Win32 UI functions invoked on the client's main
-        // thread. Every HWND is null-checked before use.
-        unsafe {
-            // Guard 1: only restore if the window we switched is still focused,
-            // so the toggle never lands on a different application.
-            let fg = GetForegroundWindow();
-            if fg.is_null() || fg as isize != self.origin_hwnd {
-                tracing::debug!(
-                    "prefix IME restore skipped: foreground window changed since switch"
-                );
-                return;
-            }
-
-            // Guard 2: only restore if the IME is still in English (our switch is
-            // still in effect). If the user manually switched back to Hangul
-            // during prefix mode, leave their choice untouched.
-            let ime_hwnd = ImmGetDefaultIMEWnd(fg);
-            if ime_hwnd.is_null() {
-                return;
-            }
-            let Some(open) = read_ime_open_status(ime_hwnd) else {
-                tracing::debug!("prefix IME restore skipped: IME open-status read timed out");
-                return;
-            };
-            if ime_open(open) {
-                tracing::debug!("prefix IME restore skipped: IME already back to native input");
-                return;
-            }
-
-            // The bounded cross-process status read can take long enough for
-            // focus to change. Recheck immediately before using SendInput.
-            if GetForegroundWindow() != fg {
-                tracing::debug!("prefix IME restore skipped: foreground window changed");
-                return;
-            }
-
-            if send_vk_tap(self.toggle_vk) {
-                tracing::debug!("restored host IME after prefix mode");
-            }
-        }
-    }
 }

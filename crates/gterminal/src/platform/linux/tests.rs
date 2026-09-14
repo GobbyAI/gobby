@@ -13,6 +13,7 @@ fn wsl_marker_detection_matches_kernel_release_text() {
     assert!(text_indicates_wsl("4.4.0-19041-Microsoft"));
     assert!(!text_indicates_wsl("6.8.0-64-generic"));
     assert!(!text_indicates_wsl(""));
+    let _ = should_draw_host_cursor_by_default();
 }
 
 #[test]

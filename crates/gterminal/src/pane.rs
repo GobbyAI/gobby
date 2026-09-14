@@ -26,7 +26,7 @@ pub(crate) enum WheelRouting {
     MouseReport,
     AlternateScroll,
 }
-pub(crate) use self::terminal::{
-    GhosttyPaneTerminal, PaneTerminal, TerminalDirtyPatch, TerminalReadSnapshot, TerminalTextMatch,
-    TerminalTextPoint, TerminalWordMotion,
-};
+#[cfg(test)]
+pub(crate) use self::terminal::GhosttyPaneTerminal;
+#[cfg(test)]
+pub(crate) use self::terminal::TerminalReadSnapshot;

@@ -4,8 +4,6 @@
 //! Wire protocol, input encoding, layout, selection, and theme modules stay
 //! feature-free so default-feature builds remain Zig-free.
 
-#![allow(dead_code, unused_imports, private_interfaces, clippy::all)]
-
 pub(crate) const GTERM_ENV_VAR: &str = "GTERM_ENV";
 pub(crate) const GTERM_ENV_VALUE: &str = "1";
 

@@ -6,7 +6,7 @@ use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 

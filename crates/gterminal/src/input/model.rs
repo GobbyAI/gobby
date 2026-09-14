@@ -26,10 +26,6 @@ impl TextCommit {
     pub fn as_str(&self) -> &str {
         &self.text
     }
-
-    pub(crate) fn into_string(self) -> String {
-        self.text
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,12 +108,12 @@ impl TerminalKey {
         self
     }
 
-    #[allow(dead_code)] // Reserved for the upcoming raw input parser to preserve shifted/base key pairs.
     pub fn with_shifted_codepoint(mut self, shifted_codepoint: u32) -> Self {
         self.shifted_codepoint = Some(shifted_codepoint);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_generated_text(mut self, text: Option<String>) -> Self {
         self.generated_text = if self.kind == crossterm::event::KeyEventKind::Release {
             None
@@ -145,7 +141,7 @@ impl TerminalKey {
         self
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(windows)]
     pub(crate) fn vt_bytes(&self) -> Option<&[u8]> {
         match &self.source {
             KeySource::Vt { bytes } => Some(bytes),
@@ -161,6 +157,7 @@ impl TerminalKey {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn identity(&self) -> KeyIdentity {
         match self.source {
             KeySource::WindowsConsole {
@@ -175,6 +172,7 @@ impl TerminalKey {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn has_physical_identity(&self) -> bool {
         matches!(
             self.source,

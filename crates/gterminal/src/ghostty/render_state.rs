@@ -386,6 +386,8 @@ pub struct RowIter<'a> {
 }
 
 impl<'a> RowIter<'a> {
+    // reason: FFI cursor advance returns bool rather than Option; not std Iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         // SAFETY: iterator handle is valid while self is alive.
         unsafe { ffi::ghostty_render_state_row_iterator_next(self.iterator.raw) }
@@ -546,6 +548,8 @@ impl Default for CellBasicData {
 }
 
 impl<'a> RowCellIter<'a> {
+    // reason: FFI cursor advance returns bool rather than Option; not std Iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         // SAFETY: cells handle is valid while self is alive.
         unsafe { ffi::ghostty_render_state_row_cells_next(self.cells.raw) }
@@ -835,4 +839,3 @@ impl<'a> RowCellIter<'a> {
         Ok(())
     }
 }
-
