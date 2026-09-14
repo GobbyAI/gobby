@@ -39,7 +39,8 @@ def _menu_description(description: str, limit: int) -> str:
 
 
 def _menu_entry(prefix: str, name: str, description: str, limit: int) -> str:
-    summary = _menu_description(description, limit)
+    provider_description = re.sub(r"(?<![\w/])[/$]gobby\b", lambda _: prefix, description)
+    summary = _menu_description(provider_description, limit)
     return f"- `{prefix} {name}`" + (f" — {summary}" if summary else "")
 
 

@@ -161,6 +161,22 @@ def test_description_keeps_dotted_words() -> None:
     assert "More detail" not in content
 
 
+@pytest.mark.parametrize("prefix", ["$gobby", "/gobby"])
+def test_description_examples_use_current_provider(prefix: str) -> None:
+    handler = _TestHandler()
+    handler._session_manager = None
+    handler.skill_manager_mock.discover_core_skills.return_value = [
+        ParsedSkill(
+            name="review-example",
+            description="Handle `$gobby review-example` or `/gobby review-example` requests.",
+            content="",
+        )
+    ]
+    content = handler._generate_help_content(command_prefix=prefix)
+    assert content.count(f"`{prefix} review-example`") == 3
+    assert ("$gobby" if prefix == "/gobby" else "/gobby") not in content
+
+
 def test_help_database_failure_never_substitutes_a_partial_catalog() -> None:
     manager = HookSkillManager(db=MagicMock())
     with (
