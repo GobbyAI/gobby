@@ -42,7 +42,7 @@ from gobby.runtime_grants.schema import (
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
-from gobby.storage.schema_contract import expected_schema_identity
+from gobby.storage.schema_contract import installed_schema_identity
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_local_api_token
 from gobby.utils.native_bin import resolve_native_bin
@@ -519,7 +519,7 @@ def _signed_grant_from_credential(
     unsigned = GrantBundle(
         config_revision=0,
         deployment=GrantDeployment(token=context.token, fencing_epoch=context.fencing_epoch),
-        schema_identity=SchemaIdentity.model_validate(expected_schema_identity()),
+        schema_identity=SchemaIdentity.model_validate(installed_schema_identity()),
         principal=GrantPrincipal(
             kind=principal_kind,
             machine_id=machine_id or "00000000-0000-4000-8000-000000000000",

@@ -30,7 +30,7 @@ from gobby.runtime_grants.schema import (
     UnavailableCapability,
 )
 from gobby.runtime_grants.signing import payload_checksum, sign_grant, signature_matches
-from gobby.storage.schema_contract import expected_schema_identity
+from gobby.storage.schema_contract import installed_schema_identity
 
 EMBED_OPERATION = BrokerOperation(name="embed", method="POST", path="/api/embeddings")
 FALKOR_OPERATIONS = (
@@ -209,7 +209,7 @@ def capabilities_from_snapshot(
 
 
 def _schema_identity() -> SchemaIdentity:
-    return SchemaIdentity.model_validate(expected_schema_identity())
+    return SchemaIdentity.model_validate(installed_schema_identity())
 
 
 def _capability_matches(grant: GrantBundle, required: RequiredCapability) -> bool:
@@ -234,7 +234,7 @@ class GrantService:
     context: DeploymentGrantContext
     clock: Callable[[], int] | None = None
     revocations: GrantRevocationStore = field(default_factory=GrantRevocationStore)
-    _expected_schema_identity: SchemaIdentity = field(
+    _installed_schema_identity: SchemaIdentity = field(
         default_factory=_schema_identity,
         init=False,
         repr=False,
@@ -262,7 +262,7 @@ class GrantService:
                 token=self.context.token,
                 fencing_epoch=self.context.fencing_epoch,
             ),
-            schema_identity=self._expected_schema_identity,
+            schema_identity=self._installed_schema_identity,
             principal=principal,
             capabilities=capabilities_from_snapshot(snapshot, postgres),
             issued_at=issued_at,
@@ -283,7 +283,7 @@ class GrantService:
             raise InvalidGrantSignature("grant payload checksum is invalid")
         if grant.deployment.token != self.context.token:
             raise WrongDeploymentGrant("grant deployment token does not match")
-        if grant.schema_identity != self._expected_schema_identity:
+        if grant.schema_identity != self._installed_schema_identity:
             raise WrongSchemaGrant("grant schema identity does not match")
         if grant.api_contract != API_CONTRACT or grant.version != GRANT_VERSION:
             raise WrongApiContractGrant("grant API contract is not supported")

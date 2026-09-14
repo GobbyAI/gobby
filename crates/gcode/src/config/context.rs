@@ -346,8 +346,7 @@ impl Context {
         let project_id = identity.project_id;
         let index_scope = identity.index_scope;
 
-        let acquired = grant::acquire(&project_root)
-            .map_err(|error| CliError::grant_for_checkout(error, &project_root))?;
+        let acquired = grant::acquire(&project_root).map_err(CliError::grant)?;
         let database_url = db::database_url_from_acquired(&acquired)?;
         let falkordb = services
             .falkordb

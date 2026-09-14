@@ -10,13 +10,12 @@ use gobby_core::gobby_home;
 use gobby_core::postgres::{connect_readwrite, is_lock_timeout};
 use gobby_core::schema::{
     BackupGateContext, HubBackupManifest, SchemaIdentityContract, SchemaRunner, SourceIdentity,
-    VerifiedBackupManifest, parse_backup_manifest,
+    VerificationReport, VerifiedBackupManifest, parse_backup_manifest,
     sweep_test_schemas as sweep_orphaned_test_schemas,
 };
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-const EXPECTED_IDENTITY_ENV: &str = "GOBBY_EXPECTED_SCHEMA_IDENTITY";
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
 const BACKUP_MANIFEST_NAME: &str = "manifest.json";
 
@@ -77,7 +76,6 @@ fn main() -> Result<()> {
 }
 
 fn sweep_test_schemas(age_hours: u64) -> Result<()> {
-    enforce_expected_identity()?;
     let age_seconds =
         i64::try_from(age_hours.saturating_mul(60 * 60)).context("--age-hours is too large")?;
     let cutoff_epoch = OffsetDateTime::now_utc()
@@ -91,6 +89,11 @@ fn sweep_test_schemas(age_hours: u64) -> Result<()> {
             redact_database_url(&database_url)
         )
     })?;
+    let schema = client
+        .query_one("SELECT current_schema()", &[])?
+        .get::<_, Option<String>>(0)
+        .context("PostgreSQL connection has no current schema")?;
+    verify_database_identity(&mut SchemaRunner::new(&mut client, &schema)?, true)?;
     let dropped = sweep_orphaned_test_schemas(&mut client, cutoff_epoch)?;
     println!("swept {dropped} orphaned PostgreSQL test schema(s)");
     Ok(())
@@ -100,7 +103,6 @@ fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
     if let Some(schema) = schema {
         validate_schema_name(schema)?;
     }
-    enforce_expected_identity()?;
     let database_url = resolve_database_url()?;
     let backup = destructive.then(load_newest_backup_manifest).transpose()?;
     let mut client = connect_readwrite(&database_url).map_err(|_| {
@@ -348,7 +350,6 @@ fn refuse_symlink_traversal(path: &Path) -> Result<()> {
 }
 
 fn verify_schema() -> Result<()> {
-    enforce_expected_identity()?;
     let database_url = resolve_database_url()?;
     let mut client = connect_readwrite(&database_url).map_err(|_| {
         anyhow::anyhow!(
@@ -360,7 +361,8 @@ fn verify_schema() -> Result<()> {
         .query_one("SELECT current_schema()", &[])?
         .get::<_, Option<String>>(0)
         .context("PostgreSQL connection has no current schema")?;
-    let report = SchemaRunner::new(&mut client, &schema)?.verify()?;
+    let report = verify_database_identity(&mut SchemaRunner::new(&mut client, &schema)?, false)?
+        .context("database schema is not initialized")?;
     println!(
         "schema verified (receipts={}, seed_rows={}, catalog_objects={})",
         report.checked_receipts, report.checked_seed_rows, report.checked_catalog_objects
@@ -380,18 +382,27 @@ fn validate_schema_name(schema: &str) -> Result<()> {
     }
 }
 
-fn enforce_expected_identity() -> Result<()> {
-    let payload = env::var(EXPECTED_IDENTITY_ENV)
-        .with_context(|| format!("{EXPECTED_IDENTITY_ENV} is required for schema apply"))?;
-    let expected: SchemaIdentityContract = serde_json::from_str(&payload)
-        .context("expected schema identity is not valid six-field JSON")?;
-    let embedded = SchemaIdentityContract::embedded();
-    if expected != embedded {
+fn verify_database_identity(
+    runner: &mut SchemaRunner<'_>,
+    allow_uninitialized: bool,
+) -> Result<Option<VerificationReport>> {
+    let database_version = runner.current_version()?;
+    // Pytest sweeps a fresh isolated database before applying its first worker schema.
+    // With no receipts there is no database identity yet, so only sweeping may proceed.
+    if allow_uninitialized && database_version == 0 {
+        return Ok(None);
+    }
+    let embedded_version = SchemaIdentityContract::embedded().latest_version;
+    if database_version != embedded_version {
         anyhow::bail!(
-            "expected schema identity does not match embedded identity (expected={expected:?}, embedded={embedded:?})"
+            "binary-embedded schema identity v{embedded_version} does not match database schema v{database_version}"
         );
     }
-    Ok(())
+    runner.verify().map(Some).map_err(|error| {
+        anyhow::anyhow!(
+            "binary-embedded schema identity v{embedded_version} does not match database schema v{database_version}: {error}"
+        )
+    })
 }
 
 fn resolve_database_url() -> Result<String> {

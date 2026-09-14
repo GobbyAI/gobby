@@ -77,6 +77,11 @@ impl<'a> SchemaRunner<'a> {
         verify_schema(self.client, &self.schema)
     }
 
+    /// Return the applied migration head, or zero when the schema is uninitialized.
+    pub fn current_version(&mut self) -> Result<i32, SchemaError> {
+        read_schema_head(self.client, &self.schema)
+    }
+
     #[cfg(test)]
     pub(crate) fn with_migrations_for_test(
         client: &'a mut Client,

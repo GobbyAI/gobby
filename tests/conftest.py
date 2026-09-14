@@ -58,12 +58,12 @@ _ensure_isolated_bootstrap()
 def _select_schema_contract_gdaemon() -> Iterator[None]:
     """Pin schema-contract gdaemon calls at the binary ``select_test_gdaemon`` chooses.
 
-    The installed ``~/.gobby/bin`` binary by default — the same one the daemon uses,
-    identity-checked against this checkout's pin so a mismatch fails loudly. Only
-    ``GOBBY_TEST_GDAEMON=checkout`` routes applies at this checkout's ``target/debug``
-    build, and that build must be newer than its crate sources. Session-scoped and
-    autouse so the choice is active before the session-scoped postgres fixtures run
-    their first schema apply/sweep, and uniform across the whole run.
+    The installed ``~/.gobby/bin`` binary is the default — the same authority the
+    daemon and runtime grants use. Only ``GOBBY_TEST_GDAEMON=checkout`` routes schema
+    actions at this checkout's ``target/debug`` build, which must be newer than its
+    crate sources. Session-scoped and autouse so the choice is active before the
+    session-scoped postgres fixtures run their first schema apply/sweep, and the choice
+    cannot vary between test modules.
     """
     from gobby.utils.native_bin import native_bin_name, resolve_native_bin
     from tests.fixtures.gdaemon_binary import select_test_gdaemon

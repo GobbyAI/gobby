@@ -45,7 +45,10 @@ use handshake::{
 pub enum GrantError {
     DaemonRequired,
     Expired,
-    SchemaMismatch,
+    SchemaMismatch {
+        grant_version: i64,
+        binary_version: i64,
+    },
     DeploymentMismatch,
     ApiContractMismatch {
         grant_contract: Option<i64>,
@@ -68,7 +71,13 @@ impl fmt::Display for GrantError {
         match self {
             Self::DaemonRequired => f.write_str("daemon required"),
             Self::Expired => f.write_str("grant expired"),
-            Self::SchemaMismatch => f.write_str("schema identity mismatch"),
+            Self::SchemaMismatch {
+                grant_version,
+                binary_version,
+            } => write!(
+                f,
+                "daemon-issued grant schema identity v{grant_version} does not match binary-embedded schema identity v{binary_version}"
+            ),
             Self::DeploymentMismatch => f.write_str("deployment mismatch"),
             Self::ApiContractMismatch {
                 grant_contract,
@@ -97,7 +106,7 @@ impl GrantError {
         match self {
             Self::DaemonRequired => "daemon_required",
             Self::Expired => "expired",
-            Self::SchemaMismatch => "schema_mismatch",
+            Self::SchemaMismatch { .. } => "schema_mismatch",
             Self::DeploymentMismatch => "deployment_mismatch",
             Self::ApiContractMismatch { .. } => "api_contract_mismatch",
             Self::PayloadSkew { .. } => "payload_skew",

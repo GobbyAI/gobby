@@ -134,9 +134,12 @@ fn grant_errors_stable_contract() {
         ),
         (GrantError::Expired, "expired", "grant expired", 2),
         (
-            GrantError::SchemaMismatch,
+            GrantError::SchemaMismatch {
+                grant_version: 436,
+                binary_version: 437,
+            },
             "schema_mismatch",
-            "schema identity mismatch",
+            "daemon-issued grant schema identity v436 does not match binary-embedded schema identity v437",
             2,
         ),
         (

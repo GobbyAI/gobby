@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.resources
-import json
-from pathlib import Path
-
 import pytest
 
 from gobby.runtime_grants import DeploymentGrantContext, GrantBundle, GrantService
+from gobby.runtime_grants import service as grant_service_module
 from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect, SchemaIdentity
 from gobby.storage.schema_contract import expected_schema_identity
 from tests.runtime_grants.support import (
@@ -64,29 +61,31 @@ def _issue(service: GrantService) -> GrantBundle:
 
 
 def test_issue_and_present_keep_construction_identity(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    identity_path = tmp_path / "schema_expected_identity.json"
     original_identity = expected_schema_identity()
-    identity_path.write_text(json.dumps(original_identity))
-    monkeypatch.setattr(importlib.resources, "files", lambda _package: tmp_path)
+    installed_identity = original_identity
+    monkeypatch.setattr(
+        grant_service_module,
+        "installed_schema_identity",
+        lambda: installed_identity,
+    )
 
     existing_service = _service()
-    grant_before_rewrite = _issue(existing_service)
+    grant_before_update = _issue(existing_service)
 
-    rewritten_identity = {
+    updated_identity = {
         **original_identity,
         "baseline_version": int(original_identity["baseline_version"]) + 1,
     }
-    identity_path.write_text(json.dumps(rewritten_identity))
+    installed_identity = updated_identity
 
-    grant_after_rewrite = _issue(existing_service)
+    grant_after_update = _issue(existing_service)
     expected_original = SchemaIdentity.model_validate(original_identity)
-    assert grant_before_rewrite.schema_identity == expected_original
-    assert grant_after_rewrite.schema_identity == expected_original
-    assert existing_service.present(grant_before_rewrite, now=NOW) is grant_before_rewrite
-    assert existing_service.present(grant_after_rewrite, now=NOW) is grant_after_rewrite
+    assert grant_before_update.schema_identity == expected_original
+    assert grant_after_update.schema_identity == expected_original
+    assert existing_service.present(grant_before_update, now=NOW) is grant_before_update
+    assert existing_service.present(grant_after_update, now=NOW) is grant_after_update
 
     fresh_grant = _issue(_service())
-    assert fresh_grant.schema_identity == SchemaIdentity.model_validate(rewritten_identity)
+    assert fresh_grant.schema_identity == SchemaIdentity.model_validate(updated_identity)

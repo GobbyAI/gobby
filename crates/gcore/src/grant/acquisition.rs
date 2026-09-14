@@ -247,7 +247,7 @@ fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, Grant
     validate_managed_identity(&grant, ctx.expected_execution_id.as_deref())?;
     let destination = path.to_path_buf();
     match validation {
-        Err(GrantError::SchemaMismatch) if ctx.reachable() => {
+        Err(GrantError::SchemaMismatch { .. }) if ctx.reachable() => {
             return refresh_or_fail(
                 ctx,
                 Some(&grant),
@@ -291,7 +291,7 @@ fn accept_cached_or_rehandshake(
         false,
     ) {
         Ok(()) => cached(grant),
-        Err(GrantError::SchemaMismatch) if ctx.reachable() => {
+        Err(GrantError::SchemaMismatch { .. }) if ctx.reachable() => {
             handshake_interactive(ctx, expected_deployment, persist_binding)
         }
         Err(error) => Err(error),
@@ -551,7 +551,7 @@ pub(super) fn refresh_or_fail(
             if managed {
                 let (_, claims) = managed_envelope(ctx, existing)?;
                 match validate_managed_refresh(ctx, &current, &claims, existing) {
-                    Err(GrantError::SchemaMismatch) => {
+                    Err(GrantError::SchemaMismatch { .. }) => {
                         return handshake_managed(ctx, Some(&current), destination);
                     }
                     result => result?,
