@@ -12,18 +12,22 @@ Tier 2 rules (YAML templates — configurable):
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
+import gobby.storage.task_close_reviews as review_storage
+import gobby.tasks.agentic_close_review as review_payloads
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import Task
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.agentic_close_review import build_terminal_review_payload
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -2016,3 +2020,93 @@ class TestForceAllowStopWithTaskClaimed:
         variables["force_allow_stop"] = False
         await engine.evaluate(event, SESSION_ID, variables)
         assert variables.get("force_allow_stop") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_type", ["task", "epic"])
+@pytest.mark.parametrize(
+    "wait_state,expected",
+    [
+        ("valid", "allow"),
+        ("expired", "block"),
+        ("superseded", "block"),
+        ("other-caller", "block"),
+        ("mixed", "block"),
+        ("mixed-waits", "allow"),
+    ],
+)
+async def test_infrastructure_retry_wait_reaches_task_and_epic_stop_gates(
+    db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    task_type: str,
+    wait_state: str,
+    expected: str,
+) -> None:
+    _sync_bundled(db)
+    now = datetime(2026, 9, 13, 12, tzinfo=UTC)
+    monkeypatch.setattr(review_payloads, "utc_now", lambda: now)
+    monkeypatch.setattr(review_storage, "utc_now", lambda: now)
+    tasks = LocalTaskManager(db)
+    task = tasks.create_task(
+        validation_criteria="Focused close retry regression passes",
+        project_id=sample_project["id"],
+        title="Infrastructure wait",
+        task_type=task_type,
+    )
+    if task_type == "epic":
+        tasks.create_task(
+            validation_criteria="Focused close retry regression passes",
+            project_id=sample_project["id"],
+            title="Open child",
+            parent_task_id=task.id,
+        )
+    store = TaskCloseReviewStore(db)
+    review, _ = store.create_or_get_active(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=SESSION_ID,
+        close_arguments={},
+        expected_task_updated_at=task.updated_at,
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
+    )
+    payload = build_terminal_review_payload(
+        review, status="error", error_class="retryable_infrastructure"
+    )
+    store.finish(review.id, status="error", result_payload=payload)
+    claimed = {task.id: f"#{task.seq_num}"}
+    if wait_state in {"mixed", "mixed-waits"}:
+        other = tasks.create_task(
+            validation_criteria="Focused close retry regression passes",
+            project_id=sample_project["id"],
+            title="Another claimed task",
+        )
+        claimed[other.id] = f"#{other.seq_num}"
+        if wait_state == "mixed-waits":
+            tasks.escalate_task(other.id, reason="Product decision required")
+    if wait_state == "expired":
+        monkeypatch.setattr(review_storage, "utc_now", lambda: now + timedelta(seconds=900))
+    if wait_state == "superseded":
+        store.supersede_retry_wait(task.id, caller_session_id=SESSION_ID)
+    caller = "22222222-2222-4222-8222-222222222222" if wait_state == "other-caller" else SESSION_ID
+    variables: dict[str, object] = {
+        "mode_level": 2,
+        "task_claimed": True,
+        "claimed_tasks": claimed,
+        "stop_attempts": 0,
+        "_memory_initial_stop_checked": True,
+    }
+    event = _make_event(HookEventType.STOP)
+    event.session_id = caller
+    response = await RuleEngine(db, task_manager=tasks).evaluate(event, caller, variables)
+    assert response.decision == expected
+    if expected == "block":
+        assert "require-task-close" in (response.reason or "") or "require-epic-tree-close" in (
+            response.reason or ""
+        )
+    persisted = tasks.get_task(task.id)
+    assert persisted is not None and persisted.closed_at is None

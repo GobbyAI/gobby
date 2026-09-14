@@ -3155,6 +3155,7 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
     result = await execute_spawn(request)
     assert result.success is False
     assert "timed out" in (result.error or "")
+    assert result.retryable_infrastructure is True
     manager = _manager_of(request)
     row = next(iter(manager.rows.values()))
     assert row.state == "pending"
@@ -3678,3 +3679,51 @@ async def test_tmux_retry_kills_duplicate_session_before_failing() -> None:
     assert row.state == "exited"
     assert row.spawn_key not in runtime.live_keys
     assert runtime.killed == [row.spawn_key]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("os", True),
+        ("wrapped-os", True),
+        ("unknown", False),
+        ("malformed", False),
+    ],
+)
+async def test_spawn_failure_keeps_typed_infrastructure_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    expected: bool,
+) -> None:
+    from gobby.terminals.runtime import TerminalSpawnFailed
+
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+    )
+    runtime = _runtime_of(request)
+    error: Exception
+    if kind == "os":
+        error = OSError("provider unavailable")
+    elif kind == "wrapped-os":
+        error = TerminalSpawnFailed("failed")
+        error.__cause__ = OSError("provider unavailable")
+    elif kind == "malformed":
+        error = TerminalSpawnFailed("invalid dimensions")
+        error.__cause__ = ValueError("malformed")
+    else:
+        error = RuntimeError("unknown")
+    monkeypatch.setattr(runtime, "prepare_spawn", AsyncMock(side_effect=error))
+    result = await execute_spawn(request)
+    assert result.success is False
+    assert result.retryable_infrastructure is expected

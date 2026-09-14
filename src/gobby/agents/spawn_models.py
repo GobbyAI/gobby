@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
+from subprocess import SubprocessError
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.terminals import TerminalConfig
+from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.runtime import TerminalSpawnFailed
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
@@ -159,3 +162,12 @@ class SpawnResult:
     codex_session_id: str | None = None
     terminal_id: str | None = None
     locator: AttachLocator | None = None
+    retryable_infrastructure: bool = False
+
+
+def is_infrastructure_spawn_error(error: BaseException) -> bool:
+    """Keep malformed/configuration failures distinct from transport/process failures."""
+    known = (OSError, SubprocessError, HostUnavailableError)
+    return isinstance(error, known) or (
+        isinstance(error, TerminalSpawnFailed) and isinstance(error.__cause__, known)
+    )

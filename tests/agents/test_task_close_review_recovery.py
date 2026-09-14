@@ -37,6 +37,8 @@ async def test_orphaned_launch_becomes_error_and_wakes_origin_without_relaunch(
     assert store.delivered is True
     wake.assert_awaited_once()
     assert wake.call_args.args[2]["event"] == "task_close_review_completed"
+    assert wake.call_args.args[2]["error_class"] == "retryable_infrastructure"
+    assert wake.call_args.args[2]["retry_after"] is not None
     assert subscribers.added == []
 
 
@@ -68,6 +70,8 @@ async def test_terminal_payload_without_run_is_redelivered_on_startup(
         "review_id": "review",
         "status": "error",
         "message": "launch failed",
+        "error_class": "retryable_infrastructure",
+        "retry_after": "2026-09-13T12:15:00+00:00",
     }
     store = _Store(
         replace(
@@ -118,24 +122,34 @@ async def test_periodic_reconciliation_expires_review_and_wakes_subscriber(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("run_status", ["success", "error"])
 async def test_periodic_reconciliation_delivers_terminal_run_without_verdict(
     monkeypatch: pytest.MonkeyPatch,
+    run_status: str,
 ) -> None:
-    store = _Store(_review(status="running", run_id="run"))
+    store = _Store(
+        replace(
+            _review(status="running", run_id="run"),
+            close_arguments={"_review_deadline_at": "2020-01-01T00:00:00+00:00"},
+        )
+    )
     subscribers = _Subscribers()
-    run = SimpleNamespace(id="run", status="error")
+    run = SimpleNamespace(id="run", status=run_status)
     wake = AsyncMock(return_value={"ism_persisted": True})
     _install(monkeypatch, store=store, run=run, subscribers=subscribers)
 
     def terminal_review_delivery(_db: object, _run_id: str) -> tuple[dict[str, Any], str]:
+        message = "validator ended without a verdict"
         payload = {
             "event": "task_close_review_completed",
             "review_id": "review",
             "status": "error",
-            "message": "validator ended without a verdict",
+            "message": message,
+            "error_class": "action_required",
+            "retry_after": None,
         }
         store.finish("review", status="error", result_payload=payload)
-        return payload, payload["message"]
+        return payload, message
 
     monkeypatch.setattr(
         "gobby.tasks.close_review_delivery.terminal_review_delivery",
@@ -146,6 +160,9 @@ async def test_periodic_reconciliation_delivers_terminal_run_without_verdict(
 
     assert recovered == 2
     assert store.finished_status == "error"
+    assert store.review.result_payload is not None
+    assert store.review.result_payload["error_class"] == "action_required"
+    assert store.review.result_payload["retry_after"] is None
     assert store.delivered is True
     wake.assert_awaited_once()
     assert subscribers.removed == [("run", ["parent"])]

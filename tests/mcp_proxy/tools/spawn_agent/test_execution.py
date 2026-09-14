@@ -14,7 +14,7 @@ import pytest
 
 from gobby.agents.isolation import IsolationContext
 from gobby.agents.session import ChildSessionManager
-from gobby.agents.spawn_models import SpawnRequest
+from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -1558,3 +1558,64 @@ class TestSpawnAgentPreRegistration:
             mock_runner.run_storage.start.assert_not_called()
             assert mock_runner.run_storage.start.call_count == 0
             assert not mock_runner.run_storage.start.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("infrastructure", [True, False])
+async def test_spawn_failure_provenance_is_persisted_before_cleanup(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    isolation_context: IsolationContext,
+    infrastructure: bool,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    caller = _register_parent_session(temp_db, sample_project, "spawn-provenance-parent")
+    runs = LocalAgentRunManager(temp_db)
+    run = runs.create(parent_session_id=caller, provider="codex", prompt="Review")
+    result = SpawnResult(
+        success=False,
+        run_id=run.id,
+        child_session_id=None,
+        status="failed",
+        error="launch failed",
+        retryable_infrastructure=infrastructure,
+    )
+
+    async def cleanup(*_args: object, **_kwargs: object) -> None:
+        persisted = LocalAgentRunManager(temp_db).get(run.id)
+        assert persisted is not None
+        assert (
+            (persisted.resume_metadata_json or {}).get("spawn_retryable_infrastructure") is True
+        ) is infrastructure
+
+    with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn", side_effect=cleanup
+        ),
+    ):
+        response = await finalize_executed_spawn(
+            runner=SimpleNamespace(run_storage=runs),
+            run_id=run.id,
+            spawn_result=result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_isolation="none",
+            base_commit_sha=None,
+            handler=MagicMock(),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=False,
+            task_manager=None,
+            parent_session_id=caller,
+            effective_provider="codex",
+            resolved_task_id=None,
+            task_seq_num=None,
+            db=temp_db,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+    assert response["success"] is False
+    assert response["run_id"] == run.id

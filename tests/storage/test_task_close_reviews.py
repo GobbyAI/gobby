@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+import gobby.storage.task_close_reviews as review_storage
+import gobby.tasks.agentic_close_review as review_payloads
 from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import ensure_system_session, system_session_id
@@ -424,3 +426,89 @@ def _intent() -> dict[str, Any]:
         "test_bodies_sha": "e" * 64,
         "stable_facts": {"commit_shas": ["abc123"]},
     }
+
+
+@pytest.mark.parametrize("elapsed,expected", [(899.999, True), (900, False), (900.001, False)])
+def test_infrastructure_wait_survives_reconstruction_until_exact_expiry(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    elapsed: float,
+    expected: bool,
+) -> None:
+    now = datetime(2026, 9, 13, 12, tzinfo=UTC)
+    monkeypatch.setattr(review_payloads, "utc_now", lambda: now)
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(**_intent())
+    payload = review_payloads.build_terminal_review_payload(
+        review,
+        status="error",
+        error_class="retryable_infrastructure",
+    )
+    store.finish(review.id, status="error", result_payload=payload)
+    assert payload["retry_after"] == "2026-09-13T12:15:00+00:00"
+    assert payload["closed"] is False
+    monkeypatch.setattr(review_storage, "utc_now", lambda: now + timedelta(seconds=elapsed))
+    restarted = TaskCloseReviewStore(temp_db)
+    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is expected
+    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_RUN_ID) is False
+    persisted = restarted.get(review.id)
+    assert persisted is not None and persisted.result_payload == payload
+    with temp_db.transaction() as conn:
+        row = conn.execute("SELECT closed_at FROM tasks WHERE id = %s", (_TASK_ID,)).fetchone()
+    assert row is not None and row["closed_at"] is None
+
+
+@pytest.mark.parametrize("retry", ["entry", "new-launch", "different-caller"])
+def test_retry_supersedes_wait_durably(temp_db: HubDatabase, retry: str) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(**_intent())
+    payload = review_payloads.build_terminal_review_payload(
+        review,
+        status="error",
+        error_class="retryable_infrastructure",
+    )
+    store.finish(review.id, status="error", result_payload=payload)
+    assert store.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is True
+    if retry == "entry":
+        store.supersede_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID)
+    else:
+        intent = _intent()
+        if retry == "different-caller":
+            intent["caller_session_id"] = _RUN_ID
+        newer, created = store.create_or_get_active(**intent)
+        assert created is True and newer.active
+    restarted = TaskCloseReviewStore(temp_db)
+    assert restarted.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is False
+    previous = restarted.get(review.id)
+    assert previous is not None and previous.result_payload == payload
+    if retry == "entry":
+        assert previous.close_arguments["_retry_superseded_at"]
+
+
+@pytest.mark.parametrize("status", ["invalid", "stale", "external_pending", "error", "closed"])
+def test_noninfrastructure_results_never_grant_wait(
+    temp_db: HubDatabase,
+    status: TerminalTaskCloseReviewStatus,
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(**_intent())
+    payload = review_payloads.build_terminal_review_payload(review, status=status)
+    store.finish(review.id, status=status, result_payload=payload)
+    assert payload["error_class"] == (None if status == "closed" else "action_required")
+    assert payload["retry_after"] is None
+    assert store.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is False
+
+
+@pytest.mark.parametrize("retry_after", [None, 123, "not-a-date"])
+def test_malformed_retry_metadata_fails_closed(temp_db: HubDatabase, retry_after: object) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(**_intent())
+    store.finish(
+        review.id,
+        status="error",
+        result_payload={
+            "error_class": "retryable_infrastructure",
+            "retry_after": retry_after,
+        },
+    )
+    assert store.has_retry_wait(_TASK_ID, caller_session_id=_SESSION_ID) is False

@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from datetime import timedelta
 from typing import Any
 
 from gobby.config.feature_base import candidate_runtime_entries, parse_feature_candidate
 from gobby.config.tasks import TaskValidationConfig
-from gobby.storage.task_close_reviews import TaskCloseReview, TerminalTaskCloseReviewStatus
+from gobby.storage.task_close_reviews import (
+    TaskCloseReview,
+    TaskCloseReviewErrorClass,
+    TerminalTaskCloseReviewStatus,
+)
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+from gobby.utils.datetime import utc_now
 
 TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
+CLOSE_REVIEW_RETRY_SECONDS = 900
 
 
 def validator_spawn_overrides(
@@ -137,10 +144,16 @@ def build_terminal_review_payload(
     status: TerminalTaskCloseReviewStatus,
     close_result: Mapping[str, Any] | None = None,
     message: str | None = None,
+    error_class: TaskCloseReviewErrorClass = "action_required",
 ) -> dict[str, Any]:
     """Build the persisted automatic-wake contract for one terminal review."""
     result = dict(close_result or {})
     closed = status == "closed"
+    retry_after = (
+        (utc_now() + timedelta(seconds=CLOSE_REVIEW_RETRY_SECONDS)).isoformat()
+        if status == "error" and error_class == "retryable_infrastructure"
+        else None
+    )
     validation_status = (
         "valid"
         if closed
@@ -172,7 +185,11 @@ def build_terminal_review_payload(
     elif not required_actions and status == "stale":
         required_actions = ["Call close_task again with the current task and commit evidence."]
     elif not required_actions and status == "error":
-        required_actions = ["Call close_task again to start a fresh review attempt."]
+        required_actions = (
+            [f"You may yield while this task stays open. Retry close_task after {retry_after}."]
+            if retry_after
+            else ["Call close_task again to start a fresh review attempt."]
+        )
     if status == "invalid":
         result["outstanding_finding_count"] = len(blocking_reasons)
         result["remediation_guidance"] = (
@@ -188,6 +205,10 @@ def build_terminal_review_payload(
             "task_ref": review.task_ref,
             "status": status,
             "closed": closed,
+            "error_class": (
+                None if closed else "retryable_infrastructure" if retry_after else "action_required"
+            ),
+            "retry_after": retry_after,
             "validation_status": validation_status,
             "message": message or str(result.get("message") or default_messages[status]),
             "blocking_reasons": blocking_reasons,

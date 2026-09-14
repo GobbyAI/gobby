@@ -305,6 +305,12 @@ async def finalize_executed_spawn(
                 completion_registry,
             )
     else:
+        if spawn_result.retryable_infrastructure is True:
+            await asyncio.to_thread(
+                runner.run_storage.merge_resume_metadata,
+                run_id,
+                {"spawn_retryable_infrastructure": True},
+            )
         await cleanup_failed_spawn(
             runner,
             run_id,

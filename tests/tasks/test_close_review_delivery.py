@@ -15,13 +15,32 @@ from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewSta
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("run_status", ["error", "timeout", "cancelled"])
+@pytest.mark.parametrize(
+    "run_status,terminal_reason,infrastructure,expected_class",
+    [
+        ("error", "provider_error", False, "action_required"),
+        ("timeout", None, False, "retryable_infrastructure"),
+        ("cancelled", "user_cancel", False, "action_required"),
+        ("error", "provider_quota_exhausted", False, "retryable_infrastructure"),
+        ("cancelled", "spawn_rollback", True, "retryable_infrastructure"),
+        ("cancelled", "spawn_rollback", False, "action_required"),
+        ("success", None, False, "action_required"),
+    ],
+)
 def test_failed_validator_run_terminalizes_review_and_clears_lock(
     monkeypatch: pytest.MonkeyPatch,
     run_status: str,
+    terminal_reason: str | None,
+    infrastructure: bool,
+    expected_class: str,
 ) -> None:
     store = _Store(_review("running"))
-    run = SimpleNamespace(status=run_status, error="boom")
+    run = SimpleNamespace(
+        status=run_status,
+        error="boom",
+        terminal_reason=terminal_reason,
+        resume_metadata_json={"spawn_retryable_infrastructure": infrastructure},
+    )
     _install(monkeypatch, store=store, run=run, task=None)
 
     resolved = delivery.terminal_review_delivery(cast(Any, object()), "run")
@@ -31,6 +50,8 @@ def test_failed_validator_run_terminalizes_review_and_clears_lock(
     assert payload["status"] == "error"
     assert payload["closed"] is False
     assert run_status in message
+    assert payload["error_class"] == expected_class
+    assert (payload["retry_after"] is not None) == (expected_class == "retryable_infrastructure")
     assert store.finished_status == "error"
 
 

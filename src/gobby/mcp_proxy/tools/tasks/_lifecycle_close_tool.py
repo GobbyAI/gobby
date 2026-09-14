@@ -10,6 +10,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import _commit_close, _evaluat
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     active_review_response,
     launch_close_review,
+    supersede_close_retry_wait,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     submit_close_review as finalize_close_review,
@@ -35,6 +36,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         active = active_review_response(ctx, task_id)
         if active is not None:
             return active
+        supersede_close_retry_wait(ctx, task_id)
         close_arguments = {
             "task_id": task_id,
             "reason": reason,

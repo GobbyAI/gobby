@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 from typing import Any, cast
+from uuid import UUID
 
 from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -15,6 +16,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.task_close_reviews import (
     TaskCloseReview,
+    TaskCloseReviewErrorClass,
     TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
     TerminalTaskCloseReviewStatus,
@@ -44,6 +46,20 @@ def active_review_response(ctx: RegistryContext, task_id: str) -> dict[str, Any]
         return None
     review = TaskCloseReviewStore(ctx.task_manager.db).get_active_for_task(resolved_id)
     return pending_review_response(review) if review is not None else None
+
+
+def supersede_close_retry_wait(ctx: RegistryContext, task_id: str) -> None:
+    """Consume the caller's prior wait before evaluating a new close request."""
+    caller = get_current_session_id()
+    if caller is None:
+        return
+    try:
+        resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+    except (TaskNotFoundError, ValueError):
+        return
+    TaskCloseReviewStore(ctx.task_manager.db).supersede_retry_wait(
+        resolved_id, caller_session_id=caller
+    )
 
 
 async def launch_close_review(
@@ -113,7 +129,12 @@ async def launch_close_review(
 
     registry = ctx.agent_registry
     if registry is None:
-        return _finish_launch_error(store, review, "Internal agent registry is unavailable.")
+        return _finish_launch_error(
+            store,
+            review,
+            "Internal agent registry is unavailable.",
+            error_class="retryable_infrastructure",
+        )
     validation_commands = evaluation.extra.get("validation_commands")
     prompt = build_agentic_review_prompt(
         review_id=review.id,
@@ -136,8 +157,7 @@ async def launch_close_review(
             "No validator was launched; the task remains open."
         )
         return {
-            **_finish_launch_error(store, review, message),
-            "error": "agentic_review_prompt_too_large",
+            **_finish_launch_error(store, review, message, error="agentic_review_prompt_too_large"),
             "prompt_chars": len(prompt),
             "prompt_limit": prompt_limit,
         }
@@ -166,17 +186,52 @@ async def launch_close_review(
         )
     except Exception as exc:
         logger.warning("Task-close validator launch failed", exc_info=True)
-        return _finish_launch_error(store, review, str(exc))
+        return _finish_launch_error(
+            store,
+            review,
+            str(exc),
+            error_class=(
+                "retryable_infrastructure" if isinstance(exc, OSError) else "action_required"
+            ),
+        )
     if not isinstance(launch, Mapping) or launch.get("success") is not True:
         message = (
             str(launch.get("error") or "Task-close validator launch failed.")
             if isinstance(launch, Mapping)
             else "Task-close validator launch returned an invalid response."
         )
-        return _finish_launch_error(store, review, message)
+        failed_run_id = launch.get("run_id") if isinstance(launch, Mapping) else None
+        try:
+            failed_run_id = str(UUID(failed_run_id)) if isinstance(failed_run_id, str) else None
+        except ValueError:
+            failed_run_id = None
+        failed_run = (
+            LocalAgentRunManager(ctx.task_manager.db).get(failed_run_id)
+            if isinstance(failed_run_id, str) and failed_run_id
+            else None
+        )
+        return _finish_launch_error(
+            store,
+            review,
+            message,
+            error_class=(
+                "retryable_infrastructure"
+                if failed_run is not None
+                and failed_run.terminal_reason == "spawn_rollback"
+                and (failed_run.resume_metadata_json or {}).get("spawn_retryable_infrastructure")
+                is True
+                else "action_required"
+            ),
+        )
     run_id = str(launch.get("run_id") or "")
     if not run_id:
         return _finish_launch_error(store, review, "Task-close validator launch omitted run_id.")
+    try:
+        run_id = str(UUID(run_id))
+    except ValueError:
+        return _finish_launch_error(
+            store, review, "Task-close validator launch returned invalid run_id."
+        )
     running = store.bind_run(review.id, run_id)
     if running is None:
         return _finish_launch_error(
@@ -406,14 +461,23 @@ def _finish_launch_error(
     store: TaskCloseReviewStore,
     review: TaskCloseReview,
     message: str,
+    *,
+    error_class: TaskCloseReviewErrorClass = "action_required",
+    error: str = "agentic_review_launch_failed",
 ) -> dict[str, Any]:
-    payload = build_terminal_review_payload(review, status="error", message=message)
+    payload = build_terminal_review_payload(
+        review,
+        status="error",
+        message=message,
+        error_class=error_class,
+        close_result={"error": error},
+    )
     store.finish(review.id, status="error", result_payload=payload, error=message)
     return {
         **payload,
         "success": False,
         "can_close": False,
-        "error": "agentic_review_launch_failed",
+        "error": error,
         "review_status": "error",
     }
 

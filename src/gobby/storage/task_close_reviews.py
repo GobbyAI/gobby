@@ -13,10 +13,12 @@ from psycopg.errors import UniqueViolation
 
 from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
 TerminalTaskCloseReviewStatus = Literal["closed", "invalid", "external_pending", "stale", "error"]
 TaskCloseReviewStatus = ActiveTaskCloseReviewStatus | TerminalTaskCloseReviewStatus
+TaskCloseReviewErrorClass = Literal["retryable_infrastructure", "action_required"]
 
 ACTIVE_TASK_CLOSE_REVIEW_STATUSES: tuple[ActiveTaskCloseReviewStatus, ...] = (
     "launching",
@@ -95,6 +97,56 @@ class TaskCloseReviewStore:
 
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
+
+    def has_retry_wait(self, task_id: str, *, caller_session_id: str) -> bool:
+        """Only the latest task attempt can grant its caller an unexpired retry wait."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {_COLUMNS} FROM task_close_reviews
+                WHERE task_id = %s
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """,  # nosec B608 - static column fragment
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        review = _review_from_row(row)
+        payload = review.result_payload or {}
+        if (
+            review.caller_session_id != caller_session_id
+            or review.status != "error"
+            or payload.get("error_class") != "retryable_infrastructure"
+            or review.close_arguments.get("_retry_superseded_at")
+        ):
+            return False
+        retry_after = payload.get("retry_after")
+        if not isinstance(retry_after, str):
+            return False
+        try:
+            expiry = parse_stored_datetime(retry_after)
+        except (TypeError, ValueError):
+            return False
+        return expiry is not None and utc_now() < expiry
+
+    def supersede_retry_wait(self, task_id: str, *, caller_session_id: str) -> None:
+        """Starting a retry consumes old waits even if evaluation never launches a review."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE task_close_reviews
+                SET close_arguments = close_arguments || %s::jsonb, updated_at = %s
+                WHERE task_id = %s AND caller_session_id = %s AND status = 'error'
+                  AND result_payload ->> 'error_class' = 'retryable_infrastructure'
+                  AND NOT (close_arguments ? '_retry_superseded_at')
+                """,
+                (
+                    json.dumps({"_retry_superseded_at": utc_now().isoformat()}),
+                    utc_now(),
+                    task_id,
+                    caller_session_id,
+                ),
+            )
 
     def create_or_get_active(
         self,

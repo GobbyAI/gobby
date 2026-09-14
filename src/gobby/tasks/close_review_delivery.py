@@ -57,7 +57,27 @@ def terminal_review_delivery(
                 message = (
                     f"Task-close validator run ended with status {run_status} before finalization."
                 )
-            payload = build_terminal_review_payload(review, status="error", message=message)
+            payload = build_terminal_review_payload(
+                review,
+                status="error",
+                message=message,
+                error_class=(
+                    "retryable_infrastructure"
+                    if run is not None
+                    and (
+                        run.status == "timeout"
+                        or run.terminal_reason == "provider_quota_exhausted"
+                        or (
+                            run.terminal_reason == "spawn_rollback"
+                            and (run.resume_metadata_json or {}).get(
+                                "spawn_retryable_infrastructure"
+                            )
+                            is True
+                        )
+                    )
+                    else "action_required"
+                ),
+            )
             review = (
                 store.finish_run_ended(review.id, result_payload=payload, error=message) or review
             )

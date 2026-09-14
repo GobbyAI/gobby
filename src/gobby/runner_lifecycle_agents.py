@@ -180,7 +180,15 @@ async def _reconcile_task_close_reviews(
             else None
         )
         deadline = _close_review_deadline(review.close_arguments)
-        if review.active and deadline is not None and utc_now() >= deadline:
+        if (
+            review.active
+            and deadline is not None
+            and utc_now() >= deadline
+            and (
+                review.status == "launching"
+                or (run is not None and run.status not in TERMINAL_AGENT_RUN_STATUSES)
+            )
+        ):
             message = "Task-close validator exceeded its durable deadline."
             get_cleanup = getattr(
                 getattr(runner, "agent_lifecycle_monitor", None),
@@ -195,7 +203,12 @@ async def _reconcile_task_close_reviews(
                     await _run_db(runner, run_manager.timeout, run.id, error=message)
             current = await _run_db(runner, store.get, review.id) or review
             if current.active:
-                payload = build_terminal_review_payload(current, status="error", message=message)
+                payload = build_terminal_review_payload(
+                    current,
+                    status="error",
+                    message=message,
+                    error_class="retryable_infrastructure",
+                )
                 current = (
                     await _run_db(
                         runner,
@@ -210,7 +223,12 @@ async def _reconcile_task_close_reviews(
             reconciled += 1
         elif review.status == "launching" and startup:
             message = "Daemon restarted before the task-close validator launch was bound."
-            payload = build_terminal_review_payload(review, status="error", message=message)
+            payload = build_terminal_review_payload(
+                review,
+                status="error",
+                message=message,
+                error_class="retryable_infrastructure",
+            )
             current = (
                 await _run_db(
                     runner,

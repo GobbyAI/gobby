@@ -26,7 +26,7 @@ from fastapi import FastAPI
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
 from gobby.config.tasks import TaskValidationConfig
-from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
@@ -69,7 +69,9 @@ async def test_close_persists_and_launches_one_taskless_validator(
 ) -> None:
     launched_at = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = _Store(_review(status="launching", run_id=None))
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     ctx = _ctx(
         registry=registry,
         validation_config=TaskValidationConfig(
@@ -114,7 +116,7 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["error"] == "agentic_review_required"
-    assert result["validator_run_id"] == "run"
+    assert result["validator_run_id"] == _FIRST_REVIEW_RUN_ID
     assert result["review_status"] == "running"
     assert "run_id" not in result
     assert "spawn_request" not in result
@@ -133,7 +135,9 @@ async def test_launch_moves_down_the_candidate_list_after_a_provider_failure(
     # provider makes that instruction unfollowable, so the ordered candidate
     # list has to advance.
     store = _Store(_review(status="launching", run_id=None), unjudged_attempts=1)
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     ctx = _ctx(
         registry=registry,
         validation_config=TaskValidationConfig(
@@ -160,7 +164,9 @@ async def test_launch_wraps_to_the_head_once_every_candidate_has_failed(
     # is the next worth trying; stopping at the last entry would pin the task to
     # whichever provider stays down longest.
     store = _Store(_review(status="launching", run_id=None), unjudged_attempts=2)
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     ctx = _ctx(
         registry=registry,
         validation_config=TaskValidationConfig(
@@ -232,7 +238,9 @@ async def test_launch_preserves_closure_reason(
     monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
     store = _Store(_review(status="launching", run_id=None))
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     arguments = _arguments()
     arguments["reason"] = reason
@@ -255,7 +263,9 @@ async def test_launch_prompt_carries_gate10_validation_facts(
 ) -> None:
     """The evaluation's gate-10 record reaches the validator through its launch prompt."""
     store = _Store(_review(status="launching", run_id=None))
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     ctx = _ctx(registry=registry)
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     evaluation = _evaluation()
@@ -297,7 +307,9 @@ async def test_launch_refuses_actual_prompt_over_limit_without_spawning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store(_review(status="launching", run_id=None))
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     config = TaskValidationConfig()
     ctx = _ctx(registry=registry, validation_config=config)
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
@@ -311,6 +323,10 @@ async def test_launch_refuses_actual_prompt_over_limit_without_spawning(
     registry.call.assert_not_awaited()
     assert store.finished_status == "error"
     assert result["closed"] is False
+    assert result["error_class"] == "action_required"
+    assert result["retry_after"] is None
+    assert store.review.result_payload is not None
+    assert store.review.result_payload["error"] == "agentic_review_prompt_too_large"
     assert result["error"] == "agentic_review_prompt_too_large"
     assert result["prompt_chars"] > result["prompt_limit"]
     assert "validation_commands" not in result
@@ -321,7 +337,9 @@ async def test_pending_concise_response_keeps_commands_only_in_validator_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store(_review(status="launching", run_id=None))
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     ctx = _ctx(registry=registry)
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     evaluation = _evaluation()
@@ -468,7 +486,9 @@ async def test_launch_omits_model_overrides_without_validation_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store(_review(status="launching", run_id=None))
-    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
     ctx = cast(
         RegistryContext,
         SimpleNamespace(
@@ -532,15 +552,32 @@ async def test_missing_agent_registry_finishes_launch_error(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "launch",
+    "launch,expected_class",
     [
-        pytest.param(RuntimeError("spawn failed"), id="spawn-exception"),
-        pytest.param({"success": True}, id="missing-run-id"),
+        pytest.param(
+            OSError("provider executable missing"), "retryable_infrastructure", id="launch-os-error"
+        ),
+        pytest.param(
+            TimeoutError("launch timed out"), "retryable_infrastructure", id="launch-timeout"
+        ),
+        pytest.param(RuntimeError("unknown"), "action_required", id="unknown-exception"),
+        pytest.param({"success": True}, "action_required", id="missing-run-id"),
+        pytest.param(
+            {"success": True, "run_id": "bad"}, "action_required", id="invalid-success-id"
+        ),
+        pytest.param(["invalid"], "action_required", id="malformed-response"),
+        pytest.param(
+            {"success": False, "run_id": "invalid"}, "action_required", id="malformed-run-id"
+        ),
+        pytest.param(
+            {"success": False, "error": "invalid prompt"}, "action_required", id="request-error"
+        ),
     ],
 )
 async def test_incomplete_spawn_finishes_launch_error(
     monkeypatch: pytest.MonkeyPatch,
-    launch: Exception | dict[str, object],
+    launch: Exception | dict[str, object] | list[str],
+    expected_class: str,
 ) -> None:
     store = _Store(_review(status="launching", run_id=None))
     call = (
@@ -558,6 +595,10 @@ async def test_incomplete_spawn_finishes_launch_error(
 
     assert result["error"] == "agentic_review_launch_failed"
     assert result["closed"] is False
+    assert result["error_class"] == expected_class
+    assert (result["retry_after"] is not None) == (expected_class == "retryable_infrastructure")
+    assert store.review.result_payload is not None
+    assert store.review.result_payload["error_class"] == expected_class
     assert store.finished_status == "error"
 
 
@@ -1461,3 +1502,60 @@ def _stop_stdio_process(process: subprocess.Popen[bytes], master_fd: int) -> Non
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_close_retry_invalidates_wait_before_evidence_evaluation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        validation_criteria="Focused close retry regression passes",
+        project_id=sample_project["id"],
+        title="Retry before evidence",
+    )
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=_PERSISTED_SESSION_ID,
+        close_arguments={},
+        expected_task_updated_at=task.updated_at,
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
+    )
+    payload = agentic_close_review_module.build_terminal_review_payload(
+        review,
+        status="error",
+        error_class="retryable_infrastructure",
+    )
+    store.finish(review.id, status="error", result_payload=payload)
+    assert store.has_retry_wait(task.id, caller_session_id=_PERSISTED_SESSION_ID) is True
+    monkeypatch.setattr(orchestration, "get_current_session_id", lambda: _PERSISTED_SESSION_ID)
+
+    async def evaluate(_ctx: RegistryContext, **_kwargs: Any) -> CloseEvaluation:
+        assert store.has_retry_wait(task.id, caller_session_id=_PERSISTED_SESSION_ID) is False
+        result = CloseEvaluation(task.id)
+        result.error = "validation_failed"
+        return result
+
+    monkeypatch.setattr(close_tool, "_evaluate_close", evaluate)
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(
+        registry, cast(RegistryContext, SimpleNamespace(task_manager=tasks))
+    )
+    result = await registry.call("close_task", {"task_id": task.id})
+    assert result["error"] == "validation_failed"
+    assert (
+        TaskCloseReviewStore(temp_db).has_retry_wait(
+            task.id, caller_session_id=_PERSISTED_SESSION_ID
+        )
+        is False
+    )
+    persisted = tasks.get_task(task.id)
+    assert persisted is not None and persisted.closed_at is None

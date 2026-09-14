@@ -663,6 +663,7 @@ def task_needs_human_review(task_manager: TaskProvider | None, task_id: TaskIdRe
 def all_tasks_have_durable_stop_wait(
     task_manager: TaskProvider | None,
     task_id_or_ids: TaskIdInput,
+    retry_wait: Callable[[str], bool] | None = None,
 ) -> bool:
     """Return whether every claimed task has an objective durable wait state."""
     task_ids = _normalize_task_ids(task_id_or_ids, "all_tasks_have_durable_stop_wait")
@@ -681,7 +682,11 @@ def all_tasks_have_durable_stop_wait(
             and isinstance(escalation_reason, str)
             and escalation_reason.strip()
         )
-        if not getattr(task, "active_blocked_by", set()) and not has_escalation:
+        if (
+            not getattr(task, "active_blocked_by", set())
+            and not has_escalation
+            and not (retry_wait is not None and retry_wait(task.id))
+        ):
             return False
 
     return True

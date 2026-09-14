@@ -834,7 +834,13 @@ async def spawn_agent_impl(
             terminal_backend=resolved_terminal_backend,
         )
 
-        async def _spawn_failure(error: str) -> dict[str, Any]:
+        async def _spawn_failure(error: str, *, infrastructure: bool = False) -> dict[str, Any]:
+            if infrastructure:
+                await asyncio.to_thread(
+                    runner.run_storage.merge_resume_metadata,
+                    run_id,
+                    {"spawn_retryable_infrastructure": True},
+                )
             await cleanup_failed_spawn(
                 runner,
                 run_id,
@@ -883,7 +889,7 @@ async def spawn_agent_impl(
                 await _spawn_failure("Agent spawn cancelled")
                 raise
             except Exception as exc:
-                return await _spawn_failure(str(exc))
+                return await _spawn_failure(str(exc), infrastructure=isinstance(exc, OSError))
 
         async def _run_spawn_phase() -> None:
             result = await _execute_spawn_phase()

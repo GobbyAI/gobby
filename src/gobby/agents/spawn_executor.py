@@ -31,7 +31,7 @@ from gobby.agents.spawn_executor_support import (
     _unsupported_sandbox_request_error,
     schedule_codex_prompt_delivery,
 )
-from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.agents.spawn_models import SpawnRequest, SpawnResult, is_infrastructure_spawn_error
 from gobby.agents.spawn_timing import (
     complete_spawn_phase_timings,
     finish_spawn_phase,
@@ -494,6 +494,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             child_session_id=plan.child_session_id,
             status="failed",
             error="spawn_timeout" if backend == "native" else "spawn timed out",
+            retryable_infrastructure=True,
             error_detail="spawn timed out" if backend == "native" else None,
             terminal_id=terminal_id,
         )
@@ -539,6 +540,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             error=code,
             error_detail=detail,
             terminal_id=terminal_id,
+            retryable_infrastructure=is_infrastructure_spawn_error(exc),
         )
     except Exception as exc:
         logger.exception("Backend spawn raised for terminal %s", terminal_id)
@@ -560,6 +562,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             error=code,
             error_detail=detail,
             terminal_id=terminal_id,
+            retryable_infrastructure=is_infrastructure_spawn_error(exc),
         )
     finally:
         finish_spawn_phase(
