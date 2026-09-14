@@ -30,6 +30,8 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
 _DEFAULT_COMPACT_INTERRUPT_KEY: NamedKey = "escape"
 _CLI_COMPACT_INTERRUPT_KEYS: dict[str, NamedKey] = {
     "codex": "ctrl_c",
+    # Grok 1.0.30: Esc never cancels a turn; Ctrl+C on an empty composer does.
+    "grok": "ctrl_c",
 }
 # Blind path (no transcript observer): wait this long after the interrupt key.
 _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
@@ -37,7 +39,11 @@ _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 _OBSERVED_INTERRUPT_SETTLE_SECONDS = 1.0
 _INTERRUPT_ATTEMPTS = 3
 _INTERRUPT_POLL_SECONDS = 0.05
-_COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
+# After submitting the command, poll the pane this long for the CLI rejecting it
+# because its turn is still running; a rejection interrupts again and resubmits.
+_COMPACTION_REJECTION_SETTLE_SECONDS = 1.0
+_COMPACTION_REJECTION_POLL_SECONDS = 0.1
+_COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
@@ -192,6 +198,49 @@ async def _submit_command(pane: PaneIO, command: str, session_id: str) -> SendRe
     return await _send_pane_key(pane, "enter", session_id, action="submitting compaction command")
 
 
+async def _interrupt_turn(
+    pane: PaneIO,
+    key: NamedKey,
+    session_id: str,
+    observe_interrupt: Callable[[], bool | None] | None,
+    *,
+    settle_seconds: float,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Interrupt the running turn: transcript-confirmed, or blind with a settle."""
+    if observe_interrupt is not None:
+        return await _confirm_interrupt(
+            pane, key, session_id, observe_interrupt, attempt_seconds=settle_seconds
+        )
+    ok, reason = await _send_pane_key(pane, key, session_id, action="sending compaction interrupt")
+    if not ok:
+        return False, reason, None
+    if settle_seconds > 0:
+        await asyncio.sleep(settle_seconds)
+    return True, None, None
+
+
+async def _wait_for_compaction_rejection(
+    pane: PaneIO,
+    before_command: str | None,
+    command: str,
+    *,
+    window_seconds: float,
+    poll_seconds: float = _COMPACTION_REJECTION_POLL_SECONDS,
+) -> dict[str, str] | None:
+    """Poll the pane for the CLI rejecting ``command`` until the window elapses."""
+    elapsed = 0.0
+    while True:
+        delay = min(poll_seconds, window_seconds - elapsed)
+        if delay > 0:
+            await asyncio.sleep(delay)
+            elapsed += delay
+        rejection = _detect_compaction_rejection(
+            before_command, await _capture_pane_snapshot(pane), command
+        )
+        if rejection is not None or elapsed >= window_seconds:
+            return rejection
+
+
 async def _send_terminal_compaction_command(
     pane: PaneIO,
     command: str,
@@ -207,14 +256,18 @@ async def _send_terminal_compaction_command(
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Confirm the interrupt, drain the composer, then submit the command.
+    """Interrupt the turn, drain the composer, submit the command, watch for a rejection.
 
     ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
     transcript observer for CLIs that record interrupts, and its absence keeps the
-    blind interrupt path for CLIs that do not.
+    blind interrupt path for CLIs that do not. A CLI that rejects the command
+    because its turn is still running (Grok) is interrupted again and the command
+    resubmitted once before the delivery fails.
     """
     continuation_pending = False
     interrupt_key = _compact_interrupt_key(cli_source)
+    interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
+    rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds
     if observe_interrupt is not None:
         continuation_pending = bool(mark_continuation_pending())
         if not continuation_pending:
@@ -224,75 +277,75 @@ async def _send_terminal_compaction_command(
                 False,
                 None,
             )
-        attempt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
-        confirmed, reason, detail = await _confirm_interrupt(
+
+    readiness_before_command: str | None = None
+    rejection: dict[str, str] | None = None
+    for resubmission in range(1 + _COMPACTION_REJECTION_RETRIES):
+        if resubmission:
+            logger.warning(
+                "Session %s rejected %s while its task was still running; "
+                "interrupting again before resubmission %d of %d",
+                session_id,
+                command,
+                resubmission,
+                _COMPACTION_REJECTION_RETRIES,
+            )
+        interrupted, reason, detail = await _interrupt_turn(
             pane,
             interrupt_key,
             session_id,
             observe_interrupt,
-            attempt_seconds=attempt_seconds,
+            settle_seconds=interrupt_seconds,
         )
-        if not confirmed:
-            clear_continuation_pending()
+        if not interrupted:
+            if continuation_pending:
+                clear_continuation_pending()
             return False, reason, False, detail
-    else:
-        ok, reason = await _send_pane_key(
-            pane, interrupt_key, session_id, action="sending compaction interrupt"
-        )
+
+        before_command = await _capture_pane_snapshot(pane)
+        readiness_before_command = before_command
+        if (
+            schedule_continuation_readiness is not None
+            and continuation_readiness_capture_lines is not None
+        ):
+            readiness_before_command = await _capture_pane_snapshot(
+                pane,
+                lines=continuation_readiness_capture_lines,
+            )
+        if observe_interrupt is None and not continuation_pending:
+            continuation_pending = bool(mark_continuation_pending())
+        if schedule_continuation_readiness is not None and not continuation_pending:
+            return (
+                False,
+                "failed to persist handoff continuation before compaction",
+                False,
+                None,
+            )
+
+        cleared, clear_reason = await clear_composer(pane, cli_source)
+        if not cleared:
+            if continuation_pending:
+                clear_continuation_pending()
+            _log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
+            return (
+                False,
+                f"composer could not be cleared before {command}: {clear_reason}",
+                False,
+                {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
+            )
+
+        ok, reason = await _submit_command(pane, command, session_id)
         if not ok:
+            if continuation_pending:
+                clear_continuation_pending()
             return False, reason, False, None
 
-        delay = interrupt_settle_seconds if settle_seconds is None else settle_seconds
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-    before_command = await _capture_pane_snapshot(pane)
-    readiness_before_command = before_command
-    if (
-        schedule_continuation_readiness is not None
-        and continuation_readiness_capture_lines is not None
-    ):
-        readiness_before_command = await _capture_pane_snapshot(
-            pane,
-            lines=continuation_readiness_capture_lines,
+        rejection = await _wait_for_compaction_rejection(
+            pane, before_command, command, window_seconds=rejection_seconds
         )
-    if observe_interrupt is None:
-        continuation_pending = bool(mark_continuation_pending())
-    if schedule_continuation_readiness is not None and not continuation_pending:
-        return (
-            False,
-            "failed to persist handoff continuation before compaction",
-            False,
-            None,
-        )
+        if rejection is None:
+            break
 
-    cleared, clear_reason = await clear_composer(pane, cli_source)
-    if not cleared:
-        if continuation_pending:
-            clear_continuation_pending()
-        _log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
-        return (
-            False,
-            f"composer could not be cleared before {command}: {clear_reason}",
-            False,
-            {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
-        )
-
-    ok, reason = await _submit_command(pane, command, session_id)
-    if not ok:
-        if continuation_pending:
-            clear_continuation_pending()
-        return False, reason, False, None
-
-    rejection_delay = rejection_settle_seconds if settle_seconds is None else settle_seconds
-    if rejection_delay > 0:
-        await asyncio.sleep(rejection_delay)
-
-    rejection = _detect_compaction_rejection(
-        before_command,
-        await _capture_pane_snapshot(pane),
-        command,
-    )
     if rejection is not None:
         if continuation_pending:
             clear_continuation_pending()
