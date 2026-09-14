@@ -4,10 +4,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use assert_cmd::Command;
 use gobby_core::postgres::connect_readwrite;
-use gobby_core::schema::SchemaRunner;
+use gobby_core::schema::{SchemaIdentityContract, SchemaRunner};
 
 const DATABASE_URL_ENV: &str = "GOBBY_TEST_POSTGRES_URL";
-const EXPECTED_IDENTITY_ENV: &str = "GOBBY_EXPECTED_SCHEMA_IDENTITY";
 
 struct ScratchSchema {
     database_url: String,
@@ -25,24 +24,26 @@ impl Drop for ScratchSchema {
 
 struct ScratchHome {
     path: PathBuf,
-}
-
-impl Drop for ScratchHome {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+    _directory: tempfile::TempDir,
 }
 
 impl ScratchHome {
     fn create() -> Result<Self> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "../../target/gdaemon-schema-cli-home-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).context("create per-process schema CLI GOBBY_HOME")?;
-        Ok(Self { path })
+        let directory = tempfile::Builder::new()
+            .prefix(".gdaemon-schema-cli-home-")
+            .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+            .context("create per-test schema CLI GOBBY_HOME")?;
+        let path = directory.path().to_path_buf();
+        Ok(Self {
+            path,
+            _directory: directory,
+        })
     }
+}
+
+fn scoped_database_url(database_url: &str, schema: &str) -> String {
+    let separator = if database_url.contains('?') { '&' } else { '?' };
+    format!("{database_url}{separator}options=-csearch_path%3D{schema}")
 }
 
 /// Stage a verified v3 hub backup manifest under `home` for the schema's current
@@ -97,13 +98,8 @@ fn apply_builds_verified_baseline_in_named_schema() -> Result<()> {
         scratch.name
     ))?;
 
-    let identity = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(identity.status.success());
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--schema", &scratch.name])
-        .env(EXPECTED_IDENTITY_ENV, String::from_utf8(identity.stdout)?)
         .env("GOBBY_DATABASE_URL", &database_url)
         .output()?;
     assert!(
@@ -134,19 +130,10 @@ fn apply_uses_connection_current_schema_by_default() -> Result<()> {
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE; CREATE SCHEMA \"{}\"",
         scratch.name, scratch.name
     ))?;
-    let separator = if database_url.contains('?') { '&' } else { '?' };
-    let scoped_url = format!(
-        "{database_url}{separator}options=-csearch_path%3D{}",
-        scratch.name
-    );
+    let scoped_url = scoped_database_url(&database_url, &scratch.name);
 
-    let identity = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(identity.status.success());
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply"])
-        .env(EXPECTED_IDENTITY_ENV, String::from_utf8(identity.stdout)?)
         .env("GOBBY_DATABASE_URL", scoped_url)
         .output()?;
     assert!(
@@ -169,6 +156,10 @@ fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
         return Ok(());
     };
     let process_id = std::process::id();
+    let authority = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_sweep_authority_{process_id}"),
+    };
     let stale = ScratchSchema {
         database_url: database_url.clone(),
         name: format!("gobby_test_0_{process_id}_stale_deadbeef"),
@@ -178,20 +169,17 @@ fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
         name: format!("gobby_test_0_{process_id}_live_cafebabe"),
     };
     let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    SchemaRunner::new(&mut admin, &authority.name)?.apply()?;
     admin.batch_execute(&format!(
         "CREATE SCHEMA \"{}\"; CREATE SCHEMA \"{}\"",
         stale.name, live.name,
     ))?;
     admin.query_one("SELECT pg_advisory_lock(hashtext($1))", &[&live.name])?;
 
-    let identity = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(identity.status.success());
+    let scoped_url = scoped_database_url(&database_url, &authority.name);
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "sweep-test-schemas", "--age-hours", "1"])
-        .env(EXPECTED_IDENTITY_ENV, String::from_utf8(identity.stdout)?)
-        .env("GOBBY_DATABASE_URL", &database_url)
+        .env("GOBBY_DATABASE_URL", scoped_url)
         .output()?;
 
     assert!(
@@ -219,6 +207,45 @@ fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
 }
 
 #[test]
+fn sweep_rejects_database_schema_identity_mismatch() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_sweep_mismatch_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    SchemaRunner::new(&mut admin, &scratch.name)?.apply()?;
+    let embedded_version = SchemaIdentityContract::embedded().latest_version;
+    admin.execute(
+        &format!(
+            "DELETE FROM \"{}\".schema_migrations WHERE version = $1",
+            scratch.name
+        ),
+        &[&embedded_version],
+    )?;
+
+    let scoped_url = scoped_database_url(&database_url, &scratch.name);
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "sweep-test-schemas", "--age-hours", "1"])
+        .env("GOBBY_DATABASE_URL", scoped_url)
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains(&format!(
+            "binary-embedded schema identity v{embedded_version} does not match database schema v{}",
+            embedded_version - 1
+        )),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn destructive_apply_refuses_without_open_maintenance_epoch() -> Result<()> {
     let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
         eprintln!("skipped: {DATABASE_URL_ENV} is not set");
@@ -234,15 +261,8 @@ fn destructive_apply_refuses_without_open_maintenance_epoch() -> Result<()> {
         scratch.name, scratch.name
     ))?;
 
-    let identity = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(identity.status.success());
-    let identity_json = String::from_utf8(identity.stdout)?;
-
     let first = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--schema", &scratch.name])
-        .env(EXPECTED_IDENTITY_ENV, &identity_json)
         .env("GOBBY_DATABASE_URL", &database_url)
         .output()?;
     assert!(
@@ -262,7 +282,6 @@ fn destructive_apply_refuses_without_open_maintenance_epoch() -> Result<()> {
             "--schema",
             &scratch.name,
         ])
-        .env(EXPECTED_IDENTITY_ENV, identity_json)
         .env("GOBBY_DATABASE_URL", &database_url)
         .env("GOBBY_HOME", &home.path)
         .output()?;
@@ -291,15 +310,8 @@ fn destructive_apply_succeeds_with_epoch_bound_dsn_and_verified_backup() -> Resu
         scratch.name, scratch.name
     ))?;
 
-    let identity = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(identity.status.success());
-    let identity_json = String::from_utf8(identity.stdout)?;
-
     let first = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--schema", &scratch.name])
-        .env(EXPECTED_IDENTITY_ENV, &identity_json)
         .env("GOBBY_DATABASE_URL", &database_url)
         .output()?;
     assert!(
@@ -331,7 +343,6 @@ fn destructive_apply_succeeds_with_epoch_bound_dsn_and_verified_backup() -> Resu
             "--schema",
             &scratch.name,
         ])
-        .env(EXPECTED_IDENTITY_ENV, identity_json)
         .env("GOBBY_DATABASE_URL", bound_url)
         .env("GOBBY_HOME", &home.path)
         .output()?;
@@ -360,15 +371,8 @@ fn destructive_apply_refuses_after_epoch_is_released() -> Result<()> {
         scratch.name, scratch.name
     ))?;
 
-    let identity = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(identity.status.success());
-    let identity_json = String::from_utf8(identity.stdout)?;
-
     let first = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--schema", &scratch.name])
-        .env(EXPECTED_IDENTITY_ENV, &identity_json)
         .env("GOBBY_DATABASE_URL", &database_url)
         .output()?;
     assert!(
@@ -402,7 +406,6 @@ fn destructive_apply_refuses_after_epoch_is_released() -> Result<()> {
             "--schema",
             &scratch.name,
         ])
-        .env(EXPECTED_IDENTITY_ENV, identity_json)
         .env("GOBBY_DATABASE_URL", bound_url)
         .env("GOBBY_HOME", &home.path)
         .output()?;

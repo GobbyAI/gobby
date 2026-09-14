@@ -1,11 +1,10 @@
 """Select the gdaemon binary that schema-contract calls use during tests.
 
-The installed ``~/.gobby/bin`` binary is the default: it is what the daemon and every
-CLI path use, and gdaemon checks its embedded schema identity against this checkout's
-pin, so a mismatch fails loudly instead of testing the wrong migrations. A branch that
-carries unreleased migrations cannot use the installed binary without cutting the whole
-machine over, so ``GOBBY_TEST_GDAEMON=checkout`` opts into the checkout's own debug
-build — and that build must be newer than the crate sources it was built from.
+The installed ``~/.gobby/bin`` binary is the default: it is what the daemon, runtime
+grants, and every CLI path use. A branch that carries unreleased migrations cannot use
+the installed binary to exercise those new assets without cutting the whole machine
+over, so ``GOBBY_TEST_GDAEMON=checkout`` opts into the checkout's own debug build — and
+that build must be newer than the crate sources it was built from.
 """
 
 from __future__ import annotations

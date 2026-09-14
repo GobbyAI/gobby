@@ -299,7 +299,7 @@ def test_schema_apply_executor_verify_uses_bootstrap_dsn(
     collect = MagicMock(return_value=(MagicMock(), 42))
     monkeypatch.setattr(schema_module, "bind_maintenance_epoch", bind)
     monkeypatch.setattr(schema_module, "collect_postgres_identity", collect)
-    monkeypatch.setattr(schema_module, "latest_schema_version", lambda: 42)
+    monkeypatch.setattr(schema_module, "installed_schema_version", lambda: 42)
     epoch = MagicMock(id=uuid.uuid4())
 
     schema_module._SchemaApplyExecutor().verify(epoch, MagicMock())

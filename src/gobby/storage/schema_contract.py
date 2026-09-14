@@ -1,4 +1,4 @@
-"""Identity-enforcing process boundary for the gdaemon schema runner."""
+"""Process boundary for the installed gdaemon schema authority."""
 
 from __future__ import annotations
 
@@ -14,11 +14,8 @@ from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
 
-EXPECTED_IDENTITY_ENV = "GOBBY_EXPECTED_SCHEMA_IDENTITY"
 DATABASE_URL_ENV = "GOBBY_DATABASE_URL"
 _IDENTITY_FILE = "schema_expected_identity.json"
-_IDENTITY_MISMATCH = "expected schema identity does not match embedded identity"
-_CUTOVER_RECOVERY = "run `uv run gobby cutover --path .` from this source checkout"
 
 
 class SchemaContractError(RuntimeError):
@@ -48,23 +45,30 @@ def latest_schema_version() -> int:
     return value
 
 
-def _identity_mismatch_detail(binary: str) -> str:
-    """Describe checkout-versus-binary schema identity drift."""
-    expected = expected_schema_identity()
-    expected_version = expected["latest_version"]
+def installed_schema_identity() -> dict[str, int | str]:
+    """Read the schema identity embedded in the installed gdaemon."""
+    binary = resolve_native_bin("gdaemon")
+    if binary is None:
+        raise SchemaContractError(
+            "gdaemon is required to read the installed schema identity; "
+            "run `gobby install` to install it"
+        )
     try:
-        embedded = probe_identity(Path(binary))
-    except SchemaIdentityError:
-        logger.debug("Could not probe mismatched gdaemon identity", exc_info=True)
-        return f"{_IDENTITY_MISMATCH}; checkout-expected schema v{expected_version}"
-    return (
-        f"installed/embedded schema v{embedded['latest_version']} does not match "
-        f"checkout-expected schema v{expected_version}"
-    )
+        return probe_identity(Path(binary))
+    except SchemaIdentityError as exc:
+        raise SchemaContractError(f"Installed gdaemon schema identity is unusable: {exc}") from exc
+
+
+def installed_schema_version() -> int:
+    """Return the latest schema version embedded in the installed gdaemon."""
+    value = installed_schema_identity()["latest_version"]
+    if not isinstance(value, int):
+        raise SchemaContractError("Installed latest schema version must be an integer")
+    return value
 
 
 def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
-    """Run one identity-enforcing gdaemon schema action."""
+    """Run one installed-authoritative gdaemon schema action."""
     binary = resolve_native_bin("gdaemon")
     if binary is None:
         raise SchemaContractError(
@@ -73,7 +77,7 @@ def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
 
     env = os.environ.copy()
     env[DATABASE_URL_ENV] = database_url
-    env[EXPECTED_IDENTITY_ENV] = expected_schema_identity_json()
+    env.pop("GOBBY_EXPECTED_SCHEMA_IDENTITY", None)
     try:
         result = subprocess.run(
             [binary, *args],
@@ -94,9 +98,6 @@ def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
         detail = (
             result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         )
-        if _IDENTITY_MISMATCH in detail:
-            mismatch = _identity_mismatch_detail(binary)
-            raise SchemaContractError(f"gdaemon {action} failed: {mismatch}; {_CUTOVER_RECOVERY}")
         raise SchemaContractError(
             f"gdaemon {action} failed: {detail}. Run `gobby install` to refresh gdaemon"
         )
@@ -117,7 +118,7 @@ def apply_schema(
     schema: str | None = None,
     destructive: bool = False,
 ) -> None:
-    """Apply schema assets through one identity-enforcing gdaemon process."""
+    """Apply the installed gdaemon's embedded schema assets."""
     args = ["schema", "apply"]
     if schema is not None:
         args.extend(["--schema", schema])

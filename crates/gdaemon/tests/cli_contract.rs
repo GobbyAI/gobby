@@ -1,17 +1,8 @@
 use assert_cmd::Command;
 use gobby_core::schema::schema_identity;
 
-const EXPECTED_IDENTITY_ENV: &str = "GOBBY_EXPECTED_SCHEMA_IDENTITY";
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
 const SECRET_DSN: &str = "postgresql://schema_user:do-not-leak@127.0.0.1:1/gobby";
-
-fn embedded_identity_json() -> anyhow::Result<String> {
-    let output = Command::cargo_bin("gdaemon")?
-        .args(["schema", "version", "--json"])
-        .output()?;
-    assert!(output.status.success(), "{output:?}");
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
-}
 
 #[test]
 fn schema_help_exposes_test_schema_sweep() -> anyhow::Result<()> {
@@ -64,7 +55,7 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["assets_root_hash"], embedded.root_hash);
     // One literal stays as the human tripwire, deliberately: a bare version number is
     // something a reviewer can verify at a glance, which was never true of a checksum.
-    assert_eq!(identity["latest_version"], 435);
+    assert_eq!(identity["latest_version"], 436);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)
@@ -73,40 +64,20 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
 }
 
 #[test]
-fn apply_rejects_mismatched_identity_before_connecting() -> anyhow::Result<()> {
-    let mut expected: serde_json::Value = serde_json::from_str(&embedded_identity_json()?)?;
-    expected["latest_version"] = serde_json::json!(999);
-
+fn apply_ignores_checkout_identity_environment() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply"])
-        .env(EXPECTED_IDENTITY_ENV, serde_json::to_string(&expected)?)
+        .env(
+            "GOBBY_EXPECTED_SCHEMA_IDENTITY",
+            r#"{"latest_version":999}"#,
+        )
         .env(DATABASE_URL_ENV, SECRET_DSN)
         .output()?;
     let stderr = String::from_utf8(output.stderr)?;
 
     assert!(!output.status.success());
-    assert!(stderr.contains("expected schema identity does not match embedded identity"));
-    assert!(!stderr.contains("failed to connect"));
-    assert!(!stderr.contains("schema_user"));
-    assert!(!stderr.contains("do-not-leak"));
-    Ok(())
-}
-
-#[test]
-fn verify_rejects_mismatched_identity_before_connecting() -> anyhow::Result<()> {
-    let mut expected: serde_json::Value = serde_json::from_str(&embedded_identity_json()?)?;
-    expected["latest_version"] = serde_json::json!(999);
-
-    let output = Command::cargo_bin("gdaemon")?
-        .args(["schema", "verify"])
-        .env(EXPECTED_IDENTITY_ENV, serde_json::to_string(&expected)?)
-        .env(DATABASE_URL_ENV, SECRET_DSN)
-        .output()?;
-    let stderr = String::from_utf8(output.stderr)?;
-
-    assert!(!output.status.success());
-    assert!(stderr.contains("expected schema identity does not match embedded identity"));
-    assert!(!stderr.contains("failed to connect"));
+    assert!(stderr.contains("failed to connect"));
+    assert!(!stderr.contains("expected schema identity"));
     assert!(!stderr.contains("schema_user"));
     assert!(!stderr.contains("do-not-leak"));
     Ok(())
@@ -116,7 +87,6 @@ fn verify_rejects_mismatched_identity_before_connecting() -> anyhow::Result<()> 
 fn apply_rejects_malicious_schema_before_connecting() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--schema", "bad\";drop schema public;--"])
-        .env(EXPECTED_IDENTITY_ENV, embedded_identity_json()?)
         .env(DATABASE_URL_ENV, SECRET_DSN)
         .output()?;
     let stderr = String::from_utf8(output.stderr)?;
@@ -149,7 +119,6 @@ fn apply_has_no_dsn_argument() -> anyhow::Result<()> {
 fn connection_errors_redact_dsn_credentials() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply"])
-        .env(EXPECTED_IDENTITY_ENV, embedded_identity_json()?)
         .env(DATABASE_URL_ENV, SECRET_DSN)
         .output()?;
     let stderr = String::from_utf8(output.stderr)?;
@@ -171,7 +140,6 @@ fn destructive_apply_parses_newest_backup_before_connecting() -> anyhow::Result<
 
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--destructive"])
-        .env(EXPECTED_IDENTITY_ENV, embedded_identity_json()?)
         .env("GOBBY_HOME", &home_path)
         .env(DATABASE_URL_ENV, SECRET_DSN)
         .output()?;

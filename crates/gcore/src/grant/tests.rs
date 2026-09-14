@@ -561,13 +561,21 @@ fn schema_mismatch_refuses_construction() {
     let harness = Harness::new();
     let mut grant = fixture_grant(PrincipalKind::AgentRun);
     grant.schema_identity.baseline_version += 1;
+    let grant_version = grant.schema_identity.latest_version;
+    let binary_version = expected_schema_identity().latest_version;
     grant = grant.with_checksum();
     let path = harness.home.join("managed.json");
     write_grant_file(&path, &grant).expect("write");
     let mut request = harness.request(None);
     request.managed_bootstrap = Some(path.clone());
     let error = acquire_with(&request).expect_err("schema");
-    assert_eq!(error, GrantError::SchemaMismatch);
+    assert_eq!(
+        error,
+        GrantError::SchemaMismatch {
+            grant_version,
+            binary_version,
+        }
+    );
 }
 
 #[test]
@@ -608,12 +616,20 @@ fn stale_cached_schema_stays_mismatch_offline() {
     let mut grant = fixture_grant(PrincipalKind::Interactive);
     grant.deployment.token = deployment_token(&harness.home);
     grant.schema_identity.latest_version -= 1;
+    let grant_version = grant.schema_identity.latest_version;
+    let binary_version = expected_schema_identity().latest_version;
     grant = grant.with_checksum();
     write_cache(&harness, &grant, None);
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
     let error =
         acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("offline");
-    assert_eq!(error, GrantError::SchemaMismatch);
+    assert_eq!(
+        error,
+        GrantError::SchemaMismatch {
+            grant_version,
+            binary_version,
+        }
+    );
 }
 
 #[test]
@@ -1838,7 +1854,7 @@ fn stale_managed_schema_fails_closed_without_usable_capability_or_daemon() {
         assert!(
             matches!(
                 error,
-                GrantError::Expired | GrantError::Malformed(_) | GrantError::SchemaMismatch
+                GrantError::Expired | GrantError::Malformed(_) | GrantError::SchemaMismatch { .. }
             ),
             "unexpected {case}: {error:?}"
         );
@@ -1902,7 +1918,7 @@ fn stale_managed_schema_rejects_downgrade_without_returning_stale_cache() {
     request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
     let result = acquire_with(&request);
     assert_eq!(join(scripted).len(), 2);
-    assert!(matches!(result, Err(GrantError::SchemaMismatch)));
+    assert!(matches!(result, Err(GrantError::SchemaMismatch { .. })));
     assert_eq!(fs::read(&managed_path).unwrap(), before);
 }
 

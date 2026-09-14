@@ -36,7 +36,7 @@ from gobby.storage.maintenance_epoch import (
     get_destructive_batch,
     require_orchestrator_epoch,
 )
-from gobby.storage.schema_contract import latest_schema_version
+from gobby.storage.schema_contract import installed_schema_version
 
 
 class SchemaGateError(RuntimeError):
@@ -118,7 +118,7 @@ def apply_schema(
     runtime = get_cli_runtime(ctx)
     if not destructive:
         runtime.require_database()
-        click.echo(f"Schema is at version {latest_schema_version()}")
+        click.echo(f"Schema is at version {installed_schema_version()}")
         return
 
     try:
@@ -233,7 +233,7 @@ class _SchemaApplyExecutor(CampaignExecutor):
         _identity, current_head = collect_postgres_identity(
             bind_maintenance_epoch(database_url, epoch.id)
         )
-        expected_version = latest_schema_version()
+        expected_version = installed_schema_version()
         if current_head != expected_version:
             raise SchemaGateError(
                 f"Schema batch stopped at version {current_head}; expected {expected_version}"

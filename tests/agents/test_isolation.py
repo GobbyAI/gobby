@@ -41,6 +41,7 @@ from gobby.agents.isolation import (
 from gobby.clones.git import CloneGitManager
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
+from gobby.storage.schema_contract import expected_schema_identity
 from gobby.worktrees.git import WorktreeGitManager
 
 _REAL_POPEN = subprocess.Popen
@@ -289,6 +290,14 @@ class TestEnsureIsolationCodeIndex:
         source_home.mkdir()
         self._write_operator_token(source_home)
         self._stub_grant_context(monkeypatch)
+        installed_identity = {
+            **expected_schema_identity(),
+            "latest_version": 999,
+        }
+        monkeypatch.setattr(
+            "gobby.agents.code_index.installed_schema_identity",
+            lambda: installed_identity,
+        )
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
 
         with (
@@ -314,6 +323,7 @@ class TestEnsureIsolationCodeIndex:
         assert payload["principal"]["project_id"] == self._PROJECT_ID
         assert payload["deployment"]["token"] == self._LEASE_TOKEN
         assert payload["deployment"]["fencing_epoch"] == self._LEASE_EPOCH
+        assert payload["schema_identity"] == installed_identity
         assert not (Path(result.runtime_home or "") / "bootstrap.yaml").exists()
         assert "database_url" not in result.env
         assert "GOBBY_AGENT_API_TOKEN" not in result.env

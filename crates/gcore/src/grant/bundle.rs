@@ -333,8 +333,12 @@ pub fn validate_for_construction(
             "grant code overlay does not match the local isolation workspace".to_string(),
         ));
     }
-    if grant.schema_identity != expected_schema_identity() {
-        return Err(GrantError::SchemaMismatch);
+    let binary_identity = expected_schema_identity();
+    if grant.schema_identity != binary_identity {
+        return Err(GrantError::SchemaMismatch {
+            grant_version: grant.schema_identity.latest_version,
+            binary_version: binary_identity.latest_version,
+        });
     }
     Ok(())
 }
