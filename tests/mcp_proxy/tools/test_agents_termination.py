@@ -525,3 +525,134 @@ async def test_self_termination_early_exit_returns_success_and_notifies_incomple
     assert result["status"] == "incomplete"
     assert notification["terminal_reason"] == "early_exit"
     assert notification["incomplete_step"] == "implement"
+
+
+@pytest.mark.asyncio
+async def test_dirty_path_exit_is_not_success(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.agents.run_completion import DIRTY_PATH_REMEDIATION
+
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Leave dirty work",
+        validation_criteria="Dirty attributed paths are not a successful exit.",
+    )
+    run = MagicMock(
+        id="11111111-1111-4111-8111-111111111111",
+        child_session_id="22222222-2222-4222-8222-222222222222",
+        terminal_id=None,
+        task_id=task.id,
+        worktree_id=None,
+        clone_id=None,
+        status="running",
+        terminal_reason=None,
+        result=None,
+        error=None,
+        provider="codex",
+        model=None,
+        prompt="Implement the task",
+        tool_calls_count=0,
+        turns_used=0,
+        started_at=None,
+        completed_at=None,
+        capture_id=None,
+        resume_metadata_json={},
+    )
+    runner = MagicMock()
+    run_storage = MagicMock()
+    run_storage.db = temp_db
+    run_storage.get.return_value = run
+    runner.run_storage = run_storage
+    runner._run_storage = run_storage
+    runner._session_manager = MagicMock()
+    runner._session_manager.get.return_value = None
+    runner.get_run.return_value = run
+
+    def persist_run(
+        *,
+        run_id: str,
+        result: str | None,
+        tool_calls_count: int,
+        turns_used: int,
+        terminal_reason: AgentRunTerminalReason | None,
+    ) -> MagicMock:
+        run.status = "success"
+        run.terminal_reason = terminal_reason
+        if result is not None:
+            run.result = result
+        run.tool_calls_count = tool_calls_count
+        run.turns_used = turns_used
+        return run
+
+    run_storage.complete.side_effect = persist_run
+    runner.complete_run.side_effect = lambda run_id, result=None, terminal_reason=None: (
+        AgentRunner.complete_run(runner, run_id, result=result, terminal_reason=terminal_reason)
+    )
+    session_vars: dict[str, Any] = {"task_edited_files": {run.task_id: ["src/dirty.py"]}}
+    variable_manager = MagicMock()
+    variable_manager.get_variables.return_value = session_vars
+    completion_call: dict[str, Any] = {}
+    notifications: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def wake_parent(session_id: str, message: str, result: dict[str, Any]) -> dict[str, bool]:
+        notifications.append((session_id, message, result))
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake_parent)
+    registry.register(run.id, ["parent-session"])
+
+    async def capture_completion(*args: Any, **kwargs: Any) -> bool:
+        completion_call.update(kwargs)
+        return await complete_and_notify_agent_run(*args, **kwargs)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.agents.complete_and_notify_agent_run",
+            new=capture_completion,
+        ),
+        patch(
+            "gobby.workflows.state_manager.SessionVariableManager",
+            return_value=variable_manager,
+        ),
+        patch(
+            "gobby.agents.run_completion.SessionVariableManager",
+            return_value=variable_manager,
+        ),
+        patch(
+            "gobby.agents.run_completion._agent_run_checkout_root",
+            return_value="/repo",
+        ),
+        patch(
+            "gobby.agents.run_completion.task_dirty_paths_async",
+            new_callable=AsyncMock,
+            return_value={"src/dirty.py"},
+        ),
+    ):
+        termination = await _complete_self_terminated_run(
+            runner=runner,
+            run=run,
+            kill_db=temp_db,
+            completion_registry=registry,
+            session_manager=None,
+        )
+        get_result = create_agents_registry(runner)._tools["get_agent_result"].func
+        result = await get_result(run_id=run.id)
+
+    assert termination["success"] is True
+    assert completion_call["notify_result"]["status"] == "incomplete"
+    assert completion_call["notify_result"]["remediation"] == DIRTY_PATH_REMEDIATION
+    assert result["status"] == "incomplete"
+    assert result["dirty_paths"] == ["src/dirty.py"]
+    assert notifications[0][2]["status"] == "incomplete"
+    assert DIRTY_PATH_REMEDIATION in notifications[0][1]

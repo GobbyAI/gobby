@@ -96,6 +96,8 @@ struct GrepResponse<'a> {
     budget_exceeded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     files: Option<&'a [String]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coverage_gap: Option<&'a str>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -108,6 +110,7 @@ pub(crate) struct GrepResult {
     pub(crate) matched_lines: usize,
     pub(crate) truncated: bool,
     pub(crate) matches: Vec<GrepMatch>,
+    pub(crate) coverage_gap: Option<String>,
 }
 
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
@@ -122,6 +125,7 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     };
     let mut result = grep_chunks_with_filters(&loaded.chunks, &scan_options, &filters)?;
     result.truncated |= loaded.truncated;
+    attach_coverage_gap(&mut conn, ctx, &filters, &options, &loaded, &mut result)?;
 
     if options.files_with_matches {
         return print_file_page(ctx, &options, &result);
@@ -167,7 +171,11 @@ fn print_file_page(
             page.next_offset,
             page.budget_exceeded,
         )),
-        Format::Text => print_text_page(&format_matching_files(&page.results), page.next_offset),
+        Format::Text => print_text_page(
+            &format_matching_files(&page.results),
+            page.next_offset,
+            result.coverage_gap.as_deref(),
+        ),
     }
 }
 
@@ -209,13 +217,24 @@ fn print_match_page(
             page.next_offset,
             page.budget_exceeded,
         )),
-        Format::Text => print_text_page(&format_text_matches(&page.results), page.next_offset),
+        Format::Text => print_text_page(
+            &format_text_matches(&page.results),
+            page.next_offset,
+            result.coverage_gap.as_deref(),
+        ),
     }
 }
 
-fn print_text_page(body: &str, next_offset: Option<usize>) -> anyhow::Result<()> {
+fn print_text_page(
+    body: &str,
+    next_offset: Option<usize>,
+    coverage_gap: Option<&str>,
+) -> anyhow::Result<()> {
     let rendered = token_budget::render_text_page(body, next_offset);
     if rendered.is_empty() {
+        if let Some(gap) = coverage_gap {
+            eprintln!("{gap}");
+        }
         Ok(())
     } else {
         output::print_text(&rendered)
@@ -241,6 +260,7 @@ pub(crate) fn grep_repo(
     let loaded = load_indexed_chunks(conn, ctx, &filters)?;
     let mut result = grep_chunks_with_filters(&loaded.chunks, options, &filters)?;
     result.truncated |= loaded.truncated;
+    attach_coverage_gap(conn, ctx, &filters, options, &loaded, &mut result)?;
     Ok(result)
 }
 
@@ -382,6 +402,125 @@ fn load_indexed_chunks(
     Ok(LoadedIndexedChunks { chunks, truncated })
 }
 
+fn attach_coverage_gap(
+    conn: &mut Client,
+    ctx: &Context,
+    filters: &GrepFilters,
+    options: &GrepOptions<'_>,
+    loaded: &LoadedIndexedChunks,
+    result: &mut GrepResult,
+) -> anyhow::Result<()> {
+    if !filters.is_scoped() || !result.matches.is_empty() || !loaded.chunks.is_empty() {
+        return Ok(());
+    }
+    if indexed_files_cover_filters(conn, ctx, filters)? {
+        return Ok(());
+    }
+    result.coverage_gap = Some(coverage_gap_message(options.paths, options.globs));
+    Ok(())
+}
+
+fn coverage_gap_message(paths: &[String], globs: &[String]) -> String {
+    let mut scopes = Vec::new();
+    if !paths.is_empty() {
+        scopes.push(format!("paths {}", paths.join(", ")));
+    }
+    if !globs.is_empty() {
+        scopes.push(format!("globs {}", globs.join(", ")));
+    }
+    format!(
+        "incomplete index coverage: no indexed files match {}; run gcode index",
+        scopes.join(" and ")
+    )
+}
+
+fn indexed_files_cover_filters(
+    conn: &mut Client,
+    ctx: &Context,
+    filters: &GrepFilters,
+) -> anyhow::Result<bool> {
+    let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
+    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
+        return Ok(false);
+    };
+    let rows = match &ctx.index_scope {
+        ProjectIndexScope::Single => {
+            let project_id = db::id_param(&ctx.project_id)?;
+            let mut params: Vec<&(dyn ToSql + Sync)> =
+                vec![&project_id, &tombstone_language, &machine_id];
+            let mut conditions = vec![
+                "fs.project_id = $1".to_string(),
+                "cf.language != $2".to_string(),
+                "fs.machine_id = $3".to_string(),
+            ];
+            push_grep_sql_prefilters(&mut conditions, &mut params, "fs", filters);
+            let sql = format!(
+                "SELECT fs.file_path
+                 FROM code_indexed_file_states fs
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = fs.project_id
+                  AND cf.file_path = fs.file_path
+                  AND cf.content_hash = fs.content_hash
+                 WHERE {}
+                 LIMIT 500",
+                conditions.join(" AND ")
+            );
+            conn.query(&sql, &params)?
+        }
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => {
+            let overlay_project_id = db::id_param(overlay_project_id)?;
+            let parent_project_id = db::id_param(parent_project_id)?;
+            let mut params: Vec<&(dyn ToSql + Sync)> = vec![
+                &overlay_project_id,
+                &parent_project_id,
+                &tombstone_language,
+                &machine_id,
+            ];
+            let mut conditions = vec![
+                "cf.language != $3".to_string(),
+                "fs.machine_id = $4".to_string(),
+                "(
+                    fs.project_id = $1
+                    OR (
+                        fs.project_id = $2
+                        AND NOT EXISTS (
+                            SELECT 1 FROM code_indexed_file_states shadow
+                            WHERE shadow.machine_id = $4
+                              AND shadow.project_id = $1
+                              AND shadow.file_path = fs.file_path
+                        )
+                    )
+                )"
+                .to_string(),
+            ];
+            push_grep_sql_prefilters(&mut conditions, &mut params, "fs", filters);
+            let sql = format!(
+                "SELECT fs.file_path
+                 FROM code_indexed_file_states fs
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = fs.project_id
+                  AND cf.file_path = fs.file_path
+                  AND cf.content_hash = fs.content_hash
+                 WHERE {}
+                 LIMIT 500",
+                conditions.join(" AND ")
+            );
+            conn.query(&sql, &params)?
+        }
+    };
+    for row in rows {
+        let file_path: String = row.try_get("file_path")?;
+        if filters.matches(&file_path) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn push_grep_sql_prefilters<'a>(
     conditions: &mut Vec<String>,
     params: &mut Vec<&'a (dyn ToSql + Sync)>,
@@ -507,6 +646,7 @@ fn grep_chunks_with_filters(
         matched_lines: total_matching_lines,
         truncated: total_matching_lines > retained.len(),
         matches: retained,
+        coverage_gap: None,
     })
 }
 
@@ -594,6 +734,10 @@ impl GrepFilters {
         let glob_matches =
             self.globs.is_empty() || self.globs.iter().any(|glob| glob.matches(file_path));
         path_matches && glob_matches
+    }
+
+    fn is_scoped(&self) -> bool {
+        !self.paths.is_empty() || !self.globs.is_empty()
     }
 }
 
@@ -713,7 +857,7 @@ fn format_matching_files(files: &[String]) -> String {
 fn grep_response<'a>(
     project_id: &'a str,
     options: &'a GrepOptions<'_>,
-    result: &GrepResult,
+    result: &'a GrepResult,
     matches: &'a [GrepMatch],
     files: Option<&'a [String]>,
     next_offset: Option<usize>,
@@ -736,6 +880,7 @@ fn grep_response<'a>(
         next_offset,
         budget_exceeded,
         files,
+        coverage_gap: result.coverage_gap.as_deref(),
     }
 }
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from gobby.agents.run_completion import agent_exit_public_status
 from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
 from gobby.utils.datetime import datetime_to_iso
 
@@ -116,6 +117,19 @@ def _bounded_capture_result(prefix: str, capture: str) -> tuple[str, int, bool]:
     return result[:_AGENT_RESULT_CAPTURE_CHARS], excerpt_lines, True
 
 
+def _result_stored_at(run: AgentRunProtocol, *, has_result: bool) -> str | None:
+    """Timestamp of the stored result, distinct from live last_progress_at."""
+    if not has_result:
+        return None
+    updated = getattr(run, "updated_at", None)
+    if isinstance(updated, datetime):
+        return datetime_to_iso(updated)
+    completed = run.completed_at
+    if isinstance(completed, datetime):
+        return datetime_to_iso(completed)
+    return None
+
+
 def _agent_result_payload(
     run: AgentRunProtocol,
     *,
@@ -128,11 +142,14 @@ def _agent_result_payload(
         if isinstance(authoritative_result, str) and authoritative_result.strip()
         else None
     )
+    public_dirty = dirty_paths if isinstance(dirty_paths, list) else None
     payload: dict[str, Any] = {
         **run.liveness_payload(),
         "run_id": run.id,
-        "status": {"task_blocker": "blocked", "early_exit": "incomplete"}.get(
-            run.terminal_reason or "", run.status
+        "status": agent_exit_public_status(
+            run.terminal_reason,
+            public_dirty,
+            fallback=run.status,
         ),
         "result": preferred_result if preferred_result is not None else run.result,
         "error": run.error,
@@ -142,6 +159,7 @@ def _agent_result_payload(
         "turns_used": run.turns_used,
         "started_at": datetime_to_iso(run.started_at),
         "completed_at": datetime_to_iso(run.completed_at),
+        "result_at": _result_stored_at(run, has_result=bool(preferred_result or run.result)),
         "child_session_id": run.child_session_id,
         "terminal_reason": run.terminal_reason,
     }

@@ -668,6 +668,55 @@ class TestCreateTaskTool:
         mock_task_manager.create_task_with_decomposition.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_create_rejects_malformed_command_span(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        registry = create_task_registry(mock_task_manager)
+
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Reject piped close command",
+                "category": "research",
+                "validation_criteria": "Done when `uv run pytest tests/foo.py | tee log`.",
+            },
+        )
+
+        assert "error" in result
+        assert "pipelines" in result["error"]
+        mock_task_manager.create_task_with_decomposition.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_explains_exact_command_contract(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        from gobby.tasks.criterion_commands import CRITERION_COMMAND_CONTRACT
+
+        registry = create_task_registry(mock_task_manager)
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440008"
+        mock_task.seq_num = 99
+        mock_task.to_dict.return_value = {"id": mock_task.id, "seq_num": 99}
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": mock_task.id},
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Explain exact close commands",
+                "category": "research",
+                "validation_criteria": ("Done when `uv run pytest tests/foo.py -q` passes."),
+            },
+        )
+
+        assert "error" not in result
+        assert result["criterion_commands"] == ["uv run pytest tests/foo.py -q"]
+        assert result["criterion_command_contract"] == CRITERION_COMMAND_CONTRACT
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_create_ignores_prose_after_test_marker(
         self, mock_task_manager: MagicMock
     ) -> None:

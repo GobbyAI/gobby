@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shlex
 from collections.abc import Set as AbstractSet
@@ -73,6 +74,8 @@ class GitCommitInvocation:
     """One Git commit invocation and its explicit pathspecs."""
 
     pathspecs: tuple[str, ...]
+    chdir: str | None = None
+    work_tree: str | None = None
 
     @property
     def is_path_scoped(self) -> bool:
@@ -120,7 +123,7 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             index += 1
             continue
 
-        commit_index = _skip_git_global_options(tokens, index + 1)
+        commit_index, chdir, work_tree = _skip_git_global_options(tokens, index + 1)
         if commit_index >= len(tokens) or tokens[commit_index] != "commit":
             index += 1
             continue
@@ -135,17 +138,37 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             if delimiter_index >= 0 and delimiter_index + 1 < len(segment)
             else ()
         )
-        invocations.append(GitCommitInvocation(pathspecs=pathspecs))
+        invocations.append(
+            GitCommitInvocation(pathspecs=pathspecs, chdir=chdir, work_tree=work_tree)
+        )
         index = segment_end + 1
 
     return tuple(invocations)
 
 
-def _skip_git_global_options(tokens: list[str], index: int) -> int:
+def _skip_git_global_options(tokens: list[str], index: int) -> tuple[int, str | None, str | None]:
+    chdir: str | None = None
+    work_tree: str | None = None
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
-            return index + 1
+            return index + 1, chdir, work_tree
+        if token == "-C" and index + 1 < len(tokens):
+            chdir = _join_chdir(chdir, tokens[index + 1])
+            index += 2
+            continue
+        if token.startswith("-C="):
+            chdir = _join_chdir(chdir, token[3:])
+            index += 1
+            continue
+        if token == "--work-tree" and index + 1 < len(tokens):
+            work_tree = tokens[index + 1]
+            index += 2
+            continue
+        if token.startswith("--work-tree="):
+            work_tree = token.split("=", 1)[1]
+            index += 1
+            continue
         if token in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
             index += 2
             continue
@@ -155,8 +178,34 @@ def _skip_git_global_options(tokens: list[str], index: int) -> int:
         if token.startswith("-"):
             index += 1
             continue
-        return index
-    return index
+        return index, chdir, work_tree
+    return index, chdir, work_tree
+
+
+def _join_chdir(current: str | None, nxt: str) -> str:
+    if not current:
+        return nxt
+    nxt_path = Path(nxt)
+    if nxt_path.is_absolute():
+        return nxt
+    return str(Path(current) / nxt_path)
+
+
+def resolve_commit_inspect_cwd(
+    invocation: GitCommitInvocation,
+    *,
+    event_cwd: str | None,
+    project_path: str,
+) -> str:
+    """Working tree git should inspect for this commit, not the project default."""
+    base = event_cwd or project_path
+    if invocation.chdir:
+        chdir = Path(invocation.chdir)
+        base = str(chdir if chdir.is_absolute() else Path(base) / chdir)
+    if invocation.work_tree:
+        work_tree = Path(invocation.work_tree)
+        base = str(work_tree if work_tree.is_absolute() else Path(base) / work_tree)
+    return os.path.normpath(base)
 
 
 async def foreign_staged_commit_conflict(
@@ -187,11 +236,17 @@ async def foreign_staged_commit_conflict(
             return ""
 
         conflicts: set[ForeignPathOwner] = set()
-        staged_paths: set[str] | None = None
+        staged_paths_by_cwd: dict[str, set[str]] = {}
+        event_cwd = event.cwd if isinstance(event.cwd, str) else None
         for invocation in invocations:
+            inspect_cwd = resolve_commit_inspect_cwd(
+                invocation,
+                event_cwd=event_cwd,
+                project_path=project_path,
+            )
             if invocation.is_path_scoped:
                 candidate_paths = await _git_paths_async(
-                    project_path,
+                    inspect_cwd,
                     "ls-files",
                     "-z",
                     "--cached",
@@ -201,15 +256,17 @@ async def foreign_staged_commit_conflict(
                     *invocation.pathspecs,
                 )
             else:
+                staged_paths = staged_paths_by_cwd.get(inspect_cwd)
                 if staged_paths is None:
                     staged_paths = await _git_paths_async(
-                        project_path,
+                        inspect_cwd,
                         "diff",
                         "--cached",
                         "--name-only",
                         "-z",
                         "--diff-filter=ACDMRTUXB",
                     )
+                    staged_paths_by_cwd[inspect_cwd] = staged_paths
                 candidate_paths = staged_paths
             for path in candidate_paths:
                 conflicts.update(owners.get(path, ()))

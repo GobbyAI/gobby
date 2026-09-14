@@ -105,6 +105,47 @@ async def test_liveness_payloads_share_durable_state_despite_transcript_overlays
     assert persisted.last_activity == baseline
 
 
+@pytest.mark.asyncio
+async def test_get_agent_result_result_at_is_older_than_live_progress(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    parent = _register_session(session_manager, sample_project, "result-at-parent")
+    child = _register_session(
+        session_manager, sample_project, "result-at-child", parent_session_id=parent
+    )
+    storage = LocalAgentRunManager(temp_db)
+    run = storage.create(
+        parent_session_id=parent, child_session_id=child, provider="codex", prompt="recency"
+    )
+    storage.start(run.id)
+    result_at = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    live_progress = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+    temp_db.execute(
+        "UPDATE agent_runs SET result = %s, updated_at = %s, started_at = %s WHERE id = %s",
+        ("mid-run parent note", result_at, result_at, run.id),
+    )
+    temp_db.execute("UPDATE sessions SET last_activity = %s WHERE id = %s", (live_progress, child))
+    runner = MagicMock()
+    runner.run_storage = storage
+    runner.get_run.side_effect = storage.get
+    registry = create_agents_registry(
+        runner,
+        session_manager=session_manager,
+        db=temp_db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    with session_context_for_test(parent):
+        payload = await registry._tools["get_agent_result"].func(run.id)
+
+    assert payload["success"] is True
+    assert payload["result"] == "mid-run parent note"
+    assert payload["result_at"] == result_at.isoformat()
+    assert payload["last_progress_at"] == live_progress.isoformat()
+    assert payload["result_at"] != payload["last_progress_at"]
+
+
 class _FakeTranscriptReader:
     def __init__(self, counts: dict[str, int]) -> None:
         self.counts = counts

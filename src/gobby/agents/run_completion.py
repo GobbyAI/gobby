@@ -154,6 +154,27 @@ async def agent_run_task_dirty_paths(
     return None if dirty is None else sorted(dirty)
 
 
+DIRTY_PATH_REMEDIATION = (
+    "Commit or revert attributed dirty paths before treating this run as complete."
+)
+
+
+def agent_exit_public_status(
+    terminal_reason: AgentRunTerminalReason | None,
+    dirty_paths: list[str] | None,
+    *,
+    fallback: str = "success",
+) -> str:
+    """Public completion status for waiters and get_agent_result."""
+    if terminal_reason == "task_blocker":
+        return "blocked"
+    if terminal_reason == "early_exit":
+        return "incomplete"
+    if dirty_paths and fallback == "success":
+        return "incomplete"
+    return fallback
+
+
 def build_agent_exit_notification(
     run_id: str,
     *,
@@ -167,10 +188,9 @@ def build_agent_exit_notification(
     early_exit_step = variables.get("_agent_early_exit_step")
     if terminal_reason is None and isinstance(early_exit_step, str) and early_exit_step:
         terminal_reason = "early_exit"
+    status = agent_exit_public_status(terminal_reason, dirty_paths)
     notify_result: dict[str, Any] = {
-        "status": {"task_blocker": "blocked", "early_exit": "incomplete"}.get(
-            terminal_reason or "", "success"
-        ),
+        "status": status,
         "run_id": run_id,
         "dirty_paths": dirty_paths,
     }
@@ -178,12 +198,19 @@ def build_agent_exit_notification(
         notify_result["terminal_reason"] = terminal_reason
     if terminal_reason == "early_exit":
         notify_result["incomplete_step"] = early_exit_step
+    if terminal_reason is None and dirty_paths:
+        notify_result["remediation"] = DIRTY_PATH_REMEDIATION
     verdict = variables.get("adversary_verdict")
     if isinstance(verdict, str) and verdict:
         notify_result["signoff_message"] = verdict
-    message = (
-        f"Agent {run_id} completed; dirty_paths={json.dumps(dirty_paths, separators=(',', ':'))}"
-    )
+    dirty_json = json.dumps(dirty_paths, separators=(",", ":"))
+    if terminal_reason is None and dirty_paths:
+        message = (
+            f"Agent {run_id} left attributed dirty paths; {DIRTY_PATH_REMEDIATION} "
+            f"dirty_paths={dirty_json}"
+        )
+    else:
+        message = f"Agent {run_id} completed; dirty_paths={dirty_json}"
     return terminal_reason, notify_result, message
 
 

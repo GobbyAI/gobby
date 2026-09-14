@@ -363,6 +363,18 @@ fn files_with_matches_max_count_caps_files_not_lines() {
 }
 
 #[test]
+fn coverage_gap_message_names_scoped_paths_and_globs() {
+    assert_eq!(
+        super::coverage_gap_message(&["src/missing.rs".into()], &[]),
+        "incomplete index coverage: no indexed files match paths src/missing.rs; run gcode index"
+    );
+    assert_eq!(
+        super::coverage_gap_message(&[], &["*.never".into()]),
+        "incomplete index coverage: no indexed files match globs *.never; run gcode index"
+    );
+}
+
+#[test]
 fn files_with_matches_ignores_context_flags() {
     let chunks = vec![chunk("src/lib.rs", 1, "one\ntwo\nneedle\nfour\nfive")];
     let mut opts = options("needle");
