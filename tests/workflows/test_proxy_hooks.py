@@ -858,7 +858,7 @@ async def test_rtk_runs_after_same_session_queue_wait(
     event.cwd = str(tmp_path)
 
     held = handler._reserve_eval_lock(SESSION_ID)
-    await handler._acquire_eval_lock(held.lock)
+    await held.lock.acquire()
     deadline = BlockingEffectDeadline(time.monotonic() - 1.0)
     with monkeypatch.context() as queue_clock:
         queue_clock.setattr(

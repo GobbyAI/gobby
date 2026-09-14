@@ -797,6 +797,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     "evaluation_event": getattr(exc, "event_type", hook_type),
                     "evaluation_session_id": getattr(exc, "session_id", None),
                     "evaluation_timeout_seconds": getattr(exc, "timeout_seconds", None),
+                    "adapter_admission_wait_seconds": getattr(exc, "admission_wait_seconds", None),
                     "adapter_queue_duration_seconds": getattr(exc, "queue_duration_seconds", None),
                     "adapter_execution_duration_seconds": getattr(
                         exc, "execution_duration_seconds", None

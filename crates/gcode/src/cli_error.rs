@@ -106,6 +106,18 @@ impl CliError {
         }
     }
 
+    pub fn path_not_found(input: &str) -> Self {
+        Self {
+            code: "path_not_found",
+            message: format!("path `{input}` does not exist in the current project checkout"),
+            recovery: Some(
+                "correct the path (bare paths start at the project root); list files with `gcode tree`"
+                    .to_string(),
+            ),
+            exit_status: 2,
+        }
+    }
+
     pub(crate) fn json_payload(&self) -> serde_json::Value {
         match &self.recovery {
             Some(recovery) => json!({
@@ -261,6 +273,23 @@ mod tests {
         assert_eq!(
             value["recovery"],
             "rerun with `--project /workspace/other` to select that project"
+        );
+    }
+
+    #[test]
+    fn path_not_found_serializes_typed_recovery() {
+        let rendered = CliError::path_not_found("web/src/missing.tsx");
+
+        assert_eq!(rendered.exit_status, 2);
+        let value = rendered.json_payload();
+        assert_eq!(value["error"], "path_not_found");
+        assert_eq!(
+            value["message"],
+            "path `web/src/missing.tsx` does not exist in the current project checkout"
+        );
+        assert_eq!(
+            value["recovery"],
+            "correct the path (bare paths start at the project root); list files with `gcode tree`"
         );
     }
 

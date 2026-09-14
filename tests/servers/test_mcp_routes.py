@@ -42,6 +42,7 @@ from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.hooks import HookTimeoutConfig
+from gobby.hooks.adapter_execution import AdapterHookTimeout
 from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
@@ -3884,6 +3885,101 @@ class TestHooksEndpoints:
         assert active_workers == 0
         assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
 
+    @pytest.mark.asyncio
+    async def test_session_hook_flood_holds_one_adapter_worker(self) -> None:
+        from gobby.hooks.adapter_execution import run_adapter_hook
+        from gobby.servers.routes.mcp import hooks as hook_routes
+
+        flood_size = hook_routes.HOOK_ADAPTER_MAX_WORKERS + 3
+        flood_started: list[int] = []
+        first_flood_started = threading.Event()
+        release_flood = threading.Event()
+
+        def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, Any]:
+            if payload["_platform_session_id"] == "flooding-session":
+                flood_started.append(payload["seq"])
+                first_flood_started.set()
+                assert release_flood.wait(timeout=5)
+            return {"continue": True, "seq": payload.get("seq")}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = handle_native
+        flood = [
+            asyncio.create_task(
+                run_adapter_hook(
+                    adapter,
+                    {"_platform_session_id": "flooding-session", "seq": seq},
+                    MagicMock(),
+                    timeout_seconds=5.0,
+                )
+            )
+            for seq in range(flood_size)
+        ]
+        try:
+            assert await asyncio.to_thread(first_flood_started.wait, 1.0)
+            other = await asyncio.wait_for(
+                run_adapter_hook(
+                    adapter,
+                    {"_platform_session_id": "other-session"},
+                    MagicMock(),
+                    timeout_seconds=5.0,
+                ),
+                timeout=1.0,
+            )
+            assert other == {"continue": True, "seq": None}
+            assert flood_started == [0]
+        finally:
+            release_flood.set()
+        results = await asyncio.gather(*flood)
+
+        assert flood_started == list(range(flood_size))
+        assert [result["seq"] for result in results] == list(range(flood_size))
+
+    @pytest.mark.asyncio
+    async def test_timed_out_session_worker_keeps_admission_until_it_exits(self) -> None:
+        from gobby.hooks.adapter_execution import run_adapter_hook
+
+        entered: list[str] = []
+        release_first = threading.Event()
+
+        def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, bool]:
+            entered.append(payload["name"])
+            if payload["name"] == "first":
+                assert release_first.wait(timeout=5)
+            return {"continue": True}
+
+        def payload(name: str) -> dict[str, str]:
+            return {"_platform_session_id": "slow-session", "name": name}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = handle_native
+        try:
+            with pytest.raises(AdapterHookTimeout) as first_timeout:
+                await run_adapter_hook(adapter, payload("first"), MagicMock(), timeout_seconds=0.05)
+            first_worker = first_timeout.value.executor_future
+            assert first_worker is not None
+            assert not first_worker.done()
+
+            with pytest.raises(AdapterHookTimeout) as queued_timeout:
+                await run_adapter_hook(
+                    adapter, payload("queued"), MagicMock(), timeout_seconds=0.05
+                )
+        finally:
+            release_first.set()
+
+        queued_error = queued_timeout.value
+        assert queued_error.executor_future is None
+        assert queued_error.session_id == "slow-session"
+        assert queued_error.admission_wait_seconds is not None
+        assert queued_error.admission_wait_seconds >= 0.04
+        assert queued_error.queue_duration_seconds == 0.0
+        assert queued_error.execution_duration_seconds == 0.0
+        assert entered == ["first"]
+
+        after = await run_adapter_hook(adapter, payload("after"), MagicMock(), timeout_seconds=1.0)
+        assert after == {"continue": True}
+        assert entered == ["first", "after"]
+
     @pytest.mark.parametrize(
         ("source", "hook_type", "critical", "adapter_patch"),
         [
@@ -3896,6 +3992,7 @@ class TestHooksEndpoints:
             ("claude", "session-start", True, "gobby.adapters.claude_code.ClaudeCodeAdapter"),
         ],
     )
+    @pytest.mark.parametrize("timeout_kind", ["evaluation", "adapter"])
     def test_execute_hook_fail_safe_timeout_blocks(
         self,
         session_storage: SessionManager,
@@ -3903,6 +4000,7 @@ class TestHooksEndpoints:
         hook_type: str,
         critical: bool,
         adapter_patch: str,
+        timeout_kind: str,
     ) -> None:
         """Capable Stop and CLI-critical timeouts are retryable adapter_timeout."""
         server = create_http_server(
@@ -3912,13 +4010,25 @@ class TestHooksEndpoints:
         )
         server.app.state.hook_manager = _mock_hook_manager()
 
-        timeout_error = WorkflowEvaluationTimeout(
-            event_type=hook_type,
-            session_id="test-stop",
-            timeout_seconds=15,
-        )
-        timeout_error.queue_duration_seconds = 0.125
-        timeout_error.execution_duration_seconds = 15.0
+        timeout_error: TimeoutError
+        if timeout_kind == "evaluation":
+            evaluation_timeout = WorkflowEvaluationTimeout(
+                event_type=hook_type,
+                session_id="test-stop",
+                timeout_seconds=15,
+            )
+            evaluation_timeout.admission_wait_seconds = 2.5
+            evaluation_timeout.queue_duration_seconds = 0.125
+            evaluation_timeout.execution_duration_seconds = 15.0
+            timeout_error = evaluation_timeout
+        else:
+            timeout_error = AdapterHookTimeout(
+                timeout_seconds=15,
+                session_id="test-stop",
+                admission_wait_seconds=2.5,
+                queue_duration_seconds=0.125,
+                execution_duration_seconds=15.0,
+            )
         timeout_mock = AsyncMock(side_effect=timeout_error)
         with (
             TestClient(server.app) as client,
@@ -3958,12 +4068,12 @@ class TestHooksEndpoints:
             for call in mock_logger.warning.call_args_list
             if call.args and call.args[0] == "Retrying hook after adapter timeout"
         )
-        assert timeout_log.kwargs["extra"]["exception_type"] == "WorkflowEvaluationTimeout"
         expected_timeout_fields = {
-            "exception_type": "WorkflowEvaluationTimeout",
+            "exception_type": type(timeout_error).__name__,
             "evaluation_event": hook_type,
             "evaluation_session_id": "test-stop",
             "evaluation_timeout_seconds": 15,
+            "adapter_admission_wait_seconds": 2.5,
             "adapter_queue_duration_seconds": 0.125,
             "adapter_execution_duration_seconds": 15.0,
             "retry_kind": "adapter_timeout",

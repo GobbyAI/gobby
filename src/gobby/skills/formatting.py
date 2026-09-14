@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.skills.instruction_requirements import (
     instruction_fetch_call,
     instruction_fetch_directive,
+    is_instruction_call_line,
 )
 from gobby.skills.metadata import get_skill_category, get_skill_tags
 
@@ -45,6 +46,11 @@ def format_skill_block_reason(reason: str) -> str:
     guidance = reason.replace(SKILL_BLOCK_ATOMICITY_NOTICE, "").strip()
     if guidance.startswith("Rule enforced by Gobby: ["):
         header, _, guidance = guidance.partition("\n")
+        lead, _, rest = guidance.partition("\n")
+        if is_instruction_call_line(lead):
+            # The bare load calls stay directly under the header so a provider
+            # that clips the reason still shows the targets before boilerplate.
+            return f"{header}\n{lead}\n{SKILL_BLOCK_ATOMICITY_NOTICE}\n{rest}"
         return f"{header}\n{SKILL_BLOCK_ATOMICITY_NOTICE}\n{guidance}"
     return f"{SKILL_BLOCK_ATOMICITY_NOTICE}\n{guidance}"
 

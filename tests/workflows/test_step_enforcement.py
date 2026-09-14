@@ -12,7 +12,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.adapters.capabilities import GROK_MODEL_REASON_WINDOW_CHARS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -83,6 +85,55 @@ def _make_event(
         data=data or {},
         metadata=metadata or {},
     )
+
+
+_REQUIRED_SKILLS = [
+    "gobby:references/development/obligations.md",
+    "restraint",
+    "gobby:references/tasks/overview.md",
+]
+# Bare call forms, in required order, that a load_required_skills denial leads with.
+_REQUIRED_SKILL_CALLS = (
+    'get_skill_file(name="gobby", path="references/development/obligations.md")',
+    'get_skill(name="restraint")',
+    'get_skill_file(name="gobby", path="references/tasks/overview.md")',
+)
+# Mirrors the bundled backend-developer load_required_skills step.
+_REQUIRED_SKILLS_WORKFLOW: dict[str, Any] = {
+    "name": "backend-developer",
+    "version": "1.0",
+    "enabled": False,
+    "variables": {"required_skills": _REQUIRED_SKILLS, "required_skills_loaded": False},
+    "steps": [
+        {
+            "name": "load_required_skills",
+            "allowed_tools": [
+                "mcp__gobby__call_tool",
+                "mcp__gobby__list_mcp_servers",
+                "mcp__gobby__list_tools",
+                "mcp__gobby__get_tool_schema",
+            ],
+            "allowed_mcp_tools": ["gobby-skills:get_skill", "gobby-skills:get_skill_file"],
+            "on_mcp_success": [
+                {
+                    "server": "gobby-skills",
+                    "tool": tool,
+                    "action": "set_variable",
+                    "variable": "required_skills_loaded",
+                    "value": "all(skill_loaded(skill) for skill in vars.required_skills)",
+                }
+                for tool in ("get_skill", "get_skill_file")
+            ],
+        }
+    ],
+}
+
+
+def _get_task_event_data() -> dict[str, Any]:
+    return {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {"server_name": "gobby-tasks", "tool_name": "get_task"},
+    }
 
 
 # Developer workflow definition for tests
@@ -698,6 +749,83 @@ class TestStepToolBlocking:
         assert "own outer tool result" in guidance
         assert 'call_tool("gobby-skills", "get_skill", {"name":"plan-review"})' in guidance
         assert tool_name in response.reason
+
+    @pytest.mark.parametrize(
+        "event_data",
+        [
+            pytest.param({"tool_name": "Bash"}, id="native"),
+            pytest.param(_get_task_event_data(), id="mcp"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_required_skill_denial_window_names_every_unloaded_target(
+        self,
+        event_data: dict[str, Any],
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """Grok shows the model only the first window of a deny reason."""
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="load_required_skills",
+            workflow_data=_REQUIRED_SKILLS_WORKFLOW,
+        )
+
+        response = await engine.evaluate(
+            _make_event(data=event_data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        visible_reason = response.reason[:GROK_MODEL_REASON_WINDOW_CHARS]
+        for call in _REQUIRED_SKILL_CALLS:
+            assert call in visible_reason
+        assert response.reason.index(SKILL_BLOCK_ATOMICITY_NOTICE) > response.reason.index(
+            _REQUIRED_SKILL_CALLS[-1]
+        )
+
+    @pytest.mark.asyncio
+    async def test_required_skill_repeat_denial_window_names_every_unloaded_target(
+        self,
+        db: "HubDatabase",
+        manager: AgentDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: AgentStepInstanceManager,
+    ) -> None:
+        """The collapsed repeat keeps the targets in the window: the full text was clipped too."""
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="load_required_skills",
+            workflow_data=_REQUIRED_SKILLS_WORKFLOW,
+        )
+        variables: dict[str, Any] = {}
+
+        first = await engine.evaluate(
+            _make_event(data=_get_task_event_data()),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        second = await engine.evaluate(
+            _make_event(data=_get_task_event_data()),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert first.decision == "block"
+        assert second.decision == "block"
+        assert second.reason is not None
+        assert "full reason shown earlier this turn" in second.reason
+        visible_reason = second.reason[:GROK_MODEL_REASON_WINDOW_CHARS]
+        for call in _REQUIRED_SKILL_CALLS:
+            assert call in visible_reason
 
     @pytest.mark.asyncio
     async def test_all_tools_allowed_when_set(

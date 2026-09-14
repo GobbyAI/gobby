@@ -625,6 +625,7 @@ pub fn contract() -> CliContract {
         error_codes: vec![
             "invalid_input",
             "invalid_path_scope",
+            "path_not_found",
             "missing_project",
             "backend_unavailable",
             "index_unavailable",

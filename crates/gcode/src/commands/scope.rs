@@ -91,11 +91,20 @@ pub(crate) fn resolve_path_input(
         None
     };
 
-    relative
+    let resolved = relative
         .map(|path| clean_relative_path(&path))
         .ok_or_else(|| {
             CliError::invalid_path_scope(value, discover_project_root(&candidate).as_deref())
-        })
+        })?;
+    // A filter naming a path absent from every checkout matches nothing, which
+    // would otherwise read as an empty result.
+    if matches!(input, ScopedPathInput::Filter(_))
+        && !crate::search::fts::has_glob_meta(&resolved)
+        && !path_exists_in_current_project(ctx, &resolved)
+    {
+        return Err(CliError::path_not_found(value));
+    }
+    Ok(resolved)
 }
 
 fn scope_roots(ctx: &Context, cwd: &Path) -> Vec<ScopeRoot> {
@@ -419,6 +428,39 @@ mod tests {
             )
             .expect("resolve nonexistent in-scope file"),
             "generated/missing.rs"
+        );
+    }
+
+    #[test]
+    fn rejects_nonexistent_non_glob_filters() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let root = project.path();
+        std::fs::create_dir_all(root.join("src/empty")).expect("create project directories");
+        let ctx = context_for(root.to_path_buf());
+
+        let error = resolve_path_input(
+            &ctx,
+            root,
+            ScopedPathInput::Filter("src/components/ResizeHandle.tsx"),
+        )
+        .expect_err("nonexistent filter must fail");
+        assert_eq!(error.code, "path_not_found");
+        assert_eq!(error.exit_status, 2);
+
+        assert_eq!(
+            resolve_path_input(&ctx, root, ScopedPathInput::Filter("src/empty"))
+                .expect("existing directory filter"),
+            "src/empty"
+        );
+        assert_eq!(
+            resolve_path_input(&ctx, root, ScopedPathInput::Filter("src/missing/*.tsx"))
+                .expect("glob filter"),
+            "src/missing/*.tsx"
+        );
+        assert_eq!(
+            resolve_path_input(&ctx, root, ScopedPathInput::ExactFile("src/missing.tsx"))
+                .expect("nonexistent exact file"),
+            "src/missing.tsx"
         );
     }
 

@@ -415,6 +415,12 @@ GROK_HOOK_ALIASES: dict[str, str] = {
 }
 
 GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"pre_tool_use", "stop", "subagent_stop"})
+# Grok CLI (grok-1.0.30) shows the model only the first 256 characters of a
+# PreToolUse deny reason: every denied tool_result in run ad9ddd5f's
+# chat_history.jsonl is "Hook denied: " + 256 characters + " … [+N chars]".
+# Nothing is truncated to fit; denial text is ordered so the actionable
+# directive lands inside this window, and tests assert against it.
+GROK_MODEL_REASON_WINDOW_CHARS = 256
 GROK_TRANSPORT_CAPABILITIES: dict[str, TransportCapabilityValue] = {
     "loadSession": True,
     "x.ai/fs_notify": True,

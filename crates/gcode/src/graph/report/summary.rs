@@ -351,6 +351,6 @@ fn sort_hotspots(hotspots: &mut [GraphHotspot]) {
 fn is_symbol_node(node_type: &str) -> bool {
     matches!(
         node_type,
-        "function" | "method" | "class" | "type" | "property"
+        "function" | "method" | "class" | "type" | "property" | "variable"
     )
 }

@@ -160,7 +160,8 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
 # exercise only the memory-review gate, so every session arrives with both
 # satisfied.
 _OTHER_HANDOFF_GATES_SATISFIED: dict[str, Any] = {
-    "loaded_skills": ["handoff-discipline"],
+    "loaded_skills": ["gobby"],
+    "loaded_skill_references": ["gobby:references/sessions/handoffs.md"],
     "_gobby_feedback_epoch_submitted": True,
 }
 

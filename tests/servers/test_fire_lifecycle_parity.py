@@ -114,6 +114,7 @@ def _make_session(db_session_id: str = SESSION_ID, seq_num: int = 42) -> MagicMo
     session = MagicMock()
     session.db_session_id = db_session_id
     session.seq_num = seq_num
+    session.session_ref = f"gobby#{seq_num}"
     session.project_path = "/tmp/project"
     session.project_id = PROJECT_ID
     session.provider = "claude"
@@ -215,7 +216,7 @@ class TestFireLifecycleStopEnrichment:
         )
 
         assert result is not None
-        assert result["context"] == "Gobby Session ID: #42"
+        assert result["context"] == "Gobby Session ID: gobby#42"
 
     @pytest.mark.asyncio
     async def test_before_agent_enrichment_prefixes_rule_context(self, host: ChatMixinHost) -> None:
@@ -227,7 +228,7 @@ class TestFireLifecycleStopEnrichment:
         )
 
         assert result is not None
-        assert result["context"] == "Gobby Session ID: #42\n\nrule context"
+        assert result["context"] == "Gobby Session ID: gobby#42\n\nrule context"
 
 
 # ---------------------------------------------------------------------------
@@ -577,8 +578,12 @@ class TestFireLifecycleMessagePiggyback:
             from_session="eeee5555-0000-0000-0000-000000000000",
             priority="normal",
         )
+        delivered: list[tuple[str, str]] = []
         mgr = MagicMock()
         mgr.get_undelivered_messages.return_value = [msg]
+        mgr.mark_delivered.side_effect = lambda message_id, session_id: delivered.append(
+            (message_id, session_id)
+        )
         host.inter_session_msg_manager = mgr
         monkeypatch.setattr(
             host,
@@ -591,7 +596,8 @@ class TestFireLifecycleMessagePiggyback:
         )
 
         assert result is None
-        mgr.mark_delivered.assert_not_called()
+        assert delivered == []
+        mgr.get_undelivered_messages.assert_called_once_with(SESSION_ID)
 
     @pytest.mark.asyncio
     async def test_no_manager_proceeds(self, host: ChatMixinHost) -> None:
