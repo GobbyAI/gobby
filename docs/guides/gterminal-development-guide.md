@@ -172,10 +172,15 @@ root with `DATABASE_URL` pointed at the isolated test hub
 
 1. `uv run pytest tests/test_runner_lifecycle_restart_replay.py tests/agents/test_resume_executor.py tests/agents/test_spawn_executor.py tests/agents/test_tmux.py tests/agents/test_lifecycle_monitor.py tests/agents/test_capture_consumers.py tests/config/test_runtime_config_contract.py tests/config/test_terminal_config.py tests/cli/test_install_setup_gterm.py tests/gterminal/test_vendor_layer.py tests/mcp_proxy/tools/sessions/test_terminal.py tests/mcp_proxy/tools/sessions/test_terminal_clear.py tests/servers/test_tmux_mixin.py tests/servers/test_admin_health.py tests/install/test_version_pins.py tests/install/test_distribution.py tests/tasks/test_validation_evidence.py`
 2. `uv run pytest tests/terminals tests/storage/test_terminals.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_rename.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_native_web_proxy.py tests/servers/test_attention_respond.py tests/mcp_proxy/test_sessions_terminal_tools.py` (DB-backed; run with `GOBBY_POSTGRES_TEST_DSN` exported)
-3. `cargo build -p gobby-terminal --release --features vt-engine && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-terminal -p gobby-client`
+3. `cargo build -p gobby-terminal --release --features vt-engine && cargo clippy -p gobby-terminal -p gobby-client --all-targets --features vt-engine -- -D warnings && cargo nextest run -p gobby-terminal -p gobby-client --features vt-engine`
 4. `cargo nextest run -p gobby-core -p gobby-daemon` (schema identity and grant pins)
 5. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
-6. `cd web && npx vitest run src/hooks src/components/activity`
+6. `cd web && npx --no-install vitest run hooks/ activitySessionVisibility.test.ts`
+   The directory-segment and unique-basename substrings deliberately select
+   `src/hooks` plus `src/components/activity/__tests__/activitySessionVisibility.test.ts`.
+   Bare `hooks` also selects two hook-named tests outside `src/hooks`, while adding
+   slash-terminated filters for both original directories widens the run to the
+   whole web suite under Vitest 4.
 7. Host leak check: the set of `gterm host` PIDs after groups 2–3 equals the set
    before, and no surviving `gterm host` references a state directory the run
    created.
