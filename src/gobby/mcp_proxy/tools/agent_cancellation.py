@@ -8,8 +8,11 @@ from typing import Any, Literal, cast
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.agents.task_recovery import TaskRecoveryHandler
+from gobby.storage.agents import TerminalAction
 
 logger = logging.getLogger(__name__)
+
+_SELF_REPORTED_ERROR = "Agent self-reported error"
 
 
 async def _reap_terminal_srt_runner(run_id: str) -> None:
@@ -130,7 +133,7 @@ async def terminalize_killed_agent_run(
     )
 
     if effective_status == "error":
-        error = terminal_error or "Agent self-reported error"
+        error = terminal_error or _SELF_REPORTED_ERROR
         failed_run = await run_terminal_delivery_offload(
             runner.run_storage.fail,
             run_id,
@@ -230,6 +233,14 @@ async def terminate_agent_run(
     run_id = str(run.id)
     kill_db = db or agent_run_manager.db
     resolved_agent_session_id = agent_session_id or run.child_session_id
+    # The managed-terminal kill commits the run's terminal state before
+    # terminalize_killed_agent_run runs, so it must carry the requested outcome.
+    terminal_action: TerminalAction = "fail" if effective_status == "error" else "cancel"
+    terminal_reason = (
+        (terminal_error or _SELF_REPORTED_ERROR)
+        if effective_status == "error"
+        else "user_cancelled"
+    )
 
     async def kill_and_deliver() -> dict[str, Any]:
         try:
@@ -240,6 +251,8 @@ async def terminate_agent_run(
                     kill_db,
                     signal_name=signal,
                     close_terminal=not debug,
+                    terminal_action=terminal_action,
+                    terminal_reason=terminal_reason,
                     terminal_services=getattr(runner, "terminal_services", None),
                 ),
             )

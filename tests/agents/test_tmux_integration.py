@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
@@ -14,8 +15,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import psutil
 import pytest
 
+from gobby.agents.tmux.launcher import INLINE_LAUNCH_LIMIT
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
@@ -235,6 +238,50 @@ async def test_agy_live_child_strips_denied_ambient_credentials(
     assert values.get("GOOGLE_APPLICATION_CREDENTIALS", "") == ""
     assert values.get("PATH")
     del quoted
+
+
+def _process_cmdline(pid: int) -> list[str]:
+    try:
+        return [str(part) for part in psutil.Process(pid).cmdline()]
+    except psutil.Error:
+        return []
+
+
+@pytest.mark.parametrize("shell", ["/bin/bash", "/bin/zsh"])
+@pytest.mark.parametrize("transport", ["inline", "launcher"])
+async def test_argv_spawn_pane_pid_is_the_launched_program(
+    tmux_manager: TmuxSessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    shell: str,
+    transport: str,
+) -> None:
+    """The recorded pane PID must pass the pane monitor's provider identity check."""
+    from gobby.agents.kill import pid_matches_agent_identity
+    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
+
+    if not Path(shell).is_file():
+        pytest.skip(f"{shell} is not installed")
+    # tmux runs pane commands with the $SHELL of the environment that starts its server.
+    monkeypatch.setenv("SHELL", shell)
+    session_id = str(uuid4())
+    padding = ["x" * INLINE_LAUNCH_LIMIT] if transport == "launcher" else []
+    command = [
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        "claude",
+        "--session-id",
+        session_id,
+        *padding,
+    ]
+    shell_cmd, extra_env = tmux_spawn_shell_and_env(command, {"PATH": os.environ["PATH"]}, None)
+    await tmux_manager.create_session(name=f"argv-{transport}", command=shell_cmd, env=extra_env)
+
+    info = await tmux_manager.get_session(f"argv-{transport}")
+    assert info is not None and info.pane_pid is not None
+    pane_pid = info.pane_pid
+    await _wait_for(lambda: _process_cmdline(pane_pid) == command)
+    assert await pid_matches_agent_identity(pane_pid, provider="claude", session_id=session_id)
 
 
 async def _spawn_gobby_terminal(

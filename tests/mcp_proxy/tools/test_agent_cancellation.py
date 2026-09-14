@@ -6,11 +6,12 @@ import asyncio
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.capture import CaptureStorage, _default_terminalize
 from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.mcp_proxy.tools.agent_cancellation import (
@@ -19,6 +20,7 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
     terminalize_killed_agent_run,
     terminate_agent_run,
 )
+from gobby.storage.agents import TerminalAction
 from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
 pytestmark = pytest.mark.unit
@@ -116,6 +118,113 @@ async def test_terminate_agent_run_reaps_sandbox_run_roots(
     assert not managed_root.exists()
     retained = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl"
     assert retained.read_text(encoding="utf-8") == '{"operation":"write"}\n'
+
+
+class _FirstTerminalWriteWinsStorage:
+    """Run storage whose terminal writes only transition a live run, like the hub CAS."""
+
+    def __init__(self, run: SimpleNamespace) -> None:
+        self.db = MagicMock()
+        self._run = run
+
+    def get(self, run_id: str) -> SimpleNamespace | None:
+        return self._run if run_id == self._run.id else None
+
+    def _transition(self, run_id: str, **fields: str | None) -> SimpleNamespace | None:
+        run = self.get(run_id)
+        if run is None or run.status not in ("pending", "running"):
+            return None
+        for name, value in fields.items():
+            setattr(run, name, value)
+        return run
+
+    def fail(self, run_id: str, *, error: str) -> SimpleNamespace | None:
+        return self._transition(run_id, status="error", error=error)
+
+    def cancel(self, run_id: str, *, terminal_reason: str | None = None) -> SimpleNamespace | None:
+        return self._transition(run_id, status="cancelled", terminal_reason=terminal_reason)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("effective_status", "expected_error", "expected_reason"),
+    [
+        ("error", "Blocked: identical denial repeated", None),
+        ("cancelled", None, "user_cancelled"),
+    ],
+)
+async def test_terminate_agent_run_commits_requested_outcome_at_terminal_close(
+    monkeypatch: pytest.MonkeyPatch,
+    effective_status: Literal["cancelled", "error"],
+    expected_error: str | None,
+    expected_reason: str | None,
+) -> None:
+    """The managed terminal close commits first, so it must record the requested outcome."""
+    run = SimpleNamespace(
+        id="run-123",
+        status="running",
+        error=None,
+        terminal_reason=None,
+        terminal_id="terminal-123",
+        child_session_id=None,
+        pid=None,
+        provider="grok",
+    )
+    storage = _FirstTerminalWriteWinsStorage(run)
+
+    async def close_managed_terminal(
+        closing_run: SimpleNamespace,
+        _db: object,
+        *,
+        terminal_action: TerminalAction,
+        terminal_reason: str | None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        # The fake implements only the fail/cancel CAS subset _default_terminalize uses.
+        _default_terminalize(
+            cast(CaptureStorage, storage), closing_run.id, terminal_action, terminal_reason
+        )
+        return {"success": True, "method": "runtime_terminate"}
+
+    monkeypatch.setattr("gobby.agents.kill._close_tmux_session", close_managed_terminal)
+    runner = SimpleNamespace(
+        run_storage=storage,
+        get_run=storage.get,
+        cancel_run=lambda run_id: storage.cancel(run_id, terminal_reason="user_cancelled"),
+        terminal_services=object(),
+    )
+
+    with (
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope",
+            new_callable=AsyncMock,
+        ),
+    ):
+        result = await terminate_agent_run(
+            run=run,
+            runner=runner,
+            agent_run_manager=storage,
+            db=None,
+            lifecycle_monitor=None,
+            completion_registry=None,
+            task_manager=None,
+            session_manager=None,
+            effective_status=effective_status,
+            terminal_error="Blocked: identical denial repeated",
+            cleanup_terminal_artifacts=AsyncMock(),
+        )
+
+    assert result["success"] is True
+    assert result["status"] == effective_status
+    assert (run.status, run.error, run.terminal_reason) == (
+        effective_status,
+        expected_error,
+        expected_reason,
+    )
 
 
 @pytest.mark.asyncio

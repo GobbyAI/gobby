@@ -56,7 +56,14 @@ def tmux_spawn_shell_and_env(
     auth_cli: str | None,
 ) -> tuple[str, dict[str, str]]:
     """Build the pane shell command and extra env TmuxSessionManager.create_session needs."""
-    shell_cmd = shlex.join(command) if len(command) > 1 else command[0]
+    if len(command) > 1:
+        # exec replaces the pane shell, so tmux's pane_pid (the recorded agent PID) is the
+        # program itself. Without it a sourced launcher or a non-exec'ing shell such as
+        # bash leaves pane_pid on the shell, whose argv fails the provider identity check.
+        shell_cmd = f"exec {shlex.join(command)}"
+    else:
+        # A single element is a caller-authored shell command line (web terminals).
+        shell_cmd = command[0]
     cli = auth_cli or _infer_auth_cli(command)
     denied = CLI_DENIED_AMBIENT_KEYS.get(cli or "", frozenset())
     unset_names = ["VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", *sorted(denied)]
