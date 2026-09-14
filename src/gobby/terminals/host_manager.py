@@ -128,12 +128,14 @@ class TerminalHostManager:
         orphaned = 0
         manager = self.terminal_manager
         epoch = self.host_epoch
+        pid = self.host_pid
+        running = self.running and isinstance(pid, int) and pid > 0 and self._pid_identity(pid)
         if manager is not None and epoch is not None:
             live = len(manager.list_live_by_epoch(epoch))
             orphaned = len(manager.list_orphaned_by_epoch(epoch))
         return {
             "enabled": self.enabled,
-            "running": self.running,
+            "running": running,
             "adopted": self.adopted,
             "host_epoch": self.host_epoch,
             "protocol_version": self.protocol_version,

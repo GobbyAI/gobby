@@ -125,6 +125,19 @@ def _host(
     )
 
 
+def test_health_state_observes_recorded_host_pid(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    client = FakeControlClient(host_pid=9100)
+    host = _host(tmp_path, TerminalManager(temp_db), client, pid_ok=False)
+    host.running = True
+    host.host_pid = client.host_pid
+
+    assert host.health_state()["running"] is False
+    assert host.running is True
+
+
 class _ControlledSleep:
     def __init__(self) -> None:
         self.calls: list[float] = []

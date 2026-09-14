@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeIs, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -893,15 +893,20 @@ async def test_terminal_client_stack_end_to_end(
         commit_deadline_ms=8000,
     )
     inflight_host = str(inflight_prepared["host_terminal_id"])
-    with (
-        patch.object(
-            control,
-            "read_payload",
-            new=AsyncMock(side_effect=ConnectionError("commit reply lost")),
-        ),
-        pytest.raises(CommitTransportError) as commit_error,
-    ):
-        await control.spawn_commit(inflight_id, inflight_id, 8000)
+    original_read_payload = control.read_payload
+
+    async def drop_commit_reply() -> dict[str, Any]:
+        await original_read_payload()
+        raise ConnectionError("commit reply lost")
+
+    reader_task = control._reader_task
+    assert reader_task is not None
+    reader_task.cancel()
+    await asyncio.gather(reader_task, return_exceptions=True)
+    with patch.object(control, "read_payload", new=drop_commit_reply):
+        control._reader_task = asyncio.create_task(control._reader_loop(control._generation))
+        with pytest.raises(CommitTransportError) as commit_error:
+            await control.spawn_commit(inflight_id, inflight_id, 8000)
     assert commit_error.value.request_written is True
     await control.close()
     control = await _open_control(socket_dir)

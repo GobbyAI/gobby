@@ -317,11 +317,14 @@ async def test_commit_transport_error_reports_written_state() -> None:
     assert before_write.value.request_written is False
 
     reader = asyncio.StreamReader()
-    reader.feed_eof()
     read_writer = _Writer()
     read_client = HostClient(reader, read_writer)
+    commit = asyncio.create_task(read_client.spawn_commit("terminal-2", "spawn-2", 30_000))
+    request = await read_writer.next_write()
+    assert request["method"] == "spawn_commit"
+    reader.feed_eof()
     with pytest.raises(CommitTransportError) as after_write:
-        await read_client.spawn_commit("terminal-2", "spawn-2", 30_000)
+        await commit
     assert after_write.value.request_written is True
     assert b'"commit_deadline_ms":30000' in read_writer.writes[0]
 
