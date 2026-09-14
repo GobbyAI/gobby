@@ -53,6 +53,7 @@ _UV_RUN_OPTIONS_WITH_VALUES = [
     "-p",
     "-w",
 ]
+_NPX_VALUELESS_OPTIONS = ["--no-install", "--no", "--yes", "-y"]
 WrapperKind = Literal["prefix", "delimiter", "command_string"]
 
 
@@ -102,6 +103,7 @@ class ValidationCommandWrapper(BaseModel):
     kind: WrapperKind = "prefix"
     delimiter: str = "--"
     strip_options_with_values: list[str] = Field(default_factory=list)
+    strip_options: list[str] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -199,7 +201,7 @@ def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
         _wrapper_rule("pipenv-run", "pipenv run", "prefix", ["pipenv run"]),
         _wrapper_rule("bundle-exec", "bundle exec", "prefix", ["bundle exec"]),
         _wrapper_rule("pnpm-exec", "pnpm exec", "prefix", ["pnpm exec"]),
-        _wrapper_rule("npx", "npx", "prefix", ["npx"]),
+        _wrapper_rule("npx", "npx", "prefix", ["npx"], strip_options=_NPX_VALUELESS_OPTIONS),
         _wrapper_rule("bunx", "bunx", "prefix", ["bunx"]),
         _wrapper_rule("timeout", "timeout", "delimiter", ["timeout"]),
         _wrapper_rule("env", "env", "delimiter", ["env"]),
@@ -751,6 +753,7 @@ def _wrapper_rule(
     *,
     delimiter: str = "--",
     strip_options_with_values: list[str] | None = None,
+    strip_options: list[str] | None = None,
 ) -> ValidationCommandWrapper:
     return ValidationCommandWrapper(
         id=wrapper_id,
@@ -759,6 +762,7 @@ def _wrapper_rule(
         prefixes=prefixes,
         delimiter=delimiter,
         strip_options_with_values=strip_options_with_values or [],
+        strip_options=strip_options or [],
     )
 
 
@@ -858,7 +862,7 @@ def _unwrap_matched_rule(
 ) -> tuple[list[list[str]], tuple[str, ...]] | None:
     if wrapper.kind == "prefix":
         remaining = tokens[len(prefix_tokens) :]
-        if wrapper.strip_options_with_values:
+        if wrapper.strip_options_with_values or wrapper.strip_options:
             remaining = _strip_wrapper_options(remaining, set(wrapper.strip_options_with_values))
         return [remaining], ()
 
@@ -883,7 +887,7 @@ def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str
         return False
     for prefix in matcher.prefixes:
         prefix_tokens = safe_split(prefix)
-        if not prefix_tokens or not _starts_with(tokens, prefix_tokens):
+        if not prefix_tokens or not _starts_with_command_prefix(tokens, prefix_tokens):
             continue
         if any(_tokens_include_arg(tokens, arg) for arg in matcher.forbidden_args_any):
             continue
@@ -908,14 +912,15 @@ def _matcher_requires_execution_confirmation(
     prefix_lengths = [
         len(prefix_tokens)
         for prefix in matcher.prefixes
-        if (prefix_tokens := safe_split(prefix)) and _starts_with(tokens, prefix_tokens)
+        if (prefix_tokens := safe_split(prefix))
+        and _starts_with_command_prefix(tokens, prefix_tokens)
     ]
     arguments = tokens[max(prefix_lengths, default=0) :]
     if any(_tokens_include_arg(arguments, arg) for arg in matcher.evidence_weakening_args_any):
         return True
     for prefix in matcher.evidence_weakening_bare_args_after:
         prefix_tokens = safe_split(prefix)
-        if not _starts_with(tokens, prefix_tokens):
+        if not _starts_with_command_prefix(tokens, prefix_tokens):
             continue
         remaining = tokens[len(prefix_tokens) :]
         if remaining and not remaining[0].startswith("-"):
@@ -961,12 +966,6 @@ def _starts_with_command_prefix(tokens: list[str], prefix: list[str]) -> bool:
 
 def _matches_command_token(token: str, expected: str) -> bool:
     return token == expected or ("/" not in expected and Path(token).name == expected)
-
-
-def _starts_with(tokens: list[str], prefix: list[str]) -> bool:
-    if len(tokens) < len(prefix):
-        return False
-    return tokens[: len(prefix)] == prefix
 
 
 def _wrapper_id_suffix(wrapper: str) -> str:

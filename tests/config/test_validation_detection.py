@@ -211,6 +211,31 @@ def test_uv_run_options_with_values_are_stripped_before_the_runner(options: str)
     assert match.normalized_argv == ("pytest", "tests/x.py", "-q")
 
 
+@pytest.mark.parametrize("flag", ["--no-install", "--no", "--yes", "-y"])
+def test_npx_valueless_flags_do_not_block_detection(flag: str) -> None:
+    match = classify_validation_command(f"npx {flag} vitest run src/hooks")
+
+    assert match is not None
+    assert match.matcher_id == "js-ts-tests"
+    assert match.categories == ("test",)
+    assert match.normalized_argv == ("vitest", "run", "src/hooks")
+    assert match.wrapper_chain == ("npx",)
+
+
+def test_path_qualified_local_binary_is_detected() -> None:
+    match = classify_validation_command("./node_modules/.bin/vitest run src/hooks")
+
+    assert match is not None
+    assert match.matcher_id == "js-ts-tests"
+    assert match.categories == ("test",)
+    assert match.normalized_argv == ("./node_modules/.bin/vitest", "run", "src/hooks")
+
+
+def test_path_qualified_non_validation_binary_is_not_detected() -> None:
+    assert classify_validation_command("./tools/deploy.sh") is None
+    assert classify_validation_command("./tools/deploy.sh run src/hooks") is None
+
+
 def test_default_wrapper_rules_apply_to_explicit_config() -> None:
     match = classify_validation_command(
         "rust-token-killer -- 'cargo check'", ValidationDetectionConfig()
