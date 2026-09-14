@@ -148,7 +148,9 @@ fn symbol_search(
     let mut query = SearchQuery::new(&selector.query, selector.limit);
     query.kind.clone_from(&selector.kind);
     query.language.clone_from(&selector.language);
-    query.paths.clone_from(&selector.paths);
+    // Evidence scopes are file or directory prefixes, but the symbol index
+    // post-filters by glob; expand them as the search commands do.
+    query.paths = crate::search::fts::expand_paths(&selector.paths);
     library
         .facts
         .search_symbols(&query)

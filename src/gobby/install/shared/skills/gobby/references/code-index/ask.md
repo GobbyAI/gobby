@@ -104,12 +104,13 @@ not invalidate the result. MCP never writes output files or exposes this option.
 ## Native evidence adapter
 
 `gcode evidence` is a model-free JSON adapter for exact source evidence. Supply
-one complete versioned request through `--request-json`. Evidence schema v1
-supports search, read, and graph operations against the resolved project index,
-with recorded commit/tree provenance.
-Use the generated request contract in `crates/gcode/src/evidence/contracts.rs`
-for supported selectors; interactive requests may omit binding and resolve it
-from the caller’s project. Do not invent hashes or IDs.
+one versioned request through `--request-json`; `gcode evidence --help` prints
+example requests. Evidence schema v1 supports search, read, and graph operations
+against the resolved project index, with recorded commit/tree provenance. A
+minimal symbol search is
+`{"schema_version":1,"operation":"search","search":{"lane":"symbol","query":"NAME"}}`.
+Search `paths` are file or directory scopes. Interactive requests may omit
+binding and resolve it from the caller’s project. Do not invent hashes or IDs.
 
 JSON output is required. `--allow-stale` is rejected.
 Honor response `complete`, `completeness`, `bounds`, warnings, and

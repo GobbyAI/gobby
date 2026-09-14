@@ -139,14 +139,16 @@ Unknown fields, operation tags, selector tags, and enum values are rejected as
 explicitly forbidden and returns `stale_admission_bypass_forbidden`—evidence
 never weakens exact-snapshot admission.
 
-Every request contains `schema_version: 1`, a complete `binding`, one flattened
-operation, `max_bytes` (default 16384), and an optional opaque `continuation`.
-The binding contains `project_id`, exact `commit_oid`, `tree_oid`,
-`inventory_digest`, and commit provenance: parent OIDs, comparison parent/kind,
-changed-path digest, and complete changed-path records. The CLI resolves the
-managed checkout selected by global `--project` (or cwd), prepares that exact
-commit from local Git objects, and compares the whole supplied binding to the
-prepared snapshot. A mismatch never falls back to HEAD or another project.
+Every request contains `schema_version: 1`, one flattened operation, `max_bytes`
+(default 16384), an optional opaque `continuation`, and an optional `binding` of
+`project_id`, exact `commit_oid`, and `tree_oid`. The CLI resolves the managed
+checkout selected by global `--project` (or cwd). An omitted binding is filled
+from that checkout's project identity and `HEAD`. The CLI prepares the bound
+commit from local Git objects and compares the whole binding to the prepared
+snapshot; a mismatch never falls back to HEAD or another project. A minimal
+request is
+`{"schema_version":1,"operation":"search","search":{"lane":"symbol","query":"NAME"}}`,
+and `gcode evidence --help` prints further examples.
 
 Operations and selector semantics are:
 
@@ -156,8 +158,8 @@ Operations and selector semantics are:
   emits one record per changed path (or one empty-change record).
 - `{"operation":"search","search":...}`: lanes are `symbol` (exact name or
   qualified name), `lexical_symbol`, `literal`, `regex`, `content`, and
-  `hybrid`. `paths` are safe snapshot-relative scopes; `kind` is valid only for
-  symbol lanes. Empty results carry
+  `hybrid`. `paths` are safe snapshot-relative file or directory scopes;
+  `kind` is valid only for symbol lanes. Empty results carry
   `search_absence_not_repository_negative`; they are not represented as proof
   of a repository-wide negative.
 - `{"operation":"graph","graph":...}`: queries are `callers`, `callees`,

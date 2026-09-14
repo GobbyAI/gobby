@@ -169,12 +169,18 @@ impl EvidenceFacts for FakeFacts {
 
     fn search_symbols(&self, query: &SearchQuery) -> anyhow::Result<FactPage<SymbolFact>> {
         let needle = query.text.to_lowercase();
+        // Mirror the index's glob post-filter so scope handling is exercised.
+        let patterns = crate::search::fts::compile_patterns(&query.paths)?;
         let mut items = self
             .symbols
             .iter()
             .filter(|symbol| {
                 (symbol.name.to_lowercase().contains(&needle)
                     || symbol.qualified_name.to_lowercase().contains(&needle))
+                    && (patterns.is_empty()
+                        || patterns
+                            .iter()
+                            .any(|pattern| pattern.matches(&symbol.file_path)))
                     && query.kind.as_ref().is_none_or(|kind| symbol.kind == *kind)
                     && query
                         .language
@@ -998,6 +1004,26 @@ fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
     assert_eq!(response.completeness, Completeness::TruncatedIndex);
     assert!(!response.complete);
     assert!(response.continuation.is_none());
+    Ok(())
+}
+
+#[test]
+fn symbol_search_honors_directory_scopes() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let library = EvidenceLibrary::new(
+        temporary.path(),
+        binding.clone(),
+        Arc::new(FakeFacts::for_source(&binding)),
+    )?;
+    for (scope, expected_items) in [("src", 1), ("src/lib.rs", 1), ("lib", 0)] {
+        let mut selector = search_selector(SearchLane::Symbol, "alpha");
+        selector.paths = vec![scope.to_string()];
+        let response = library.query(request(
+            &binding,
+            EvidenceOperation::Search { search: selector },
+        ))?;
+        assert_eq!(response.items.len(), expected_items, "scope {scope}");
+    }
     Ok(())
 }
 

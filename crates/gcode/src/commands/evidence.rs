@@ -12,6 +12,12 @@ use crate::evidence::{
 use crate::output::{self, Format};
 use crate::vector::code_symbols::{audited_semantic_search, collection_name};
 
+fn request_recovery(action: &str) -> String {
+    format!(
+        r#"{action} with --request-json, for example {{"schema_version":1,"operation":"search","search":{{"lane":"symbol","query":"NAME"}}}}; run gcode evidence --help for more examples"#
+    )
+}
+
 pub(crate) fn preflight(
     request_json: &str,
     format: Format,
@@ -22,9 +28,7 @@ pub(crate) fn preflight(
         serde_json::from_str(request_json).map_err(|error| CliError {
             code: "invalid_evidence_request",
             message: format!("invalid evidence request JSON: {error}"),
-            recovery: Some(
-                "provide one complete evidence schema v1 request with --request-json".to_string(),
-            ),
+            recovery: Some(request_recovery("provide one evidence schema v1 request")),
             exit_status: 2,
         })?;
 
@@ -56,9 +60,9 @@ pub(crate) fn preflight(
     let request = serde_json::from_value(document).map_err(|error| CliError {
         code: "invalid_evidence_request",
         message: format!("invalid evidence request JSON: {error}"),
-        recovery: Some(
-            "provide a valid evidence schema v1 request with --request-json".to_string(),
-        ),
+        recovery: Some(request_recovery(
+            "provide a valid evidence schema v1 request",
+        )),
         exit_status: 2,
     })?;
 
