@@ -16,6 +16,9 @@ After loading, reconsider the blocked command using the guidance. Use `gcode` fo
 supported search, navigation, and source retrieval. Use raw tools when `gcode`
 cannot adequately serve the operation, and state the reason before falling back.
 Ordinary turns do not repeat the warning; clear or compact resets the teaching gate.
+Once loaded, source reads over 40 lines redirect to `gcode outline`, then
+`gcode symbol-at path/to/file:line`. A failed gcode call on that file, or a
+typed outage, reopens the read for the turn.
 
 | Topic | Load when |
 | --- | --- |

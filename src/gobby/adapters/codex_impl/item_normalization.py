@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.adapters.codex_impl.execution_chain import (
@@ -69,6 +71,7 @@ _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
 )
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_SESSION_RE = re.compile(r"\bsession_id\s*:\s*(\"(?:\\.|[^\"\\])*\"|-?\d+)")
+_CODEX_LOGIN_SHELLS = frozenset({"bash", "sh", "zsh"})
 
 
 def compose_mcp_tool_name(server: str, tool: str) -> str:
@@ -262,6 +265,27 @@ def looks_like_tool_item(item: dict[str, Any]) -> bool:
     return any(field in item for field in toolish_fields)
 
 
+def codex_command_input(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose the model's shell script as tool input, not Codex's login-shell argv.
+
+    Codex reports `/bin/zsh -lc '<script>'`; command rules must see the script itself.
+    """
+    command = payload.get("parsedCmd") or payload.get("command")
+    if not isinstance(command, str) or not command:
+        return {}
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return {"command": command}
+    if (
+        len(argv) == 3
+        and argv[0].rsplit("/", 1)[-1] in _CODEX_LOGIN_SHELLS
+        and argv[1] in {"-c", "-lc"}
+    ):
+        return {"command": argv[2]}
+    return {"command": command}
+
+
 def build_tool_event_data(
     item: dict[str, Any],
     *,
@@ -301,6 +325,7 @@ def build_tool_event_data(
             item_data["tool_input"] = item_data["input"]
 
     if item_type == "commandExecution":
+        item_data.setdefault("tool_input", codex_command_input(item_data))
         item_data["tool_response"] = {
             "output": item_data.get("aggregatedOutput"),
             "exitCode": item_data.get("exitCode"),

@@ -14,6 +14,7 @@ from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.item_normalization import (
+    codex_command_input,
     parse_mcp_arguments,
 )
 from gobby.agents.local_model import LocalModelError, ensure_local_model
@@ -569,10 +570,7 @@ class CodexWebChatBackend:
         payload.update(params)
 
         if item_type == "commandExecution":
-            command = payload.get("parsedCmd") or payload.get("command") or ""
-            if isinstance(command, str):
-                return "Bash", {"command": command}
-            return "Bash", {}
+            return "Bash", codex_command_input(payload)
 
         if item_type == "fileChange":
             changes = payload.get("changes")

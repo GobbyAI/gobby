@@ -1,6 +1,5 @@
 """Canonical tool metadata inference."""
 
-import json
 import os
 import posixpath
 import re
@@ -77,7 +76,6 @@ from gobby.hooks.code_navigation import (
 from gobby.hooks.code_navigation_recovery import (
     annotate_navigation,
     gcode_targets,
-    navigation_recovery,
 )
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
@@ -937,29 +935,3 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
         _setdefault_tool_input_paths(tool_input, canonical_file_paths)
 
     data.update(metadata)
-    data.pop("canonical_code_index_error", None)
-    if metadata.get("canonical_code_index_navigation") and _has_typed_gcode_error(data):
-        data["canonical_code_index_error"] = True
-    data["canonical_code_index_recovery"] = navigation_recovery(data)
-
-
-def _has_typed_gcode_error(data: Mapping[str, Any]) -> bool:
-    """Recognize gcode's one-line JSON error without trusting generic shell prose."""
-    output: Any = data.get("tool_output")
-    if isinstance(output, Mapping):
-        if isinstance(output.get("error"), str) and isinstance(output.get("message"), str):
-            return True
-        output = output.get("output")
-    if not isinstance(output, str):
-        return False
-
-    for line in output.splitlines():
-        try:
-            payload = json.loads(line)
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        if isinstance(payload.get("error"), str) and isinstance(payload.get("message"), str):
-            return True
-    return False

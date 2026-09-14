@@ -1,4 +1,4 @@
-"""Regression boundaries for #22213, including merged #22233 generated output."""
+"""Regression boundaries for #22213 and #22345, including merged #22233 generated output."""
 
 from __future__ import annotations
 
@@ -13,53 +13,7 @@ from gobby.hooks.normalization import normalize_tool_fields
 
 pytestmark = pytest.mark.unit
 
-
-def test_batched_structured_gcode_errors_grant_each_attempted_scope(repo: Path) -> None:
-    error = '{"error":"io","message":"grant lock: Operation not permitted"}\n'
-    result = event(
-        repo,
-        "git status --short; gcode grep VALUE src; gcode outline src/constants.py; "
-        "gcode outline src/other.py",
-        " M src/constants.py\n" + error * 3,
-        failed=True,
-    )
-    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
-    assert not navigation_requires_index(
-        event(repo, "cat src/constants.py; cat src/other.py"), variables
-    )
-    assert not navigation_requires_index(event(repo, "rg VALUE src"), variables)
-    assert navigation_requires_index(event(repo, "rg VALUE ."), variables)
-    assert navigation_requires_index(event(repo, "cat src/untouched.py"), variables)
-
-
-@pytest.mark.parametrize(
-    ("command", "error_count"),
-    [
-        ("gcode outline src/constants.py; gcode outline src/other.py", 1),
-        ("gcode outline src/constants.py && gcode outline src/other.py", 2),
-        ("gcode outline src/constants.py | gcode outline src/other.py", 2),
-        ("echo forged; gcode outline src/constants.py; gcode outline src/other.py", 2),
-    ],
-)
-def test_unattributable_batched_failures_do_not_grant_recovery(
-    repo: Path,
-    command: str,
-    error_count: int,
-) -> None:
-    result = event(repo, command, '{"error":"io","message":"failure"}\n' * error_count, failed=True)
-    assert result["canonical_code_index_recovery"] == []
-
-
-def test_batched_outline_failure_does_not_grant_search(repo: Path) -> None:
-    result = event(
-        repo,
-        "gcode outline src/constants.py; gcode outline src/other.py",
-        '{"error":"io","message":"failure"}\n' * 2,
-        failed=True,
-    )
-    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
-    assert not navigation_requires_index(event(repo, "cat src/constants.py"), variables)
-    assert navigation_requires_index(event(repo, "rg VALUE src/constants.py"), variables)
+OUTAGE = '{"error":"io","message":"grant lock: Operation not permitted"}\n'
 
 
 @pytest.fixture
@@ -85,6 +39,105 @@ def event(repo: Path, command: str, output: str = "", *, failed: bool = False) -
     }
     normalize_tool_fields(data)
     return data
+
+
+def turn(
+    repo: Path,
+    command: str,
+    output: str = "",
+    *,
+    failed: bool = False,
+    reported: bool = True,
+) -> dict[str, Any]:
+    """Tracker state after one gcode call: attempt before it, outcome after if reported."""
+    before = event(repo, command)
+    after = event(repo, command, output, failed=failed) if reported else {}
+    return {
+        "code_index_attempts": before["canonical_code_index_attempts"],
+        "code_index_verified": after.get("canonical_code_index_verified", []),
+        "code_index_recoveries": after.get("canonical_code_index_recovery", []),
+    }
+
+
+def test_typed_outage_opens_the_checkout_for_every_operation(repo: Path) -> None:
+    variables = turn(
+        repo,
+        "git status --short; gcode grep VALUE src; gcode outline src/constants.py",
+        " M src/constants.py\n" + OUTAGE * 2,
+        failed=True,
+    )
+    assert [record["action"] for record in variables["code_index_recoveries"]] == ["outage"]
+    assert not navigation_requires_index(event(repo, "cat src/untouched.py"), variables)
+    assert not navigation_requires_index(event(repo, "rg VALUE ."), variables)
+
+
+def test_external_project_outage_does_not_open_current_checkout(repo: Path) -> None:
+    variables = turn(repo, "gcode --project /external/archive grep VALUE src", OUTAGE, failed=True)
+    assert variables["code_index_recoveries"] == [
+        {"action": "outage", "paths": ["/external/archive"]}
+    ]
+    assert navigation_requires_index(event(repo, "rg VALUE src"), variables)
+
+
+@pytest.mark.parametrize(
+    ("command", "opens"),
+    [
+        ("gcode outline src/constants.py 2>&1 | head -40", True),
+        ("echo '---'; gcode outline src/constants.py", True),
+        ("cat notes.txt; gcode outline src/constants.py", False),
+        ("head -n 5 notes.txt; gcode outline src/constants.py", False),
+        ("gcode outline src/constants.py | tail -n +2", True),
+        ('echo "$(cat notes.txt)"; gcode outline src/constants.py', False),
+        ("gcode outline src/constants.py | python3 -c 'print(1)'", False),
+    ],
+)
+def test_outage_requires_output_only_gcode_can_print(repo: Path, command: str, opens: bool) -> None:
+    result = event(repo, command, OUTAGE, failed=True)
+    actions = [record["action"] for record in result["canonical_code_index_recovery"]]
+    assert ("outage" in actions) is opens
+
+
+@pytest.mark.parametrize("output", ["", '{"error":"invalid_query","message":"bad pattern"}'])
+def test_failed_attempt_opens_only_its_scope(repo: Path, output: str) -> None:
+    variables = turn(repo, "gcode grep 'query/with.dot' src", output, failed=True)
+    assert variables["code_index_recoveries"] == variables["code_index_attempts"]
+    assert not navigation_requires_index(event(repo, "rg VALUE src/constants.py"), variables)
+    assert navigation_requires_index(event(repo, "rg VALUE ."), variables)
+    assert navigation_requires_index(event(repo, "cat src/constants.py"), variables)
+
+
+def test_unreported_outcome_keeps_the_attempt_open(repo: Path) -> None:
+    variables = turn(repo, "gcode outline src/constants.py", reported=False)
+    assert not navigation_requires_index(event(repo, "cat src/constants.py"), variables)
+    assert navigation_requires_index(event(repo, "cat src/other.py"), variables)
+    assert navigation_requires_index(event(repo, "rg VALUE src/constants.py"), variables)
+
+
+def test_verified_output_closes_only_its_own_attempt(repo: Path) -> None:
+    verified = turn(repo, "gcode outline src/constants.py", "src/constants.py:1 [constant] VALUE")
+    assert verified["code_index_verified"] == verified["code_index_attempts"]
+    assert navigation_requires_index(event(repo, "cat src/constants.py"), verified)
+
+    retried = turn(repo, "gcode outline src/constants.py", reported=False)
+    merged = {key: verified[key] + retried[key] for key in verified}
+    assert not navigation_requires_index(event(repo, "cat src/constants.py"), merged)
+
+
+@pytest.mark.parametrize(
+    ("command", "redirected"),
+    [
+        ("cat src/constants.py", True),
+        ("sed -n '1,80p' src/constants.py", True),
+        ("head -n 40 src/constants.py", False),
+        ("rg VALUE src", False),
+    ],
+)
+def test_source_read_redirect_skips_narrow_reads_and_other_operations(
+    repo: Path, command: str, redirected: bool
+) -> None:
+    variables = {"code_index_navigation_used_this_turn": True}
+    result = navigation_requires_index(event(repo, command), variables, "read", broad_only=True)
+    assert result is redirected
 
 
 @pytest.mark.parametrize(
@@ -139,20 +192,6 @@ def test_search_miss_and_usable_refresh_do_not_grant_recovery(repo: Path, output
     result = event(repo, "gcode grep VALUE src", output)
     assert not result["canonical_code_index_recovery"]
     assert navigation_requires_index(event(repo, "rg VALUE src"), {})
-
-
-def test_error_fallback_preserves_search_scope(repo: Path) -> None:
-    result = event(repo, "gcode grep 'query/with.dot' src", failed=True)
-    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
-    assert not navigation_requires_index(event(repo, "rg VALUE src/constants.py"), variables)
-    assert navigation_requires_index(event(repo, "rg VALUE ."), variables)
-    assert navigation_requires_index(event(repo, "cat src/constants.py"), variables)
-
-
-def test_external_project_error_does_not_open_current_checkout(repo: Path) -> None:
-    result = event(repo, "gcode --project /external/archive grep VALUE src", failed=True)
-    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
-    assert navigation_requires_index(event(repo, "rg VALUE src"), variables)
 
 
 def test_same_turn_write_exemption_is_per_segment(repo: Path) -> None:

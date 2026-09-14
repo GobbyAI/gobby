@@ -376,10 +376,15 @@ invalidation returns HTTP `207`; inspect the body rather than treating every
 
 ## Rules
 
-Gobby includes a `require-code-index-skill` rule in the shared code-index
-ruleset. When active, it blocks first-pass code navigation reads and searches
-until the agent loads `gobby:references/code-index/overview.md`. The loaded guidance points agents
-to:
+Gobby's shared code-index ruleset teaches first, then redirects:
+
+- `require-code-index-skill` blocks the first raw code search, navigation, or
+  source read in a context until the agent loads
+  `gobby:references/code-index/overview.md`.
+- `prefer-gcode-for-source-read` then redirects broad source reads (more than
+  40 lines) to `gcode outline` followed by `gcode symbol-at`.
+
+The loaded guidance points agents to:
 
 ```bash
 gcode grep "pattern" [PATH...] -m 50
@@ -389,11 +394,28 @@ gcode search-content "query" [PATH...]
 gcode search-symbol "name" [PATH...]
 gcode search "concept" [PATH...]
 gcode outline path/to/file
+gcode symbol-at path/to/file:line
 gcode grep '^#{1,6} ' path/to/file.md -m 200
 gcode symbol <id>
 gcode callers <symbol_name>
 gcode usages <symbol_name>
 ```
+
+Both rules fail open when `gcode` cannot serve the request:
+
+- A gcode call records its scope before it runs. A raw read of that file stays
+  allowed for the turn unless the call returns output with no error. This
+  covers providers that never report a failure: Droid emits no hook for a
+  nonzero exit, and AGY's post-tool hook carries no output.
+- A reported gcode failure opens the scope it attempted for the rest of the
+  turn, even without a pre-tool hook (Codex app-server reports auto-approved
+  commands only on completion).
+- A typed outage error (such as `schema_mismatch`, `daemon_required`, `io`, or
+  `checkout_required`) opens raw navigation of that checkout for the turn. It
+  counts only when every other command in the same shell call is `git status`,
+  a plain `echo`, or `head`/`tail` trimming piped output, so no other output can
+  forge it.
+- An outline that finds no symbols opens reads of that file.
 
 Rules are runtime state, not just template files. Check installed rule state in
 the rules engine before claiming a rule is disabled.

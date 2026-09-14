@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 CONSECUTIVE_TOOL_BLOCK_RULE = "consecutive-tool-block"
 _CODE_INDEX_REMEDIATION_RULES = {
     "require-code-index-skill",
+    "prefer-gcode-for-source-read",
 }
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
 _ACTION_WORD_RE = re.compile(

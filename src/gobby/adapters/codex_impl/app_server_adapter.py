@@ -24,6 +24,9 @@ from gobby.adapters.codex_impl.item_normalization import (
     build_tool_event_data as _shared_build_tool_event_data,
 )
 from gobby.adapters.codex_impl.item_normalization import (
+    codex_command_input as _shared_codex_command_input,
+)
+from gobby.adapters.codex_impl.item_normalization import (
     compose_mcp_tool_name as _shared_compose_mcp_tool_name,
 )
 from gobby.adapters.codex_impl.item_normalization import (
@@ -550,9 +553,7 @@ class CodexAdapter(BaseAdapter):
             original_tool = "commandExecution"
             tool_name = self.normalize_tool_name(original_tool)
             data["tool_name"] = tool_name
-            data["tool_input"] = approval_payload.get(
-                "parsedCmd", approval_payload.get("command", "")
-            )
+            data["tool_input"] = _shared_codex_command_input(approval_payload)
         elif item_type == "fileChange":
             original_tool = "fileChange"
             tool_name = "Write"

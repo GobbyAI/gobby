@@ -363,7 +363,6 @@ class TestTranslateToHookEvent:
         assert event.cwd is None
         assert event.data == {
             "canonical_code_navigation_segments": [],
-            "canonical_code_index_recovery": [],
         }
 
     def test_none_input_data(self) -> None:
@@ -373,7 +372,6 @@ class TestTranslateToHookEvent:
         assert event.session_id == ""
         assert event.data == {
             "canonical_code_navigation_segments": [],
-            "canonical_code_index_recovery": [],
         }
 
     def test_session_end(self) -> None:
@@ -780,7 +778,6 @@ class TestNormalizeEventData:
         result = adapter._normalize_event_data({})
         assert result == {
             "canonical_code_navigation_segments": [],
-            "canonical_code_index_recovery": [],
         }
 
     def test_original_dict_not_mutated(self) -> None:

@@ -16,6 +16,7 @@ from gobby.hooks._path_scope import (
     current_tool_cwd,
     resolve_tool_path,
 )
+from gobby.hooks.tool_outcomes import tool_outcome_from_data
 
 # Gcode's fixed directory exclusions (index/indexer/util.rs). Build/dist are
 # root-only there; nested generated output is recognized through Git below.
@@ -38,6 +39,38 @@ _INDEX_EXCLUDED_DIRS = frozenset(
         ".cache",
     }
 )
+# Failures raised before gcode consults the index: gcore GrantError::cli_code
+# (crates/gcore/src/grant/mod.rs) and checkout resolution (crates/gcode/src/cli_error.rs).
+# Every navigation in that checkout fails the same way until the environment is repaired.
+_OUTAGE_ERROR_CODES = frozenset(
+    {
+        "daemon_required",
+        "expired",
+        "schema_mismatch",
+        "deployment_mismatch",
+        "api_contract_mismatch",
+        "payload_skew",
+        "remote_endpoint",
+        "config_revision_mismatch",
+        "revoked",
+        "timeout",
+        "malformed",
+        "io",
+        "project_required",
+        "checkout_required",
+        "checkout_mismatch",
+    }
+)
+# Shell output carriers: Claude stdout/stderr and failure `error`, Codex and web-chat
+# `output`, Grok `output_for_prompt`, Droid chat `error.message`.
+_OUTPUT_TEXT_FIELDS = ("output", "stdout", "stderr", "output_for_prompt", "error", "message")
+_EMPTY_OUTLINE_DIAGNOSTICS = (
+    "file has no indexed symbols in current project:",
+    "file type has no AST parser support; `gcode outline` is AST-only:",
+    "file not indexed in current project:",
+)
+# Separator arguments that could print a forged JSON line through escapes or expansion.
+_SEPARATOR_UNSAFE_CHARS = frozenset("{\\$`")
 
 
 def gcode_targets(parts: list[str], command: str) -> list[str]:
@@ -182,115 +215,139 @@ def annotate_navigation(data: Mapping[str, Any], metadata: dict[str, Any]) -> No
     metadata["canonical_code_navigation_segments"] = segments
 
 
-def navigation_recovery(data: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Grant recovery only when the outcome is attributable to the requested scope."""
-    batched = _batched_error_recovery(data)
-    if batched:
-        return batched
-    if not data.get("canonical_code_index_navigation"):
-        return []
-    segments = data.get("canonical_code_navigation_segments") or []
-    if len(segments) != 1:
-        return []
-    segment = segments[0]
-    paths = segment.get("canonical_file_paths") or []
-    if not paths:
-        return []
-    failed = data.get("is_error") or data.get("canonical_code_index_error")
-    output = data.get("tool_output")
-    if isinstance(output, Mapping):
-        output = output.get("output", output)
-    text = output if isinstance(output, str) else json.dumps(output)
-    command = segment.get("canonical_code_index_command")
-    empty_outline = command == "gcode outline" and any(
-        line.startswith(diagnostic)
-        for line in text.splitlines()
-        for diagnostic in (
-            "file has no indexed symbols in current project:",
-            "file type has no AST parser support; `gcode outline` is AST-only:",
-            "file not indexed in current project:",
-        )
-    )
-    if command == "gcode outline" and not empty_outline:
-        try:
-            payload = json.loads(text)
-        except (ValueError, TypeError):
-            payload = None
-        empty_outline = isinstance(payload, dict) and payload.get("total") == 0
-    if not failed and not empty_outline:
-        return []
-    action = (
-        "enumerate" if command == "gcode tree" else segment.get("canonical_code_navigation_action")
-    )
-    return [{"action": action, "paths": paths}]
+def annotate_navigation_outcome(data: dict[str, Any]) -> None:
+    """Record gcode attempts, verified results, and scopes that fail open.
 
-
-def _batched_error_recovery(data: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Recognize one structured failure per gcode invocation in a sequential batch.
-
-    Gcode's failure contract is one JSON line per invocation. A failed aggregate
-    exit alone proves nothing about earlier segments. Permit status inspection as
-    the only non-gcode segment; arbitrary commands could manufacture error output.
+    Hooks cannot report every failure: Droid emits no hook for a nonzero exit and
+    AGY's PostToolUse carries no output. An attempted scope therefore stays open
+    until verified gcode output arrives. A reported failure opens its scope for the
+    turn, since Codex app-server raises no pre-tool event for auto-approved commands.
+    Typed outages open the whole checkout.
     """
-    tool_input = data.get("tool_input")
-    if not isinstance(tool_input, Mapping):
-        return []
-    command = tool_input.get("command") or tool_input.get("cmd")
-    if not isinstance(command, str):
-        return []
-    parsed = parse_shell_command(command)
-    if not parsed.operators or any(op not in {";", "\n"} for op in parsed.operators):
-        return []
-    gcode_count = 0
-    for part in parsed.segments:
-        if part and part[0] == "gcode":
-            gcode_count += 1
-        elif part[:2] != ("git", "status"):
-            return []
-    segments = data.get("canonical_code_navigation_segments") or []
-    if (
-        not gcode_count
-        or len(segments) != gcode_count
-        or any(not segment.get("canonical_code_index_navigation") for segment in segments)
+    for field in (
+        "canonical_code_index_attempts",
+        "canonical_code_index_verified",
+        "canonical_code_index_recovery",
     ):
-        return []
-    output = data.get("tool_output")
-    if isinstance(output, Mapping):
-        output = output.get("output")
-    if not isinstance(output, str):
-        return []
-    errors = 0
-    for line in output.splitlines():
+        data.pop(field, None)
+    segments = [
+        segment
+        for segment in data.get("canonical_code_navigation_segments") or []
+        if segment.get("canonical_code_index_navigation") and segment.get("canonical_file_paths")
+    ]
+    if not segments:
+        return
+    attempts = [_scope(segment) for segment in segments]
+    text = _output_text(data)
+    codes = _gcode_error_codes(text)
+    failed = bool(codes) or tool_outcome_from_data(data).succeeded is False
+    recovery: list[dict[str, Any]] = []
+    if _OUTAGE_ERROR_CODES.intersection(codes) and _output_is_gcode_only(data):
+        recovery = [{"action": "outage", "paths": _outage_roots(data, segments)}]
+    elif failed or (len(segments) == 1 and _is_empty_outline(segments[0], text)):
+        recovery = attempts
+    data["canonical_code_index_attempts"] = attempts
+    data["canonical_code_index_verified"] = [] if failed or not text.strip() else attempts
+    data["canonical_code_index_recovery"] = recovery
+
+
+def _scope(segment: Mapping[str, Any]) -> dict[str, Any]:
+    action = (
+        "enumerate"
+        if segment.get("canonical_code_index_command") == "gcode tree"
+        else segment.get("canonical_code_navigation_action")
+    )
+    return {"action": action, "paths": list(segment["canonical_file_paths"])}
+
+
+def _output_text(data: Mapping[str, Any]) -> str:
+    """Join shell output from every provider carrier into gcode's line contract."""
+    texts: list[str] = []
+    for value in (data.get("tool_output"), data.get("error"), data.get("error_details")):
+        if isinstance(value, str):
+            texts.append(value)
+        elif _is_gcode_error(value):
+            texts.append(json.dumps(value))
+        elif isinstance(value, Mapping):
+            texts.extend(
+                item for field in _OUTPUT_TEXT_FIELDS if isinstance(item := value.get(field), str)
+            )
+    return "\n".join(texts)
+
+
+def _is_gcode_error(payload: object) -> bool:
+    return (
+        isinstance(payload, Mapping)
+        and isinstance(payload.get("error"), str)
+        and isinstance(payload.get("message"), str)
+    )
+
+
+def _gcode_error_codes(text: str) -> list[str]:
+    """Return error codes from gcode's one-line JSON failure contract."""
+    codes: list[str] = []
+    for line in text.splitlines():
         try:
             payload = json.loads(line)
         except ValueError:
             continue
-        if (
-            isinstance(payload, dict)
-            and isinstance(payload.get("error"), str)
-            and isinstance(payload.get("message"), str)
-        ):
-            errors += 1
-        else:
-            return []
-    if errors != gcode_count:
-        return []
-    return [
-        {
-            "action": "enumerate"
-            if segment.get("canonical_code_index_command") == "gcode tree"
-            else segment.get("canonical_code_navigation_action"),
-            "paths": segment["canonical_file_paths"],
-        }
+        if _is_gcode_error(payload):
+            codes.append(payload["error"])
+    return codes
+
+
+def _output_is_gcode_only(data: Mapping[str, Any]) -> bool:
+    """Only gcode may print the lines that open a checkout; other output could forge them.
+
+    head/tail qualify only as filters (options and counts): a file operand prints file text.
+    """
+    tool_input = data.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
+    if not isinstance(command, str):
+        return False
+    return all(
+        part[0] == "gcode"
+        or part[:2] == ("git", "status")
+        or (
+            part[0] in {"head", "tail"}
+            and all(arg.startswith("-") or arg.lstrip("+").isdigit() for arg in part[1:])
+        )
+        or (part[0] == "echo" and not _SEPARATOR_UNSAFE_CHARS.intersection("".join(part[1:])))
+        for part in parse_shell_command(command).segments
+        if part
+    )
+
+
+def _outage_roots(data: Mapping[str, Any], segments: list[Mapping[str, Any]]) -> list[str]:
+    cwd = current_tool_cwd(data)
+    roots = {
+        resolve_tool_path(project, cwd)
+        if (project := segment.get("canonical_code_index_project"))
+        else current_project_root(data) or cwd
         for segment in segments
-        if segment.get("canonical_file_paths")
-    ]
+    }
+    return sorted(str(root) for root in roots if root is not None)
+
+
+def _is_empty_outline(segment: Mapping[str, Any], text: str) -> bool:
+    """A successful outline without symbols leaves Read as the only source view."""
+    if segment.get("canonical_code_index_command") != "gcode outline":
+        return False
+    if any(line.startswith(_EMPTY_OUTLINE_DIAGNOSTICS) for line in text.splitlines()):
+        return True
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("total") == 0
 
 
 def navigation_requires_index(
     data: Mapping[str, Any],
     variables: Mapping[str, Any],
     action: str | None = None,
+    *,
+    broad_only: bool = False,
 ) -> bool:
     """Every enforced segment must qualify for its own exemption or recovery."""
     segments = data.get("canonical_code_navigation_segments") or [data]
@@ -298,9 +355,12 @@ def navigation_requires_index(
         str(resolve_tool_path(path, current_tool_cwd(data)) or path)
         for path in variables.get("turn_written_paths", [])
     }
+    opened = _opened_scopes(variables)
     for segment in segments:
         operation = segment.get("canonical_code_navigation_action")
         if not operation or (action is not None and operation != action):
+            continue
+        if broad_only and not segment.get("canonical_code_navigation_broad"):
             continue
         if (
             segment.get("canonical_code_index_navigation")
@@ -314,7 +374,8 @@ def navigation_requires_index(
         ):
             continue
         if (
-            operation == "read"
+            not broad_only
+            and operation == "read"
             and segment.get("canonical_source_read_scope") == "line_range"
             and variables.get("code_index_navigation_used_this_turn")
         ):
@@ -322,19 +383,31 @@ def navigation_requires_index(
         paths = segment.get("canonical_file_paths") or []
         if paths and set(paths).issubset(written):
             continue
-        recovered = {
-            path
-            for record in variables.get("code_index_recoveries", [])
-            if isinstance(record, Mapping) and record.get("action") == operation
-            for path in record.get("paths", [])
-        }
         if paths and all(
-            any(
-                path == target or (operation != "read" and Path(path).is_relative_to(target))
-                for target in recovered
-            )
-            for path in paths
+            any(_opens(record, operation, path) for record in opened) for path in paths
         ):
             continue
         return True
     return False
+
+
+def _opened_scopes(variables: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Recovered scopes plus gcode attempts that never produced verified output."""
+    attempts = variables.get("code_index_attempts") or []
+    verified = variables.get("code_index_verified") or []
+    unverified = [record for record in attempts if attempts.count(record) > verified.count(record)]
+    return [
+        record
+        for record in [*(variables.get("code_index_recoveries") or []), *unverified]
+        if isinstance(record, Mapping)
+    ]
+
+
+def _opens(record: Mapping[str, Any], operation: str, path: str) -> bool:
+    targets = record.get("paths") or []
+    if record.get("action") == "outage":
+        return any(Path(path).is_relative_to(target) for target in targets)
+    return record.get("action") == operation and any(
+        path == target or (operation != "read" and Path(path).is_relative_to(target))
+        for target in targets
+    )

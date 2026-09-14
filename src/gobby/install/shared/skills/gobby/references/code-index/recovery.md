@@ -65,6 +65,12 @@ new-inode installation with active owners; never replace their newer binary
 with another checkout's reduced surface. Destructive examples and recovery
 probes belong in isolated fixtures, not the running user's state.
 
+Navigation rules fail open without being asked. A typed outage from grant or
+checkout resolution (`schema_mismatch`, `daemon_required`, `io`,
+`checkout_required`, and the like) allows raw navigation of that checkout for
+the rest of the turn. A gcode call without verified output reopens the read it
+targeted. Retry the blocked raw command rather than repeating the failing call.
+
 Guide: [Recovery and maintenance](../../../../../../../../docs/guides/gcode-user-guide.md#project-management).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-14_

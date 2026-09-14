@@ -25,7 +25,10 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter, _get_daemon_machine_id
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.adapters.codex_impl.item_normalization import build_post_tool_lifecycle_payload
+from gobby.adapters.codex_impl.item_normalization import (
+    build_post_tool_lifecycle_payload,
+    codex_command_input,
+)
 from gobby.adapters.codex_impl.types import (
     CodexConnectionState,
     CodexItem,
@@ -1804,14 +1807,37 @@ class TestCodexAdapterTranslateToHookEvent:
         assert tool_response == {"output": "1 passed", "exitCode": 0, "status": "completed"}
 
     @pytest.mark.parametrize(
-        ("exit_code", "status", "output"),
-        [(0, "completed", "CODEX_ZERO"), (7, "failed", None)],
+        ("payload", "expected"),
+        [
+            (
+                {"command": "/bin/zsh -lc 'gcode outline src/app.py'"},
+                {"command": "gcode outline src/app.py"},
+            ),
+            ({"command": "bash -c 'rg -n x src'"}, {"command": "rg -n x src"}),
+            ({"parsedCmd": "ls -la", "command": "/bin/zsh -lc 'ls'"}, {"command": "ls -la"}),
+            ({"command": "python3 -c 'print(1)'"}, {"command": "python3 -c 'print(1)'"}),
+            ({"command": "/bin/zsh -lc 'unterminated"}, {"command": "/bin/zsh -lc 'unterminated"}),
+            ({}, {}),
+        ],
+    )
+    def test_command_input_unwraps_codex_login_shell(
+        self, payload: dict[str, str], expected: dict[str, str]
+    ) -> None:
+        assert codex_command_input(payload) == expected
+
+    @pytest.mark.parametrize(
+        ("exit_code", "status", "output", "command"),
+        [
+            (0, "completed", "CODEX_ZERO", "printf CODEX_ZERO"),
+            (7, "failed", None, '/bin/sh -c "exit 7"'),
+        ],
     )
     def test_live_command_execution_fixture_preserves_structured_outcome(
         self,
         exit_code: int,
         status: str,
         output: str | None,
+        command: str,
     ) -> None:
         native = next(
             event
@@ -1826,6 +1852,7 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.AFTER_TOOL
         assert hook_event.data["tool_name"] == "Bash"
+        assert hook_event.data["tool_input"]["command"] == command
         assert hook_event.data["tool_output"] == {
             "output": output,
             "exitCode": exit_code,
@@ -2085,7 +2112,7 @@ class TestCodexAdapterTranslateApprovalEvent:
         assert hook_event.event_type == HookEventType.BEFORE_TOOL
         assert hook_event.session_id == "thr-cmd"
         assert hook_event.data["tool_name"] == "Bash"
-        assert hook_event.data["tool_input"] == "rm -rf /"
+        assert hook_event.data["tool_input"]["command"] == "rm -rf /"
         assert hook_event.metadata["requires_response"] is True
         assert hook_event.wait_kind == "approval"
         assert hook_event.wait_token == "item-cmd"
@@ -5141,7 +5168,7 @@ class TestCodexWorkflowEnforcementIntegration:
         hook_event = mock_hm.handle.call_args[0][0]
         assert hook_event.event_type == HookEventType.BEFORE_TOOL
         assert hook_event.data["tool_name"] == "Bash"
-        assert hook_event.data["tool_input"] == "pip install malware"
+        assert hook_event.data["tool_input"]["command"] == "pip install malware"
         assert hook_event.source == SessionSource.CODEX
 
         # Verify decline response

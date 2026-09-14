@@ -10,6 +10,7 @@ from gobby.hooks._normalization_paths import (
     _normalize_file_change_input,
 )
 from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
+from gobby.hooks.code_navigation_recovery import annotate_navigation_outcome
 from gobby.hooks.tool_outcomes import normalize_tool_outcome
 
 _TOOL_INPUT_FIELD_ALIASES = (
@@ -136,6 +137,7 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
         )
     ):
         _detect_tool_error(data)
+        annotate_navigation_outcome(data)
 
     return data
 

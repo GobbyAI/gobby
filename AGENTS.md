@@ -73,7 +73,9 @@ how the system behaves so you can work with it instead of being surprised by it.
    truth for what's active. Check the installed row before declaring a rule enabled or
    disabled.
 9. Prefer `gcode` over grep/rg/sed/awk for code search and navigation — the code
-   index returns ranked, token-cheap results, and hooks redirect raw grep anyway.
+   index returns ranked, token-cheap results. Hooks teach it once per context,
+   redirect broad source reads to `gcode outline`/`gcode symbol-at`, and fail open
+   when gcode cannot serve the checkout.
 10. No backward compatibility. 0.5.0 has not shipped; there is nothing to preserve.
 11. Agent depth limit of 5 — no deeper recursive agent chains.
 12. Cross-session messaging goes through `gobby-agents:send_message`. Reserve

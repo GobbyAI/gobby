@@ -4011,9 +4011,12 @@ class TestRequireCodeIndexSkillStructure:
         _sync_bundled(db)
         expected = {
             "reset-code-index-navigation",
+            "track-code-index-attempts",
             "track-code-index-navigation",
+            "track-gcode-fail-open",
             "track-turn-written-paths",
             "note-code-index-preflight-fail-open",
+            "prefer-gcode-for-source-read",
         }
         rules = {row.name for row in manager.list_all()}
         assert expected.issubset(rules)
@@ -4022,12 +4025,13 @@ class TestRequireCodeIndexSkillStructure:
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
-        for rule_name in ("require-code-index-skill",):
+        for rule_name in ("require-code-index-skill", "prefer-gcode-for-source-read"):
             row = manager.get_by_name(rule_name)
             assert row is not None
             body = RuleDefinitionBody.model_validate(row.definition_json)
             assert body.when is not None
             assert "navigation_requires_index(event.data" in body.when
+            assert "not variables.get('code_index_preflight_warning')" in body.when
 
     def test_code_index_recovery_allowlist_names_installed_rules(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -4106,7 +4110,6 @@ class TestCodeIndexNavigationRules:
             "grep -R pattern src",
             "sed -n '1,5p' src/app.py",
             "awk 'NR < 5' src/app.py",
-            "cat src/app.py",
         )
         first = await engine.evaluate(
             self._normalized_bash_event(commands[0]), session_id=SESSION_ID, variables=variables
@@ -4254,6 +4257,12 @@ class TestCodeIndexNavigationRules:
                 variables=variables,
             )
             assert response.decision == "allow"
+        # The gcode call returned matches, so its attempt no longer holds search open.
+        gcode_outcome = self._normalized_bash_event('gcode grep "pattern" src || true')
+        gcode_outcome.data["tool_output"] = "src/app.py:1:pattern"
+        normalize_tool_fields(gcode_outcome.data)
+        gcode_outcome.event_type = HookEventType.AFTER_TOOL
+        await engine.evaluate(gcode_outcome, session_id=SESSION_ID, variables=variables)
 
         track_proxy_outcome(
             state_manager,
@@ -4801,7 +4810,7 @@ class TestCodeIndexNavigationRules:
         normalize_tool_fields(failure_data)
 
         assert failure_data["canonical_code_index_navigation"] is True
-        assert failure_data["canonical_code_index_error"] is True
+        assert failure_data["canonical_code_index_recovery"][0]["action"] == "outage"
         await RuleEngine(db).evaluate(
             self._event(HookEventType.AFTER_TOOL, failure_data),
             session_id=SESSION_ID,
@@ -4914,23 +4923,29 @@ class TestCodeIndexNavigationRules:
         assert tracker_body.effects[0].variable == "code_index_recoveries"
         assert "canonical_code_index_recovery" in str(tracker_body.effects[0].value)
 
-        recovery = manager.get_by_name("reset-code-index-navigation")
-        assert recovery is not None
-        recovery_body = RuleDefinitionBody.model_validate(recovery.definition_json)
-        assert recovery_body.effects is not None
-        clear_effects = [
-            effect for effect in recovery_body.effects if effect.variable == "code_index_recoveries"
+        attempts = manager.get_by_name("track-code-index-attempts")
+        assert attempts is not None
+        attempts_body = RuleDefinitionBody.model_validate(attempts.definition_json)
+        assert attempts_body.event.value == "before_tool"
+        assert attempts_body.effects is not None
+        assert attempts_body.effects[0].variable == "code_index_attempts"
+        # A blocked gcode call must not count as an attempt: later rules keep only blocks.
+        block_priorities = [
+            row.priority
+            for row in manager.list_all()
+            if (body := RuleDefinitionBody.model_validate(row.definition_json)).event.value
+            == "before_tool"
+            and any(effect.type == "block" for effect in body.resolved_effects)
         ]
-        assert len(clear_effects) == 1
-        assert clear_effects[0].value == []
+        assert max(block_priorities) < attempts.priority
 
-        for rule_name in ("require-code-index-skill",):
-            row = manager.get_by_name(rule_name)
-            assert row is not None
-            body = RuleDefinitionBody.model_validate(row.definition_json)
-            assert body.when is not None
-            assert "navigation_requires_index(event.data" in body.when
-            assert "not variables.get('code_index_preflight_warning')" in body.when
+        reset = manager.get_by_name("reset-code-index-navigation")
+        assert reset is not None
+        reset_body = RuleDefinitionBody.model_validate(reset.definition_json)
+        assert reset_body.effects is not None
+        cleared = {effect.variable: effect.value for effect in reset_body.effects}
+        for variable in ("code_index_recoveries", "code_index_attempts", "code_index_verified"):
+            assert cleared[variable] == []
 
     @pytest.mark.asyncio
     async def test_compound_search_after_pipeline_uses_persistent_shell_cwd(
@@ -5129,35 +5144,89 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db: HubDatabase) -> None:
+    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=False)
-        before = self._event(
-            HookEventType.BEFORE_TOOL,
-            {
-                "tool_name": "Bash",
-                "command": 'gcode grep "pattern" src -m 50',
-                "canonical_tool_kind": "search",
-                "canonical_code_index_navigation": True,
-                "canonical_code_navigation_action": "search",
-            },
-        )
-        after = self._event(
-            HookEventType.AFTER_TOOL,
-            {
-                "tool_name": "Bash",
-                "command": 'gcode grep "pattern" src -m 50',
-                "canonical_tool_kind": "search",
-                "canonical_code_index_navigation": True,
-                "is_error": False,
-            },
-        )
+        command = 'gcode grep "pattern" src -m 50'
+        before = self._normalized_bash_event(command, cwd=str(tmp_path), project_path=str(tmp_path))
+        after = self._normalized_bash_event(command, cwd=str(tmp_path), project_path=str(tmp_path))
+        after.data["tool_output"] = "src/app.py:1:pattern"
+        normalize_tool_fields(after.data)
+        after.event_type = HookEventType.AFTER_TOOL
 
         allowed = await RuleEngine(db).evaluate(before, session_id=SESSION_ID, variables=variables)
         await RuleEngine(db).evaluate(after, session_id=SESSION_ID, variables=variables)
 
         assert allowed.decision == "allow"
         assert variables["code_index_navigation_used_this_turn"] is True
+        assert variables["code_index_attempts"]
+        assert variables["code_index_verified"] == variables["code_index_attempts"]
+
+    @pytest.mark.asyncio
+    async def test_source_read_redirect_fails_open_after_unverified_gcode(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables(loaded=True)
+        root = str(tmp_path)
+
+        async def decide(command: str, output: str | None = None) -> str:
+            event = self._normalized_bash_event(command, cwd=root, project_path=root)
+            if output is not None:
+                event.data["tool_output"] = output
+                normalize_tool_fields(event.data)
+                event.event_type = HookEventType.AFTER_TOOL
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+            return response.decision
+
+        redirected = await engine.evaluate(
+            self._normalized_bash_event("cat src/app.py", cwd=root, project_path=root),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert redirected.decision == "block"
+        assert "[prefer-gcode-for-source-read]" in (redirected.reason or "")
+        for command in ("sed -n '1,40p' src/app.py", "rg pattern src", "gcode outline src/app.py"):
+            assert await decide(command) == "allow", command
+        assert await decide("cat src/app.py") == "allow"
+        assert await decide("cat src/other.py") == "block"
+
+        await decide("gcode outline src/app.py", "src/app.py:1-3 [function] main")
+        assert await decide("cat src/app.py") == "block"
+
+        await decide(
+            "gcode outline src/other.py",
+            '{"error":"schema_mismatch","message":"schema identity mismatch"}',
+        )
+        assert await decide("cat src/other.py") == "allow"
+
+    @pytest.mark.parametrize(
+        ("read_range", "decision"),
+        [({}, "block"), ({"offset": 10, "limit": 40}, "allow")],
+    )
+    @pytest.mark.asyncio
+    async def test_native_read_redirect_spares_short_ranges(
+        self, db: HubDatabase, tmp_path: Path, read_range: dict[str, int], decision: str
+    ) -> None:
+        _sync_bundled(db)
+        data: dict[str, Any] = {
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(tmp_path / "src/app.py"), **read_range},
+            "cwd": str(tmp_path),
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+
+        response = await RuleEngine(db).evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == decision
 
     @pytest.mark.asyncio
     async def test_direct_gcode_call_does_not_require_skill_loading(self, db: HubDatabase) -> None:
@@ -5180,6 +5249,11 @@ class TestCodeIndexNavigationRules:
             ("require-code-index-skill", 'gcode grep "pattern" src -m 50'),
             ("require-code-index-skill", "gcode tree src"),
             ("require-code-index-skill", "gcode outline src/gobby/workflows/engine/core.py"),
+            ("prefer-gcode-for-source-read", "gcode outline src/gobby/workflows/engine/core.py"),
+            (
+                "prefer-gcode-for-source-read",
+                "gcode symbol-at src/gobby/workflows/engine/core.py:10",
+            ),
         ],
     )
     @pytest.mark.asyncio

@@ -37,7 +37,6 @@ class TestTranslateToHookEvent:
         assert event.cwd == "/home/user/project"
         assert event.data == {
             **native_event["input_data"],
-            "canonical_code_index_recovery": [],
             "canonical_code_navigation_segments": [],
         }
 

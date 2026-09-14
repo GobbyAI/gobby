@@ -562,8 +562,8 @@ def build_condition_helpers(
             "paths_written_this_turn": lambda paths: paths_written_this_turn(
                 paths, _get_variables(ctx).get("turn_written_paths")
             ),
-            "navigation_requires_index": lambda data, action=None: navigation_requires_index(
-                data, _get_variables(ctx), action
+            "navigation_requires_index": lambda data, action=None, broad_only=False: (
+                navigation_requires_index(data, _get_variables(ctx), action, broad_only=broad_only)
             ),
             "shell_command_invokes_gcode": shell_command_invokes_gcode,
             "blocks_direct_provider_launch": blocks_direct_provider_launch,

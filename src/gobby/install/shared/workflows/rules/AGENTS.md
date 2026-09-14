@@ -17,7 +17,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `context-handoff` | `context-handoff/` | 7 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require the build/coordination reference for Gobby build work |
-| `code-index` | `code-index/` | 5 | Require the code-index/overview reference and prefer `gcode` for search and source navigation |
+| `code-index` | `code-index/` | 8 | Require the code-index/overview reference, redirect broad source reads to `gcode`, and fail open when gcode cannot serve the checkout |
 | `monolith-enforcement` | `monolith-enforcement/` | 4 | Require same-session decomposition before writes, commits, task transitions, and turn end |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |

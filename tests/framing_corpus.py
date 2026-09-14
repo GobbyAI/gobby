@@ -36,8 +36,6 @@ REDIRECT_RULES = frozenset(
         "no-git-stash",
         "no-git-stash-interactive",
         "no-invalid-git-flags",
-        "prefer-gcode-for-code-search",
-        "prefer-gcode-for-file-navigation",
         "prefer-gcode-for-source-read",
         "require-bash-skill",
         "require-build-coordinator-for-gobby-build",

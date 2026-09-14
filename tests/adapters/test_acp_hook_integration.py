@@ -211,7 +211,6 @@ class TestEdgeCases:
         assert event.session_id == ""
         assert event.data == {
             "canonical_code_navigation_segments": [],
-            "canonical_code_index_recovery": [],
         }
 
     def test_translate_none_values_in_event(self, adapter: QwenAdapter) -> None:

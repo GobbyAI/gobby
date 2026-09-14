@@ -6,7 +6,10 @@ tags: [code-index, gobby, default]
 # | same-repo primary/linked-worktree search | redirect | gcode indexes each checkout |
 # | simple find path/name/type/depth navigation | redirect | gcode tree |
 # | find live metadata/format/action predicates | allow | gcode must not emulate filesystem state/actions |
-# | sed/head/tail source range | teach | load reference once, then allow |
+# | source range of 40 lines or fewer | teach | load reference once, then allow |
+# | broad source read after reference load | redirect | gcode outline, then gcode symbol-at |
+# | read after an unverified gcode attempt on that file | allow | hooks cannot report every failure |
+# | any navigation after a typed gcode outage | allow | the checkout cannot be served this turn |
 # | wc byte/line counts | allow | exact current filesystem aggregate |
 # | read/search of a path written this turn | allow | verify current bytes before refresh |
 # | session scratchpad navigation | allow | scratchpads are never indexed |
@@ -28,6 +31,12 @@ rules:
       - type: set_variable
         variable: code_index_recoveries
         value: []
+      - type: set_variable
+        variable: code_index_attempts
+        value: []
+      - type: set_variable
+        variable: code_index_verified
+        value: []
 
   track-turn-written-paths:
     description: "Remember paths written during the current turn"
@@ -43,23 +52,38 @@ rules:
         variable: turn_written_paths
         value: "(variables.get('turn_written_paths') or []) + event.data.get('canonical_file_paths')"
 
+  track-code-index-attempts:
+    description: "Remember gcode scopes before execution, since some providers never report failure"
+    event: before_tool
+    enabled: true
+    # After every before_tool block rule (max 100): a blocked gcode call suppresses this effect.
+    priority: 101
+    when: >
+      variables.get('code_index_available')
+      and event.data.get('canonical_code_index_attempts')
+    effects:
+      - type: set_variable
+        variable: code_index_attempts
+        value: "(variables.get('code_index_attempts') or []) + event.data.get('canonical_code_index_attempts')"
+
   track-code-index-navigation:
-    description: "Remember successful gcode navigation for follow-up line context"
+    description: "Remember gcode navigation that produced verified output"
     event: after_tool
     enabled: true
     priority: 20
     when: >
       variables.get('code_index_available')
-      and event.data.get('canonical_code_index_navigation')
-      and not event.data.get('is_error')
-      and not event.data.get('canonical_code_index_error')
+      and event.data.get('canonical_code_index_verified')
     effects:
       - type: set_variable
         variable: code_index_navigation_used_this_turn
         value: true
+      - type: set_variable
+        variable: code_index_verified
+        value: "(variables.get('code_index_verified') or []) + event.data.get('canonical_code_index_verified')"
 
   track-gcode-fail-open:
-    description: "Remember path- and operation-scoped gcode recovery"
+    description: "Remember gcode outages, failed scopes, and zero-symbol outline scopes"
     event: after_tool
     enabled: true
     priority: 20
@@ -114,4 +138,18 @@ rules:
       and navigation_requires_index(event.data)
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, reconsider the blocked command using the guidance. Use `gcode` for supported search, navigation, and source retrieval. Use raw tools when `gcode` cannot adequately serve the operation, and state the reason before falling back. The teaching gate resets only after clear or compact. Prefer gcode by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
+        reason: '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, reconsider the blocked command using the guidance. Use `gcode` for supported search, navigation, and source retrieval. Use raw tools when `gcode` cannot adequately serve the operation, and state the reason before falling back. The teaching gate resets only after clear or compact. Prefer gcode by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`; source body `gcode symbol-at path/to/file:line`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
+
+  prefer-gcode-for-source-read:
+    description: "Redirect broad source reads to gcode after the code-index reference loads"
+    event: before_tool
+    enabled: true
+    priority: 31
+    when: >
+      variables.get('code_index_available')
+      and skill_loaded('gobby:references/code-index/overview.md')
+      and not variables.get('code_index_preflight_warning')
+      and navigation_requires_index(event.data, 'read', broad_only=True)
+    effects:
+      - type: block
+        reason: 'Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` for the symbol you need. Reads of 40 lines or fewer stay available. If a gcode call on that file fails or finds no symbols, retry this read; it stays allowed for the rest of the turn. A typed gcode outage error opens every read in the checkout for the turn.'

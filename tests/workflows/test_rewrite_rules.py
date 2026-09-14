@@ -158,7 +158,7 @@ class TestBundledBlockReasonFraming:
         reasons = _bundled_before_tool_block_reasons()
 
         assert reasons["require-code-index-skill"].startswith(
-            '{{ skill_fetch_directive("code-index") }}'
+            '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }}'
         )
         assert reasons["require-java-skill"].startswith('{{ skill_fetch_directive("java") }}')
         assert reasons["no-invalid-git-flags"].startswith("Run the command without `--no-stat`")
