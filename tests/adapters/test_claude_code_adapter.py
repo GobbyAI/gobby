@@ -361,14 +361,20 @@ class TestTranslateToHookEvent:
         assert event.session_id == ""
         assert event.machine_id is None
         assert event.cwd is None
-        assert event.data == {}
+        assert event.data == {
+            "canonical_code_navigation_segments": [],
+            "canonical_code_index_recovery": [],
+        }
 
     def test_none_input_data(self) -> None:
         adapter = ClaudeCodeAdapter()
         native = {"hook_type": "session-start", "input_data": None}
         event = adapter.translate_to_hook_event(native)
         assert event.session_id == ""
-        assert event.data == {}
+        assert event.data == {
+            "canonical_code_navigation_segments": [],
+            "canonical_code_index_recovery": [],
+        }
 
     def test_session_end(self) -> None:
         adapter = ClaudeCodeAdapter()
@@ -772,7 +778,10 @@ class TestNormalizeEventData:
     def test_empty_input_data(self) -> None:
         adapter = ClaudeCodeAdapter()
         result = adapter._normalize_event_data({})
-        assert result == {}
+        assert result == {
+            "canonical_code_navigation_segments": [],
+            "canonical_code_index_recovery": [],
+        }
 
     def test_original_dict_not_mutated(self) -> None:
         adapter = ClaudeCodeAdapter()
