@@ -3916,25 +3916,28 @@ class TestShutdownLoop:
             for active_patch in patches:
                 stack.enter_context(active_patch)
             runner = self._minimal_runner(mock_config)
-            stack.enter_context(
+            readiness = stack.enter_context(
                 patch(
                     "gobby.runner_service_readiness.require_managed_services_ready",
                     new=AsyncMock(side_effect=RuntimeError("stop after owner-loop wiring")),
                 )
             )
-            stack.enter_context(
+            rollback = stack.enter_context(
                 patch("gobby.runner_rollback.rollback_runner_resources_async", new=AsyncMock())
             )
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
             stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
 
-            with pytest.raises(SystemExit):
+            with pytest.raises(SystemExit) as exc_info:
                 await runner_lifecycle.run_daemon(
-                    runner,
+                    cast(GobbyRunner, runner),
                     ownership_resolution=FailOpenPidOwnership("test"),
                 )
 
+        assert exc_info.value.code == 1
         runner.wake_dispatcher.bind_owner_loop.assert_called_once_with(asyncio.get_running_loop())
+        readiness.assert_awaited_once_with(runner)
+        rollback.assert_awaited_once_with(runner)
 
     @pytest.mark.asyncio
     async def test_web_chat_runtime_starts_after_http_bind(self, mock_config) -> None:
