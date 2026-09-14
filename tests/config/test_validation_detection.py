@@ -222,6 +222,19 @@ def test_npx_valueless_flags_do_not_block_detection(flag: str) -> None:
     assert match.wrapper_chain == ("npx",)
 
 
+@pytest.mark.parametrize("options", ["-p vitest", "--package vitest", "--workspace web -y"])
+def test_npx_options_with_values_are_stripped_before_the_runner(options: str) -> None:
+    # A value-taking option stripped alone leaves its value where the runner should
+    # be, so the real test run is misread or never credited.
+    match = classify_validation_command(f"npx {options} vitest run src/hooks")
+
+    assert match is not None
+    assert match.matcher_id == "js-ts-tests"
+    assert match.categories == ("test",)
+    assert match.normalized_argv == ("vitest", "run", "src/hooks")
+    assert match.wrapper_chain == ("npx",)
+
+
 def test_path_qualified_local_binary_is_detected() -> None:
     match = classify_validation_command("./node_modules/.bin/vitest run src/hooks")
 

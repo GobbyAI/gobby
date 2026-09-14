@@ -5370,12 +5370,6 @@
           "secrecy": "none",
           "type": "array"
         },
-        "strip_options": {
-          "default": [],
-          "identity": false,
-          "secrecy": "none",
-          "type": "array"
-        },
         "strip_options_with_values": {
           "default": [],
           "identity": false,
