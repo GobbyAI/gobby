@@ -224,3 +224,108 @@ fn grep_scopes_chunks_to_local_machine_file_state() {
         "grep must return only the local machine's active content version"
     );
 }
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn grep_reports_incomplete_coverage_for_unindexed_path() {
+    let database_url = crate::test_env::postgres_test_database_url("grep PostgreSQL tests");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect grep PostgreSQL test database");
+    crate::schema::validate_runtime_schema(&mut conn).expect("grep test schema is valid");
+
+    let root = tempfile::tempdir().expect("create temp project root");
+    std::fs::create_dir_all(root.path().join("src")).expect("create src dir");
+    std::fs::write(root.path().join("src/lib.rs"), "grepmarker localonly\n")
+        .expect("write fixture file");
+
+    let project_id = unique_project_id("grep-coverage-gap");
+    let project_uuid = crate::db::id_param(&project_id).expect("project uuid");
+    ProjectCleanup::run(&mut conn, &project_uuid);
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_uuid,
+    };
+
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&project_uuid],
+    )
+    .expect("insert project");
+
+    let local_machine = crate::db::id_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    )
+    .expect("local machine uuid");
+    let root_path = root.path().to_string_lossy().to_string();
+    insert_file_version(&mut conn, &project_uuid, "src/lib.rs", "hash-local");
+    insert_machine_state(
+        &mut conn,
+        &local_machine,
+        &project_uuid,
+        &root_path,
+        "src/lib.rs",
+        "hash-local",
+    );
+    insert_chunk_version(
+        &mut conn,
+        &project_uuid,
+        "src/lib.rs",
+        "grepmarker localonly",
+        "hash-local",
+    );
+
+    let ctx = Context {
+        database_url: database_url.clone(),
+        project_root: root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let missing = "not-indexed/mod.rs".to_string();
+    let uncovered = GrepOptions {
+        pattern: "grepmarker",
+        paths: std::slice::from_ref(&missing),
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: false,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+    let gap = grep_repo(&ctx, &mut conn, &uncovered).expect("grep unindexed path");
+    assert!(gap.matches.is_empty());
+    assert_eq!(
+        gap.coverage_gap.as_deref(),
+        Some(
+            "incomplete index coverage: no indexed files match paths not-indexed/mod.rs; run gcode index"
+        )
+    );
+
+    let indexed_path = "src/lib.rs".to_string();
+    let nomatch = GrepOptions {
+        pattern: "does-not-appear-in-chunk",
+        paths: std::slice::from_ref(&indexed_path),
+        ..uncovered
+    };
+    let covered = grep_repo(&ctx, &mut conn, &nomatch).expect("grep indexed path without matches");
+    assert!(covered.matches.is_empty());
+    assert_eq!(covered.coverage_gap, None);
+}
