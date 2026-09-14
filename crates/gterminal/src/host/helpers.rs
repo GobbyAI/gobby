@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use serde_json::{json, Map, Value};
 
+use super::backpressure::PushResult;
 use super::state::{Attachment, CommitState, Inner, ObserverBind};
 use crate::protocol::{
     FrameData, ObservationReason, ObservationState, ServerMessage, TerminalFrame, TITLE_MAX_BYTES,
@@ -135,7 +136,12 @@ pub fn truncate_title(text: &str) -> String {
 /// A synced attachment whose last committed frame equals `frame` sends
 /// nothing. The encoder commits only after a successful send, so a dropped
 /// delta marks the attachment desynced and the next frame is a full repaint.
-pub(crate) fn push_terminal_ansi(att: &mut Attachment, frame: &FrameData, seq: u64) -> bool {
+pub(crate) fn push_terminal_ansi(
+    att: &mut Attachment,
+    frame: &FrameData,
+    seq: u64,
+    cap: usize,
+) -> bool {
     if !att.desynced && att.encoder.is_current(frame) {
         return false;
     }
@@ -148,14 +154,30 @@ pub(crate) fn push_terminal_ansi(att: &mut Attachment, frame: &FrameData, seq: u
         full: encoded.full,
         bytes,
     });
-    match att.tx.try_send(msg) {
-        Ok(()) => {
+    match att.mailbox.try_push(&msg, cap) {
+        PushResult::Queued => {
             att.encoder.commit(frame.clone(), encoded);
             att.desynced = false;
             att.last_send = Instant::now();
             true
         }
-        Err(_) => {
+        PushResult::Overflow => {
+            let mut keyframe = att.encoder.encode(frame, true);
+            let keyframe_bytes = std::mem::take(&mut keyframe.bytes);
+            let keyframe_msg = ServerMessage::Terminal(TerminalFrame {
+                seq,
+                width: frame.width,
+                height: frame.height,
+                full: true,
+                bytes: keyframe_bytes,
+            });
+            att.mailbox.replace_with_keyframe(&keyframe_msg);
+            att.encoder.commit(frame.clone(), keyframe);
+            att.desynced = true;
+            att.last_send = Instant::now();
+            true
+        }
+        PushResult::Closed => {
             att.desynced = true;
             false
         }

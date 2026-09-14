@@ -1,12 +1,14 @@
 //! Read-only frame protocol on `gterm-frames.sock`.
 
 use std::io::{self, Cursor};
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+use super::backpressure::FrameMailbox;
 use super::embed::{self, AttachOutcome};
 use super::state::HostState;
 use crate::protocol::{
@@ -17,7 +19,24 @@ use crate::protocol::{
 
 const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn set_send_buffer(stream: &UnixStream, bytes: u32) {
+    let size = i32::try_from(bytes.max(256)).unwrap_or(i32::MAX);
+    // SAFETY: `stream` is a live Unix socket; `SO_SNDBUF` takes an `i32` whose
+    // storage outlives the call. Failure is ignored so a kernel that rejects the
+    // size still accepts the connection.
+    let _ = unsafe {
+        libc::setsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&size as *const i32).cast(),
+            std::mem::size_of::<i32>() as libc::socklen_t,
+        )
+    };
+}
+
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
+    set_send_buffer(&stream, state.config.delta_queue_bytes);
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut read_buffer = Vec::new();
@@ -99,7 +118,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     }
 
     let mut attachment_id: Option<u64> = None;
-    let mut out_rx: Option<tokio::sync::mpsc::Receiver<ServerMessage>> = None;
+    let mut out_rx: Option<FrameMailbox> = None;
     loop {
         tokio::select! {
             incoming = read_frame::<ClientMessage>(&mut reader, &mut read_buffer) => {
@@ -221,9 +240,26 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     tracing::debug!("frame connection sender closed");
                     break;
                 };
-                if let Err(error) = write_frame(&mut writer, &msg).await {
-                    tracing::debug!(%error, "frame connection write failed");
-                    break;
+                match tokio::time::timeout(state.config.lag_timeout(), write_frame(&mut writer, &msg)).await
+                {
+                    Ok(Ok(())) => {
+                        if let Some(mailbox) = out_rx.as_ref() {
+                            mailbox.note_drain();
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        tracing::debug!(%error, "frame connection write failed");
+                        break;
+                    }
+                    Err(_) => {
+                        if let Some(mailbox) = out_rx.as_ref() {
+                            mailbox.close_with(ServerMessage::Error {
+                                code: "lagged".into(),
+                                message: None,
+                            });
+                        }
+                        break;
+                    }
                 }
             }
         }
@@ -248,27 +284,23 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     .await;
 }
 
-async fn recv_opt(
-    rx: &mut Option<tokio::sync::mpsc::Receiver<ServerMessage>>,
-) -> Option<ServerMessage> {
+async fn recv_opt(rx: &mut Option<FrameMailbox>) -> Option<ServerMessage> {
     match rx.as_mut() {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
     }
 }
 
-async fn drain_ready(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    rx: &mut Option<tokio::sync::mpsc::Receiver<ServerMessage>>,
-) {
+async fn drain_ready(writer: &mut tokio::net::unix::OwnedWriteHalf, rx: &mut Option<FrameMailbox>) {
     let Some(rx) = rx.as_mut() else {
         return;
     };
-    while let Ok(message) = rx.try_recv() {
+    while let Some(message) = rx.try_pop() {
         if let Err(error) = write_frame(writer, &message).await {
             tracing::debug!(%error, "frame connection drain failed");
             break;
         }
+        rx.note_drain();
     }
 }
 

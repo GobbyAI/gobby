@@ -5,8 +5,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
-
+use super::backpressure::{FrameMailbox, PushResult};
 use super::poll::{
     capture_to_frame, classify_poll, geometry_oversize, numeric_format, parse_poll_batch,
     truncate_attach_history, PollClass, STDOUT_CAP,
@@ -14,14 +13,14 @@ use super::poll::{
 use super::state::{Attachment, CommitState, HostState, Identity, ObserverBind, TerminalSlot};
 use crate::protocol::{
     CursorState, ObservationReason, ObservationState, PaneLocator, RenderEncoding, ServerMessage,
-    TmuxClientIdentity, DELTA_QUEUE_ENTRIES, MAX_FRAME_SIZE,
+    TmuxClientIdentity, MAX_FRAME_SIZE,
 };
 
 pub struct AttachOutcome {
     pub attachment_id: u64,
     pub host_terminal_id: String,
     pub created: bool,
-    pub rx: mpsc::Receiver<ServerMessage>,
+    pub rx: FrameMailbox,
 }
 
 pub async fn attach_frame(
@@ -167,7 +166,8 @@ async fn attach_tmux(
     {
         return Err("capacity");
     }
-    let (tx, rx) = mpsc::channel(DELTA_QUEUE_ENTRIES);
+    let mailbox = FrameMailbox::new();
+    let cap = state.config.delta_queue_bytes as usize;
     let id = inner.next_attachment;
     inner.next_attachment += 1;
     inner.attachments.insert(
@@ -180,7 +180,7 @@ async fn attach_tmux(
             cols,
             scroll: 0,
             reservation_id: None,
-            tx: tx.clone(),
+            mailbox: mailbox.clone(),
             last_send: std::time::Instant::now(),
             desynced: true,
             delta_len: 0,
@@ -192,7 +192,7 @@ async fn attach_tmux(
     if let Some(slot) = inner.terminals.get_mut(&identity) {
         slot.user_attachments.insert(id);
         if let Some(history) = slot.history.clone() {
-            let _ = tx.try_send(history);
+            let _ = mailbox.try_push(&history, cap);
         }
         replay = slot.last_frame.clone().map(|frame| (frame, slot.last_seq));
     }
@@ -200,10 +200,10 @@ async fn attach_tmux(
         if let Some(att) = inner.attachments.get_mut(&id) {
             match encoding {
                 RenderEncoding::SemanticFrame => {
-                    let _ = att.tx.try_send(ServerMessage::Frame(frame));
+                    let _ = att.mailbox.try_push(&ServerMessage::Frame(frame), cap);
                 }
                 RenderEncoding::TerminalAnsi => {
-                    super::helpers::push_terminal_ansi(att, &frame, seq);
+                    super::helpers::push_terminal_ansi(att, &frame, seq, cap);
                 }
             }
         }
@@ -219,7 +219,7 @@ async fn attach_tmux(
                 .is_some_and(|l| l.locator_key() == key)
         }) {
             if let Some(history) = slot.history.clone() {
-                let _ = tx.try_send(history);
+                let _ = mailbox.try_push(&history, cap);
             }
         }
     }
@@ -227,7 +227,7 @@ async fn attach_tmux(
         attachment_id: id,
         host_terminal_id: host_id,
         created,
-        rx,
+        rx: mailbox,
     })
 }
 
@@ -268,12 +268,16 @@ async fn reap_observer(
         if let Some(slot) = inner.terminals.remove(&identity) {
             inner.by_host_id.remove(&slot.host_terminal_id);
             for att_id in slot.user_attachments {
-                inner.attachments.remove(&att_id);
+                if let Some(att) = inner.attachments.remove(&att_id) {
+                    att.mailbox.close();
+                }
             }
         }
     }
     for attachment_id in delivered_attachment_ids {
-        inner.attachments.remove(attachment_id);
+        if let Some(att) = inner.attachments.remove(attachment_id) {
+            att.mailbox.close();
+        }
     }
 }
 
@@ -562,6 +566,7 @@ async fn publish_frame(
     copy_mode: bool,
 ) {
     let mut inner = state.inner.lock().await;
+    let cap = state.config.delta_queue_bytes as usize;
     let (seq, ids) = {
         let Some(slot) = inner.terminals.values_mut().find(|slot| {
             slot.locator
@@ -594,14 +599,22 @@ async fn publish_frame(
                 match att.encoding {
                     RenderEncoding::SemanticFrame => ServerMessage::Frame(frame.clone()),
                     RenderEncoding::TerminalAnsi => {
-                        super::helpers::push_terminal_ansi(att, &frame, seq);
+                        super::helpers::push_terminal_ansi(att, &frame, seq, cap);
                         continue;
                     }
                 }
             };
-            if att.tx.try_send(msg).is_ok() {
-                att.desynced = false;
-                att.last_send = std::time::Instant::now();
+            match att.mailbox.try_push(&msg, cap) {
+                PushResult::Queued => {
+                    att.desynced = false;
+                    att.last_send = std::time::Instant::now();
+                }
+                PushResult::Overflow => {
+                    att.mailbox.replace_with_keyframe(&msg);
+                    att.desynced = true;
+                    att.last_send = std::time::Instant::now();
+                }
+                PushResult::Closed => {}
             }
         }
     }
@@ -627,7 +640,7 @@ async fn emit_code(state: &Arc<HostState>, key: &str, code: &str) {
     let ids: Vec<u64> = slot.user_attachments.iter().copied().collect();
     for id in ids {
         if let Some(att) = inner.attachments.get(&id) {
-            let _ = att.tx.try_send(ServerMessage::Error {
+            att.mailbox.force_push(ServerMessage::Error {
                 code: code.into(),
                 message: None,
             });
@@ -648,36 +661,26 @@ async fn emit_exit(state: &Arc<HostState>, key: &str) -> Vec<u64> {
         let recipients = slot
             .user_attachments
             .iter()
-            .filter_map(|id| inner.attachments.get(id).map(|att| (*id, att.tx.clone())))
+            .filter_map(|id| {
+                inner
+                    .attachments
+                    .get(id)
+                    .map(|att| (*id, att.mailbox.clone()))
+            })
             .collect::<Vec<_>>();
         (slot.host_terminal_id.clone(), recipients)
     };
     let mut delivered = Vec::with_capacity(recipients.len());
-    for (attachment_id, sender) in recipients {
-        let messages = [
-            ServerMessage::TerminalExited {
-                host_terminal_id: host_id.clone(),
-                exit_code: None,
-            },
-            ServerMessage::Error {
-                code: "observer_reaped".into(),
-                message: None,
-            },
-        ];
-        match sender.reserve_many(messages.len()).await {
-            Ok(permits) => {
-                for (permit, message) in permits.zip(messages) {
-                    permit.send(message);
-                }
-                delivered.push(attachment_id);
-            }
-            Err(_) => {
-                tracing::debug!(
-                    host_terminal_id = %host_id,
-                    "observer frame receiver closed before lifecycle delivery"
-                );
-            }
-        }
+    for (attachment_id, mailbox) in recipients {
+        mailbox.force_push(ServerMessage::TerminalExited {
+            host_terminal_id: host_id.clone(),
+            exit_code: None,
+        });
+        mailbox.force_push(ServerMessage::Error {
+            code: "observer_reaped".into(),
+            message: None,
+        });
+        delivered.push(attachment_id);
     }
     delivered
 }

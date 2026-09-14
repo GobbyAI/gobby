@@ -7,8 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{watch, Mutex};
 
+use super::backpressure::FrameMailbox;
 use super::config::HostConfig;
 use super::events::{EventReceiver, HostEvents};
 use super::helpers::{err, list_rows, s, spawn_fingerprint};
@@ -17,7 +18,7 @@ use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
 use crate::protocol::{
     validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
-    DELTA_QUEUE_ENTRIES, LIFECYCLE_RESERVED_SLOTS,
+    LIFECYCLE_RESERVED_SLOTS,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -102,7 +103,7 @@ pub struct Attachment {
     pub cols: u16,
     pub scroll: u32,
     pub reservation_id: Option<String>,
-    pub tx: mpsc::Sender<ServerMessage>,
+    pub mailbox: FrameMailbox,
     pub last_send: Instant,
     pub desynced: bool,
     pub delta_len: usize,
@@ -147,7 +148,7 @@ impl HostState {
         host_pid: u32,
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
-        let events = HostEvents::new(host_epoch.clone());
+        let events = HostEvents::new(host_epoch.clone(), config.event_queue_bytes as usize);
         Arc::new(Self {
             config,
             token,
@@ -411,7 +412,7 @@ impl HostState {
         encoding: RenderEncoding,
         rows: u16,
         cols: u16,
-    ) -> Result<(u64, mpsc::Receiver<ServerMessage>), &'static str> {
+    ) -> Result<(u64, FrameMailbox), &'static str> {
         let mut inner = self.inner.lock().await;
         let identity = inner
             .by_host_id
@@ -443,7 +444,7 @@ impl HostState {
                 return Err("invalid_reservation");
             }
         }
-        let (tx, rx) = mpsc::channel(DELTA_QUEUE_ENTRIES);
+        let mailbox = FrameMailbox::new();
         let id = inner.next_attachment;
         inner.next_attachment += 1;
         inner.attachments.insert(
@@ -456,7 +457,7 @@ impl HostState {
                 cols,
                 scroll: 0,
                 reservation_id: reservation_id.clone(),
-                tx,
+                mailbox: mailbox.clone(),
                 last_send: Instant::now(),
                 desynced: true,
                 delta_len: 0,
@@ -475,7 +476,7 @@ impl HostState {
                 slot.user_attachments.insert(id);
             }
         }
-        Ok((id, rx))
+        Ok((id, mailbox))
     }
 
     pub async fn detach(&self, attachment_id: u64) {
@@ -483,6 +484,7 @@ impl HostState {
         let Some(att) = inner.attachments.remove(&attachment_id) else {
             return;
         };
+        att.mailbox.close();
         if let Some(identity) = inner.by_host_id.get(&att.host_terminal_id).cloned() {
             if let Some(slot) = inner.terminals.get_mut(&identity) {
                 slot.user_attachments.remove(&attachment_id);

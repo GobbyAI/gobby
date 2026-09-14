@@ -164,15 +164,14 @@ fn process_exits_within(pid: u32, timeout: Duration) -> bool {
 
 #[test]
 fn host_exits_when_socket_dir_vanishes() {
-    let parent = tempfile::tempdir().expect("parent tempdir");
-    let socket_dir = parent.path().join("host");
-    let removed_dir = parent.path().join("removed-host");
-    std::fs::create_dir(&socket_dir).expect("create socket dir");
-    write_token(&socket_dir, "control-token-socket-dir");
-    let mut host = spawn_host(&socket_dir);
-    wait_socket(&socket_dir.join(CONTROL_SOCKET));
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_token(dir.path(), "control-token-socket-dir");
+    let mut host = spawn_host(dir.path());
+    wait_socket(&dir.path().join(CONTROL_SOCKET));
 
     let started = Instant::now();
+    let socket_dir = dir.keep();
+    let removed_dir = socket_dir.with_extension("removed");
     std::fs::rename(&socket_dir, &removed_dir).expect("remove live socket dir");
     assert!(
         wait_exit(&mut host, Duration::from_millis(250)).is_some(),
@@ -185,6 +184,7 @@ fn host_exits_when_socket_dir_vanishes() {
     );
     let log = std::fs::read_to_string(removed_dir.join("gterm.log")).expect("host log");
     assert!(log.contains("socket_dir_removed"), "{log}");
+    let _ = std::fs::remove_dir_all(&removed_dir);
 }
 
 #[test]
