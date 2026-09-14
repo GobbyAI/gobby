@@ -99,6 +99,14 @@ class GrokAdapter(ACPHookAdapter):
             and isinstance(tool_input.get("tool_input"), dict)
         ):
             data["tool_input"] = tool_input["tool_input"]
+        # toolResult is the tool's raw output: MCP results wrap the proxy's JSON
+        # text as {"type": "MCP", "output": {"OkayOutput": ...}}. Hand the text to
+        # shared normalization so rules and handoff delivery see the envelope.
+        tool_output = data.get("tool_output")
+        if isinstance(tool_output, dict) and tool_output.get("type") == "MCP":
+            output = tool_output.get("output")
+            if isinstance(output, dict) and isinstance(output.get("OkayOutput"), str):
+                data["tool_output"] = output["OkayOutput"]
         if "subagent_id" in data:
             data.setdefault("agent_id", data["subagent_id"])
         if "subagent_type" in data:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.adapters.grok import GrokAdapter
 from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.event_handlers import EventHandlers
@@ -145,6 +147,52 @@ def test_staged_handoff_accepts_real_set_handoff_result(
     assert dispatch.session_id == SESSION_ID
     assert dispatch.attempt_id == "b2db8b6dbe1543c4b891f6a36324eefe"
     assert dispatch.clear_session is False
+    assert _warnings(caplog) == []
+
+
+def test_grok_mcp_tool_result_returns_staged_dispatch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Grok's post_tool_use toolResult is the tool's raw output, so an MCP result
+    # arrives as {"type": "MCP", "output": {"OkayOutput": "<proxy JSON text>"}}
+    # (gobby#13288's set_handoff was staged but never delivered).
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    envelope = _staged_output(cli="grok")
+    event = GrokAdapter().translate_to_hook_event(
+        {
+            "hook_type": "post_tool_use",
+            "input_data": {
+                "hookEventName": "post_tool_use",
+                "sessionId": "grok-session",
+                "toolName": "gobby__call_tool",
+                "toolInput": {
+                    "tool_name": "gobby__call_tool",
+                    "tool_input": {
+                        "server_name": "gobby-sessions",
+                        "tool_name": "set_handoff",
+                        "arguments": {"clear_session": False},
+                    },
+                },
+                "toolResult": {
+                    "type": "MCP",
+                    "tool_name": "call_tool",
+                    "server_name": "gobby",
+                    "output": {"OkayOutput": json.dumps(envelope, indent=2)},
+                },
+            },
+        }
+    )
+    event.metadata["_platform_session_id"] = SESSION_ID
+
+    dispatch = staged_handoff_from_event(event)
+
+    assert event.data["tool_output"] == envelope
+    assert dispatch is not None
+    assert (dispatch.session_id, dispatch.attempt_id, dispatch.clear_session) == (
+        SESSION_ID,
+        ATTEMPT_ID,
+        False,
+    )
     assert _warnings(caplog) == []
 
 
