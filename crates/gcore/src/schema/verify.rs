@@ -265,7 +265,8 @@ fn normalize_function_definition(
 }
 
 // Normalize schema identifier tokens, never substrings of identifiers or quoted data.
-// Preserve formatting except established full-line SQL comments outside quoted text.
+// Preserve formatting except full-line SQL comments and leading body indentation outside
+// quoted text. Historical migrations indent the same source differently from the baseline.
 fn normalize_function_sql(
     value: &str,
     schema: &str,
@@ -294,12 +295,23 @@ fn normalize_function_sql_with_extensions(
     let mut line_start = 0;
     while i < bytes.len() {
         let start = i;
+        if strip_comments && i == line_start {
+            while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+                i += 1;
+            }
+            if i != start {
+                continue;
+            }
+        }
         if bytes[i..].starts_with(b"--") {
             let end = value[i..]
                 .find('\n')
                 .map_or(bytes.len(), |offset| i + offset);
-            if strip_comments && value[line_start..i].trim().is_empty() {
-                output.truncate(output.len() - (i - line_start));
+            if strip_comments
+                && value[line_start..i]
+                    .bytes()
+                    .all(|byte| matches!(byte, b' ' | b'\t'))
+            {
                 i = (end + 1).min(bytes.len());
                 line_start = i;
                 continue;

@@ -336,6 +336,44 @@ fn auth_function_catalog_is_schema_qualified_and_excludes_extensions() -> anyhow
 }
 
 #[test]
+fn verify_accepts_historical_auth_body_indentation() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    for (schema, auth_schema) in [
+        ("public", "gobby_agent_auth"),
+        ("history_hub", "history_hub_agent_auth"),
+    ] {
+        SchemaRunner::new(&mut client, schema)?.apply()?;
+        let definition: String = client
+            .query_one(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = $1 AND p.proname = 'resolve_tool_session'",
+                &[&auth_schema],
+            )?
+            .get(0);
+        let historical = definition
+            .replace("\n    ", "\n            ")
+            .replace("\n$function$", "\n            $function$");
+        assert_ne!(historical, definition);
+        client.batch_execute(&historical)?;
+        SchemaRunner::new(&mut client, schema)?.verify()?;
+        client.batch_execute("BEGIN")?;
+        client.batch_execute(&historical.replace("'active'", "'inactive'"))?;
+        let error = SchemaRunner::new(&mut client, schema)?
+            .verify()
+            .expect_err("quoted body changes still fail after indentation normalization");
+        assert!(error.to_string().contains("resolve_tool_session"));
+        client.batch_execute("ROLLBACK")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn verify_detects_auth_function_body_signature_and_security_drift() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

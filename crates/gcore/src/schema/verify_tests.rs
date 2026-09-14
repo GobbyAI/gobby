@@ -47,7 +47,9 @@ fn unicode_dollar_quotes_preserve_schema_names_and_comment_text() {
 #[test]
 fn argument_default_cannot_impersonate_the_function_body_wrapper() {
     let source = "CREATE OR REPLACE FUNCTION public.sample(value text DEFAULT 'first\nAS $fake$public.sample$fake$')\n RETURNS text\n LANGUAGE sql\nAS $function$\n SELECT value;\n$function$\n";
-    let expected = source.replacen("FUNCTION public.sample", "FUNCTION $schema.sample", 1);
+    let expected = source
+        .replacen("FUNCTION public.sample", "FUNCTION $schema.sample", 1)
+        .replace("\n SELECT value;", "\nSELECT value;");
     assert_eq!(
         normalize_function_definition(source, "public", "gobby_agent_auth", &Default::default()),
         expected.trim_end_matches('\n')
@@ -56,9 +58,15 @@ fn argument_default_cannot_impersonate_the_function_body_wrapper() {
 
 #[test]
 fn closing_body_delimiter_can_follow_sql_or_indentation() {
-    for body in [
-        " SELECT id FROM public.sample ",
-        "\n SELECT id FROM public.sample;\n    ",
+    for (body, normalized) in [
+        (
+            " SELECT id FROM public.sample ",
+            "SELECT id FROM $schema.sample ",
+        ),
+        (
+            "\n SELECT id FROM public.sample;\n    ",
+            "\nSELECT id FROM $schema.sample;\n",
+        ),
     ] {
         let source = format!(
             "CREATE OR REPLACE FUNCTION public.sample()\n RETURNS integer\n LANGUAGE sql\nAS $function${body}$function$\n"
@@ -70,7 +78,9 @@ fn closing_body_delimiter_can_follow_sql_or_indentation() {
                 "gobby_agent_auth",
                 &Default::default()
             ),
-            source.replace("public.", "$schema.").trim_end_matches('\n')
+            format!(
+                "CREATE OR REPLACE FUNCTION $schema.sample()\n RETURNS integer\n LANGUAGE sql\nAS $function${normalized}$function$"
+            )
         );
     }
 }
@@ -83,10 +93,26 @@ AS $function$\n  -- removable\n SELECT $text$tenant.sample\n-- data$text$ || 'te
 $function$\n";
     let expected = "CREATE OR REPLACE FUNCTION $auth_schema.sample()\n RETURNS text\n \
 LANGUAGE sql\n SECURITY DEFINER\n SET search_path TO '$auth_schema', 'pg_temp'\n\
-AS $function$\n SELECT $text$tenant.sample\n-- data$text$ || 'tenant.sample';\n\
+AS $function$\nSELECT $text$tenant.sample\n-- data$text$ || 'tenant.sample';\n\
 $function$";
     assert_eq!(
         normalize_function_definition(source, "tenant", "tenant_agent_auth", &Default::default()),
+        expected
+    );
+}
+
+#[test]
+fn body_indentation_is_harmless_only_outside_quoted_text() {
+    let source = "    SELECT 'first\n    string data', $é$first\n\t dollar data$é$, \"first\n  identifier\";\n    ";
+    let expected =
+        "SELECT 'first\n    string data', $é$first\n\t dollar data$é$, \"first\n  identifier\";\n";
+    assert_eq!(
+        normalize_function_sql(source, "public", "gobby_agent_auth", true),
+        expected
+    );
+    let changed = source.replace("    string data", "string data");
+    assert_ne!(
+        normalize_function_sql(&changed, "public", "gobby_agent_auth", true),
         expected
     );
 }
