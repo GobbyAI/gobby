@@ -17,7 +17,12 @@ from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import get_machine_id
 
-from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, logger
+from ._constants import (
+    INCOMPLETE_STEP_WORKFLOW_ERROR,
+    TERMINAL_AGENT_RUN_STATUSES,
+    AgentRunTerminalReason,
+    logger,
+)
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
@@ -326,6 +331,7 @@ class _AgentRunLifecycleMixin:
             UPDATE agent_runs
             SET status = 'success',
                 result = COALESCE(%s, result),
+                error = NULL,
                 terminal_reason = %s,
                 pending_terminal_action = NULL,
                 pending_terminal_reason = NULL,
@@ -336,9 +342,24 @@ class _AgentRunLifecycleMixin:
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s
-              AND status IN ('pending', 'running')
+              AND (
+                status IN ('pending', 'running')
+                OR (
+                    status = 'error'
+                    AND error LIKE %s
+                )
+              )
             """,
-            params=(result, terminal_reason, tool_calls_count, turns_used, now, now, run_id),
+            params=(
+                result,
+                terminal_reason,
+                tool_calls_count,
+                turns_used,
+                now,
+                now,
+                run_id,
+                f"{INCOMPLETE_STEP_WORKFLOW_ERROR}%",
+            ),
         )
 
     def fail(

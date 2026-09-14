@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.kill import inspect_agent_process_identity, pid_matches_agent_identity
 from gobby.agents.recovery_state import is_recovery_protected
+from gobby.agents.run_completion import bound_task_is_closed, cooperative_close_handoff_pending
 from gobby.agents.stall_classifier import StallStatus
 from gobby.terminals.lookup import active_terminal_for_run
 from gobby.utils.datetime import parse_stored_datetime
@@ -190,6 +191,10 @@ class AgentHealthMonitor:
 
         for run in runs:
             try:
+                if await self._run_db(
+                    cooperative_close_handoff_pending, self._db, run
+                ) or await self._run_db(bound_task_is_closed, self._db, run):
+                    continue
                 reason: str | None = None
                 is_timeout = False
                 timeout_age: float | None = None

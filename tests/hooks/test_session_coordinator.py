@@ -34,6 +34,7 @@ from gobby.sessions.processor_lifecycle import SessionFlushResult
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -59,6 +60,7 @@ def _stub_agent_sandbox_reaping(monkeypatch: pytest.MonkeyPatch) -> None:
 PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000001"
 PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
 CHILD_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000003"
+VALIDATOR_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000004"
 
 
 def _run_absent_tmux(command: list[str], **_kwargs: object) -> SimpleNamespace:
@@ -123,6 +125,30 @@ def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) 
             variables={},
         )
     )
+
+
+def _install_running_close_review(
+    db: HubDatabase,
+    *,
+    task: Any,
+    caller_session_id: str,
+    validator_run_id: str,
+) -> None:
+    store = TaskCloseReviewStore(db)
+    review, _created = store.create_or_get_active(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=caller_session_id,
+        close_arguments={"preview": True},
+        expected_task_updated_at=task.updated_at,
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
+    )
+    bound = store.bind_run(review.id, validator_run_id)
+    assert bound is not None
 
 
 class TestSessionRegistrationTracking:
@@ -1291,6 +1317,113 @@ class TestAgentRunCompletion:
         call_kwargs = mock_agent_run_manager.complete.call_args[1]
         assert call_kwargs["tool_calls_count"] == 10
         assert call_kwargs["turns_used"] == 5
+
+    def test_complete_agent_run_defers_close_review_handoff(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """SESSION_END must not fail a caller parked on its close-review validator."""
+        from gobby.storage.agents import LocalAgentRunManager
+
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        _create_session_row(temp_db, VALIDATOR_SESSION_ID)
+        _install_step_workflow(temp_db, CHILD_SESSION_ID, "implement")
+
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=PROJECT_ID,
+            title="Backend leaf",
+            task_type="bug",
+            category="code",
+            implementation_domain="backend",
+            validation_criteria="Closed after review.",
+        )
+        run_manager = LocalAgentRunManager(temp_db)
+        caller = run_manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="grok",
+            prompt="implement the leaf",
+            workflow_name="backend-developer",
+            agent_name="backend-developer",
+            child_session_id=CHILD_SESSION_ID,
+            task_id=task.id,
+        )
+        run_manager.start(caller.id)
+        validator = run_manager.create(
+            parent_session_id=CHILD_SESSION_ID,
+            provider="codex",
+            prompt="review close evidence",
+            agent_name="task-close-validator",
+            child_session_id=VALIDATOR_SESSION_ID,
+        )
+        run_manager.start(validator.id)
+        _install_running_close_review(
+            temp_db,
+            task=task,
+            caller_session_id=CHILD_SESSION_ID,
+            validator_run_id=validator.id,
+        )
+
+        coordinator = SessionCoordinator(
+            agent_run_manager=run_manager,
+            task_manager=task_manager,
+        )
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=caller.id,
+            summary_markdown="Waiting on close review.",
+            tool_call_count=12,
+            turn_count=8,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        updated = run_manager.get(caller.id)
+        assert updated is not None
+        assert updated.status == "running"
+        assert updated.error is None
+
+    def test_complete_agent_run_names_turn_ceiling_instead_of_workflow_error(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """A budget stop must not surface as a step-workflow error."""
+        from gobby.storage.agents import LocalAgentRunManager
+
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        _install_step_workflow(temp_db, CHILD_SESSION_ID, "implement")
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="grok",
+            prompt="implement the leaf",
+            workflow_name="backend-developer",
+            agent_name="backend-developer",
+            child_session_id=CHILD_SESSION_ID,
+        )
+        run_manager.start(run.id)
+
+        coordinator = SessionCoordinator(agent_run_manager=run_manager)
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=run.id,
+            summary_markdown="Stopped.",
+            tool_call_count=12,
+            turn_count=8,
+        )
+
+        coordinator.complete_agent_run(session, stop_reason="max_turns")
+
+        updated = run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert updated.error is not None
+        assert "turn ceiling" in updated.error
+        assert "stop_reason=max_turns" in updated.error
+        assert "before step workflow completed" not in updated.error
 
 
 class TestStartAgentRunIdempotency:
