@@ -31,6 +31,19 @@ def register_crud_tools(
         session_manager: SessionManager instance for session operations
     """
 
+    def _apply_task_refs(sessions: list[Any]) -> None:
+        """Populate claimed/created/closed refs with one lookup for the whole page."""
+        refs_by_session = session_manager.fetch_task_refs_by_session(
+            [session.id for session in sessions]
+        )
+        for session in sessions:
+            refs = refs_by_session.get(session.id)
+            if refs is None:
+                continue
+            session.claimed_task_refs = refs["claimed"]
+            session.created_task_refs = refs["created"]
+            session.closed_task_refs = refs["closed"]
+
     @registry.tool(
         name="get_session",
         description="Get session details by ID. Accepts <project>#N, local #N, UUID, or prefix. Use the session_id from your injected context.",
@@ -68,15 +81,10 @@ def register_crud_tools(
         if not session:
             return {"error": f"Session {session_id} not found", "found": False}
 
-        task_refs = session_manager.fetch_task_refs_by_session([session.id])[session.id]
-        session_data = session.to_dict()
-        session_data["claimed_task_refs"] = task_refs["claimed"]
-        session_data["created_task_refs"] = task_refs["created"]
-        session_data["closed_task_refs"] = task_refs["closed"]
-
+        _apply_task_refs([session])
         return {
             "found": True,
-            **session_data,
+            **session.to_dict(),
         }
 
     @registry.tool(
@@ -194,6 +202,11 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             source=source,
             machine_id=machine_id,
         )
+
+        # Same bulk join as GET /sessions and get_session — one query for the
+        # page, not one per row. Default empty lists on Session would otherwise
+        # serialize as an authoritative "no claims".
+        _apply_task_refs(sessions)
 
         # Detect likely misuse pattern: trying to find own session
         if status == "active" and limit == 1:
