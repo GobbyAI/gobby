@@ -33,3 +33,7 @@ test-group = 'serial-db'
 [[profile.default.overrides]]
 filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(control_protocol) | binary(frame_protocol) | binary(embed))'
 test-group = 'gterm-pty'
+
+[[profile.default.overrides]]
+filter = 'package(gobby-client) & test(late_control_reply_cannot_settle_a_newer_request)'
+slow-timeout = { period = "60s", terminate-after = 2 }

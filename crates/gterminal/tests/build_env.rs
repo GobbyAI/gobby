@@ -129,7 +129,8 @@ fn darwin_nonsimd_archive_links_every_member() {
     let prefix = temp.path().join("install");
     let cache = temp.path().join("cache");
     let version = fs::read_to_string(vendor.join("VERSION")).expect("vendor version");
-    let output = Command::new(std::env::var_os("ZIG").unwrap_or_else(|| "zig".into()))
+    let mut command = Command::new(std::env::var_os("ZIG").unwrap_or_else(|| "zig".into()));
+    command
         .current_dir(&vendor)
         .args([
             "build",
@@ -143,9 +144,11 @@ fn darwin_nonsimd_archive_links_every_member() {
         .arg("--prefix")
         .arg(&prefix)
         .arg("--cache-dir")
-        .arg(&cache)
-        .output()
-        .expect("build non-SIMD archive with Zig");
+        .arg(&cache);
+    if let Some(system_dir) = std::env::var_os("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {
+        command.arg("--system").arg(system_dir);
+    }
+    let output = command.output().expect("build non-SIMD archive with Zig");
     assert!(
         output.status.success(),
         "non-SIMD Zig build failed:\n{}",
