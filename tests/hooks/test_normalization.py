@@ -139,6 +139,46 @@ class TestSingleUnderscoreNormalization:
         assert data["mcp_tool"] == "create_memory"
 
 
+class TestDoubleUnderscoreNormalization:
+    """Tests for Grok/Qwen <server>__<tool> MCP normalization."""
+
+    def test_double_underscore_sets_canonical_tool_name(self) -> None:
+        data: dict[str, Any] = {"tool_name": "gobby__get_tool_schema"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "get_tool_schema"
+
+    def test_hyphenated_server_name(self) -> None:
+        data: dict[str, Any] = {"tool_name": "gobby-tasks__claim_task"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby-tasks__claim_task"
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "claim_task"
+
+    def test_call_tool_extracts_inner_route(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": "set_handoff",
+                "arguments": {},
+            },
+        }
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__call_tool"
+        assert result["mcp_server"] == "gobby-sessions"
+        assert result["mcp_tool"] == "set_handoff"
+
+    def test_native_dunder_and_canonical_names_unchanged(self) -> None:
+        for tool_name in ("Read", "__dunder", "mcp__gobby__list_tools"):
+            result = normalize_mcp_fields({"tool_name": tool_name})
+            assert result["tool_name"] == tool_name
+            if not tool_name.startswith("mcp__"):
+                assert "mcp_server" not in result
+                assert "mcp_tool" not in result
+
+
 class TestTripleUnderscoreNormalization:
     """Tests for droid <server>___<tool> MCP normalization."""
 

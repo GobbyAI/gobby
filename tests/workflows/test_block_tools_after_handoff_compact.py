@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -492,6 +493,61 @@ async def test_context_limit_allows_handoff_prerequisite_tools(
     )
 
     assert allowed.decision == "allow"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input", "expected"),
+    [
+        pytest.param(
+            "gobby__get_tool_schema",
+            {"server_name": "gobby-sessions", "tool_name": "feedback"},
+            "allow",
+            id="get-tool-schema",
+        ),
+        pytest.param(
+            "gobby__list_tools",
+            {"server_name": "gobby-sessions"},
+            "allow",
+            id="list-tools",
+        ),
+        pytest.param(
+            "gobby__call_tool",
+            {"server_name": "gobby-sessions", "tool_name": "set_handoff", "arguments": {}},
+            "allow",
+            id="set-handoff",
+        ),
+        pytest.param(
+            "gobby__call_tool",
+            {"server_name": "gobby-sessions", "tool_name": "feedback", "arguments": {}},
+            "allow",
+            id="feedback",
+        ),
+        pytest.param(
+            "gobby__call_tool",
+            {"server_name": "gobby-agents", "tool_name": "list_agents", "arguments": {}},
+            "block",
+            id="unrelated-agent-tool",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_context_limit_allows_grok_spelled_handoff_prerequisites(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    expected: str,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event(source=SessionSource.GROK))
+
+    data = normalize_tool_fields({"tool_name": tool_name, "tool_input": tool_input})
+    response = await handler._evaluate_rules(
+        _event(HookEventType.BEFORE_TOOL, source=SessionSource.GROK, data=data)
+    )
+
+    assert response.decision == expected
 
 
 @pytest.mark.asyncio
