@@ -6,9 +6,11 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -23,6 +25,7 @@ pytestmark = pytest.mark.unit
 # ids like SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+AGENTS_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
 
 
 @pytest.fixture
@@ -96,6 +99,18 @@ def _developer_workflow() -> dict[str, Any]:
             },
             {"name": "implement", "allowed_tools": "all"},
         ],
+    }
+
+
+def _bundled_backend_workflow() -> dict[str, Any]:
+    agent = yaml.safe_load((AGENTS_DIR / "backend-developer.yaml").read_text())
+    assert isinstance(agent, dict)
+    step_workflow = agent["step_workflow"]
+    return {
+        "name": agent["name"],
+        "variables": step_workflow["variables"],
+        "steps": step_workflow["steps"],
+        "exit_condition": step_workflow["exit_condition"],
     }
 
 
@@ -291,6 +306,92 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
     assert instance is not None
     assert instance.current_step == "implement"
     assert instance.variables["additional_skills_loaded"] is True
+
+
+@pytest.mark.parametrize(
+    ("current_step", "skill_list", "gate_variable", "skill", "released_step"),
+    [
+        (
+            "load_required_skills",
+            "required_skills",
+            "required_skills_loaded",
+            "restraint",
+            "load_additional_skills",
+        ),
+        (
+            "load_additional_skills",
+            "additional_skills",
+            "additional_skills_loaded",
+            "code-index",
+            "implement",
+        ),
+    ],
+)
+async def test_bundled_skill_gate_holds_until_skill_is_loaded(
+    db: HubDatabase,
+    current_step: str,
+    skill_list: str,
+    gate_variable: str,
+    skill: str,
+    released_step: str,
+) -> None:
+    workflow = _bundled_backend_workflow()
+    step_variables = dict(workflow["variables"])
+    step_variables[skill_list] = [skill]
+    step_variables[gate_variable] = False
+    if current_step == "load_required_skills":
+        step_variables["additional_skills"] = ["still-pending"]
+
+    instance_manager = _setup_workflow(
+        db,
+        current_step=current_step,
+        variables=step_variables,
+        workflow=workflow,
+    )
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {
+        "loaded_skills": ["unrelated"],
+        "loaded_skill_references": [],
+    }
+
+    await engine.evaluate(
+        _after_mcp_tool("gobby-skills", "get_skill", arguments={"name": "unrelated"}),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    instance = instance_manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == current_step
+    assert instance.variables[gate_variable] is False
+
+    variables["loaded_skills"].append(skill)
+    await engine.evaluate(
+        _after_mcp_tool("gobby-skills", "get_skill", arguments={"name": skill}),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    instance = instance_manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == released_step
+    assert instance.variables[gate_variable] is True
+
+
+def test_step_handler_expression_failure_logs_and_fails_closed(
+    db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = RuleEngine(db)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.workflows.engine.enforcement"):
+        result = engine._evaluate_step_handler_value(
+            "vars.value + missing_function()",
+            {"vars": {"value": 1}},
+            "set_variable",
+        )
+
+    assert result == (False, None)
+    assert "Failed to evaluate step set_variable handler value" in caplog.text
+    assert "Function not allowed: missing_function" in caplog.text
 
 
 @pytest.mark.asyncio

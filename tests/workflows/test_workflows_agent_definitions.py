@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,12 +12,22 @@ import yaml
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.skills.sync import get_bundled_skills_path
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.safe_evaluator import (
+    SafeExpressionEvaluator,
+    build_agent_workflow_allowed_funcs,
+    build_condition_helpers,
+)
 
 pytestmark = pytest.mark.unit
 
 AGENTS_DIR = get_bundled_agents_path()
 SKILLS_DIR = get_bundled_skills_path()
+PROJECT_ROOT = Path(__file__).parents[2]
+AGENT_WORKFLOW_EVALUATOR_PATHS = (
+    PROJECT_ROOT / "src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py",
+    PROJECT_ROOT / "src/gobby/workflows/engine/enforcement_handlers.py",
+    PROJECT_ROOT / "src/gobby/workflows/handler_route_lint.py",
+)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -51,6 +62,63 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
     value = agent.get("blocked_tools") or []
     assert isinstance(value, list)
     return set(value)
+
+
+def _bundled_agent_expression_function_names() -> set[str]:
+    names: set[str] = set()
+    for path in sorted(AGENTS_DIR.glob("*.yaml")):
+        workflow = _load_yaml(path).get("step_workflow") or {}
+        expressions: list[Any] = [workflow.get("exit_condition")]
+        for step in workflow.get("steps") or []:
+            expressions.extend(
+                transition.get("when") for transition in step.get("transitions") or []
+            )
+            for handler_key in ("on_mcp_before", "on_mcp_success", "on_mcp_error"):
+                for handler in step.get(handler_key) or []:
+                    expressions.extend((handler.get("when"), handler.get("value")))
+
+        for expression in expressions:
+            if not isinstance(expression, str):
+                continue
+            try:
+                tree = ast.parse(SafeExpressionEvaluator._normalize_expr(expression), mode="eval")
+            except SyntaxError:
+                continue
+            names.update(
+                node.func.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            )
+    return names
+
+
+def test_agent_workflow_allowlist_covers_bundled_expression_functions() -> None:
+    context: dict[str, Any] = {"vars": {}}
+    allowed_funcs = build_agent_workflow_allowed_funcs(context)
+    expression_function_names = _bundled_agent_expression_function_names()
+
+    assert expression_function_names
+    assert expression_function_names <= set(allowed_funcs)
+
+
+@pytest.mark.parametrize("path", AGENT_WORKFLOW_EVALUATOR_PATHS, ids=lambda path: path.name)
+def test_agent_workflow_evaluator_sites_use_shared_allowlist(path: Path) -> None:
+    tree = ast.parse(path.read_text())
+    evaluator_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "SafeExpressionEvaluator"
+    ]
+
+    assert evaluator_calls
+    for call in evaluator_calls:
+        keyword = next((item for item in call.keywords if item.arg == "allowed_funcs"), None)
+        allowed_funcs = keyword.value if keyword is not None else call.args[1]
+        assert isinstance(allowed_funcs, ast.Call)
+        assert isinstance(allowed_funcs.func, ast.Name)
+        assert allowed_funcs.func.id == "build_agent_workflow_allowed_funcs"
 
 
 def test_close_task_success_handlers_require_closed_output() -> None:

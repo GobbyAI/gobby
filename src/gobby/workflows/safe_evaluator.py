@@ -25,6 +25,7 @@ __all__ = [
     "ASSISTANT_RESPONSE_SCAN_LIMIT",
     "LazyBool",
     "SafeExpressionEvaluator",
+    "build_agent_workflow_allowed_funcs",
     "build_condition_helpers",
 ]
 
@@ -421,6 +422,28 @@ def _get_variables(context: dict[str, Any]) -> dict[str, Any]:
     return getattr(variables, "__dict__", {})
 
 
+def build_agent_workflow_allowed_funcs(
+    context: dict[str, Any],
+) -> dict[str, Callable[..., Any]]:
+    """Build the shared function allowlist for agent-workflow expressions."""
+
+    def _skill_loaded(name: str) -> bool:
+        return instruction_is_loaded(name, _get_variables(context))
+
+    return {
+        "len": len,
+        "bool": bool,
+        "str": str,
+        "int": int,
+        "list": list,
+        "dict": dict,
+        "any": any,
+        "all": all,
+        "isinstance": isinstance,
+        "skill_loaded": _skill_loaded,
+    }
+
+
 def _coerce_response_text(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -528,36 +551,31 @@ def build_condition_helpers(
     )
 
     ctx = context or {}
-    funcs: dict[str, Callable[..., Any]] = {
-        "len": len,
-        "bool": bool,
-        "str": str,
-        "int": int,
-        "list": list,
-        "dict": dict,
-        "any": any,
-        "all": all,
-        "normalize_path": lambda p: p.replace("\\", "/"),
-        "first_tdd_code_path": first_tdd_code_path,
-        "first_tdd_test_path": first_tdd_test_path,
-        "tdd_gate_open": tdd_gate_open,
-        "is_gobby_build_command": is_gobby_build_command,
-        "is_validation_command": is_validation_command,
-        "paths_written_this_turn": lambda paths: paths_written_this_turn(
-            paths, _get_variables(ctx).get("turn_written_paths")
-        ),
-        "navigation_requires_index": lambda data, action=None: navigation_requires_index(
-            data, _get_variables(ctx), action
-        ),
-        "shell_command_invokes_gcode": shell_command_invokes_gcode,
-        "blocks_direct_provider_launch": blocks_direct_provider_launch,
-        "task_commit_project_path_allowlist_violation": (
-            task_commit_project_path_allowlist_violation
-        ),
-        "touches_claude_memory_path": touches_claude_memory_path,
-        "touches_docker_policy_path": touches_docker_policy_path,
-        "touches_ui_design_path": touches_ui_design_path,
-    }
+    funcs = build_agent_workflow_allowed_funcs(ctx)
+    funcs.update(
+        {
+            "normalize_path": lambda p: p.replace("\\", "/"),
+            "first_tdd_code_path": first_tdd_code_path,
+            "first_tdd_test_path": first_tdd_test_path,
+            "tdd_gate_open": tdd_gate_open,
+            "is_gobby_build_command": is_gobby_build_command,
+            "is_validation_command": is_validation_command,
+            "paths_written_this_turn": lambda paths: paths_written_this_turn(
+                paths, _get_variables(ctx).get("turn_written_paths")
+            ),
+            "navigation_requires_index": lambda data, action=None: navigation_requires_index(
+                data, _get_variables(ctx), action
+            ),
+            "shell_command_invokes_gcode": shell_command_invokes_gcode,
+            "blocks_direct_provider_launch": blocks_direct_provider_launch,
+            "task_commit_project_path_allowlist_violation": (
+                task_commit_project_path_allowlist_violation
+            ),
+            "touches_claude_memory_path": touches_claude_memory_path,
+            "touches_docker_policy_path": touches_docker_policy_path,
+            "touches_ui_design_path": touches_ui_design_path,
+        }
+    )
 
     # --- Task helpers ---
 
@@ -666,11 +684,6 @@ def build_condition_helpers(
         )
         return outcome.succeeded is True
 
-    def _skill_loaded(name: str) -> bool:
-        """Check the canonical skill ledger."""
-        variables = _get_variables(ctx)
-        return instruction_is_loaded(name, variables)
-
     def _projected_monolith_paths(
         tool_input: Any = None,
         event_data: Mapping[str, Any] | None = None,
@@ -765,7 +778,6 @@ def build_condition_helpers(
     funcs["mcp_failed"] = _mcp_failed
     funcs["mcp_result_has"] = _mcp_result_has
     funcs["tool_call_succeeded"] = _tool_call_succeeded
-    funcs["skill_loaded"] = _skill_loaded
     funcs["projected_monolith_paths"] = _projected_monolith_paths
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error

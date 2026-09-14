@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.workflows.definitions import WorkflowStep
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.safe_evaluator import (
+    SafeExpressionEvaluator,
+    build_agent_workflow_allowed_funcs,
+)
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
 if TYPE_CHECKING:
@@ -102,16 +105,7 @@ class EnforcementHandlerMixin:
         try:
             evaluator = SafeExpressionEvaluator(
                 context=ctx,
-                allowed_funcs={
-                    "len": len,
-                    "str": str,
-                    "int": int,
-                    "bool": bool,
-                    "list": list,
-                    "dict": dict,
-                    "any": any,
-                    "all": all,
-                },
+                allowed_funcs=build_agent_workflow_allowed_funcs(ctx),
             )
             return True, evaluator.evaluate_value(value)
         except Exception as exc:

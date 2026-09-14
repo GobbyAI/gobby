@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
-from functools import partial
 from typing import Any
 
 from gobby.skills.instruction_requirements import instruction_is_loaded
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.safe_evaluator import (
+    SafeExpressionEvaluator,
+    build_agent_workflow_allowed_funcs,
+)
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
 logger = logging.getLogger(__name__)
@@ -28,19 +30,10 @@ def _transition_condition_met(condition: str | None, variables: dict[str, Any]) 
     if not condition:
         return True
     try:
+        context = {"vars": variables, "variables": variables}
         evaluator = SafeExpressionEvaluator(
-            context={"vars": variables, "variables": variables},
-            allowed_funcs={
-                "len": len,
-                "bool": bool,
-                "str": str,
-                "int": int,
-                "list": list,
-                "dict": dict,
-                "any": any,
-                "all": all,
-                "skill_loaded": partial(instruction_is_loaded, variables=variables),
-            },
+            context=context,
+            allowed_funcs=build_agent_workflow_allowed_funcs(context),
         )
         return evaluator.evaluate(condition)
     except ValueError as exc:
