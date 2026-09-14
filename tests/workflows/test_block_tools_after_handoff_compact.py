@@ -308,6 +308,14 @@ async def test_before_tool_blocked_after_successful_set_handoff(
     }
     assert response.decision == "block"
     assert BLOCK_REASON in (response.reason or "")
+    schema = await handler._evaluate_rules(
+        _arbitrary_tool_event(tool_name="mcp__gobby__get_tool_schema")
+    )
+    listing = await handler._evaluate_rules(
+        _arbitrary_tool_event(tool_name="mcp__gobby__list_tools")
+    )
+    assert schema.decision == "allow"
+    assert listing.decision == "allow"
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,11 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name, is_gobby_call_tool
+from gobby.workflows.enforcement.blocking import (
+    canonical_gobby_tool_name,
+    is_gobby_call_tool,
+    is_unblockable_discovery_tool,
+)
 from gobby.workflows.engine.blocked_tool_recovery import extract_rule_name
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
@@ -2601,6 +2605,29 @@ def test_canonical_gobby_tool_name(spelling: str, canonical: str) -> None:
 @pytest.mark.unit
 def test_is_gobby_call_tool(spelling: str | None, expected: bool) -> None:
     assert is_gobby_call_tool(spelling) is expected
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        ("get_tool_schema", True),
+        ("gobby__get_tool_schema", True),
+        ("mcp__gobby__get_tool_schema", True),
+        ("mcp_gobby_get_tool_schema", True),
+        ("list_tools", True),
+        ("gobby__list_tools", True),
+        ("mcp__gobby__list_tools", True),
+        ("call_tool", False),
+        ("gobby__call_tool", False),
+        ("list_mcp_servers", False),
+        ("Bash", False),
+        ("", False),
+        (None, False),
+    ],
+)
+@pytest.mark.unit
+def test_is_unblockable_discovery_tool(spelling: str | None, expected: bool) -> None:
+    assert is_unblockable_discovery_tool(spelling) is expected
 
 
 @pytest.mark.integration

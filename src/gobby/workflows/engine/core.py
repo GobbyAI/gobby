@@ -45,6 +45,7 @@ from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleTriggerEvent,
 )
+from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
@@ -553,6 +554,11 @@ class RuleEngine(
                 # from being collected. Now we record the override and let the loop run.
                 override_decision: str | None = None
                 override_reason: str | None = None
+
+                if is_before_tool and isinstance(event.data, dict):
+                    raw_tool = event.data.get("tool_name")
+                    if isinstance(raw_tool, str) and is_unblockable_discovery_tool(raw_tool):
+                        override_decision = "allow"
 
                 # Force-allow stop (catastrophic failure bypass — self-clearing)
                 if is_turn_end and variables.get("force_allow_stop"):

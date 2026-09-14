@@ -2310,7 +2310,18 @@ class TestTaskMutationSkillGateRoutes:
         assert "gobby:references/tasks/closing.md" in body.effects[0].reason
 
     @pytest.mark.asyncio
-    async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:
+    @pytest.mark.parametrize(
+        ("tool_name", "target"),
+        [
+            ("mcp__gobby__get_tool_schema", "create_task"),
+            ("gobby__get_tool_schema", "create_task"),
+            ("mcp__gobby__list_tools", "create_task"),
+            ("mcp__gobby__get_tool_schema", "reopen_task"),
+        ],
+    )
+    async def test_creation_schema_lookup_is_never_blocked(
+        self, db, manager, tool_name: str, target: str
+    ) -> None:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -2318,68 +2329,18 @@ class TestTaskMutationSkillGateRoutes:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
-                "tool_name": "mcp__gobby__get_tool_schema",
-                "mcp_tool": "get_tool_schema",
-                "tool_input": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+                "tool_name": tool_name,
+                "mcp_tool": "get_tool_schema" if "schema" in tool_name else "list_tools",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": target},
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(
+        allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
             variables={"_agent_type": "default"},
         )
-        allowed = await RuleEngine(db).evaluate(
-            event,
-            session_id=SESSION_ID,
-            variables={
-                "_agent_type": "default",
-                "loaded_skills": ["restraint"],
-                "loaded_skill_references": [
-                    "gobby:references/tasks/overview.md",
-                    "gobby:references/tasks/closing.md",
-                ],
-            },
-        )
 
-        assert blocked.decision == "block"
-        assert "tasks" in (blocked.reason or "")
-        assert allowed.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_transition_schema_gate_blocks_until_loaded(self, db, manager) -> None:
-        _sync_bundled(db)
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id=SESSION_ID,
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": "mcp__gobby__get_tool_schema",
-                "mcp_tool": "get_tool_schema",
-                "tool_input": {"server_name": "gobby-tasks", "tool_name": "reopen_task"},
-            },
-        )
-
-        blocked = await RuleEngine(db).evaluate(
-            event,
-            session_id=SESSION_ID,
-            variables={"_agent_type": "default"},
-        )
-        allowed = await RuleEngine(db).evaluate(
-            event,
-            session_id=SESSION_ID,
-            variables={
-                "_agent_type": "default",
-                "loaded_skill_references": [
-                    "gobby:references/tasks/overview.md",
-                    "gobby:references/tasks/closing.md",
-                ],
-            },
-        )
-
-        assert blocked.decision == "block"
-        assert "tasks" in (blocked.reason or "")
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio

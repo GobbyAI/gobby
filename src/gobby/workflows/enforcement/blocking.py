@@ -141,6 +141,18 @@ def is_gobby_call_tool(tool_name: str | None) -> bool:
     return canonical_gobby_tool_name(tool_name) == "mcp__gobby__call_tool"
 
 
+# Schema/inventory lookups must remain callable even when other before_tool
+# gates fire. Blocking them deadlocks recovery that says "get_tool_schema first".
+UNBLOCKABLE_DISCOVERY_TOOLS = frozenset({"mcp__gobby__get_tool_schema", "mcp__gobby__list_tools"})
+
+
+def is_unblockable_discovery_tool(tool_name: str | None) -> bool:
+    """True when YAML before_tool blocks must not deny this proxy tool."""
+    if not tool_name:
+        return False
+    return canonical_gobby_tool_name(tool_name) in UNBLOCKABLE_DISCOVERY_TOOLS
+
+
 def task_mutation_requires_tasks_skill(
     tool_input: Any,
     event_data: dict[str, Any] | None = None,

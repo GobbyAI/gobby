@@ -80,29 +80,34 @@ async def test_handoff_requires_feedback_even_with_skill_loaded(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool_name", ["get_tool_schema", "mcp__gobby__get_tool_schema"])
-async def test_schema_discovery_requires_feedback_then_handoff_skill(
-    db: HubDatabase, tool_name: str
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "get_tool_schema",
+        "mcp__gobby__get_tool_schema",
+        "gobby__get_tool_schema",
+        "list_tools",
+        "mcp__gobby__list_tools",
+        "gobby__list_tools",
+    ],
+)
+@pytest.mark.parametrize(
+    ("server", "tool"),
+    [("gobby-sessions", "set_handoff"), ("gobby-agents", "end_agent_run")],
+)
+async def test_schema_lookup_for_set_handoff_is_never_blocked(
+    db: HubDatabase, tool_name: str, server: str, tool: str
 ) -> None:
     event = _tool_event("gobby-sessions", "get_handoff", {})
     event.data = {
         "tool_name": tool_name,
-        "tool_input": {"server_name": "gobby-sessions", "tool_name": "set_handoff"},
+        "tool_input": {"server_name": server, "tool_name": tool},
     }
     normalize_tool_fields(event.data)
-    engine = RuleEngine(db)
-    variables: dict[str, Any] = {"project": {"name": "gobby"}}
-    feedback_block = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-    assert feedback_block.decision == "block"
-    assert "gobby-sessions:feedback" in (feedback_block.reason or "")
-    assert "10,000" in (feedback_block.reason or "")
-    variables["_gobby_feedback_epoch_submitted"] = True
-    skill_block = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-    assert skill_block.decision == "block"
-    assert skill_fetch_directive(SKILL) in (skill_block.reason or "")
-    variables["loaded_skill_references"] = [SKILL]
-    allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-    assert allowed.decision != "block"
+    result = await RuleEngine(db).evaluate(
+        event, session_id=SESSION_ID, variables={"project": {"name": "gobby"}}
+    )
+    assert result.decision != "block"
 
 
 @pytest.mark.asyncio
@@ -320,21 +325,13 @@ async def test_context_reset_rearms_authoring_gate(db: HubDatabase, boundary: st
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("schema", [False, True])
 @pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
 async def test_feedback_gate_blocks_end_agent_run_until_submitted(
     db: HubDatabase,
-    schema: bool,
     shape: str,
 ) -> None:
     engine = RuleEngine(db)
     event = _tool_event("gobby-agents", "end_agent_run", {}, shape)
-    if schema:
-        event.data = {
-            "tool_name": "get_tool_schema" if shape == "direct" else "mcp__gobby__get_tool_schema",
-            "tool_input": {"server_name": "gobby-agents", "tool_name": "end_agent_run"},
-        }
-        normalize_tool_fields(event.data)
     variables: dict[str, Any] = {
         "loaded_skill_references": [SKILL],
         "project": {"name": "gobby"},
