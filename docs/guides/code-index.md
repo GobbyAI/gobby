@@ -415,7 +415,9 @@ Both rules fail open when `gcode` cannot serve the request:
   counts only when every other command in the same shell call is `git status`,
   a plain `echo`, or `head`/`tail` trimming piped output, so no other output can
   forge it.
-- An outline that finds no symbols opens reads of that file.
+- A standalone `gcode outline <file>` that finds no symbols opens reads of that
+  file. Batched with other commands, the diagnostic could come from another
+  command's output, so it does not count.
 
 Rules are runtime state, not just template files. Check installed rule state in
 the rules engine before claiming a rule is disabled.
