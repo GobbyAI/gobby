@@ -28,6 +28,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.agents.tmux import configure_tmux
@@ -2023,7 +2024,7 @@ class TestCheckIdleAgents:
         assert handled == 1
         assert _runtime_of(idle_monitor).write_log == [
             ("key", "escape"),
-            ("text", "Continue working on your task."),
+            ("text", IdleDetector.REPROMPT_MESSAGE),
             ("key", "enter"),
         ]
 
@@ -2054,7 +2055,7 @@ class TestCheckIdleAgents:
         assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 0
         assert runtime.write_log == [
             ("key", "escape"),
-            ("text", "Continue working on your task."),
+            ("text", IdleDetector.REPROMPT_MESSAGE),
             ("key", "enter"),
         ]
 
@@ -2091,7 +2092,7 @@ class TestCheckIdleAgents:
             ("key", "escape"),
             ("text", "\x03"),
             ("key", "enter"),
-            ("text", "Continue working on your task."),
+            ("text", IdleDetector.REPROMPT_MESSAGE),
             ("key", "enter"),
         ]
 

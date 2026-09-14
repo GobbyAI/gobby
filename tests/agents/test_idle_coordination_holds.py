@@ -101,6 +101,6 @@ async def test_coordination_hold_resets_exhausted_idle_recovery_then_resumes(
             assert await monitor.check_idle_agents() == 1
 
     finished = agent_run_manager.get(run.id)
-    assert finished is not None and finished.status == "error"
-    assert finished.error is not None
-    assert "completed turns without workflow progress" in finished.error
+    # The resumed budget exhausts again; with no step workflow or task, the
+    # watchdog completes the run instead of failing it.
+    assert finished is not None and finished.status == "success"

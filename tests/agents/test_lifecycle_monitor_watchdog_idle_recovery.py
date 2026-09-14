@@ -25,6 +25,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.runtime import TerminalWriteError
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.agents.test_lifecycle_monitor import (
@@ -1531,6 +1532,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
         message = await monitor._idle_check_handler._recovery._idle_reprompt_message(run)
 
     assert message == IdleDetector.REPROMPT_MESSAGE
+    assert "gobby-agents:end_agent_run" in message
     mock_exception.assert_called_once()
     assert (
         "Unexpected error loading active step workflow context" in mock_exception.call_args.args[0]
@@ -1693,7 +1695,7 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
 
 
 @pytest.mark.asyncio
-async def test_completed_turn_recovery_allows_budget_then_fails_without_step_workflow(
+async def test_completed_turn_recovery_allows_budget_then_fails_run_holding_claimed_task(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -1711,6 +1713,12 @@ async def test_completed_turn_recovery_allows_budget_then_fails_without_step_wor
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1021",
         transcript_path=transcript_path,
         max_reprompt_attempts=3,
+    )
+    assert run.child_session_id is not None
+    # A claimed task is an open obligation, so exhaustion still fails the
+    # workflow-less run instead of completing it.
+    SessionVariableManager(temp_db).set_variable(
+        run.child_session_id, "claimed_tasks", {"claimed-task-id": "#1"}
     )
     handler = monitor._idle_check_handler
     caplog.set_level(logging.INFO)

@@ -2,8 +2,9 @@
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.agents.watchdog.models import (
     CompletedTurnRecoveryState,
@@ -11,6 +12,8 @@ from gobby.agents.watchdog.models import (
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import StepWorkflowContext
 
 CompletedTurnRecoveryDecision = Literal["duplicate", "recover", "exhausted"]
@@ -20,6 +23,8 @@ logger = logging.getLogger(__name__)
 class CompletedTurnRecoveryHost(Protocol):
     _completed_turn_recovery: dict[str, CompletedTurnRecoveryState]
     _tmux_config: TmuxConfig
+    db: HubDatabase
+    _run_db: Callable[..., Awaitable[Any]]
 
     async def _load_step_workflow_context(
         self,
@@ -56,6 +61,8 @@ class CompletedTurnRecoveryHost(Protocol):
     async def _session_made_successful_mcp_call(self, run: AgentRun) -> bool | None: ...
 
     async def _complete_if_work_finished(self, run: AgentRun) -> bool: ...
+
+    async def _complete_idle_agent(self, run: AgentRun, reason: str) -> None: ...
 
     async def _log_transcript_snapshot(
         self,
@@ -236,6 +243,14 @@ async def recover_completed_turn(
             idle_timeout_seconds=idle_timeout_seconds,
         )
     if decision == "exhausted":
+        if await _complete_exhausted_unbound_run(host, run):
+            await host._log_transcript_snapshot(
+                run,
+                reason="completing unbound agent after max completed-turn reprompts",
+                snapshot=snapshot,
+                level=logging.INFO,
+            )
+            return 1
         logger.error(
             "Agent %s completed another turn without workflow progress after %s recovery "
             "reprompts — failing",
@@ -323,6 +338,49 @@ async def _give_up_unanswered_reprompt(
         ),
     )
     return 1
+
+
+async def _complete_exhausted_unbound_run(host: CompletedTurnRecoveryHost, run: AgentRun) -> bool:
+    """Complete a responsive run with no lifecycle obligation once reprompts are exhausted.
+
+    Every exhausted reprompt drew a completed turn, so the agent is alive. With
+    no step workflow, bound task, or claimed task, reprompts have nothing to
+    drive; the agent only never called end_agent_run, so failing it would
+    report finished work as an error. A run whose obligations cannot be proven
+    absent keeps failing. Returns whether the run was completed.
+    """
+    if run.task_id is not None or not run.child_session_id:
+        return False
+    step_context, lookup_succeeded = await host._load_step_workflow_context(run)
+    if not lookup_succeeded or step_context is not None:
+        return False
+    try:
+        variables = await host._run_db(
+            SessionVariableManager(host.db).get_variables,
+            run.child_session_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to read claimed tasks for exhausted idle agent %s",
+            run.id,
+            exc_info=True,
+        )
+        return False
+    if variables.get("claimed_tasks"):
+        return False
+    logger.info(
+        "Agent %s has no step workflow or task after max idle reprompts — completing "
+        "instead of failing",
+        run.id,
+    )
+    await host._complete_idle_agent(
+        run,
+        reason=(
+            "no step workflow or task remained after max idle reprompts but the agent "
+            "never called end_agent_run"
+        ),
+    )
+    return True
 
 
 def format_reprompt_message(

@@ -34,7 +34,10 @@ class IdleDetector:
     3. **Active** — agent is still working (no action needed)
     """
 
-    REPROMPT_MESSAGE = "Continue working on your task."
+    REPROMPT_MESSAGE = (
+        "Continue working on your task. When your work is complete, call "
+        "gobby-agents:end_agent_run with current_state and next_steps to end this agent run."
+    )
 
     def __init__(self, registry: DetectionRegistry, provider_id: str | None = None) -> None:
         self._registry = registry
