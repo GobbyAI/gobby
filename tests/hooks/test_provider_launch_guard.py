@@ -123,6 +123,9 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "bash -c 'printf hello' <<'EOF'\ncodex\nEOF\n",
         "echo '# codex'; printf '%s' '# claude'",
         "echo \"$(printf '%s' 'codex exec')\"",
+        "git commit -m \"$(cat <<'EOF'\nfix: the watchdog's hook (1M context\nEOF\n)\"",
+        'git commit -m "$(cat <<EOF\nit\'s done\nEOF\n)"',
+        "x=\"$(cat <<-'EOF' |\n tr a b\n\tit's (text\n\tEOF\n)\"",
     ],
 )
 def test_administration_and_documentation(command: str) -> None:
@@ -210,6 +213,10 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "2>/dev/null codex",
         "codex --help $(claude -p hi)",
         "echo done # codex --help\nclaude -p hi",
+        "x=\"$(cat <<'EOF'\nit's text\nEOF\n)\"; claude -p hi",
+        'x="$(cat <<EOF\nit\'s $(claude -p hi)\nEOF\n)"',
+        "x=\"$(sh <<'EOF'\ncodex exec\nEOF\n)\"",
+        "echo $(( 1 << EOF\n))\nclaude -p hi\nEOF\n))",
     ],
 )
 def test_execution_contexts(command: str) -> None:
@@ -242,6 +249,7 @@ def test_absent_command(tool_input: Any) -> None:
 def test_bounded_and_malformed_input() -> None:
     assert blocks_direct_provider_launch("Bash", {"command": "echo " + "x" * 131_072})
     assert blocks_direct_provider_launch("Bash", {"command": "echo 'unclosed"})
+    assert blocks_direct_provider_launch("Bash", {"command": "echo \"$(cat <<'EOF'\nit's\n)\""})
     assert blocks_direct_provider_launch(
         "Bash", {"command": "echo " + "$(" * 30 + "codex" + ")" * 30}
     )

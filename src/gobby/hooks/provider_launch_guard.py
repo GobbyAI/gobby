@@ -33,15 +33,24 @@ def blocks_direct_provider_launch(tool_name: Any, tool_input: Any) -> bool:
 
 
 def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
-    """Find the end of a literal substitution, respecting nested shell quotes."""
+    """Find the end of a literal substitution, respecting nested shell quotes.
+
+    Heredoc bodies are data, so their quotes and parentheses never close it.
+    """
     if depth > _MAX_DEPTH:
         raise ValueError("Shell nesting limit")
     quote = ""
     level = 1
+    # In arithmetic $((...)) ``<<`` is a shift, and a newline never starts a body.
+    arithmetic = not backtick and text.startswith("(", start)
+    # The current logical line, masked like _prepare output, so the newline that
+    # ends it can find the heredocs it opens.
+    line: list[str] = []
     index = start
     while index < len(text):
         char = text[index]
         if char == "\\" and quote != "'":
+            line.append(text[index : index + 2])
             index += 2
             continue
         if backtick and char == "`":
@@ -51,21 +60,47 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
                 quote = ""
         elif text.startswith("$(", index) or char == "`":
             tick = char == "`"
-            index = _substitution_end(text, index + (1 if tick else 2), tick, depth + 1)
+            index = _substitution_end(text, index + (1 if tick else 2), tick, depth + 1) + 1
+            line.append("__gobby_expansion__")
+            continue
         elif char in "\"'":
             if not quote:
                 quote = char
             elif quote == char:
                 quote = ""
-        elif not quote and not backtick:
-            if char == "(":
-                level += 1
-            elif char == ")":
-                level -= 1
-                if level == 0:
-                    return index
+        elif not quote and not arithmetic and char == "\n":
+            tokens = scan_shell_command("".join(line)).tokens
+            if not tokens or tokens[-1].value not in {"|", "&&", "||"}:
+                index = _skip_heredocs(text, tokens, index + 1)
+                line = []
+                continue
+            char = " "
+        elif not quote and not backtick and char in "()":
+            level += 1 if char == "(" else -1
+            if level == 0:
+                return index
+            char = ";"
+        line.append(char)
         index += 1
     raise ValueError("Unclosed shell substitution")
+
+
+def _skip_heredocs(command: str, tokens: list[ShellToken], index: int) -> int:
+    """Return the index past the bodies of the heredocs ``tokens`` open, starting at ``index``."""
+    for offset, token in enumerate(tokens[:-1]):
+        if token.quoted or token.value not in {"<<", "<<-"}:
+            continue
+        delimiter = tokens[offset + 1].value
+        while index < len(command):
+            end = command.find("\n", index)
+            end = len(command) if end < 0 else end + 1
+            body_line = command[index:end].rstrip("\n")
+            index = end
+            if token.value == "<<-":
+                body_line = body_line.lstrip("\t")
+            if body_line == delimiter:
+                break
+    return index
 
 
 def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
@@ -119,22 +154,9 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
                     index += 1
                     continue
                 output.append(char)
-                index += 1
-                for offset, token in enumerate(tokens[:-1]):
-                    if token.quoted or token.value not in {"<<", "<<-"}:
-                        continue
-                    delimiter = tokens[offset + 1].value
-                    start = index
-                    while index < len(command):
-                        end = command.find("\n", index)
-                        end = len(command) if end < 0 else end + 1
-                        body_line = command[index:end].rstrip("\n")
-                        index = end
-                        if token.value == "<<-":
-                            body_line = body_line.lstrip("\t")
-                        if body_line == delimiter:
-                            break
-                    output.append(command[start:index])
+                body_start = index + 1
+                index = _skip_heredocs(command, tokens, body_start)
+                output.append(command[body_start:index])
                 line_start = len(output)
                 continue
         output.append(char)
