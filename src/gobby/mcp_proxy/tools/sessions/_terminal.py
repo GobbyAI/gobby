@@ -10,11 +10,17 @@ from __future__ import annotations
 import asyncio as asyncio
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
+    _authorize_send_keys_target as _authorize_send_keys_target,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
+    register_send_keys_tool,
+)
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
@@ -94,6 +100,7 @@ __all__ = [
     "_read_transcript_tail_lines",
     "_resolve_pane_io",
     "_resolve_session_for_compaction",
+    "_authorize_send_keys_target",
     "_resolve_tmux_target",
     "_send_pane_key",
     "_send_terminal_compaction_command",
@@ -116,95 +123,6 @@ def _resolve_tmux_target(
         agent_run_manager,
         tmux_manager_factory=manager_for_terminal_context,
     )
-
-
-_FORBIDDEN_SPEED_COMMANDS = frozenset({"/fast"})
-
-
-def _is_speed_command(keys: str) -> bool:
-    r"""Report whether a send_keys payload toggles provider speed mode.
-
-    `/fast` is Claude Code's in-session speed switch and the only such toggle
-    across the six supported CLIs; the constant is the seam for any that appear.
-    Matching is on the first whitespace-separated token, casefolded, so `/fast\n`
-    and `  /FAST  ` are caught while `/faster` passes through.
-    """
-    tokens = keys.split()
-    return bool(tokens) and tokens[0].casefold() in _FORBIDDEN_SPEED_COMMANDS
-
-
-def _authorize_send_keys_target(
-    session_ref: str,
-    session_manager: SessionManager,
-) -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve a send_keys target and verify it is within the caller's scope."""
-    from gobby.utils.session_context import get_current_session_id
-
-    caller_ref = get_current_session_id()
-    if not caller_ref:
-        return None, {
-            "success": False,
-            "error": "send_keys requires current MCP SessionContext",
-            "error_code": "send_keys_caller_required",
-        }
-
-    try:
-        caller_id = session_manager.resolve_session_reference(caller_ref)
-    except ValueError as exc:
-        return None, {
-            "success": False,
-            "error": f"Could not resolve send_keys caller: {exc}",
-            "error_code": "send_keys_caller_not_found",
-        }
-
-    caller = session_manager.get(caller_id)
-    if caller is None:
-        return None, {
-            "success": False,
-            "error": f"Send_keys caller session {caller_id} not found",
-            "error_code": "send_keys_caller_not_found",
-        }
-
-    if caller.agent_run_id:
-        return None, {
-            "success": False,
-            "error": "Autonomous agent sessions cannot use send_keys",
-            "error_code": "send_keys_autonomous_agent_forbidden",
-            "caller_session_id": caller_id,
-        }
-
-    try:
-        target_id = session_manager.resolve_session_reference(session_ref, caller.project_id)
-    except ValueError as exc:
-        return None, {
-            "success": False,
-            "error": str(exc),
-            "error_code": "send_keys_target_not_found",
-        }
-
-    target = session_manager.get(target_id)
-    if target is None:
-        return None, {
-            "success": False,
-            "error": f"Session {session_ref} not found",
-            "error_code": "send_keys_target_not_found",
-        }
-
-    if (
-        target_id == caller_id
-        or target.project_id == caller.project_id
-        or session_manager.is_ancestor(caller_id, target_id)
-        or session_manager.is_ancestor(target_id, caller_id)
-    ):
-        return target_id, None
-
-    return None, {
-        "success": False,
-        "error": "send_keys target is outside the caller's project and agent tree",
-        "error_code": "send_keys_target_forbidden",
-        "caller_session_id": caller_id,
-        "target_session_id": target_id,
-    }
 
 
 def _resolve_pane_io(
@@ -399,94 +317,13 @@ def register_terminal_tools(
     """Register terminal control and structured handoff tools."""
 
     agent_run_manager = LocalAgentRunManager(db)
-
-    @registry.tool(
-        name="send_keys",
-        description=(
-            "Send keystrokes to a session's tmux terminal. "
-            "This is for terminal control; use `gobby-agents:send_message` for direct "
-            "cross-session agent communication. "
-            "Autonomous agent-run sessions cannot use this tool. "
-            "Targets must be the caller, in the same project, or in the same agent tree. "
-            "Use literal=true (default) to paste text — one or more trailing \\n characters "
-            "produce exactly one Enter after the literal paste settles. "
-            "Use literal=false for tmux key names: C-c, Escape, Enter, C-d. "
-            "Payloads whose first token is /fast are refused with "
-            "send_keys_speed_command_forbidden; ask the user to run it."
-        ),
+    register_send_keys_tool(
+        registry,
+        session_manager,
+        db,
+        terminal_manager=terminal_manager,
+        write_coordinator=write_coordinator,
     )
-    async def send_keys(
-        session_id: str,
-        keys: str,
-        literal: bool = True,
-    ) -> dict[str, Any]:
-        resolved_session_id, authorization_error = _authorize_send_keys_target(
-            session_id,
-            session_manager,
-        )
-        if authorization_error is not None:
-            return authorization_error
-
-        if _is_speed_command(keys):
-            return {
-                "success": False,
-                "error": "send_keys cannot toggle provider speed mode; ask the user to run it",
-                "error_code": "send_keys_speed_command_forbidden",
-            }
-
-        assert resolved_session_id is not None
-        if write_coordinator is not None and terminal_manager is not None:
-            from gobby.terminals.runtime import Delivered, IndeterminateWrite, is_named_key
-            from gobby.terminals.write_coordinator import WriteRequest
-
-            terminal = terminal_manager.get_live_for_session(resolved_session_id)
-            if terminal is not None:
-                kind: Literal["text", "key", "paste"] = "text"
-                payload = keys
-                submit = False
-                if literal:
-                    if keys.endswith("\n"):
-                        payload = keys.rstrip("\n")
-                        submit = True
-                elif is_named_key(keys.lower()):
-                    kind = "key"
-                    payload = keys.lower()
-                outcome = await write_coordinator.write(
-                    WriteRequest(
-                        terminal_id=terminal.id,
-                        action_key=f"mcp-send-keys:{resolved_session_id}",
-                        origin="operator",
-                        kind=kind,
-                        payload=payload,
-                        submit=submit,
-                    )
-                )
-                if isinstance(outcome, IndeterminateWrite):
-                    return {
-                        "success": False,
-                        "indeterminate": True,
-                        "error": outcome.detail or "send_keys write was indeterminate",
-                    }
-                if not isinstance(outcome, Delivered):
-                    return {"success": False, "error": "send_keys failed"}
-                return {"success": True}
-        target, tmux, error = _resolve_tmux_target(
-            resolved_session_id,
-            session_manager,
-            agent_run_manager,
-        )
-        if error:
-            return {"success": False, "error": error}
-
-        assert target is not None
-        assert tmux is not None
-        ok = await tmux.dispatch_keys(target, keys, literal=literal)
-        if not ok:
-            return {
-                "success": False,
-                "error": f"tmux send-keys failed for session {session_id}",
-            }
-        return {"success": True}
 
     async def set_handoff(
         current_state: str,

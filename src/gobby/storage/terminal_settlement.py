@@ -106,6 +106,7 @@ class TerminalSettlementMixin:
         *,
         daemon_epoch: str,
         at: datetime | None = None,
+        payload_fingerprint: str | None = None,
     ) -> Terminal:
         """Write-ahead latch one action_key, enforcing durable map bounds."""
         if not daemon_epoch:
@@ -121,11 +122,14 @@ class TerminalSettlementMixin:
         writes = dict(current.unresolved_writes)
         if action_key not in writes and len(writes) >= UNRESOLVED_WRITE_MAX_ENTRIES:
             raise UnresolvedWriteCapacityError()
-        writes[action_key] = {
+        entry = {
             "at": (at or utc_now()).isoformat(),
             "origin": origin,
             "daemon_epoch": daemon_epoch,
         }
+        if payload_fingerprint is not None:
+            entry["payload_fingerprint"] = payload_fingerprint
+        writes[action_key] = entry
         if _serialized_unresolved_size(writes) > UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES:
             raise UnresolvedWriteCapacityError()
         row = self.db.fetchone(

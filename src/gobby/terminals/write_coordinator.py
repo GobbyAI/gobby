@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+import hashlib
+import json
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
@@ -45,6 +47,7 @@ class UnresolvedWriteStore(Protocol):
         *,
         daemon_epoch: str,
         at: datetime | None = None,
+        payload_fingerprint: str | None = None,
     ) -> Terminal: ...
 
     def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal: ...
@@ -62,12 +65,13 @@ class WriteRequest:
 
     terminal_id: str
     action_key: str
-    origin: Literal["operator", "automatic", "attention"]
+    origin: Literal["operator", "automatic", "attention", "daemon"]
     kind: Literal["text", "key", "paste", "input"]
     payload: str
     submit: bool = False
     attachment_id: str | None = None
     expected_lease_generation: int | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,12 @@ class RuntimeUnavailableError(TerminalWriteError):
     def __init__(self, backend: str) -> None:
         super().__init__(stage="none")
         self.backend = backend
+
+
+class IdempotencyConflictError(RuntimeError):
+    """One idempotency key was reused for a different terminal payload."""
+
+    code = "idempotency_conflict"
 
 
 class WriteCoordinator:
@@ -132,12 +142,24 @@ class WriteCoordinator:
         on_dispatch: Callable[[], None] | None = None,
     ) -> WriteOutcome:
         async with self.lease_registry.lock(request.terminal_id):
+            payload_fingerprint = (
+                _payload_fingerprint(request) if request.idempotency_key is not None else None
+            )
+            if payload_fingerprint is not None:
+                replay = self._idempotent_replay(request, payload_fingerprint)
+                if replay is not None:
+                    return replay
             blocked = self._blocked_automatic(
                 request.terminal_id, request.action_key, request.origin
             )
             if blocked is not None:
                 return blocked
-            return await self._write_locked(request, latch=True, on_dispatch=on_dispatch)
+            return await self._write_locked(
+                request,
+                latch=True,
+                on_dispatch=on_dispatch,
+                payload_fingerprint=payload_fingerprint,
+            )
 
     def observe_resolved(self, terminal_id: str, action_key: str) -> None:
         """Positive observation of one logical action; clears only that key."""
@@ -372,6 +394,7 @@ class WriteCoordinator:
         *,
         latch: bool,
         on_dispatch: Callable[[], None] | None = None,
+        payload_fingerprint: str | None = None,
     ) -> WriteOutcome:
         terminal = self._require(request.terminal_id)
         if request.origin == "attention" and self._attention_gate is not None:
@@ -383,7 +406,12 @@ class WriteCoordinator:
             expected_generation=request.expected_lease_generation,
         )
         if latch:
-            self._persist(request.terminal_id, request.action_key, request.origin)
+            self._persist(
+                request.terminal_id,
+                request.action_key,
+                request.origin,
+                payload_fingerprint=payload_fingerprint,
+            )
         if on_dispatch is not None:
             on_dispatch()
         try:
@@ -394,11 +422,30 @@ class WriteCoordinator:
             raise
         except Exception:
             raise
-        if isinstance(outcome, Delivered):
+        if not isinstance(outcome, IndeterminateWrite):
             self._clear(request.terminal_id, request.action_key)
+        if isinstance(outcome, Delivered):
             if request.origin == "operator":
                 self._store.clear_automatic_write_quarantine(request.terminal_id)
         return outcome
+
+    def _idempotent_replay(
+        self,
+        request: WriteRequest,
+        payload_fingerprint: str,
+    ) -> IndeterminateWrite | None:
+        terminal = self._require(request.terminal_id)
+        entry = terminal.unresolved_writes.get(request.action_key)
+        if entry is None:
+            return None
+        stored_fingerprint = (
+            entry.get("payload_fingerprint") if isinstance(entry, Mapping) else None
+        )
+        if stored_fingerprint != payload_fingerprint:
+            raise IdempotencyConflictError(
+                "idempotency key was already used with a different payload"
+            )
+        return IndeterminateWrite(detail="send_keys write outcome remains indeterminate")
 
     def _blocked_automatic(
         self,
@@ -436,12 +483,20 @@ class WriteCoordinator:
         ):
             raise StaleTerminalLeaseError("lease is no longer current")
 
-    def _persist(self, terminal_id: str, action_key: str, origin: str) -> None:
+    def _persist(
+        self,
+        terminal_id: str,
+        action_key: str,
+        origin: str,
+        *,
+        payload_fingerprint: str | None = None,
+    ) -> None:
         self._store.persist_unresolved_write(
             terminal_id,
             action_key,
             origin,
             daemon_epoch=self._daemon_epoch,
+            payload_fingerprint=payload_fingerprint,
         )
 
     def _clear(self, terminal_id: str, action_key: str) -> None:
@@ -472,3 +527,17 @@ class WriteCoordinator:
         if request.kind == "input":
             return await runtime.write_input(terminal, request.payload.encode("utf-8"))
         return await runtime.write_paste(terminal, request.payload)
+
+
+def _payload_fingerprint(request: WriteRequest) -> str:
+    payload = json.dumps(
+        {
+            "kind": request.kind,
+            "payload": request.payload,
+            "submit": request.submit,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()

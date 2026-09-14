@@ -14,10 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from gobby.agents.attention_metadata import validate_metadata_text, validate_metadata_ttl_ms
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.tmux.text_injection import (
-    AttentionInjectionError,
-    inject_attention_answer_to_tmux_target,
-)
+from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
@@ -27,8 +24,8 @@ from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
     TerminalWriteError,
-    is_named_key,
 )
+from gobby.terminals.write_coordinator import WriteRequest
 from gobby.utils.hashing import is_sha256
 from gobby.utils.machine_id import require_machine_id
 
@@ -171,20 +168,44 @@ def create_attention_router(
             return await pane_resolver(state)
         return await _resolve_attention_pane(server, state)
 
-    async def inject_answer(pane: AttentionPane, answer: AttentionAnswer) -> None:
+    async def inject_answer(
+        pane: AttentionPane,
+        answer: AttentionAnswer,
+        state: AttentionState,
+    ) -> None:
         if injector is not None:
             await injector(pane, answer)
             return
-        if pane.tmux_cmd:
-            await inject_attention_answer_to_tmux_target(
-                pane.target,
-                option=answer.option,
-                text=answer.text,
-                key=answer.key,
-                tmux_cmd=pane.tmux_cmd,
+        coordinator = getattr(server.services, "write_coordinator", None)
+        if coordinator is None:
+            raise AttentionInjectionError(stage="none")
+        kind: Literal["text", "key"] = "key" if answer.key is not None else "text"
+        payload = (
+            answer.key
+            if answer.key is not None
+            else str(answer.option)
+            if answer.option is not None
+            else answer.text or ""
+        )
+        try:
+            result = await coordinator.write(
+                WriteRequest(
+                    terminal_id=pane.target,
+                    action_key=f"attention-respond:{state.attention_id}",
+                    origin="attention",
+                    kind=kind,
+                    payload=payload,
+                    submit=kind == "text",
+                )
             )
-            return
-        await _inject_via_runtime(server, pane, answer)
+        except TerminalWriteError as exc:
+            raise AttentionInjectionError(stage=exc.stage) from exc
+        except KeyError as exc:
+            raise AttentionInjectionError(stage="none") from exc
+        if isinstance(result, IndeterminateWrite):
+            raise AttentionInjectionError(stage="partial")
+        if not isinstance(result, Delivered):
+            raise AttentionInjectionError(stage="none")
 
     @router.get("/roster")
     async def roster() -> dict[str, object]:
@@ -287,9 +308,34 @@ def create_attention_router(
                         },
                     )
 
+                claimed_before_injection = injector is None
+                if claimed_before_injection:
+                    claimed = await manager.transition_async(
+                        server.services.run_db,
+                        entry_id,
+                        state=None,
+                        expected_attention_id=latest.attention_id,
+                        expected_fingerprint=latest.fingerprint,
+                    )
+                    if not claimed.applied:
+                        if claimed.current is None:
+                            raise HTTPException(
+                                status_code=404,
+                                detail={"code": "attention_not_found"},
+                            )
+                        _raise_stale_episode(claimed.current)
+
                 try:
-                    await inject_answer(pane, request.answer)
+                    await inject_answer(pane, request.answer, latest)
                 except AttentionInjectionError as exc:
+                    if claimed_before_injection:
+                        await _redetect_retired_attention(
+                            server,
+                            current=latest,
+                            pane=pane,
+                            detector=detector,
+                        )
+                        raise _injection_http_error(stage=exc.stage) from exc
                     if exc.stage == "none":
                         raise _injection_http_error(stage="none") from exc
                     await _retire_and_redetect(
@@ -300,6 +346,8 @@ def create_attention_router(
                     )
                     raise _injection_http_error(stage="partial") from exc
 
+                if claimed_before_injection:
+                    return {"status": "accepted", "entry_id": entry_id}
                 cleared = await manager.transition_async(
                     server.services.run_db,
                     entry_id,
@@ -676,34 +724,36 @@ def _serialize_timestamp(value: object) -> str | None:
     return str(value)
 
 
-async def _inject_via_runtime(
+async def _redetect_retired_attention(
     server: HTTPServer,
+    *,
+    current: AttentionState,
     pane: AttentionPane,
-    answer: AttentionAnswer,
+    detector: PromptDetector,
 ) -> None:
-    manager = getattr(server.services, "terminal_manager", None)
-    registry = getattr(server.services, "terminal_runtime_registry", None)
-    if manager is None or registry is None:
-        raise AttentionInjectionError(stage="none")
-    row = manager.get(pane.target)
-    if row is None:
-        raise AttentionInjectionError(stage="none")
-    runtime = registry.resolve(row.backend)
-    try:
-        if answer.key is not None:
-            if not is_named_key(answer.key):
-                raise AttentionInjectionError(stage="none")
-            result = await runtime.write_key(row, answer.key)
-        elif answer.option is not None:
-            result = await runtime.write_text(row, str(answer.option), True)
-        else:
-            result = await runtime.write_text(row, answer.text or "", True)
-    except TerminalWriteError as exc:
-        raise AttentionInjectionError(stage=exc.stage) from exc
-    if isinstance(result, IndeterminateWrite):
-        raise AttentionInjectionError(stage="partial")
-    if not isinstance(result, Delivered):
-        raise AttentionInjectionError(stage="none")
+    attention_manager = server.services.attention_manager
+    if attention_manager is None:
+        return
+    latest = await server.services.run_db(attention_manager.get, current.entry_id)
+    if latest is None or latest.state is not None:
+        return
+    pane_output = await pane.capture()
+    if pane_output is None:
+        return
+    detected = detector.detect_prompt(pane_output)
+    if detected is None:
+        return
+    await attention_manager.transition_async(
+        server.services.run_db,
+        current.entry_id,
+        state="blocked",
+        run_id=current.run_id,
+        session_id=current.session_id,
+        reason=detected.kind,
+        kind="actionable",
+        fingerprint=detected.fingerprint,
+        payload=detected.to_payload(),
+    )
 
 
 async def _resolve_attention_pane(

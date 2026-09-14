@@ -345,6 +345,7 @@ class MemoryTerminalStore:
         *,
         daemon_epoch: str,
         at: datetime | None = None,
+        payload_fingerprint: str | None = None,
     ) -> Terminal:
         if not daemon_epoch:
             raise ValueError("daemon_epoch is required")
@@ -357,11 +358,14 @@ class MemoryTerminalStore:
         writes = dict(current.unresolved_writes)
         if action_key not in writes and len(writes) >= UNRESOLVED_WRITE_MAX_ENTRIES:
             raise UnresolvedWriteCapacityError()
-        writes[action_key] = {
+        entry = {
             "at": (at or utc_now()).isoformat(),
             "origin": origin,
             "daemon_epoch": daemon_epoch,
         }
+        if payload_fingerprint is not None:
+            entry["payload_fingerprint"] = payload_fingerprint
+        writes[action_key] = entry
         serialized = json.dumps(writes, separators=(",", ":")).encode("utf-8")
         if len(serialized) > UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES:
             raise UnresolvedWriteCapacityError()

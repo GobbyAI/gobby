@@ -898,6 +898,53 @@ def test_latch_entries_carry_daemon_epoch(
     assert isinstance(entry["at"], str)
 
 
+def test_unresolved_write_fingerprint_round_trip(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    fingerprint = "a" * 64
+    manager = _manager(temp_db)
+    pending = _create_pending(manager, sample_project["id"])
+
+    manager.persist_unresolved_write(
+        pending.id,
+        "mcp-send-keys:session:key",
+        "daemon",
+        daemon_epoch="test-epoch",
+        payload_fingerprint=fingerprint,
+    )
+
+    loaded = _manager(temp_db).get(pending.id)
+    assert loaded is not None
+    assert (
+        loaded.unresolved_writes["mcp-send-keys:session:key"]["payload_fingerprint"] == fingerprint
+    )
+
+    memory = MemoryTerminalStore(make_memory_terminal())
+    memory_terminal = next(iter(memory.rows.values()))
+    memory.persist_unresolved_write(
+        memory_terminal.id,
+        "mcp-send-keys:session:key",
+        "daemon",
+        daemon_epoch="test-epoch",
+        payload_fingerprint=fingerprint,
+    )
+    assert (
+        memory_terminal.unresolved_writes["mcp-send-keys:session:key"]["payload_fingerprint"]
+        == fingerprint
+    )
+
+    oversized = _create_pending(manager, sample_project["id"])
+    with pytest.raises(UnresolvedWriteCapacityError):
+        manager.persist_unresolved_write(
+            oversized.id,
+            "mcp-send-keys:oversized:key",
+            "daemon",
+            daemon_epoch="test-epoch",
+            payload_fingerprint="a" * UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES,
+        )
+
+
 def test_orphan_sweep_clears_only_dead_epochs_on_this_machine(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
