@@ -192,8 +192,20 @@ state inconsistent.
   `gobby-hooks`→`ghook`, `gobby-terminal`→`gterm`,
   `gobby-client`→`gclient`, shared `gobby-core`. The daemon shells
   out to the installed `~/.gobby/bin/` binaries, so a crate change is live only after
-  rebuild and reinstall — and install via a new inode (`cp` to a dotfile, `mv -f` over
-  the name): macOS kills processes that exec an in-place-overwritten signed binary.
+  rebuild and reinstall. Install through `promote_workspace_binary_set`
+  (`src/gobby/install/bin_set_coherence.py`) — that function is the contract, and
+  new-inode replacement (`cp` to a dotfile, `mv -f` over the name) is one step inside
+  it, not the whole of it. It also ad-hoc signs each staged binary, and when promoting
+  the complete set it writes the identity stamp
+  `~/.gobby/bin/.gdaemon-schema-identity.json`. Copying by hand skips
+  the stamp, and the next start is refused with `mixed installed binary set`. New-inode
+  replacement stays required because macOS kills processes that exec an
+  in-place-overwritten signed binary. Two consequences worth knowing before you
+  verify an install: promotion signs the binary, so the installed bytes differ from the
+  cargo artifact — read `sha256` from `~/.gobby/bin/` after promoting, never from
+  `target/release/`; and the stamped coherent set is exactly `gcode`, `gdaemon`,
+  `ghook`, so other `gobby-core` dependents such as `gclient` must be rebuilt alongside
+  them but are promoted separately.
   Load the `rust` skill before editing Rust; conventions live in `crates/CLAUDE.md`.
 - Key paths: `~/.gobby/bootstrap.yaml` (ports, bind host, PostgreSQL `database_url`,
   owner-only 0600), `~/.gobby/logs/`, `.gobby/project.json` (project metadata),
