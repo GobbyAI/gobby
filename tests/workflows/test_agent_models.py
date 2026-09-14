@@ -26,6 +26,9 @@ step_workflow:
       allowed_tools: all
     - name: terminate
       allowed_tools: []
+workflows:
+  rule_selectors:
+    include: []
 """
 
 _STEPLESS_YAML = """
@@ -33,6 +36,9 @@ name: coder
 description: Step-less agent
 prompts:
   agent: Run the assigned task.
+workflows:
+  rule_selectors:
+    include: []
 """
 
 

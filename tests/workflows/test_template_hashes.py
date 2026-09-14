@@ -23,6 +23,9 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
         "mode: interactive\n"
         "prompts:\n"
         "  agent: Run the assigned task.\n"
+        "workflows:\n"
+        "  rule_selectors:\n"
+        "    include: []\n"
         "step_workflow:\n"
         "  variables:\n"
         "    goal: ship\n"
@@ -41,6 +44,9 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
         "mode: interactive\n"
         "prompts:\n"
         "  agent: Run the assigned task.\n"
+        "workflows:\n"
+        "  rule_selectors:\n"
+        "    include: []\n"
         "step_workflow:\n"
         "  variables:\n"
         "    goal: ship\n"
@@ -59,6 +65,7 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
             "provider": "claude",
             "mode": "interactive",
             "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
             "step_workflow": {
                 "variables": {"goal": "ship"},
                 "steps": [{"name": "review"}],

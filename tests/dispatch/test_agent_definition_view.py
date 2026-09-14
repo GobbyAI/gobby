@@ -30,7 +30,10 @@ def test_string_json_uses_row_name_fallback() -> None:
     # A spawn surface requires its prompt block (require_surface_prompt_blocks);
     # the subject here is the name fallback, not an incomplete definition.
     view = _agent_definition_view(
-        _row('{"surfaces": ["spawn"], "prompts": {"agent": "Do the work."}}')
+        _row(
+            '{"surfaces": ["spawn"], "prompts": {"agent": "Do the work."},'
+            ' "workflows": {"rule_selectors": {"include": []}}}'
+        )
     )
 
     assert view.name == "coder"

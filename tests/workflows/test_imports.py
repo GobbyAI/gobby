@@ -75,7 +75,14 @@ async def test_sync_imported_workflows_loads_project_and_global_files_without_re
 @pytest.mark.parametrize(
     "definition,manager_type",
     [
-        ({"type": "agent", "prompts": {"agent": "Inspect only."}}, AgentDefinitionManager),
+        (
+            {
+                "type": "agent",
+                "prompts": {"agent": "Inspect only."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            AgentDefinitionManager,
+        ),
         (
             {
                 "type": "rule",
@@ -123,6 +130,7 @@ def test_sync_imported_definition_writes_all_four_kinds(temp_db: HubDatabase) ->
             "name": "imported-agent",
             "type": "agent",
             "provider": "claude",
+            "workflows": {"rule_selectors": {"include": []}},
             # surfaces defaults to ["spawn"], which requires prompts.agent.
             "prompts": {"agent": "Do the imported work."},
         },
@@ -220,6 +228,7 @@ def test_sync_imported_agent_persists_nested_step_workflow(temp_db: HubDatabase)
             "name": "imported-step-agent",
             "type": "agent",
             "provider": "claude",
+            "workflows": {"rule_selectors": {"include": []}},
             # surfaces defaults to ["spawn"], which requires prompts.agent.
             "prompts": {"agent": "Run the imported step workflow."},
             "step_workflow": _STEP_WORKFLOW,

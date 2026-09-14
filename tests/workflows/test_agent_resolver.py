@@ -50,6 +50,7 @@ def _create_agent(
         "name": name,
         "provider": "claude",
         "prompts": {"agent": "Run the assigned task."},
+        "workflows": {"rule_selectors": {"include": []}},
         **(body or {}),
     }
     manager = _manager(db)
