@@ -39,6 +39,8 @@ pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
 
 pub const DELTA_QUEUE_ENTRIES: usize = 64;
 pub const DELTA_QUEUE_BYTES: usize = MAX_FRAME_SIZE;
+/// Tests may use smaller caps that still admit one local frame. Shipped default
+/// and maximum equal `MAX_FRAME_SIZE`, so a legal frame always fits there.
 pub const MIN_DELTA_QUEUE_BYTES: u32 = 1;
 pub const MAX_DELTA_QUEUE_BYTES: u32 = MAX_FRAME_SIZE as u32;
 pub const CONTROL_QUEUE_ENTRIES: usize = 16;

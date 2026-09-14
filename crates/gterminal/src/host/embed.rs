@@ -610,7 +610,7 @@ async fn publish_frame(
                     att.last_send = std::time::Instant::now();
                 }
                 PushResult::Overflow => {
-                    att.mailbox.replace_with_keyframe(&msg);
+                    att.mailbox.replace_with_keyframe(&msg, cap);
                     att.desynced = true;
                     att.last_send = std::time::Instant::now();
                 }

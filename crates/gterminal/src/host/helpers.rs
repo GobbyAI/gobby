@@ -171,7 +171,7 @@ pub(crate) fn push_terminal_ansi(
                 full: true,
                 bytes: keyframe_bytes,
             });
-            att.mailbox.replace_with_keyframe(&keyframe_msg);
+            att.mailbox.replace_with_keyframe(&keyframe_msg, cap);
             att.encoder.commit(frame.clone(), keyframe);
             att.desynced = true;
             att.last_send = Instant::now();

@@ -635,7 +635,7 @@ impl HostState {
                                 true
                             }
                             PushResult::Overflow => {
-                                att.mailbox.replace_with_keyframe(&msg);
+                                att.mailbox.replace_with_keyframe(&msg, cap);
                                 att.last_send = Instant::now();
                                 att.desynced = true;
                                 true

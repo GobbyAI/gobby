@@ -7,9 +7,12 @@ use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use super::{write_outbound, ControlClose, ControlQueue};
+use super::{
+    encoded_message_bytes, write_outbound, ControlClose, ControlQueue, FrameMailbox, PushResult,
+};
 use crate::host::config::HostConfig;
 use crate::host::events::HostEvents;
+use crate::protocol::{ServerMessage, DELTA_QUEUE_BYTES, MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE};
 
 struct PendingWriter;
 
@@ -86,4 +89,126 @@ async fn control_deadline_and_event_overflow() {
         saw_overflow,
         "an overflowing event subscriber must receive event_overflow"
     );
+}
+
+fn error_msg(code: &str) -> ServerMessage {
+    ServerMessage::Error {
+        code: code.into(),
+        message: None,
+    }
+}
+
+fn queued_len(mailbox: &FrameMailbox) -> usize {
+    mailbox.lock().items.len()
+}
+
+#[test]
+fn empty_mailbox_does_not_admit_a_frame_over_cap() {
+    let small = error_msg("n");
+    let over = error_msg(&"n".repeat(64));
+    let cap = encoded_message_bytes(&small);
+    let over_bytes = encoded_message_bytes(&over);
+    assert!(
+        over_bytes > cap,
+        "over-cap probe must exceed cap={cap}, got {over_bytes}"
+    );
+
+    let mailbox = FrameMailbox::new();
+    assert_eq!(mailbox.try_push(&over, cap), PushResult::Overflow);
+    assert_eq!(
+        mailbox.queued_bytes(),
+        0,
+        "queued_bytes must stay at 0 when the first frame exceeds the cap"
+    );
+    assert_eq!(queued_len(&mailbox), 0);
+}
+
+#[test]
+fn overflow_collapses_to_one_keyframe_within_cap() {
+    let small = error_msg("n");
+    let over = error_msg(&"n".repeat(64));
+    let cap = encoded_message_bytes(&small);
+    let mailbox = FrameMailbox::new();
+
+    assert_eq!(mailbox.try_push(&small, cap), PushResult::Queued);
+    assert_eq!(mailbox.try_push(&small, cap), PushResult::Overflow);
+    assert_eq!(
+        queued_len(&mailbox),
+        1,
+        "overflow must leave the in-cap queue untouched"
+    );
+    assert!(mailbox.queued_bytes() <= cap);
+
+    mailbox.replace_with_keyframe(&small, cap);
+    assert_eq!(
+        queued_len(&mailbox),
+        1,
+        "resync must collapse the mailbox to one replacement keyframe"
+    );
+    assert!(
+        mailbox.queued_bytes() <= cap,
+        "replacement keyframe must respect the byte cap; queued={} cap={cap}",
+        mailbox.queued_bytes()
+    );
+
+    mailbox.replace_with_keyframe(&over, cap);
+    assert_eq!(
+        queued_len(&mailbox),
+        1,
+        "an over-cap replacement must not grow the mailbox"
+    );
+    assert!(
+        mailbox.queued_bytes() <= cap,
+        "replace_with_keyframe must not land over cap; queued={} cap={cap}",
+        mailbox.queued_bytes()
+    );
+}
+
+#[test]
+fn shipped_delta_queue_admits_one_max_frame() {
+    assert_eq!(DELTA_QUEUE_BYTES, MAX_FRAME_SIZE);
+    assert_eq!(MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE as u32);
+    assert_eq!(
+        HostConfig::default().delta_queue_bytes,
+        MAX_FRAME_SIZE as u32
+    );
+    let mut test_local = HostConfig::default();
+    test_local.delta_queue_bytes = 4096;
+    test_local
+        .validate()
+        .expect("4096 admits an 8x24 semantic keyframe and remains a valid test-local cap");
+}
+
+struct FailingWriter;
+
+impl AsyncWrite for FailingWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(Err(std::io::Error::other("peer reset")))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn write_outbound_distinguishes_disconnect_from_peer_error() {
+    let (tx, rx) = mpsc::channel(4);
+    drop(tx);
+    let closed = write_outbound(Vec::<u8>::new(), rx, Duration::from_millis(50)).await;
+    assert_eq!(closed, ControlClose::Disconnected);
+
+    let (tx, rx) = mpsc::channel(4);
+    tx.try_send(json!({"ok": true})).expect("enqueue");
+    drop(tx);
+    let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
+    assert_eq!(errored, ControlClose::Overflow);
 }

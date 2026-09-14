@@ -15,6 +15,7 @@ use crate::protocol::{write_message, ServerMessage};
 pub enum ControlClose {
     Deadline,
     Overflow,
+    Disconnected,
 }
 
 struct ControlEntry {
@@ -92,7 +93,7 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
             }
         }
     }
-    ControlClose::Overflow
+    ControlClose::Disconnected
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +147,7 @@ impl FrameMailbox {
         if inner.closed {
             return PushResult::Closed;
         }
-        if !inner.items.is_empty() && inner.queued_bytes.saturating_add(bytes) > cap {
+        if inner.queued_bytes.saturating_add(bytes) > cap {
             return PushResult::Overflow;
         }
         inner.queued_bytes = inner.queued_bytes.saturating_add(bytes);
@@ -156,10 +157,13 @@ impl FrameMailbox {
         PushResult::Queued
     }
 
-    pub fn replace_with_keyframe(&self, msg: &ServerMessage) {
+    pub fn replace_with_keyframe(&self, msg: &ServerMessage, cap: usize) {
         let bytes = encoded_message_bytes(msg);
         let mut inner = self.lock();
         if inner.closed {
+            return;
+        }
+        if bytes > cap {
             return;
         }
         inner.items.clear();
