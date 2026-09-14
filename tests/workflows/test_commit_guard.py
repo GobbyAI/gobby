@@ -966,3 +966,67 @@ def test_parse_keeps_explicit_pathspecs_and_quoted_messages() -> None:
     assert [
         i.pathspecs for i in parse_git_commit_invocations("git commit -m 'row -- a/b and c/d'")
     ] == [()]
+
+
+def test_parse_captures_git_c_and_work_tree() -> None:
+    from gobby.workflows.commit_guard import resolve_commit_inspect_cwd
+
+    dash_c = parse_git_commit_invocations("git -C /wt/agent commit -m x")
+    assert len(dash_c) == 1
+    assert dash_c[0].chdir == "/wt/agent"
+    assert dash_c[0].work_tree is None
+    assert (
+        resolve_commit_inspect_cwd(dash_c[0], event_cwd="/main", project_path="/main")
+        == "/wt/agent"
+    )
+
+    work_tree = parse_git_commit_invocations(
+        "git --work-tree=/wt/agent --git-dir=/main/.git commit -m x"
+    )
+    assert work_tree[0].work_tree == "/wt/agent"
+    assert (
+        resolve_commit_inspect_cwd(work_tree[0], event_cwd="/main", project_path="/main")
+        == "/wt/agent"
+    )
+
+    relative = parse_git_commit_invocations("git -C ../agent-wt commit -m x")
+    assert (
+        resolve_commit_inspect_cwd(
+            relative[0], event_cwd="/repos/gobby", project_path="/repos/gobby"
+        )
+        == "/repos/agent-wt"
+    )
+
+    bare = parse_git_commit_invocations("git commit -m x")[0]
+    assert (
+        resolve_commit_inspect_cwd(bare, event_cwd="/wt/agent", project_path="/main") == "/wt/agent"
+    )
+    assert resolve_commit_inspect_cwd(bare, event_cwd=None, project_path="/main") == "/main"
+
+
+@pytest.mark.asyncio
+async def test_git_c_worktree_commit_does_not_inspect_primary_index(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "agent-worktree"
+    _git(
+        guard_harness.repo,
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "agent-worktree",
+        str(worktree),
+    )
+    (guard_harness.repo / "foreign.txt").write_text("staged on primary\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(f"git -C {worktree} commit -m 'worktree commit'")
+    )
+
+    assert response.decision == "allow"
+    assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == {
+        "foreign.txt"
+    }
