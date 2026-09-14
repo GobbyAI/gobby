@@ -430,6 +430,9 @@ class TestNoGitStashInteractive:
         assert "gobby-agents" in reason
         assert "send_message" in reason
         assert "permission to disable" not in reason
+        assert "git show HEAD:<path> > <path>" in reason
+        assert "gobby-worktrees.create_worktree" in reason
+        assert "git add -- <paths>" in reason
 
     def test_same_pattern_as_autonomous(self, db, manager) -> None:
         autonomous_stash = _get_rule(manager, "no-git-stash")
