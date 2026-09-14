@@ -241,6 +241,13 @@ def test_runtime_requirements_are_reported_without_rewriting_history(
         additional_skills=["tasks"],
         validation_criteria="Migration preserves this task and reports the retired requirement",
     )
+    closed = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Closed tasks history",
+        additional_skills=["merge"],
+        validation_criteria="Migration neither rewrites nor reports this closed task",
+    )
+    closed = tasks.close_task(closed.id, reason="obsolete")
     agent = make_agent_definition(
         name="runtime-fixture",
         prompts={"agent": "Task instructions"},
@@ -260,6 +267,8 @@ def test_runtime_requirements_are_reported_without_rewriting_history(
     assert tasks.get_task(task.id) == task
     assert instances.get_for_session(session.id) == original
     assert any(task.id in warning and "tasks ->" in warning for warning in result.warnings)
+    assert tasks.get_task(closed.id) == closed
+    assert not any(closed.id in warning for warning in result.warnings)
     assert any(
         session.id in warning and "live-session ->" in warning for warning in result.warnings
     )

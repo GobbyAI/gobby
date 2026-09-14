@@ -231,8 +231,10 @@ def migrate_instruction_requirements(
                 result.warnings.append(
                     f"{location}.{field_name}: malformed payload ({exc}); preserved"
                 )
+    # Closed tasks never load requirements; reopening makes them visible again.
     for row in db.fetchall(
-        "SELECT id, additional_skills FROM tasks WHERE additional_skills IS NOT NULL"
+        "SELECT id, additional_skills FROM tasks "
+        "WHERE additional_skills IS NOT NULL AND closed_at IS NULL"
     ):
         location = f"tasks[{row['id']}].additional_skills"
         try:
