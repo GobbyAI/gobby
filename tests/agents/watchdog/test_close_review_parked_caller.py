@@ -603,3 +603,50 @@ async def test_observer_wait_yields_task_and_epic_gates_until_run_completes(
     assert blocked_again.decision == "block"
     assert "[aggregated:2-gates]" in (blocked_again.reason or "")
     assert variables["stop_attempts"] == attempts_before_wait + 1
+
+
+async def _sweep_after_caller_ends(harness: _Harness) -> int:
+    SessionManager(harness.db).update_status(harness.caller_session, "expired")
+    with (
+        patch.object(
+            harness.monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(harness.monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
+    ):
+        return await harness.monitor.check_completed_task_agents()
+
+
+async def test_ended_caller_fails_on_an_invalid_verdict_it_cannot_retry(
+    harness: _Harness,
+) -> None:
+    launched = await harness.close_task()
+    [validator_run_id] = harness.spawned
+    submitted = await harness.validator_submits(validator_run_id, launched["review_id"], "invalid")
+    assert submitted["review_status"] == "invalid"
+
+    handled = await _sweep_after_caller_ends(harness)
+
+    caller = harness.runs.get(harness.caller_run.id)
+    assert handled == 1
+    assert caller is not None
+    assert caller.status == "error"
+    assert "review_status=invalid" in (caller.error or "")
+
+
+async def test_ended_caller_completes_on_a_valid_verdict_before_delivery(
+    harness: _Harness,
+) -> None:
+    launched = await harness.close_task()
+    [validator_run_id] = harness.spawned
+    submitted = await harness.validator_submits(validator_run_id, launched["review_id"], "valid")
+    assert submitted["review_status"] == "closed"
+
+    handled = await _sweep_after_caller_ends(harness)
+
+    caller = harness.runs.get(harness.caller_run.id)
+    assert handled == 1
+    assert caller is not None
+    assert (caller.status, caller.terminal_reason) == ("success", "task_completed")
+    assert harness.wakes == []

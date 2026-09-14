@@ -13,7 +13,7 @@ from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.run_completion import (
     closed_task_completion_result,
     cooperative_close_handoff_pending,
-    is_incomplete_workflow_error,
+    ended_caller_close_review_outcome,
 )
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.transcript_reader import TranscriptReader
@@ -216,24 +216,12 @@ class LifecycleReconciliation:
         task_manager: LocalTaskManager | None,
         terminalize: Callable[..., Awaitable[bool]],
     ) -> int:
-        """Complete active task-bound runs whose authoritative task is closed."""
+        """Terminalize active task-bound runs from task or ended-caller review state."""
         if task_manager is None:
             return 0
 
         handled = 0
-        candidates = list(runs)
-        extra_runs = await self._run_db(
-            self._agent_run_manager.list_by_status,
-            status="error",
-            limit=100,
-        )
-        seen = {run.id for run in candidates}
-        for extra in extra_runs:
-            if extra.id not in seen and is_incomplete_workflow_error(extra.error):
-                candidates.append(extra)
-                seen.add(extra.id)
-
-        for run in candidates:
+        for run in runs:
             if run.task_id is None:
                 continue
             try:
@@ -247,6 +235,14 @@ class LifecycleReconciliation:
                 )
                 continue
             if not is_task_closed(task):
+                outcome = await self._run_db(ended_caller_close_review_outcome, self._db, run)
+                if outcome is not None:
+                    await self._cleanup_handler.cleanup_agent(
+                        run,
+                        terminal_payload=outcome[1],
+                        is_success=outcome[0] == "complete",
+                    )
+                    handled += 1
                 continue
 
             if await self._cooperative_close_handoff_pending(run):

@@ -95,6 +95,9 @@ def complete_run(
     run_id: str,
     result: str | None = None,
     terminal_reason: AgentRunTerminalReason | None = None,
+    *,
+    tool_calls_count: int,
+    turns_used: int,
 ) -> bool:
     """
     Complete a running agent (mark as success).
@@ -110,6 +113,8 @@ def complete_run(
         run_id: The agent run ID.
         result: Optional result text. If None, preserves any existing result.
         terminal_reason: Optional semantic reason for successful termination.
+        tool_calls_count: Resolved tool-call count to persist.
+        turns_used: Resolved turn count to persist.
 
     Returns:
         True if the run was completed, False otherwise.
@@ -121,17 +126,6 @@ def complete_run(
         return False
 
     result = closed_task_run_completion_result(runner.run_storage.db, run, result)
-
-    # Read session stats (message processor writes these to the sessions table).
-    # The agent_runs table may still have 0/0 at this point since stats are
-    # written to sessions, not agent_runs, during execution.
-    tool_calls_count = run.tool_calls_count or 0
-    turns_used = run.turns_used or 0
-    if run.child_session_id and (tool_calls_count == 0 or turns_used == 0):
-        session = runner._session_manager.get(run.child_session_id)
-        if session:
-            tool_calls_count = getattr(session, "tool_call_count", 0) or tool_calls_count
-            turns_used = getattr(session, "turn_count", 0) or turns_used
 
     completed_run = runner._run_storage.complete(
         run_id=run_id,

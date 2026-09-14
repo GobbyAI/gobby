@@ -25,15 +25,15 @@ from weakref import WeakValueDictionary
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
 from gobby.agents.run_completion import (
-    budget_ceiling_error,
     closed_task_completion_result,
     cooperative_close_handoff_pending,
+    ended_caller_close_review_outcome,
 )
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
-from gobby.storage.agents import INCOMPLETE_STEP_WORKFLOW_ERROR, TerminalAction
+from gobby.storage.agents import TerminalAction
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 
 if TYPE_CHECKING:
@@ -47,6 +47,7 @@ _AUTH_PROMPT_RE = re.compile(
     r"/login|Press 1 to trust|not authenticated|Invalid API key|API key required",
     re.IGNORECASE,
 )
+_INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
 _NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
 _TERMINAL_DELIVERY_WAIT_SECONDS = 20.0
 
@@ -72,7 +73,7 @@ def _format_incomplete_step_workflow_error(
     eval_error: Exception | None = None,
 ) -> str:
     parts = [
-        INCOMPLETE_STEP_WORKFLOW_ERROR,
+        _INCOMPLETE_STEP_WORKFLOW_ERROR,
         f"workflow={workflow_name}",
         f"current_step={current_step or 'unknown'}",
     ]
@@ -609,7 +610,7 @@ class SessionCoordinator:
             return None
         return finish_followups(result.run)
 
-    def complete_agent_run(self, session: Any, *, stop_reason: str | None = None) -> None:
+    def complete_agent_run(self, session: Any) -> None:
         """
         Complete an agent run when its terminal-mode session ends.
 
@@ -619,7 +620,6 @@ class SessionCoordinator:
 
         Args:
             session: Session object with agent_run_id
-            stop_reason: Optional provider stop reason from the SESSION_END event.
         """
         # Check for agent_run_id
         agent_run_id = getattr(session, "agent_run_id", None)
@@ -755,22 +755,23 @@ class SessionCoordinator:
             if task_close_result is not None:
                 result = task_close_result
             else:
-                if cooperative_close_handoff_pending(self._agent_run_manager.db, agent_run):
+                db = self._agent_run_manager.db
+                outcome = ended_caller_close_review_outcome(db, agent_run, caller_ended=True)
+                if outcome is None and cooperative_close_handoff_pending(db, agent_run):
                     self.logger.info(
                         "Deferring session-end for agent run %s: close-review handoff pending",
                         agent_run_id,
                     )
                     return
-                if not isinstance(stop_reason, str) or not stop_reason.strip():
-                    raw_stop_reason = getattr(session, "stop_reason", None)
-                    stop_reason = raw_stop_reason if isinstance(raw_stop_reason, str) else None
-                incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
-                ceiling_error = (
-                    budget_ceiling_error(stop_reason) if incomplete_workflow_error else None
-                )
-                if incomplete_workflow_error:
-                    fail_reason = ceiling_error or incomplete_workflow_error
-                    if tool_calls_count == 0 and turns_used == 0 and ceiling_error is None:
+                if outcome is None:
+                    fail_reason = self._incomplete_step_workflow_error(session_id)
+                elif outcome[0] == "fail":
+                    fail_reason = outcome[1]
+                else:
+                    fail_reason = None
+                    result = f"{result}\n\n{outcome[1]}" if result else outcome[1]
+                if fail_reason:
+                    if tool_calls_count == 0 and turns_used == 0:
                         fail_reason = f"{fail_reason}\n\n{_format_no_activity_error(result)}"
                     updated_run = self._terminate_agent_run(
                         run_id=agent_run_id,
