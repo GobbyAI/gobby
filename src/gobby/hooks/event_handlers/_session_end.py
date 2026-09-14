@@ -100,7 +100,9 @@ class SessionEndMixin(EventHandlersBase):
         # Complete agent run if this is a terminal-mode agent session
         if terminal_outcome and session and session.agent_run_id and self._session_coordinator:
             try:
-                self._session_coordinator.complete_agent_run(session)
+                raw_stop_reason = event.data.get("stop_reason")
+                stop_reason = raw_stop_reason if isinstance(raw_stop_reason, str) else None
+                self._session_coordinator.complete_agent_run(session, stop_reason=stop_reason)
             except Exception as e:
                 self.logger.warning("Failed to complete agent run: %s", e)
 

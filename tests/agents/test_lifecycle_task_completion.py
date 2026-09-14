@@ -10,14 +10,20 @@ import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.run_completion import closed_task_completion_result
+from gobby.agents.run_completion import (
+    bound_task_is_closed,
+    budget_ceiling_error,
+    closed_task_completion_result,
+    cooperative_close_handoff_pending,
+)
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.session_coordinator import SessionCoordinator
-from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents import INCOMPLETE_STEP_WORKFLOW_ERROR, AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -394,3 +400,172 @@ async def test_task_lookup_failure_does_not_invent_success(
         run.child_session_id or run.claimed_session_id or run.parent_session_id
     )
     assert unavailable_task_manager.get_task.call_args.args == (run.task_id,)
+
+
+def test_budget_ceiling_error_names_turn_and_context() -> None:
+    assert budget_ceiling_error("max_turns") is not None
+    assert "turn ceiling" in (budget_ceiling_error("max_turns") or "")
+    assert "stop_reason=max_turns" in (budget_ceiling_error("max_turns") or "")
+    assert budget_ceiling_error("MaxTokens") is not None
+    assert "context ceiling" in (budget_ceiling_error("MaxTokens") or "")
+    assert budget_ceiling_error("end_turn") is None
+    assert budget_ceiling_error(None) is None
+
+
+@pytest.mark.asyncio
+async def test_incomplete_workflow_error_revives_when_bound_task_closes(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task_id, run = _create_task_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    failed = agent_run_manager.fail(
+        run.id,
+        error=(
+            f"{INCOMPLETE_STEP_WORKFLOW_ERROR}; workflow=backend-developer; "
+            "current_step=implement; exit_condition=current_step == 'terminate'"
+        ),
+        tool_calls_count=12,
+        turns_used=8,
+    )
+    assert failed is not None
+    assert failed.status == "error"
+    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    closed_task = task_manager.get_task(task_id)
+    stuck_detector = MagicMock()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
+    monitor = _monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=task_manager,
+        stuck_detector=stuck_detector,
+    )
+
+    with (
+        patch.object(
+            monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
+    ):
+        handled = await monitor.check_completed_task_agents()
+
+    completed = agent_run_manager.get(run.id)
+    assert handled == 1
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.error is None
+    assert completed.terminal_reason == "task_completed"
+    assert closed_task.closed_at is not None
+    assert "Task completion:" in (completed.result or "")
+
+
+@pytest.mark.asyncio
+async def test_expired_close_review_caller_completes_when_task_closes(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    """A dead caller cannot cooperative-end; closed-task reconciliation must win."""
+    task_manager = LocalTaskManager(temp_db)
+    caller_session = session_manager.register(
+        external_id="expired-close-review-caller",
+        machine_id=LOCAL_MACHINE_ID,
+        source="grok",
+        project_id=sample_project["id"],
+        parent_session_id=parent_session["id"],
+    )
+    validator_session = session_manager.register(
+        external_id="expired-close-review-validator",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=sample_project["id"],
+        parent_session_id=caller_session.id,
+    )
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Close after review",
+        validation_criteria="The reviewed close lands.",
+    )
+    caller = agent_run_manager.create(
+        parent_session_id=parent_session["id"],
+        provider="grok",
+        prompt="implement",
+        task_id=task.id,
+        child_session_id=caller_session.id,
+    )
+    agent_run_manager.start(caller.id)
+    agent_run_manager.update_runtime(caller.id)
+    live_caller = agent_run_manager.get(caller.id)
+    assert live_caller is not None
+    make_live_terminal(live_caller, db=agent_run_manager.db, session_name=f"gobby-test-{caller.id}")
+    validator = agent_run_manager.create(
+        parent_session_id=caller_session.id,
+        provider="codex",
+        prompt="review",
+        child_session_id=validator_session.id,
+    )
+    agent_run_manager.start(validator.id)
+    store = TaskCloseReviewStore(temp_db)
+    review, _created = store.create_or_get_active(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=caller_session.id,
+        close_arguments={"preview": True},
+        expected_task_updated_at=task.updated_at,
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+        diff_sha="a" * 64,
+        test_bodies_sha="b" * 64,
+        stable_facts={},
+    )
+    assert store.bind_run(review.id, validator.id) is not None
+    assert cooperative_close_handoff_pending(temp_db, agent_run_manager.get(caller.id)) is True
+
+    finished = store.finish(
+        review.id,
+        status="closed",
+        result_payload={"event": "task_close_review_completed", "closed": True},
+    )
+    assert finished is not None
+    assert store.mark_delivered(review.id) is True
+    session_manager.update_status(caller_session.id, "expired")
+    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    closed_caller = agent_run_manager.get(caller.id)
+    assert closed_caller is not None
+    assert bound_task_is_closed(temp_db, closed_caller) is True
+    assert cooperative_close_handoff_pending(temp_db, closed_caller) is False
+
+    stuck_detector = MagicMock()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
+    monitor = _monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=task_manager,
+        stuck_detector=stuck_detector,
+    )
+    with (
+        patch.object(
+            monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
+    ):
+        handled = await monitor.check_completed_task_agents()
+
+    completed = agent_run_manager.get(caller.id)
+    assert handled == 1
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.terminal_reason == "task_completed"

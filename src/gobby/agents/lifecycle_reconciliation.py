@@ -10,7 +10,11 @@ from typing import Any, cast
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.capture import TerminationErrorCode, terminate_managed_runtime_async
 from gobby.agents.completion_stats import resolve_completion_stats
-from gobby.agents.run_completion import closed_task_completion_result
+from gobby.agents.run_completion import (
+    closed_task_completion_result,
+    cooperative_close_handoff_pending,
+    is_incomplete_workflow_error,
+)
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import (
@@ -217,7 +221,19 @@ class LifecycleReconciliation:
             return 0
 
         handled = 0
-        for run in runs:
+        candidates = list(runs)
+        extra_runs = await self._run_db(
+            self._agent_run_manager.list_by_status,
+            status="error",
+            limit=100,
+        )
+        seen = {run.id for run in candidates}
+        for extra in extra_runs:
+            if extra.id not in seen and is_incomplete_workflow_error(extra.error):
+                candidates.append(extra)
+                seen.add(extra.id)
+
+        for run in candidates:
             if run.task_id is None:
                 continue
             try:
@@ -265,26 +281,7 @@ class LifecycleReconciliation:
 
     async def _cooperative_close_handoff_pending(self, run: AgentRun) -> bool:
         """Keep a close-review caller alive while it can cooperatively report."""
-        if run.task_id is None or run.child_session_id is None:
-            return False
-
-        from gobby.autonomous.progress_tracker import ProgressTracker
-        from gobby.storage.task_close_reviews import TaskCloseReviewStore
-
-        review = await self._run_db(
-            TaskCloseReviewStore(self._db).get_latest_agentic_for_task_caller,
-            task_id=run.task_id,
-            caller_session_id=run.child_session_id,
-        )
-        if review is None or (not review.active and review.status != "closed"):
-            return False
-        if review.active or review.delivered_at is None:
-            return True
-
-        return not await self._run_db(
-            ProgressTracker(self._db).is_stagnant,
-            run.child_session_id,
-        )
+        return bool(await self._run_db(cooperative_close_handoff_pending, self._db, run))
 
     async def reap_stale_pending(self) -> int:
         """Fail pending terminals older than the 2.3 in-doubt deadline."""
