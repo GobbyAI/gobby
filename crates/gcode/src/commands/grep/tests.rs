@@ -374,6 +374,7 @@ fn coverage_gap_message_names_scoped_paths_and_globs() {
     );
 }
 
+#[test]
 fn files_with_matches_ignores_context_flags() {
     let chunks = vec![chunk("src/lib.rs", 1, "one\ntwo\nneedle\nfour\nfive")];
     let mut opts = options("needle");
