@@ -414,7 +414,7 @@ GROK_HOOK_ALIASES: dict[str, str] = {
     "StopCancelled": "stop_cancelled",
 }
 
-GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"stop", "subagent_stop"})
+GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"pre_tool_use", "stop", "subagent_stop"})
 GROK_TRANSPORT_CAPABILITIES: dict[str, TransportCapabilityValue] = {
     "loadSession": True,
     "x.ai/fs_notify": True,

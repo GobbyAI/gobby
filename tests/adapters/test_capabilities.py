@@ -101,7 +101,7 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert qwen_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert grok_pre_tool is not None
-    assert grok_pre_tool.context_channel is ContextChannel.NONE
+    assert grok_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
     assert grok_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert agy_pre_tool is not None
@@ -201,7 +201,7 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
     subagent_stop = capabilities.get_hook("subagent_stop")
 
     assert pre_tool is not None
-    assert pre_tool.context_channel is ContextChannel.NONE
+    assert pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
     assert pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
     assert pre_tool.supports_response_field("permission_decision")
     assert pre_tool.supports_response_field("auto_approve")

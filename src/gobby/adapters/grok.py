@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
@@ -30,6 +32,26 @@ from gobby.hooks.normalization import normalize_tool_outcome
 
 _GROK_STOP_HOOKS = frozenset({"stop", "subagent_stop"})
 _GROK_POLICY_BLOCK_REASON = "Blocked by Gobby hook"
+# Grok keeps only the first ~19.5 KB of a large MCP result in the hook payload and
+# names the file holding the full JSON, <session>/mcp/<toolUseId>.json.
+_MCP_SPILL_NOTICE = re.compile(
+    r"\n\n\[MCP output truncated: [^\]]*? Full output written to: (?P<path>/.+?\.json)\. "
+    r"The full output is valid JSON saved to the file above;[^\]]*\]\Z"
+)
+
+
+def _spilled_mcp_output(text: str, tool_use_id: object) -> str:
+    """Return the full MCP output Grok spilled to disk in place of its truncated copy."""
+    match = _MCP_SPILL_NOTICE.search(text)
+    if match is None or not isinstance(tool_use_id, str) or not tool_use_id:
+        return text
+    path = Path(match["path"])
+    if path.name != f"{tool_use_id}.json" or path.parent.name != "mcp":
+        return text
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return text
 
 
 class GrokAdapter(ACPHookAdapter):
@@ -101,12 +123,15 @@ class GrokAdapter(ACPHookAdapter):
             data["tool_input"] = tool_input["tool_input"]
         # toolResult is the tool's raw output: MCP results wrap the proxy's JSON
         # text as {"type": "MCP", "output": {"OkayOutput": ...}}. Hand the text to
-        # shared normalization so rules and handoff delivery see the envelope.
+        # shared normalization so rules and handoff delivery see the envelope; a
+        # truncated copy is not valid JSON, so read the spilled full output instead.
         tool_output = data.get("tool_output")
         if isinstance(tool_output, dict) and tool_output.get("type") == "MCP":
             output = tool_output.get("output")
             if isinstance(output, dict) and isinstance(output.get("OkayOutput"), str):
-                data["tool_output"] = output["OkayOutput"]
+                data["tool_output"] = _spilled_mcp_output(
+                    output["OkayOutput"], data.get("tool_use_id")
+                )
         if "subagent_id" in data:
             data.setdefault("agent_id", data["subagent_id"])
         if "subagent_type" in data:
@@ -248,6 +273,9 @@ class GrokAdapter(ACPHookAdapter):
             if permission_decision is None and response.auto_approve:
                 permission_decision = "allow"
             denied = result.get("decision") == "deny" or permission_decision == "deny"
+            if denied and isinstance(result.get("hookSpecificOutput"), dict):
+                # Grok drops a denied call's additionalContext.
+                result["hookSpecificOutput"].pop("additionalContext", None)
             if permission_decision is not None or (
                 response.modified_input is not None and not denied
             ):

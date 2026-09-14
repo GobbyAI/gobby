@@ -67,7 +67,7 @@ class PendingDelivery(TypedDict):
 
 @dataclass(frozen=True)
 class _FlushPlan:
-    kind: Literal["pretool_new", "pretool_gate", "stop_briefing", "stop_turn", "drop"]
+    kind: Literal["pretool_context", "stop_briefing", "stop_turn", "drop"]
     briefing: str | None = None
     turn_context: str | None = None
     staged_effects: dict[str, Any] | None = None
@@ -477,7 +477,10 @@ def _flush_plan(
     marker_absent = bool(envelope_id and envelope_terminal_response(envelope_id) is None)
 
     if is_pretool:
-        if not briefing and not (real_gate and turn_context):
+        # Grok clips a denied call's reason to ~256 characters and drops its
+        # additionalContext, so pending text waits for an allowed call.
+        denied = real_gate or response.permission_decision == "deny"
+        if denied or not (briefing or turn_context):
             return None, changed
         if not marker_absent or envelope_id is None:
             return None, changed
@@ -487,20 +490,16 @@ def _flush_plan(
                 "components": briefing,
             }
             variables[BRIEFING_VARIABLE] = []
-        if real_gate:
-            variables[TURN_CONTEXT_VARIABLE] = []
-            return (
-                _FlushPlan(
-                    "pretool_gate",
-                    briefing=_component_text(briefing),
-                    turn_context=_component_text(turn_context),
-                    staged_effects=staged,
-                ),
-                True,
-            )
-        return _FlushPlan(
-            "pretool_new", briefing=_component_text(briefing), staged_effects=staged
-        ), True
+        variables[TURN_CONTEXT_VARIABLE] = []
+        return (
+            _FlushPlan(
+                "pretool_context",
+                briefing=_component_text(briefing),
+                turn_context=_component_text(turn_context),
+                staged_effects=staged,
+            ),
+            True,
+        )
 
     if briefing:
         if not marker_absent or envelope_id is None:
@@ -534,12 +533,16 @@ def flush_response(
     event: HookEvent,
     response: HookResponse,
 ) -> None:
-    """Deliver pending Grok context through PreToolUse or Stop gates."""
+    """Deliver pending Grok context through allowed PreToolUse calls or Stop gates."""
     if event.source != SessionSource.GROK:
         return
     session_id = _platform_session_id(event)
     if session_id is None:
         return
+    if event.event_type == HookEventType.BEFORE_TOOL:
+        # stash_response already queued this call's own text; only a flush plan
+        # puts pending text on the wire.
+        response.context = None
     plan = SessionVariableManager(handler._session_manager.db)._mutate_variables(
         session_id,
         lambda variables: _flush_plan(variables, event, response),
@@ -556,19 +559,7 @@ def flush_response(
         )
         record_worker_staging(plan.staged_effects)
 
-    if plan.kind == "pretool_new":
-        if plan.briefing:
-            response.decision = "deny"
-            response.reason = f"{plan.briefing}\n\nRetry the same tool call."
-        return
-    if plan.kind == "pretool_gate":
-        response.reason = "\n\n".join(
-            part
-            for part in (plan.briefing, plan.turn_context, response.reason)
-            if isinstance(part, str) and part
-        )
-        return
-    if plan.kind == "stop_briefing":
+    if plan.kind in {"pretool_context", "stop_briefing"}:
         response.context = "\n\n".join(
             part for part in (plan.briefing, plan.turn_context) if isinstance(part, str) and part
         )

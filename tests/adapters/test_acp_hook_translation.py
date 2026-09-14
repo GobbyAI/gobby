@@ -857,21 +857,22 @@ class TestGrokCurrentHookContract:
             },
         }
 
-    def test_pre_tool_use_omits_context_fields(self) -> None:
+    def test_allowed_pre_tool_use_carries_context_as_additional_context(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
             HookResponse(
                 decision="allow",
-                context="ignored",
+                context="pending note",
                 modified_input={"command": "git status"},
             ),
             hook_type="pre_tool_use",
         )
 
+        # Grok 1.0.30 delivers an allowed call's additionalContext after the call runs.
         assert result["hookSpecificOutput"] == {
             "hookEventName": "pre_tool_use",
+            "additionalContext": "pending note",
             "updatedInput": {"command": "git status"},
         }
-        assert "additionalContext" not in result
         assert "systemMessage" not in result
 
     def test_subagent_stop_block_has_non_empty_fallback_reason(self) -> None:

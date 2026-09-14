@@ -122,7 +122,7 @@ def test_first_prompt_context_is_stashed_as_briefing(
     ]
 
 
-def test_first_pre_tool_use_denies_once_then_acknowledges(
+def test_first_pre_tool_use_delivers_briefing_as_context_then_acknowledges(
     manager_with_mocks: HookManager,
     session_manager: SessionManager,
     grok_session_id: str,
@@ -139,8 +139,12 @@ def test_first_pre_tool_use_denies_once_then_acknowledges(
         workflow_context=None,
     )
 
-    assert first.decision == "deny"
-    assert first.reason == "read this first\n\nRetry the same tool call."
+    # Grok clips a deny reason to ~256 characters, so the briefing rides the allowed call.
+    assert first.decision == "allow"
+    assert first.reason is None
+    assert first.context == "read this first"
+    wire = GrokAdapter().translate_from_hook_response(first, hook_type="pre_tool_use")
+    assert "read this first" in wire["hookSpecificOutput"]["additionalContext"]
     assert variables.get_variables(grok_session_id)["grok_pending_delivery"] == {
         "envelope_id": "gate-1",
         "components": [_component("turn:briefing", "read this first")],
@@ -154,6 +158,73 @@ def test_first_pre_tool_use_denies_once_then_acknowledges(
 
     assert second.decision == "allow"
     assert "grok_pending_delivery" not in variables.get_variables(grok_session_id)
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        HookResponse(decision="deny", reason="policy says no"),
+        HookResponse(decision="allow", permission_decision="deny", reason="policy says no"),
+    ],
+    ids=["decision", "permission-decision"],
+)
+def test_denied_pre_tool_use_keeps_pending_text_queued_for_allowed_call(
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    grok_session_id: str,
+    gate: HookResponse,
+) -> None:
+    variables = _configure_manager(manager_with_mocks, session_manager)
+    briefing = [_component("p2p:message-1", "message body", message_ids=["message-1"])]
+    turn_context = [_component("ctx:turn:1", "turn context")]
+    variables.merge_variables(
+        grok_session_id,
+        {"grok_pending_briefing": briefing, "grok_pending_turn_context": turn_context},
+    )
+
+    denied = manager_with_mocks._complete_response(
+        _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="denied-call"),
+        gate,
+        workflow_context=None,
+        preserve_original=True,
+    )
+
+    # Grok clips a deny reason and drops its additionalContext: nothing pending is spent.
+    assert denied.reason == "policy says no"
+    assert denied.context is None
+    stored = variables.get_variables(grok_session_id)
+    assert stored["grok_pending_briefing"] == briefing
+    assert stored["grok_pending_turn_context"] == turn_context
+    assert "grok_pending_delivery" not in stored
+
+    allowed = manager_with_mocks._complete_response(
+        _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="allowed-call"),
+        HookResponse(decision="allow"),
+        workflow_context=None,
+    )
+
+    assert allowed.decision == "allow"
+    assert allowed.context == "message body\n\nturn context"
+    stored = variables.get_variables(grok_session_id)
+    assert stored["grok_pending_turn_context"] == []
+    assert stored["grok_pending_delivery"]["envelope_id"] == "allowed-call"
+
+
+def test_allowed_pre_tool_use_delivers_its_own_context_once(
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    grok_session_id: str,
+) -> None:
+    variables = _configure_manager(manager_with_mocks, session_manager)
+
+    result = manager_with_mocks._complete_response(
+        _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="own-context"),
+        HookResponse(decision="allow", context="rule note"),
+        workflow_context=None,
+    )
+
+    assert result.context == "rule note"
+    assert variables.get_variables(grok_session_id)["grok_pending_turn_context"] == []
 
 
 def test_present_inbox_file_requeues_and_redelivers_briefing(
@@ -171,7 +242,7 @@ def test_present_inbox_file_requeues_and_redelivers_briefing(
         HookResponse(decision="allow"),
         workflow_context=None,
     )
-    assert first.decision == "deny"
+    assert first.context == "retry briefing"
     inbox_path = get_gobby_home() / "hooks" / "inbox" / "failed-gate.json"
     inbox_path.parent.mkdir(parents=True, exist_ok=True)
     inbox_path.write_text("{}", encoding="utf-8")
@@ -182,8 +253,8 @@ def test_present_inbox_file_requeues_and_redelivers_briefing(
         workflow_context=None,
     )
 
-    assert retried.decision == "deny"
-    assert retried.reason == "retry briefing\n\nRetry the same tool call."
+    assert retried.decision == "allow"
+    assert retried.context == "retry briefing"
     assert not inbox_path.exists()
     assert (
         variables.get_variables(grok_session_id)["grok_pending_delivery"]["envelope_id"]
@@ -353,8 +424,8 @@ def test_no_ups_first_pre_tool_stashes_and_flushes_startup_packet(
         workflow_context=None,
     )
 
-    assert result.decision == "deny"
-    assert result.reason == "startup packet\n\nRetry the same tool call."
+    assert result.decision == "allow"
+    assert result.context == "startup packet"
     delivery = variables.get_variables(grok_session_id)["grok_pending_delivery"]
     assert delivery["components"] == [_component(f"startup:{grok_session_id}", "startup packet")]
 
@@ -488,6 +559,7 @@ def test_pre_tool_use_does_not_deny_stale_briefing_after_clear(
 
     assert result.decision == "allow"
     assert result.reason is None
+    assert result.context is None
 
 
 def test_in_place_compact_clears_queued_context(
