@@ -117,6 +117,19 @@ def _bounded_capture_result(prefix: str, capture: str) -> tuple[str, int, bool]:
     return result[:_AGENT_RESULT_CAPTURE_CHARS], excerpt_lines, True
 
 
+def _result_stored_at(run: AgentRunProtocol, *, has_result: bool) -> str | None:
+    """Timestamp of the stored result, distinct from live last_progress_at."""
+    if not has_result:
+        return None
+    updated = getattr(run, "updated_at", None)
+    if isinstance(updated, datetime):
+        return datetime_to_iso(updated)
+    completed = run.completed_at
+    if isinstance(completed, datetime):
+        return datetime_to_iso(completed)
+    return None
+
+
 def _agent_result_payload(
     run: AgentRunProtocol,
     *,
@@ -146,6 +159,7 @@ def _agent_result_payload(
         "turns_used": run.turns_used,
         "started_at": datetime_to_iso(run.started_at),
         "completed_at": datetime_to_iso(run.completed_at),
+        "result_at": _result_stored_at(run, has_result=bool(preferred_result or run.result)),
         "child_session_id": run.child_session_id,
         "terminal_reason": run.terminal_reason,
     }
