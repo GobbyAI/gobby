@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from copy import copy
 from datetime import UTC, datetime, timedelta
@@ -10,12 +12,14 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
 from gobby.config.tmux import TmuxConfig
-from gobby.hooks.inbox import HookInboxBarrierResult
+from gobby.hooks.inbox import HookInboxBarrierResult, _get_hook_inbox_drain_lock
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
@@ -1115,6 +1119,91 @@ class TestReclassifyReconciliationPendingRuns:
             "timeout_seconds": 5.0,
             "restart_horizon_ms": 1_700_000_000_000,
         }
+
+    @pytest.mark.asyncio
+    async def test_progressing_replay_backlog_settles_without_fencing_reconnected_run(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A downtime backlog that outlasts the budget but keeps replaying does not fence.
+
+        Mirrors the 14:54 restart: 17 residue hooks replayed at about 0.5 s each
+        against the default 5 s budget. The loop clock is virtual and each replay
+        is released by the test, so no wall-clock time decides the outcome.
+        """
+        horizon_ms = 1_700_000_000_000
+        replay_seconds = 0.5
+        inbox_dir = tmp_path / "hooks" / "inbox"
+        inbox_dir.mkdir(parents=True)
+        envelope = {
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": False,
+            "response_capability": "hook-response.v1",
+            "hook_type": "post-tool-use",
+            "input_data": {"terminal_context": {"gobby_agent_run_id": self._RUN_ID}},
+            "source": "claude",
+            "headers": {},
+        }
+        residue = [
+            inbox_dir / f"n-{horizon_ms - 20_000 + offset}-residue{offset:02d}.json"
+            for offset in range(17)
+        ]
+        # The reconnected run's post-bind hook is live traffic, not restart residue.
+        live = inbox_dir / f"n-{horizon_ms + 1_000}-live.json"
+        for path in (*residue, live):
+            path.write_text(json.dumps(envelope), encoding="utf-8")
+        run_storage = SimpleNamespace(
+            get=MagicMock(return_value=SimpleNamespace(id=self._RUN_ID, status="running")),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        app = FastAPI()
+        runner.http_server.app = app
+        runner.http_bound_at_ms = horizon_ms
+
+        loop = asyncio.get_running_loop()
+        real_time = loop.time
+        elapsed = 0.0
+
+        def virtual_time() -> float:
+            return real_time() + elapsed
+
+        started: asyncio.Queue[asyncio.Event] = asyncio.Queue()
+
+        async def replay(*args: object, **kwargs: object) -> httpx.Response:
+            release = asyncio.Event()
+            started.put_nowait(release)
+            await release.wait()
+            return httpx.Response(200)
+
+        post = AsyncMock(side_effect=replay)
+        with (
+            patch.object(loop, "time", virtual_time),
+            patch("gobby.hooks.inbox.get_hook_inbox_dir", return_value=inbox_dir),
+            patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+            patch("gobby.hooks.inbox._post_envelope", new=post),
+            caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
+        ):
+            barrier = asyncio.create_task(_run_agent_hook_replay_barrier(runner))
+            # Each replay fits the budget; the backlog takes 8.5 s of loop time.
+            for _ in residue:
+                release = await started.get()
+                elapsed += replay_seconds
+                release.set()
+            settled = await barrier
+            async with _get_hook_inbox_drain_lock(app):
+                pass  # a replay outliving its barrier finishes before patches unwind
+
+        assert settled is True
+        run_storage.merge_resume_metadata.assert_not_called()
+        assert [
+            record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
+        ] == []
+        assert post.await_count == len(residue)
+        assert [path for path in residue if path.exists()] == []
+        assert live.exists()
 
     @pytest.mark.asyncio
     async def test_barrier_timeout_keeps_lookup_failures_unclassified(

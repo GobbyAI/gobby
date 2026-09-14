@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from gobby.skills.capability_catalog import CapabilityCatalog
 from gobby.skills.instruction_requirements import parse_instruction_requirement
@@ -18,8 +18,12 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS, SYSTEM_SESSION_SOURCE
+from gobby.storage.sql_dialect import older_than_now_expr
 
 _REQUIREMENT_FIELDS = frozenset({"required_skills", "additional_skills"})
+# Gobby-owned definitions convert; user-owned definitions and runtime state are reported.
+_RequirementOwner = Literal["gobby", "user-owned", "runtime"]
 
 
 @dataclass
@@ -33,12 +37,12 @@ def _requirement_list(
     value: Any,
     *,
     location: str,
-    owned: bool,
+    owner: _RequirementOwner,
     catalog: CapabilityCatalog,
     result: ReferenceMigrationResult,
 ) -> Any:
     """Validate one instruction field and replace exact retired names only."""
-    diagnostics = result.errors if owned else result.warnings
+    diagnostics = result.errors if owner == "gobby" else result.warnings
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         diagnostics.append(f"{location}: expected a list of instruction identifiers; preserved")
         return value
@@ -53,9 +57,9 @@ def _requirement_list(
     }
     if not replacements:
         return value
-    if not owned:
+    if owner != "gobby":
         advice = "; ".join(f"{old} -> {new}" for old, new in replacements.items())
-        result.warnings.append(f"{location}: user-owned requirement preserved; replace {advice}")
+        result.warnings.append(f"{location}: {owner} requirement preserved; replace {advice}")
         return value
     return list(dict.fromkeys(replacements.get(item, item) for item in value))
 
@@ -64,7 +68,7 @@ def _variables(
     variables: dict[str, Any],
     *,
     location: str,
-    owned: bool,
+    owner: _RequirementOwner,
     catalog: CapabilityCatalog,
     result: ReferenceMigrationResult,
 ) -> None:
@@ -72,7 +76,7 @@ def _variables(
         variables[name] = _requirement_list(
             variables[name],
             location=f"{location}.{name}",
-            owned=owned,
+            owner=owner,
             catalog=catalog,
             result=result,
         )
@@ -110,10 +114,12 @@ def migrate_instruction_requirements(
                     if locked is None:
                         continue
                     current = manager.get(candidate.id)
-                    owned = (
-                        current.project_id is None
+                    owner: _RequirementOwner = (
+                        "gobby"
+                        if current.project_id is None
                         and current.source == "installed"
                         and "gobby" in (current.tags or [])
+                        else "user-owned"
                     )
                     if table == "agent_definitions":
                         txn.execute(
@@ -131,7 +137,7 @@ def migrate_instruction_requirements(
                             _variables(
                                 variables,
                                 location=f"{location}.step_workflow.variables",
-                                owned=owned,
+                                owner=owner,
                                 catalog=catalog,
                                 result=result,
                             )
@@ -154,7 +160,7 @@ def migrate_instruction_requirements(
                                 effect["value"] = _requirement_list(
                                     effect["value"],
                                     location=f"{location}.effects[{index}].value",
-                                    owned=owned,
+                                    owner=owner,
                                     catalog=catalog,
                                     result=result,
                                 )
@@ -166,7 +172,7 @@ def migrate_instruction_requirements(
                                 [effect["skill"]] = _requirement_list(
                                     [effect["skill"]],
                                     location=f"{location}.effects[{index}].skill",
-                                    owned=owned,
+                                    owner=owner,
                                     catalog=catalog,
                                     result=result,
                                 )
@@ -178,7 +184,7 @@ def migrate_instruction_requirements(
                         converted = _requirement_list(
                             default.default_value,
                             location=f"{location}.default_value",
-                            owned=owned,
+                            owner=owner,
                             catalog=catalog,
                             result=result,
                         )
@@ -202,14 +208,28 @@ def migrate_instruction_requirements(
                 _variables(
                     variables,
                     location=location,
-                    owned=False,
+                    owner="runtime",
                     catalog=catalog,
                     result=result,
                 )
         except ValueError as exc:
             result.warnings.append(f"{location}: malformed variables ({exc}); preserved")
+    # Sessions past the revival horizon never load requirements again; session
+    # cleanup already dropped their variables, so their instances are history.
+    stale_session_sql = older_than_now_expr(db, "s.updated_at", "%s", "hour")
     for row in db.fetchall(
-        "SELECT id, session_id, variables, snapshot_json FROM agent_step_instances WHERE enabled = TRUE"
+        f"""
+        SELECT wi.id, wi.session_id, wi.variables, wi.snapshot_json
+        FROM agent_step_instances wi
+        JOIN sessions s ON s.id = wi.session_id
+        WHERE wi.enabled = TRUE
+          AND NOT (
+              s.status IN ('expired', 'deleted')
+              AND s.source != %s
+              AND {stale_session_sql}
+          )
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
+        (SYSTEM_SESSION_SOURCE, SESSION_REVIVAL_HORIZON_HOURS),
     ):
         location = f"agent_step_instances[{row['id']}] (session {row['session_id']})"
         for field_name in ("variables", "snapshot_json"):
@@ -223,7 +243,7 @@ def migrate_instruction_requirements(
                     _variables(
                         payload,
                         location=f"{location}.{field_name}",
-                        owned=False,
+                        owner="runtime",
                         catalog=catalog,
                         result=result,
                     )
@@ -241,7 +261,9 @@ def migrate_instruction_requirements(
             value = row["additional_skills"]
             if isinstance(value, str):
                 value = json.loads(value)
-            _requirement_list(value, location=location, owned=False, catalog=catalog, result=result)
+            _requirement_list(
+                value, location=location, owner="runtime", catalog=catalog, result=result
+            )
         except ValueError as exc:
             result.warnings.append(f"{location}: malformed requirements ({exc}); preserved")
     return result
