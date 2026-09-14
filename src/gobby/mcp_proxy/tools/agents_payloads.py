@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from gobby.agents.run_completion import agent_exit_public_status
 from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
 from gobby.utils.datetime import datetime_to_iso
 
@@ -128,11 +129,14 @@ def _agent_result_payload(
         if isinstance(authoritative_result, str) and authoritative_result.strip()
         else None
     )
+    public_dirty = dirty_paths if isinstance(dirty_paths, list) else None
     payload: dict[str, Any] = {
         **run.liveness_payload(),
         "run_id": run.id,
-        "status": {"task_blocker": "blocked", "early_exit": "incomplete"}.get(
-            run.terminal_reason or "", run.status
+        "status": agent_exit_public_status(
+            run.terminal_reason,
+            public_dirty,
+            fallback=run.status,
         ),
         "result": preferred_result if preferred_result is not None else run.result,
         "error": run.error,
