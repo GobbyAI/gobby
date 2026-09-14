@@ -122,10 +122,13 @@ rungs 1 and 2 do not apply. Unlabeled or unclaimed filings and every other defec
 disposition are shirked found work; intake validation rejects invalid ladder claims,
 the stop gate blocks unclaimed filings, and the nightly digest flags them.
 
-The stop gate prompts unanswered in-scope sessions after completed work.
-`set_handoff` checks successful survey submission before staging. Submit feedback
-first, then call `set_handoff` last. The context-pressure gate permits feedback and
-its schema discovery. Merely receiving a survey prompt does not satisfy the gate.
+The stop gate prompts unanswered in-scope sessions after completed work: a queued
+task closure that no successful submission has covered. Submission alone satisfies
+the stop gate; it never calls for a handoff. `set_handoff` separately checks
+successful survey submission before staging, so a session that is handing off
+submits feedback first, then calls `set_handoff` last. The context-pressure gate
+permits feedback and its schema discovery. Merely receiving a survey prompt does not
+satisfy the gate.
 Daemon config `session_feedback.survey` is `gobby` (default; only exact
 `projects.name == "gobby"`), `all` (every project), or `off` (prompts off).
 Projects outside the Gobby repository receive gates only after an operator explicitly
@@ -136,7 +139,11 @@ acknowledgment lives in `_gobby_feedback_epoch_submitted`. Only a context reset
 re-arms it — SessionStart with source `clear` or `compact`, a `resume` carrying
 `pending_context_reset`, or the equivalent Grok PostCompact closeout. Task closure
 is not a context boundary, so one epoch is surveyed once however many tasks it
-closes.
+closes. A successful submission also records the pending closure identities in
+`_gobby_feedback_surveyed_closures`, which context resets keep. A re-armed epoch whose
+pending closures were all covered is not surveyed again, so a handoff compaction
+cannot re-trigger the stop gate; a closure queued after the submission is surveyed
+in a later epoch. The re-armed epoch flag still gates `set_handoff`.
 
 Context-pressure enforcement reads live `context_handoff.*` config. Windows
 strictly below `small_window_tokens` use `small_window_warn_ratio` and

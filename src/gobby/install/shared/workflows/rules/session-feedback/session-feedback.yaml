@@ -30,6 +30,11 @@ rules:
       - type: set_variable
         variable: _gobby_feedback_epoch_submitted
         value: true
+      # Context resets re-arm the epoch flag but keep this list, so answered
+      # closures are never surveyed again after a (handoff) compaction.
+      - type: set_variable
+        variable: _gobby_feedback_surveyed_closures
+        value: "[item.get('closure_id') for item in variables.get('_memory_pending_task_reviews') or [] if isinstance(item, dict)]"
 
   review-gobby-session-feedback-on-stop:
     description: "Request one bounded Gobby-experience survey after completed work"
@@ -38,21 +43,25 @@ rules:
     priority: 3
     when: >
       variables.get('_gobby_feedback_survey_active')
-      and bool(variables.get('_memory_pending_task_reviews'))
       and not variables.get('_gobby_feedback_epoch_submitted')
+      and any(
+        isinstance(item, dict)
+        and item.get('closure_id') not in (variables.get('_gobby_feedback_surveyed_closures') or [])
+        for item in variables.get('_memory_pending_task_reviews') or []
+      )
     effects:
       - type: block
         reason: |
           Perform one bounded Gobby-experience survey using only first-hand
-          evidence from this session. Submit through `gobby-sessions:feedback` before
-          calling `gobby-sessions:set_handoff` last, with
+          evidence from this session. Submit it through `gobby-sessions:feedback` with
           at most 3 observations: source, kind (friction | bug | noise | surprise
           | missing-affordance | useful | other; 'other' needs
           kind_other_label), evidence, impact, frequency (once | repeated |
           always); optional suggestion and disposition (worked-around |
           filed-task | fixed | escalated | noted). Most sessions should send
           `observations: []` through feedback; this is valid and writes no rows.
-          Submission satisfies this epoch's gate; it does not mark feedback human-reviewed.
+          Submission alone satisfies this gate. It does not call for a handoff, so
+          do not call `set_handoff` for it; it does not mark feedback human-reviewed.
 
           source must name a Gobby surface: gobby-<server>:<tool>;
           <surface>:<name> where surface is rule, hook, skill, workflow, agent,

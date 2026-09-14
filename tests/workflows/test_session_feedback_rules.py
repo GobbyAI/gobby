@@ -224,7 +224,9 @@ class TestSessionFeedbackRules:
         stop_body = RuleDefinitionBody.model_validate(stop.definition_json)
         stop_reason = stop_body.resolved_effects[0].reason or ""
         assert "gobby-sessions:feedback" in stop_reason
-        assert "set_handoff" in stop_reason
+        # Every set_handoff compacts; directing one from a stop gate loops (#22344).
+        assert "Submission alone satisfies this gate" in stop_reason
+        assert "set_handoff` last" not in stop_reason
         assert "gobby_feedback=" not in stop_reason
         assert "missing-affordance" in stop_reason
         assert "kind_other_label" in stop_reason
@@ -394,3 +396,55 @@ class TestSessionFeedbackRules:
         )
 
         assert variables["_gobby_feedback_epoch_submitted"] is True
+
+    @pytest.mark.asyncio
+    async def test_answered_closures_are_not_resurveyed_after_context_reset(
+        self, db: HubDatabase
+    ) -> None:
+        """Survey -> feedback -> compaction must not re-fire the stop gate (#22344)."""
+        _sync_bundled(db)
+        _enable_rules(db, *SURVEY_RULES)
+        closure = {"closure_id": "task-a:2026-09-14T14:55:06+00:00", "task_ref": "#41"}
+        variables: dict[str, Any] = {
+            "project": _project(),
+            "_memory_pending_task_reviews": [closure],
+        }
+        engine = _engine(db)
+        stop = _event(HookEventType.STOP)
+
+        assert (await engine.evaluate(stop, SESSION_ID, variables)).decision == "block"
+        await engine.evaluate(_sessions_tool_event("feedback", after=True), SESSION_ID, variables)
+        assert variables["_gobby_feedback_surveyed_closures"] == [closure["closure_id"]]
+        assert (await engine.evaluate(stop, SESSION_ID, variables)).decision == "allow"
+
+        await engine.evaluate(_session_start_event("compact"), SESSION_ID, variables)
+
+        # The epoch flag re-arms, so set_handoff needs feedback again, but the
+        # already-answered closure does not re-open the stop survey.
+        assert variables["_gobby_feedback_epoch_submitted"] is False
+        assert (await engine.evaluate(stop, SESSION_ID, variables)).decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_closure_after_submission_is_surveyed_in_a_later_epoch(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        _enable_rules(db, *SURVEY_RULES)
+        answered = {"closure_id": "task-a:closed", "task_ref": "#41"}
+        later = {"closure_id": "task-b:closed", "task_ref": "#42"}
+        variables: dict[str, Any] = {
+            "project": _project(),
+            "_memory_pending_task_reviews": [answered],
+        }
+        engine = _engine(db)
+        stop = _event(HookEventType.STOP)
+
+        await engine.evaluate(_sessions_tool_event("feedback", after=True), SESSION_ID, variables)
+        variables["_memory_pending_task_reviews"] = [later]
+        assert (await engine.evaluate(stop, SESSION_ID, variables)).decision == "allow"
+
+        await engine.evaluate(_session_start_event("compact"), SESSION_ID, variables)
+        blocked = await engine.evaluate(stop, SESSION_ID, variables)
+
+        assert blocked.decision == "block"
+        assert "gobby-sessions:feedback" in (blocked.reason or "")
