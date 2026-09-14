@@ -85,7 +85,6 @@ class MemoryWatchdogHandler:
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
-        kill_agent_fn: Callable[[AgentRun], Awaitable[dict[str, Any]]] | None = None,
         process_factory: Callable[[int], Any] = psutil.Process,
         virtual_memory_fn: Callable[[], Any] = psutil.virtual_memory,
         process_iter_fn: Callable[..., Any] = psutil.process_iter,
@@ -99,7 +98,6 @@ class MemoryWatchdogHandler:
         self._cleanup_handler = cleanup_handler
         self._config = tmux_config
         self._run_db_callback = run_db
-        self._kill_agent_fn = kill_agent_fn
         self._process_factory = process_factory
         self._virtual_memory = virtual_memory_fn
         self._process_iter = process_iter_fn

@@ -106,19 +106,11 @@ def make_handler(
     tmux = MagicMock()
     pane_pid_map = pane_pids if pane_pids is not None else {"gobby-test": 100}
     tmux.get_pane_pid = AsyncMock(side_effect=lambda name: pane_pid_map.get(name))
-    tmux_alive = True
-    tmux.has_session = AsyncMock(side_effect=lambda _name: tmux_alive)
+    tmux.has_session = AsyncMock(return_value=True)
     tmux.capture_full_pane = AsyncMock(return_value="captured output")
 
     cleanup_handler = MagicMock()
     cleanup_handler.cleanup_agent = AsyncMock()
-
-    async def kill_agent(_run: AgentRun) -> dict[str, bool]:
-        nonlocal tmux_alive
-        tmux_alive = False
-        return {"success": True}
-
-    kill_agent_fn = AsyncMock(side_effect=kill_agent)
 
     def process_factory(pid: int) -> FakeProc:
         proc = trees.get(pid)
@@ -146,7 +138,6 @@ def make_handler(
         tmux=tmux,
         cleanup_handler=cleanup_handler,
         tmux_config=config,
-        kill_agent_fn=kill_agent_fn,
         process_factory=process_factory,
         virtual_memory_fn=lambda: vm,
         process_iter_fn=process_iter or (lambda attrs: []),
@@ -156,7 +147,6 @@ def make_handler(
     mocks = {
         "agent_run_manager": agent_run_manager,
         "cleanup_handler": cleanup_handler,
-        "kill_agent_fn": kill_agent_fn,
         "tmux": tmux,
         "runtime": runtime,
     }
@@ -171,7 +161,7 @@ async def test_under_limit_no_action() -> None:
     )
     killed = await handler.check_agent_memory()
     assert killed == 0
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
     assert handler._breach_counts == {}
 
 
@@ -181,12 +171,11 @@ async def test_kill_after_consecutive_breaches() -> None:
     handler, mocks = make_handler(runs=[make_run()], trees={100: tree})
 
     assert await handler.check_agent_memory() == 0
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
     assert handler._breach_counts["run-1"] == 1
 
     assert await handler.check_agent_memory() == 1
-    mocks["kill_agent_fn"].assert_not_awaited()
-    assert mocks["runtime"].killed
+    assert mocks["runtime"].killed == ["gobby-test"]
     mocks["agent_run_manager"].record_termination_intent.assert_called_once()
     mocks["agent_run_manager"].clear_live_terminal.assert_not_called()
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
@@ -208,7 +197,7 @@ async def test_breach_counter_resets_when_back_under_limit() -> None:
     assert await handler.check_agent_memory() == 0
     trees[100] = big
     assert await handler.check_agent_memory() == 0
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
 
 
 @pytest.mark.asyncio
@@ -220,7 +209,7 @@ async def test_grace_period_skips_young_runs() -> None:
     )
     assert await handler.check_agent_memory() == 0
     assert await handler.check_agent_memory() == 0
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
 
 
 @pytest.mark.asyncio
@@ -235,7 +224,7 @@ async def test_warn_only_mode_never_kills(caplog: pytest.LogCaptureFixture) -> N
         await handler.check_agent_memory()
         killed = await handler.check_agent_memory()
     assert killed == 0
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
     mocks["cleanup_handler"].cleanup_agent.assert_not_awaited()
     assert any("warn-only" in rec.message for rec in caplog.records)
 
@@ -266,7 +255,7 @@ async def test_missing_pane_pid_and_dead_process_tolerated() -> None:
         pane_pids={"gobby-a": None, "gobby-b": 200},
     )
     assert await handler.check_agent_memory() == 0
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
 
 
 @pytest.mark.asyncio
@@ -284,7 +273,6 @@ async def test_aggregate_budget_kills_largest_tree_only() -> None:
     )
     assert await handler.check_agent_memory() == 0  # breach 1/2
     assert await handler.check_agent_memory() == 1  # kills largest
-    mocks["kill_agent_fn"].assert_not_awaited()
     assert mocks["runtime"].killed == ["gobby-a"]
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
     assert "Aggregate agent memory exceeded budget" in payload
@@ -317,7 +305,6 @@ async def test_critical_pressure_kills_largest_agent_tree() -> None:
         virtual_memory=SimpleNamespace(total=128 * GB, available=int(2 * GB)),
     )
     assert await handler.check_agent_memory() == 1
-    mocks["kill_agent_fn"].assert_not_awaited()
     assert mocks["runtime"].killed == ["gobby-b"]
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
     assert "Critical system memory pressure" in payload
@@ -353,7 +340,7 @@ async def test_pressure_warning_throttled(caplog: pytest.LogCaptureFixture) -> N
     assert first == 1
     assert second == 1  # throttled at +100s
     assert third == 2  # fires again at +400s
-    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == []
     warn_text = next(rec.message for rec in caplog.records if "top consumers" in rec.message)
     assert "proc-0" in warn_text
     assert "proc-11" not in warn_text  # top-10 only
