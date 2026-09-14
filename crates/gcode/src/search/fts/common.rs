@@ -205,7 +205,7 @@ pub(super) fn glob_to_like_prefix(pattern: &str) -> Option<String> {
     }
 }
 
-pub(super) fn has_glob_meta(path: &str) -> bool {
+pub(crate) fn has_glob_meta(path: &str) -> bool {
     path.chars().any(|c| matches!(c, '*' | '?' | '['))
 }
 

@@ -44,6 +44,8 @@ const JAVASCRIPT: LanguageSpec = LanguageSpec {
         (class_declaration name: (identifier) @name) @definition.class
         (method_definition name: (property_identifier) @name) @definition.method
         (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @definition.function
+        (program [(lexical_declaration (variable_declarator name: (identifier) @name)) (variable_declaration (variable_declarator name: (identifier) @name))] @definition.variable)
+        (program (export_statement declaration: [(lexical_declaration (variable_declarator name: (identifier) @name)) (variable_declaration (variable_declarator name: (identifier) @name))] @definition.variable))
     "#,
     import_query: r#"
         (import_statement) @import
@@ -65,6 +67,8 @@ const TYPESCRIPT: LanguageSpec = LanguageSpec {
         (type_alias_declaration name: (type_identifier) @name) @definition.type
         (enum_declaration name: (identifier) @name) @definition.type
         (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @definition.function
+        (program [(lexical_declaration (variable_declarator name: (identifier) @name)) (variable_declaration (variable_declarator name: (identifier) @name))] @definition.variable)
+        (program (export_statement declaration: [(lexical_declaration (variable_declarator name: (identifier) @name)) (variable_declaration (variable_declarator name: (identifier) @name))] @definition.variable))
     "#,
     import_query: r#"
         (import_statement) @import

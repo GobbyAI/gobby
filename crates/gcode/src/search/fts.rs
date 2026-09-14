@@ -13,6 +13,7 @@ mod symbols;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use common::has_glob_meta;
 pub use common::{
     FILTERED_FETCH_CAP, ResolvedGraphSymbol, compile_patterns, expand_paths,
     path_filter_requires_post_filter,

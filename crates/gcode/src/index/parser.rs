@@ -219,8 +219,11 @@ fn extract_symbols(
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
 
-    let mut symbols = Vec::new();
+    let mut symbols: Vec<Symbol> = Vec::new();
     let mut seen_ids = HashSet::new();
+    // Several patterns can capture the same definition node and name (a top-level
+    // `const` arrow function is also a top-level variable); the earliest pattern wins.
+    let mut definition_slots: HashMap<(usize, usize, String), (usize, usize)> = HashMap::new();
     let capture_names = query.capture_names();
     let name_capture = capture_names.iter().position(|name| *name == "name");
     let definition_kinds = capture_names
@@ -249,6 +252,12 @@ fn extract_symbols(
         let (name, node) = match (name_text, def_node) {
             (Some(n), Some(d)) => (n, d),
             _ => continue,
+        };
+        let slot_key = (node.start_byte(), node.end_byte(), name.clone());
+        let replaced_slot = match definition_slots.get(&slot_key) {
+            Some(&(pattern_index, _)) if pattern_index <= m.pattern_index => continue,
+            Some(&(_, index)) => Some(index),
+            None => None,
         };
 
         // Signature: first line of definition
@@ -283,7 +292,7 @@ fn extract_symbols(
         }
         seen_ids.insert(symbol_id.clone());
 
-        symbols.push(Symbol {
+        let symbol = Symbol {
             id: symbol_id,
             project_id: file.project_id.to_string(),
             file_path: file.rel_path.to_string(),
@@ -303,7 +312,18 @@ fn extract_symbols(
             summary: None,
             created_at: String::new(),
             updated_at: String::new(),
-        });
+        };
+        match replaced_slot {
+            Some(index) => {
+                seen_ids.remove(&symbols[index].id);
+                symbols[index] = symbol;
+                definition_slots.insert(slot_key, (m.pattern_index, index));
+            }
+            None => {
+                definition_slots.insert(slot_key, (m.pattern_index, symbols.len()));
+                symbols.push(symbol);
+            }
+        }
     }
 
     Ok(symbols)

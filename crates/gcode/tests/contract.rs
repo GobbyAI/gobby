@@ -155,6 +155,12 @@ fn contract_is_version_ten_with_ask_and_evidence_without_codewiki() {
             .expect("error codes")
             .contains(&serde_json::json!("invalid_path_scope"))
     );
+    assert!(
+        contract["error_codes"]
+            .as_array()
+            .expect("error codes")
+            .contains(&serde_json::json!("path_not_found"))
+    );
     let global_flags = contract["global_flags"]
         .as_array()
         .expect("global flags array");

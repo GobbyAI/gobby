@@ -377,6 +377,89 @@ const ArrowComponent = () => <aside />;
     }
 }
 
+fn sorted_symbol_kinds(parsed: &crate::models::ParseResult) -> Vec<(&str, &str)> {
+    let mut symbols: Vec<_> = parsed
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
+        .collect();
+    symbols.sort_unstable();
+    symbols
+}
+
+#[test]
+fn indexes_top_level_typescript_variables_once() {
+    let parsed = parse_typescript(
+        r#"
+import { cva } from "class-variance-authority";
+
+export const buttonVariants = cva("base", {});
+const chipClasses = "px-2";
+let counter = 1;
+const add = () => 1, total = 2;
+export const Arrow = () => null;
+
+export function render() {
+  const local = "nested";
+  return local;
+}
+"#,
+        &[],
+    );
+
+    assert_eq!(
+        sorted_symbol_kinds(&parsed),
+        vec![
+            ("Arrow", "function"),
+            ("add", "function"),
+            ("buttonVariants", "variable"),
+            ("chipClasses", "variable"),
+            ("counter", "variable"),
+            ("render", "function"),
+            ("total", "variable"),
+        ]
+    );
+
+    let parsed = parse_tsx(
+        r#"
+export const Card = () => <div />;
+export const cardClasses = "p-2";
+"#,
+        &[],
+    );
+    assert_eq!(
+        sorted_symbol_kinds(&parsed),
+        vec![("Card", "function"), ("cardClasses", "variable")]
+    );
+}
+
+#[test]
+fn indexes_top_level_javascript_variables_once() {
+    let parsed = parse_javascript(
+        r#"
+var legacy = 1;
+export const config = { strict: true };
+const handler = () => config;
+
+function build() {
+  var scratch = 1;
+  return scratch;
+}
+"#,
+        &[],
+    );
+
+    assert_eq!(
+        sorted_symbol_kinds(&parsed),
+        vec![
+            ("build", "function"),
+            ("config", "variable"),
+            ("handler", "function"),
+            ("legacy", "variable"),
+        ]
+    );
+}
+
 #[test]
 fn leaves_external_qualified_roots_shadowed_by_locals_unresolved() {
     let parsed = parse_typescript(

@@ -231,6 +231,12 @@ escapes and paths into another checkout, fail with exit `2` and the typed
 error includes a `--project <ROOT>` recovery command. Read commands never
 switch projects automatically.
 
+A non-glob path filter for `search`, `search-symbol`, `search-text`,
+`search-content`, `grep`, or `tree` that exists in none of the current, overlay,
+or parent checkouts fails with exit `2` and the typed `path_not_found` error
+rather than an empty result. Exact file inputs such as `outline` and `symbol-at`
+keep their own missing-file diagnostics.
+
 ## Format
 
 Navigation commands default to compact text: `search`, `search-symbol`,
