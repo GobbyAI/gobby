@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from gobby.workflows.definitions import WorkflowStep
-from gobby.workflows.engine.skill_load_guidance import skill_load_block_guidance
+from gobby.workflows.engine.skill_load_guidance import (
+    skill_load_block_guidance,
+    skill_load_call_lead,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -160,3 +163,35 @@ def test_hook_reference_fetch_injects_directive_without_instruction_body() -> No
             format_discovery_result({"tool": "get_skill_file", "result": {"file": skill_file}})
             == ""
         )
+
+
+def test_call_lead_names_unloaded_targets_in_bare_call_form() -> None:
+    lead = skill_load_call_lead(
+        _skill_step(variable_name="required_skills"),
+        {
+            "required_skills": [
+                "gobby:references/development/obligations.md",
+                "restraint",
+                "gobby:references/tasks/overview.md",
+            ],
+            "loaded_skills": ["restraint"],
+        },
+    )
+
+    assert lead == (
+        'get_skill_file(name="gobby", path="references/development/obligations.md"); '
+        'get_skill_file(name="gobby", path="references/tasks/overview.md")\n'
+    )
+
+
+def test_call_lead_is_empty_once_every_target_is_loaded() -> None:
+    step = _skill_step(variable_name="required_skills")
+    variables: dict[str, object] = {
+        "required_skills": ["restraint"],
+        "loaded_skills": ["restraint"],
+    }
+
+    assert skill_load_call_lead(step, variables) == ""
+    assert "All skills declared for this step are loaded" in skill_load_block_guidance(
+        step, variables
+    )
