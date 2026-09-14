@@ -5115,6 +5115,19 @@
     {
       "activation": "live",
       "default": null,
+      "key": "ui_settings.readingDirection",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
       "key": "ui_settings.selectedProjectId",
       "machineExport": false,
       "namespace": "ui_settings",

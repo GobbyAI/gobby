@@ -623,6 +623,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
             *,
             daemon_epoch: str,
             at: Any = None,
+            payload_fingerprint: str | None = None,
         ) -> Any:
             super().persist_unresolved_write(
                 terminal_id,
@@ -630,6 +631,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
                 origin,
                 daemon_epoch=daemon_epoch,
                 at=at,
+                payload_fingerprint=payload_fingerprint,
             )
             raise RuntimeError("hard-kill")
 

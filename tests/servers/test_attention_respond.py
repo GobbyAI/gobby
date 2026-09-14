@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -176,6 +176,105 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
             json=_request(recurring, {"text": "yes", "key": "enter"}),
         )
         assert invalid_variants.status_code == 422
+
+
+def test_respond_routes_through_coordinator_with_cas(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.terminals.leases import TerminalLeaseRegistry
+    from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
+    from tests.terminals.fakes import (
+        FakeRuntime,
+        MemoryTerminalStore,
+        make_memory_terminal,
+        runtime_registry,
+    )
+
+    manager = _manager(temp_db)
+    state = _open_prompt(manager)
+    terminal = make_memory_terminal(backend="native")
+    terminal.session_id = "session-1"
+    store = MemoryTerminalStore(terminal)
+    runtime = FakeRuntime(backend="native", snapshot_text=APPROVAL_PROMPT)
+    coordinator = WriteCoordinator(
+        store,
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    coordinator_write = AsyncMock(wraps=coordinator.write)
+
+    async def run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return function(*args, **kwargs)
+
+    server = SimpleNamespace(
+        services=SimpleNamespace(
+            attention_manager=manager,
+            agent_lifecycle_monitor=SimpleNamespace(
+                prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
+            ),
+            session_manager=MagicMock(),
+            agent_runner=None,
+            config=None,
+            run_db=run_db,
+            terminal_manager=store,
+            terminal_runtime_registry=runtime_registry(runtime),
+            write_coordinator=SimpleNamespace(write=coordinator_write),
+        )
+    )
+    app = FastAPI()
+    app.include_router(create_attention_router(cast(HTTPServer, server)))
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            f"/api/attention/{state.entry_id}/respond",
+            json=_request(state, {"option": 1}),
+        )
+        assert accepted.status_code == 200
+
+        assert coordinator_write.await_args is not None
+        request = coordinator_write.await_args.args[0]
+        assert isinstance(request, WriteRequest)
+        assert request.origin == "attention"
+        assert runtime.write_log == [("text", "1\n")]
+
+        stale = _open_prompt(manager)
+        original_transition_async = manager.transition_async
+        replacement: list[AttentionState] = []
+
+        async def change_before_cas(
+            database_runner: Callable[..., Awaitable[Any]],
+            entry_id: str,
+            **kwargs: Any,
+        ) -> Any:
+            if (
+                not replacement
+                and kwargs.get("state") is None
+                and kwargs.get("expected_attention_id") == stale.attention_id
+            ):
+                manager.transition(
+                    entry_id,
+                    state=None,
+                    expected_attention_id=stale.attention_id,
+                    expected_fingerprint=stale.fingerprint,
+                )
+                replacement.append(_open_prompt(manager))
+            return await original_transition_async(database_runner, entry_id, **kwargs)
+
+        monkeypatch.setattr(manager, "transition_async", change_before_cas)
+        refused = client.post(
+            f"/api/attention/{stale.entry_id}/respond",
+            json=_request(stale, {"option": 1}),
+        )
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == {
+        "code": "stale_episode",
+        "attention_id": replacement[0].attention_id,
+        "fingerprint": replacement[0].fingerprint,
+    }
+    assert coordinator_write.await_count == 1
+    assert runtime.write_log == [("text", "1\n")]
 
 
 def test_partial_injection_and_stall_paths(temp_db: HubDatabase) -> None:

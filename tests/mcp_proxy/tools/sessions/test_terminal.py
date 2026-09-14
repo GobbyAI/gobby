@@ -14,10 +14,12 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import (
-    _FORBIDDEN_SPEED_COMMANDS,
-    _is_speed_command,
     _resolve_tmux_target,
     register_terminal_tools,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
+    _FORBIDDEN_SPEED_COMMANDS,
+    _is_speed_command,
 )
 from gobby.sessions.handoff import HandoffAttemptState
 from gobby.storage.hub.protocol import HubDatabase
@@ -450,7 +452,7 @@ class TestRegisterTerminalTools:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
                 return_value=agent_run_manager,
             ),
         ):
@@ -473,7 +475,7 @@ class TestRegisterTerminalTools:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
+                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
                 return_value=tmux_manager,
             ) as mock_get_tmux_manager,
             patch(
@@ -483,7 +485,8 @@ class TestRegisterTerminalTools:
         ):
             result = asyncio.run(send_keys(session_id="session-1", keys="hello\n", literal=True))
 
-        assert result == {"success": True}
+        assert result["success"] is True
+        assert isinstance(result["idempotency_key"], str)
         mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
         tmux_manager.send_keys.assert_awaited_once_with("%12", "hello\n", literal=True)
 
@@ -505,7 +508,7 @@ class TestRegisterTerminalTools:
         agent_run_manager.get_by_session.return_value = None
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
             register_terminal_tools(
@@ -527,6 +530,7 @@ class TestRegisterTerminalTools:
             "error_code": "send_keys_target_forbidden",
             "caller_session_id": "caller-session",
             "target_session_id": "target-session",
+            "idempotency_key": result["idempotency_key"],
         }
         agent_run_manager.get_by_session.assert_not_called()
 
@@ -547,7 +551,7 @@ class TestRegisterTerminalTools:
         tmux_manager = MagicMock()
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
             register_terminal_tools(
@@ -563,7 +567,7 @@ class TestRegisterTerminalTools:
                 return_value="caller-session",
             ),
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
+                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
                 return_value=tmux_manager,
             ) as mock_get_tmux_manager,
         ):
@@ -574,6 +578,7 @@ class TestRegisterTerminalTools:
             "error": "Autonomous agent sessions cannot use send_keys",
             "error_code": "send_keys_autonomous_agent_forbidden",
             "caller_session_id": "caller-session",
+            "idempotency_key": result["idempotency_key"],
         }
         session_manager.resolve_session_reference.assert_called_once_with("caller-session")
         session_manager.get.assert_called_once_with("caller-session")
@@ -610,7 +615,7 @@ class TestRegisterTerminalTools:
         tmux_manager.dispatch_keys = tmux_manager.send_keys
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
             register_terminal_tools(
@@ -622,7 +627,7 @@ class TestRegisterTerminalTools:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
+                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
                 return_value=tmux_manager,
             ),
             patch(
@@ -632,7 +637,8 @@ class TestRegisterTerminalTools:
         ):
             result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
 
-        assert result == {"success": True}
+        assert result["success"] is True
+        assert isinstance(result["idempotency_key"], str)
         tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
 
     @staticmethod
@@ -659,7 +665,7 @@ class TestRegisterTerminalTools:
         agent_run_manager.get_by_session.return_value = None
 
         with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
             register_terminal_tools(
@@ -679,7 +685,7 @@ class TestRegisterTerminalTools:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
+                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
                 return_value=tmux_manager,
             ) as mock_get_tmux_manager,
             patch(
@@ -694,8 +700,10 @@ class TestRegisterTerminalTools:
             "success": False,
             "error": "send_keys cannot toggle provider speed mode; ask the user to run it",
             "error_code": "send_keys_speed_command_forbidden",
+            "idempotency_key": refused["idempotency_key"],
         }
-        assert delivered == {"success": True}
+        assert delivered["success"] is True
+        assert isinstance(delivered["idempotency_key"], str)
         # The refusal never resolved a pane, so neither the write-coordinator nor the
         # tmux fallback branch could have run; the nearby `/faster` proves the same
         # setup does deliver.
