@@ -96,6 +96,13 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
     ControlClose::Disconnected
 }
 
+pub fn enqueue_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ControlClose> {
+    tx.try_send(value).map_err(|err| match err {
+        mpsc::error::TrySendError::Full(_) => ControlClose::Overflow,
+        mpsc::error::TrySendError::Closed(_) => ControlClose::Disconnected,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushResult {
     Queued,
@@ -173,10 +180,22 @@ impl FrameMailbox {
         self.shared.notify.notify_waiters();
     }
 
-    pub fn force_push(&self, msg: ServerMessage) {
+    pub fn force_push(&self, msg: ServerMessage, cap: usize) {
         let bytes = encoded_message_bytes(&msg);
         let mut inner = self.lock();
         if inner.closed {
+            return;
+        }
+        if bytes > cap {
+            return;
+        }
+        while inner.queued_bytes.saturating_add(bytes) > cap {
+            let Some((dropped, _)) = inner.items.pop_front() else {
+                break;
+            };
+            inner.queued_bytes = inner.queued_bytes.saturating_sub(dropped);
+        }
+        if inner.queued_bytes.saturating_add(bytes) > cap {
             return;
         }
         inner.queued_bytes = inner.queued_bytes.saturating_add(bytes);
@@ -219,12 +238,16 @@ impl FrameMailbox {
             && inner.last_drain.elapsed() >= timeout
     }
 
-    pub fn close_with(&self, msg: ServerMessage) {
+    pub fn close_with(&self, msg: ServerMessage, cap: usize) {
         let bytes = encoded_message_bytes(&msg);
         let mut inner = self.lock();
         inner.items.clear();
-        inner.queued_bytes = bytes;
-        inner.items.push_back((bytes, msg));
+        if bytes <= cap {
+            inner.queued_bytes = bytes;
+            inner.items.push_back((bytes, msg));
+        } else {
+            inner.queued_bytes = 0;
+        }
         inner.closed = true;
         inner.writing = false;
         drop(inner);

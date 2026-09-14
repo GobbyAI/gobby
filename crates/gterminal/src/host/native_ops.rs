@@ -618,10 +618,13 @@ impl HostState {
             };
             if let Some(att) = inner.attachments.get_mut(&id) {
                 if att.mailbox.is_lagged(lag) {
-                    att.mailbox.close_with(ServerMessage::Error {
-                        code: "lagged".into(),
-                        message: None,
-                    });
+                    att.mailbox.close_with(
+                        ServerMessage::Error {
+                            code: "lagged".into(),
+                            message: None,
+                        },
+                        cap,
+                    );
                     lagged.push(id);
                     continue;
                 }

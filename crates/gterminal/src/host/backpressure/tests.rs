@@ -8,7 +8,8 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use super::{
-    encoded_message_bytes, write_outbound, ControlClose, ControlQueue, FrameMailbox, PushResult,
+    encoded_message_bytes, enqueue_control, write_outbound, ControlClose, ControlQueue,
+    FrameMailbox, PushResult,
 };
 use crate::host::config::HostConfig;
 use crate::host::events::HostEvents;
@@ -161,6 +162,31 @@ fn overflow_collapses_to_one_keyframe_within_cap() {
         mailbox.queued_bytes() <= cap,
         "replace_with_keyframe must not land over cap; queued={} cap={cap}",
         mailbox.queued_bytes()
+    );
+}
+
+#[test]
+fn force_push_never_exceeds_cap() {
+    let small = error_msg("n");
+    let over = error_msg(&"n".repeat(64));
+    let cap = encoded_message_bytes(&small);
+    let mailbox = FrameMailbox::new();
+    assert_eq!(mailbox.try_push(&small, cap), PushResult::Queued);
+    mailbox.force_push(over, cap);
+    assert!(
+        mailbox.queued_bytes() <= cap,
+        "force_push must not bypass the byte cap; queued={} cap={cap}",
+        mailbox.queued_bytes()
+    );
+}
+
+#[test]
+fn enqueue_control_returns_overflow_at_cap() {
+    let (tx, _rx) = mpsc::channel(1);
+    tx.try_send(json!({"n": 1})).expect("fill control queue");
+    assert_eq!(
+        enqueue_control(&tx, json!({"n": 2})),
+        Err(ControlClose::Overflow)
     );
 }
 

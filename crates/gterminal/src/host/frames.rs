@@ -253,10 +253,13 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     }
                     Err(_) => {
                         if let Some(mailbox) = out_rx.as_ref() {
-                            mailbox.close_with(ServerMessage::Error {
-                                code: "lagged".into(),
-                                message: None,
-                            });
+                            mailbox.close_with(
+                                ServerMessage::Error {
+                                    code: "lagged".into(),
+                                    message: None,
+                                },
+                                state.config.delta_queue_bytes as usize,
+                            );
                         }
                         break;
                     }

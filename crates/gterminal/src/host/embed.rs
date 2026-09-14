@@ -640,10 +640,13 @@ async fn emit_code(state: &Arc<HostState>, key: &str, code: &str) {
     let ids: Vec<u64> = slot.user_attachments.iter().copied().collect();
     for id in ids {
         if let Some(att) = inner.attachments.get(&id) {
-            att.mailbox.force_push(ServerMessage::Error {
-                code: code.into(),
-                message: None,
-            });
+            att.mailbox.force_push(
+                ServerMessage::Error {
+                    code: code.into(),
+                    message: None,
+                },
+                state.config.delta_queue_bytes as usize,
+            );
         }
     }
 }
@@ -672,14 +675,21 @@ async fn emit_exit(state: &Arc<HostState>, key: &str) -> Vec<u64> {
     };
     let mut delivered = Vec::with_capacity(recipients.len());
     for (attachment_id, mailbox) in recipients {
-        mailbox.force_push(ServerMessage::TerminalExited {
-            host_terminal_id: host_id.clone(),
-            exit_code: None,
-        });
-        mailbox.force_push(ServerMessage::Error {
-            code: "observer_reaped".into(),
-            message: None,
-        });
+        let cap = state.config.delta_queue_bytes as usize;
+        mailbox.force_push(
+            ServerMessage::TerminalExited {
+                host_terminal_id: host_id.clone(),
+                exit_code: None,
+            },
+            cap,
+        );
+        mailbox.force_push(
+            ServerMessage::Error {
+                code: "observer_reaped".into(),
+                message: None,
+            },
+            cap,
+        );
         delivered.push(attachment_id);
     }
     delivered

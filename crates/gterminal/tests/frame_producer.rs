@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use gobby_terminal::host::{FrameMailbox, PushResult};
 use gobby_terminal::pane::{PaneShellConfig, ShellMode};
 use gobby_terminal::protocol::{
     read_message, write_message, ClientMessage, FrameData, FramingError, RenderEncoding,
@@ -393,9 +394,51 @@ fn start_host(dir: &Path, extra: &[&str]) -> (host_support::HostProc, UnixStream
 
 #[test]
 fn slow_observer_resyncs_with_one_keyframe() {
+    let small = ServerMessage::Error {
+        code: "n".into(),
+        message: None,
+    };
+    let over = ServerMessage::Error {
+        code: "n".repeat(64),
+        message: None,
+    };
+    let mailbox_cap = encoded_bytes(&small);
+    let mailbox = FrameMailbox::new();
+    assert_eq!(mailbox.try_push(&small, mailbox_cap), PushResult::Queued);
+    assert_eq!(mailbox.try_push(&small, mailbox_cap), PushResult::Overflow);
+    assert!(
+        mailbox.queued_bytes() <= mailbox_cap,
+        "byte cap never exceeded; queued={} cap={mailbox_cap}",
+        mailbox.queued_bytes()
+    );
+    mailbox.replace_with_keyframe(&small, mailbox_cap);
+    assert!(
+        mailbox.queued_bytes() <= mailbox_cap,
+        "replacement keyframe must respect the byte cap; queued={} cap={mailbox_cap}",
+        mailbox.queued_bytes()
+    );
+    assert!(
+        mailbox.try_pop().is_some(),
+        "overflow must deliver exactly one replacement keyframe"
+    );
+    assert!(
+        mailbox.try_pop().is_none(),
+        "exactly one replacement keyframe"
+    );
+
+    let mailbox = FrameMailbox::new();
+    assert_eq!(mailbox.try_push(&small, mailbox_cap), PushResult::Queued);
+    mailbox.force_push(over, mailbox_cap);
+    assert!(
+        mailbox.queued_bytes() <= mailbox_cap,
+        "byte cap never exceeded after enqueue; queued={} cap={mailbox_cap}",
+        mailbox.queued_bytes()
+    );
+
     let dir = tempfile::tempdir().expect("tempdir");
     let rows = 8;
     let cols = 24;
+    let cap = 4096usize;
     let (_child, mut control, frames_path) = start_host(
         dir.path(),
         &["--delta-queue-bytes", "4096", "--lag-timeout-ms", "1500"],
@@ -444,12 +487,14 @@ fn slow_observer_resyncs_with_one_keyframe() {
         resumed.iter().all(is_keyframe),
         "semantic resync frames are keyframes; got {resumed:?}"
     );
-    // Mailbox depth at overflow is asserted in
-    // overflow_collapses_to_one_keyframe_within_cap; the producer keeps
-    // emitting after collapse, so drain length is not the criterion.
     assert!(
         queued_bytes > 0,
         "resync must deliver the replacement keyframe"
+    );
+    assert!(
+        resumed.iter().all(|message| encoded_bytes(message) <= cap),
+        "byte cap never exceeded; queued={queued_bytes} cap={cap} frames={}",
+        resumed.len()
     );
 
     slow.set_read_timeout(Some(Duration::from_millis(200)))
