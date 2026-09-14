@@ -67,9 +67,12 @@ vi.mock("../TerminalView", () => ({
     (props, ref) => {
       const [mountId] = useState(() => ++terminalViewState.mounts);
       const [writes, setWrites] = useState<string[]>([]);
+      const [keyboard, setKeyboard] = useState("down");
       useImperativeHandle(ref, () => ({
         write: (data: string) => setWrites((current) => [...current, data]),
         getSize: () => ({ rows: 24, cols: 80 }),
+        setKeyboardOpen: (open: boolean) =>
+          setKeyboard(open ? "raised" : "lowered"),
         applyAttachHistory: (
           text: string,
           truncated: boolean,
@@ -101,6 +104,13 @@ vi.mock("../TerminalView", () => ({
             Typed c
           </button>
           <output aria-label="Terminal min cols">{props.minCols ?? ""}</output>
+          <output aria-label="Terminal keyboard">{keyboard}</output>
+          <output aria-label="Terminal keyboard on demand">
+            {String(props.keyboardOnDemand ?? false)}
+          </output>
+          <button type="button" onClick={() => props.onBlur?.()}>
+            Leave terminal
+          </button>
           <button type="button" onClick={() => props.onSizeChange?.(33, 101)}>
             Renderer resized
           </button>
@@ -957,6 +967,189 @@ describe("session scope", () => {
       });
       render(<TerminalTab />);
       expect(screen.getByLabelText("Terminal min cols")).toHaveTextContent("1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("typing mode", () => {
+  const ROTATE_PROMPT = "Turn your phone upright to type";
+
+  function interactiveHookState(): HookResult {
+    return makeHookState({
+      sessionsLoaded: true,
+      sessions: [makeTmuxSession({ name: "interactive" })],
+      attachedTarget: { terminal_id: "default:interactive" },
+      streamingId: "stream-input",
+    });
+  }
+
+  /** A touch device; `rotate` flips phone landscape and fires the listeners. */
+  function stubTouchDevice(landscape: boolean) {
+    let isLandscape = landscape;
+    const listeners = new Map<string, (event: MediaQueryListEvent) => void>();
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches:
+          query === "(pointer: coarse)" ||
+          (query.includes("orientation") && isLandscape),
+        media: query,
+        addEventListener: (
+          _type: string,
+          listener: (event: MediaQueryListEvent) => void,
+        ) => listeners.set(query, listener),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    return (matches: boolean) => {
+      isLandscape = matches;
+      act(() => {
+        for (const [query, listener] of listeners) {
+          if (query.includes("orientation")) {
+            listener({ matches } as MediaQueryListEvent);
+          }
+        }
+      });
+    };
+  }
+
+  it("expands the terminal over the session list and collapses back", async () => {
+    const user = userEvent.setup();
+    const onExpandedChange = vi.fn();
+    hookState = interactiveHookState();
+    render(<TerminalTab onExpandedChange={onExpandedChange} />);
+
+    // A fine pointer keeps the keyboard following focus: the keys bar shows,
+    // but without a keyboard key.
+    await screen.findByRole("button", { name: "Ctrl" });
+    expect(screen.queryByRole("button", { name: "Keyboard" })).toBeNull();
+    expect(
+      screen.getByLabelText("Terminal keyboard on demand"),
+    ).toHaveTextContent("false");
+
+    await user.click(screen.getByRole("button", { name: "Expand terminal" }));
+    expect(
+      screen.queryByRole("combobox", { name: "Terminal session" }),
+    ).toBeNull();
+    expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+
+    await user.click(screen.getByRole("button", { name: "Collapse terminal" }));
+    expect(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+    ).toBeInTheDocument();
+    expect(onExpandedChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("raises the keyboard expanded and restores the layout when focus leaves", async () => {
+    const user = userEvent.setup();
+    stubTouchDevice(false);
+    try {
+      hookState = interactiveHookState();
+      render(<TerminalTab />);
+      expect(
+        screen.getByLabelText("Terminal keyboard on demand"),
+      ).toHaveTextContent("true");
+
+      const key = await screen.findByRole("button", { name: "Keyboard" });
+      await user.click(key);
+      expect(screen.getByLabelText("Terminal keyboard")).toHaveTextContent(
+        "raised",
+      );
+      expect(key).toHaveAttribute("aria-pressed", "true");
+      expect(
+        screen.queryByRole("combobox", { name: "Terminal session" }),
+      ).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Leave terminal" }));
+      expect(key).toHaveAttribute("aria-pressed", "false");
+      expect(
+        screen.getByRole("combobox", { name: "Terminal session" }),
+      ).toBeInTheDocument();
+      expect(hookState.releaseControl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sizes the raised-keyboard layout to the visual viewport as it moves", async () => {
+    const user = userEvent.setup();
+    stubTouchDevice(false);
+    const viewport = Object.assign(new EventTarget(), {
+      height: 800,
+      offsetTop: 0,
+    });
+    vi.stubGlobal("visualViewport", viewport);
+    try {
+      hookState = interactiveHookState();
+      const { container } = render(<TerminalTab />);
+      const root = container.firstElementChild as HTMLElement;
+      const key = await screen.findByRole("button", { name: "Keyboard" });
+      expect(root.style.height).toBe("");
+
+      await user.click(key);
+      expect(root.style.height).toBe("800px");
+
+      // The keyboard slides up, then iOS scrolls the visual viewport. The
+      // root follows both, and the pane's ResizeObserver refits the rows
+      // from that box (covered by the TerminalView padding-box fit test).
+      act(() => {
+        viewport.height = 460;
+        viewport.dispatchEvent(new Event("resize"));
+      });
+      expect(root.style.height).toBe("460px");
+      act(() => {
+        viewport.offsetTop = 40;
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      expect(root.style.height).toBe("500px");
+
+      await user.click(key);
+      expect(root.style.height).toBe("");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("asks for portrait in phone landscape and lowers a raised keyboard on rotation", async () => {
+    const user = userEvent.setup();
+    const rotate = stubTouchDevice(true);
+    try {
+      hookState = interactiveHookState();
+      render(<TerminalTab />);
+      const key = await screen.findByRole("button", { name: "Keyboard" });
+
+      await user.click(key);
+      expect(screen.getByText(ROTATE_PROMPT)).toBeInTheDocument();
+      expect(screen.getByLabelText("Terminal keyboard")).toHaveTextContent(
+        "down",
+      );
+      expect(key).toHaveAttribute("aria-pressed", "false");
+
+      // A tap on the scrim or leaving the terminal dismisses the prompt.
+      await user.click(screen.getByText(ROTATE_PROMPT));
+      expect(screen.queryByText(ROTATE_PROMPT)).toBeNull();
+      await user.click(key);
+      await user.click(screen.getByRole("button", { name: "Leave terminal" }));
+      expect(screen.queryByText(ROTATE_PROMPT)).toBeNull();
+
+      await user.click(key);
+      rotate(false);
+      expect(screen.queryByText(ROTATE_PROMPT)).toBeNull();
+      await user.click(key);
+      expect(screen.getByLabelText("Terminal keyboard")).toHaveTextContent(
+        "raised",
+      );
+
+      rotate(true);
+      expect(screen.getByLabelText("Terminal keyboard")).toHaveTextContent(
+        "lowered",
+      );
+      expect(screen.getByText(ROTATE_PROMPT)).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Expand terminal" }),
+      ).toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

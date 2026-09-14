@@ -345,6 +345,9 @@ export function ActivityPanel({
   // tri-state owns chat/split/panel, mobile owns chat/panel as an overlay.
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
+  // Expanded, the terminal takes the whole panel: the tab bar steps aside
+  // and the terminal's own Collapse button brings it back.
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
   const mobileTabMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const handleResize = () => {
@@ -394,6 +397,7 @@ export function ActivityPanel({
   const activeTabConfig =
     ACTIVITY_PANEL_TABS.find((tab) => tab.id === activeTab) ??
     ACTIVITY_PANEL_TABS[0];
+  const tabBarHidden = activeTab === "terminal" && terminalExpanded;
 
   if (mode === "chat") return null;
 
@@ -443,6 +447,7 @@ export function ActivityPanel({
               projectId={projectId ?? null}
               focusSessionId={terminalFocusSessionId}
               onFocusHandled={onTerminalFocusHandled}
+              onExpandedChange={setTerminalExpanded}
             />
           </Suspense>
         );
@@ -522,48 +527,50 @@ export function ActivityPanel({
               className="sr-only"
             >{`Activity: ${activeTabConfig.label}`}</Heading>
             <ActivityActionsProvider>
-              <div className="activity-panel-tabs flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 @max-[280px]/activity-panel:gap-1 @max-[280px]/activity-panel:px-1.5">
-                <ActivityDropdown
-                  tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
-                  activeTab={activeTab}
-                  activeTabConfig={activeTabConfig}
-                  isOpen={showMobileTabMenu}
-                  onToggle={() => setShowMobileTabMenu((open) => !open)}
-                  onSelect={handleTabSelect}
-                  wrapperRef={mobileTabMenuRef}
-                />
-                <ActivityActionButtons />
-                <span className="activity-panel-close-slot ml-auto flex shrink-0 items-center">
-                  <Button
-                    type="button"
-                    variant="accent"
-                    size="sm"
-                    dense
-                    className={coarseHitAreaCls}
-                    onClick={handleToggleChat}
-                    aria-label="Close panel"
-                    title="Close panel"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+              {tabBarHidden ? null : (
+                <div className="activity-panel-tabs flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 @max-[280px]/activity-panel:gap-1 @max-[280px]/activity-panel:px-1.5">
+                  <ActivityDropdown
+                    tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
+                    activeTab={activeTab}
+                    activeTabConfig={activeTabConfig}
+                    isOpen={showMobileTabMenu}
+                    onToggle={() => setShowMobileTabMenu((open) => !open)}
+                    onSelect={handleTabSelect}
+                    wrapperRef={mobileTabMenuRef}
+                  />
+                  <ActivityActionButtons />
+                  <span className="activity-panel-close-slot ml-auto flex shrink-0 items-center">
+                    <Button
+                      type="button"
+                      variant="accent"
+                      size="sm"
+                      dense
+                      className={coarseHitAreaCls}
+                      onClick={handleToggleChat}
+                      aria-label="Close panel"
+                      title="Close panel"
                     >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                    <span className="activity-panel-action-btn__label">
-                      Close
-                    </span>
-                  </Button>
-                </span>
-              </div>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                      <span className="activity-panel-action-btn__label">
+                        Close
+                      </span>
+                    </Button>
+                  </span>
+                </div>
+              )}
 
               {/* Tab content */}
               <div className="activity-panel-content flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -609,35 +616,37 @@ export function ActivityPanel({
           className="sr-only"
         >{`Activity: ${activeTabConfig.label}`}</Heading>
         <ActivityActionsProvider>
-          <div className="activity-panel-tabs flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 @max-[280px]/activity-panel:gap-1 @max-[280px]/activity-panel:px-1.5">
-            <ActivityDropdown
-              tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
-              activeTab={activeTab}
-              activeTabConfig={activeTabConfig}
-              isOpen={showMobileTabMenu}
-              onToggle={() => setShowMobileTabMenu((open) => !open)}
-              onSelect={handleTabSelect}
-              wrapperRef={mobileTabMenuRef}
-            />
-            <ActivityActionButtons />
-            <span className="activity-panel-close-slot ml-auto flex shrink-0 items-center">
-              <Button
-                type="button"
-                variant="accent"
-                size="sm"
-                dense
-                className={coarseHitAreaCls}
-                onClick={handleToggleChat}
-                aria-label={chatHidden ? "Show chat" : "Hide chat"}
-                title={chatHidden ? "Show chat" : "Hide chat"}
-              >
-                <PanelIcon visible={!chatHidden} />
-                <span className="activity-panel-action-btn__label">
-                  {chatHidden ? "Show Chat" : "Hide Chat"}
-                </span>
-              </Button>
-            </span>
-          </div>
+          {tabBarHidden ? null : (
+            <div className="activity-panel-tabs flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 @max-[280px]/activity-panel:gap-1 @max-[280px]/activity-panel:px-1.5">
+              <ActivityDropdown
+                tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
+                activeTab={activeTab}
+                activeTabConfig={activeTabConfig}
+                isOpen={showMobileTabMenu}
+                onToggle={() => setShowMobileTabMenu((open) => !open)}
+                onSelect={handleTabSelect}
+                wrapperRef={mobileTabMenuRef}
+              />
+              <ActivityActionButtons />
+              <span className="activity-panel-close-slot ml-auto flex shrink-0 items-center">
+                <Button
+                  type="button"
+                  variant="accent"
+                  size="sm"
+                  dense
+                  className={coarseHitAreaCls}
+                  onClick={handleToggleChat}
+                  aria-label={chatHidden ? "Show chat" : "Hide chat"}
+                  title={chatHidden ? "Show chat" : "Hide chat"}
+                >
+                  <PanelIcon visible={!chatHidden} />
+                  <span className="activity-panel-action-btn__label">
+                    {chatHidden ? "Show Chat" : "Hide Chat"}
+                  </span>
+                </Button>
+              </span>
+            </div>
+          )}
 
           {/* Tab content */}
           <div className="activity-panel-content flex min-h-0 flex-1 flex-col overflow-hidden">

@@ -124,6 +124,44 @@ describe("TerminalKeysBar", () => {
     await user.click(screen.getByRole("button", { name: "Ctrl" }));
     expect(document.activeElement).toBe(terminal);
   });
+
+  it("ends the bar with a keyboard key that toggles without taking focus", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    const bar = (open: boolean) => (
+      <>
+        <textarea data-testid="terminal" />
+        <TerminalKeysBar
+          sendInput={vi.fn()}
+          ctrlArmed={false}
+          onCtrlArmedChange={vi.fn()}
+          keyboard={{ open, onToggle }}
+        />
+      </>
+    );
+    const view = render(bar(false));
+
+    const names = screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent);
+    expect(names[names.length - 1]).toBe("Keyboard");
+
+    // The toggle has to land while the terminal keeps focus: raising the
+    // keyboard refocuses that input, and losing it would drop the lease.
+    const terminal = screen.getByTestId("terminal");
+    terminal.focus();
+    const key = screen.getByRole("button", { name: "Keyboard" });
+    expect(key).toHaveAttribute("aria-pressed", "false");
+    await user.click(key);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(terminal);
+
+    view.rerender(bar(true));
+    expect(screen.getByRole("button", { name: "Keyboard" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
 });
 
 describe("applyCtrlModifier", () => {

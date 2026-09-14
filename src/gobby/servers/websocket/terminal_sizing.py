@@ -71,7 +71,11 @@ class TerminalSizingMixin:
                     await release_size(row)
             return
         rows, cols = sizing.rows, sizing.cols
-        if rows is None or cols is None or (row.rows, row.cols) == (rows, cols):
+        if rows is None or cols is None:
+            return
+        # A released tmux window follows its clients again, so the recorded dims
+        # no longer prove the pin is in place: re-pin even at the same geometry.
+        if row.backend != "tmux" and (row.rows, row.cols) == (rows, cols):
             return
         await runtime.resize(row, rows, cols)
         manager.set_dims(row.id, rows, cols)

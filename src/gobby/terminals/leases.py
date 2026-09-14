@@ -42,6 +42,7 @@ class ControlResult:
     reason: str | None
     lease_generation: int
     displaced_attachment_id: str | None = None
+    sizing: SizingDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -398,6 +399,7 @@ class TerminalLeaseRegistry:
                 None,
                 lease.generation,
                 displaced_attachment_id=displaced,
+                sizing=self._reelect_sizing(terminal_id, lease),
             )
 
     async def release_control(self, attachment_id: str) -> ControlResult:
@@ -413,7 +415,13 @@ class TerminalLeaseRegistry:
                 return ControlResult(attachment_id, False, "released", lease.generation)
             self._bump(lease)
             lease.holder = None
-            return ControlResult(attachment_id, False, "released", lease.generation)
+            return ControlResult(
+                attachment_id,
+                False,
+                "released",
+                lease.generation,
+                sizing=self._reelect_sizing(record.terminal_id, lease),
+            )
 
     async def finalize(self, attachment_id: str, reason: str) -> FinalizedEvent | None:
         record = self._attachments.get(attachment_id)
@@ -430,12 +438,7 @@ class TerminalLeaseRegistry:
                 lease.holder = None
             record.finalized = True
             record.writes.clear()
-            sizing: SizingDecision | None = None
-            if lease.sizing_owner == attachment_id:
-                owner = self._elect_sizing_owner(terminal_id)
-                lease.sizing_owner = None if owner is None else owner.attachment_id
-                if owner is not None and owner.geometry is not None:
-                    sizing = SizingDecision(owner.viewer, *owner.geometry)
+            sizing = self._reelect_sizing(terminal_id, lease)
             if not self._live_viewers(terminal_id):
                 lease.sizing_owner = None
                 sizing = SizingDecision(None)
@@ -489,12 +492,11 @@ class TerminalLeaseRegistry:
         record.geometry = validated
         record.resize_seq = self._sizing_seq
         owner = self._elect_sizing_owner(record.terminal_id)
-        assert owner is not None and owner.geometry is not None
-        lease.sizing_owner = owner.attachment_id
-        sizing = SizingDecision(owner.viewer, *owner.geometry)
-        if owner.attachment_id != attachment_id:
-            sizing = SizingDecision(owner.viewer)
-        return ResizeAdmit(True, sizing=sizing)
+        lease.sizing_owner = None if owner is None else owner.attachment_id
+        if owner is None or owner.attachment_id != attachment_id:
+            return ResizeAdmit(True, sizing=SizingDecision(None if owner is None else owner.viewer))
+        assert owner.geometry is not None
+        return ResizeAdmit(True, sizing=SizingDecision(owner.viewer, *owner.geometry))
 
     def admit_write(
         self,
@@ -577,16 +579,33 @@ class TerminalLeaseRegistry:
         return lease
 
     def _elect_sizing_owner(self, terminal_id: str) -> _Attachment | None:
+        # A web viewer sizes the shared terminal only while it holds the input
+        # lease: a phone that is only watching must not pin a desktop client to
+        # its grid.
+        holder = self._lease(terminal_id).holder
         candidates = [
             record
             for record in self._attachments.values()
             if record.terminal_id == terminal_id
             and not record.finalized
             and record.geometry is not None
+            and (record.viewer != "web" or record.attachment_id == holder)
         ]
         if not candidates:
             return None
         return max(candidates, key=lambda record: (_VIEWER_RANK[record.viewer], record.resize_seq))
+
+    def _reelect_sizing(self, terminal_id: str, lease: _Lease) -> SizingDecision | None:
+        """Re-run the sizing election; return the runtime effect when ownership moved."""
+        previous = lease.sizing_owner
+        owner = self._elect_sizing_owner(terminal_id)
+        lease.sizing_owner = None if owner is None else owner.attachment_id
+        if lease.sizing_owner == previous:
+            return None
+        if owner is None:
+            return SizingDecision(None)
+        assert owner.geometry is not None
+        return SizingDecision(owner.viewer, *owner.geometry)
 
     def _live_viewers(self, terminal_id: str) -> list[_Attachment]:
         return [

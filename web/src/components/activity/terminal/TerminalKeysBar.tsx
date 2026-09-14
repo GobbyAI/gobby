@@ -14,6 +14,11 @@ interface TerminalKeysBarProps {
    */
   ctrlArmed: boolean;
   onCtrlArmedChange: (armed: boolean) => void;
+  /**
+   * The on-demand soft keyboard (coarse pointers). Omitted, the bar has no
+   * keyboard key and the terminal's keyboard follows focus as usual.
+   */
+  keyboard?: { open: boolean; onToggle: () => void };
 }
 
 interface QuickKey {
@@ -49,10 +54,38 @@ const CONTROL_KEYS: readonly QuickKey[] = [
   { label: "Ctrl+C", data: "\x03" },
 ];
 
-const keyCls = cn(
-  "min-h-8 min-w-8 bg-[var(--bg-secondary)] px-2 font-mono text-xs active:bg-muted/80",
-  coarseHitAreaCls,
-);
+const keyCls = cn("min-h-8 min-w-8 px-2 font-mono text-xs", coarseHitAreaCls);
+
+// A latched modifier or a raised keyboard is ringed, so the state does not
+// rest on the accent fill alone.
+const latchedRingCls =
+  "ring-2 ring-accent ring-offset-2 ring-offset-background";
+
+function KeyboardIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M10 8h.01" />
+      <path d="M12 12h.01" />
+      <path d="M14 8h.01" />
+      <path d="M16 12h.01" />
+      <path d="M18 8h.01" />
+      <path d="M6 8h.01" />
+      <path d="M7 16h10" />
+      <path d="M8 12h.01" />
+      <rect width="20" height="16" x="2" y="4" rx="2" />
+    </svg>
+  );
+}
 
 /**
  * Special keys the on-screen keyboard can't type into the terminal directly.
@@ -63,6 +96,7 @@ export function TerminalKeysBar({
   sendInput,
   ctrlArmed,
   onCtrlArmedChange,
+  keyboard,
 }: TerminalKeysBarProps) {
   const [shift, setShift] = useState(false);
 
@@ -77,7 +111,7 @@ export function TerminalKeysBar({
     <Button
       key={key.label}
       type="button"
-      variant="secondary"
+      variant="quick-key"
       size="sm"
       dense
       className={keyCls}
@@ -96,10 +130,10 @@ export function TerminalKeysBar({
   ) => (
     <Button
       type="button"
-      variant={pressed ? "accent" : "secondary"}
+      variant={pressed ? "accent" : "quick-key"}
       size="sm"
       dense
-      className={keyCls}
+      className={cn(keyCls, pressed && latchedRingCls)}
       aria-label={label}
       aria-pressed={pressed}
       onMouseDown={keepTerminalFocus}
@@ -111,21 +145,37 @@ export function TerminalKeysBar({
 
   return (
     <div
-      className="flex flex-wrap gap-1.5"
+      className="flex items-center gap-2.5"
       role="group"
       aria-label="Terminal quick keys"
     >
-      {CURSOR_KEYS.map(renderKey)}
-      {/* One row whenever it fits. The break only exists in a panel too
-          narrow for all keys (portrait phone, narrow desktop panel), where
-          numbers + arrows take the top row and the rest the bottom. */}
-      <span
-        aria-hidden="true"
-        className="hidden basis-full @max-[639px]/activity-panel:block"
-      />
-      {renderModifier("Shift", shift, () => setShift(!shift))}
-      {renderModifier("Ctrl", ctrlArmed, () => onCtrlArmedChange(!ctrlArmed))}
-      {CONTROL_KEYS.map(renderKey)}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        {CURSOR_KEYS.map(renderKey)}
+        {/* One row whenever it fits. The break only exists in a panel too
+            narrow for all keys (portrait phone, narrow desktop panel), where
+            numbers + arrows take the top row and the rest the bottom. */}
+        <span
+          aria-hidden="true"
+          className="hidden basis-full @max-[639px]/activity-panel:block"
+        />
+        {renderModifier("Shift", shift, () => setShift(!shift))}
+        {renderModifier("Ctrl", ctrlArmed, () => onCtrlArmedChange(!ctrlArmed))}
+        {CONTROL_KEYS.map(renderKey)}
+      </div>
+      {keyboard ? (
+        <Button
+          type="button"
+          variant="primary"
+          size="icon"
+          className={cn("size-11 shrink-0", keyboard.open && latchedRingCls)}
+          aria-label="Keyboard"
+          aria-pressed={keyboard.open}
+          onMouseDown={keepTerminalFocus}
+          onClick={keyboard.onToggle}
+        >
+          <KeyboardIcon />
+        </Button>
+      ) : null}
     </div>
   );
 }

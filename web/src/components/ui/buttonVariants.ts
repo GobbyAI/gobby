@@ -29,6 +29,10 @@ export const buttonVariants = cva(
         // Borderless, transparent — tertiary actions in dense rows.
         ghost:
           "border-transparent bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+        // Keyboard-gray keycap for the terminal quick keys: reads as a key
+        // pressed into the PTY, not as an action on the surface.
+        "quick-key":
+          "border-transparent bg-quick-key text-quick-key-foreground hover:bg-quick-key/90 active:bg-quick-key/80",
       },
       size: {
         // leading-none sits after each text-* step: tailwind-merge treats a

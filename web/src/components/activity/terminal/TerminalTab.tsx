@@ -11,7 +11,7 @@ import {
 import type { TmuxTarget } from "../../../hooks/terminalRosterSnapshot";
 import type { SettledWrite } from "../../../hooks/terminalWriteSettlement";
 import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
-import { useIsMobile } from "../../../hooks/useIsMobile";
+import { useCoarsePointer, useIsMobile } from "../../../hooks/useIsMobile";
 import type { GobbySession } from "../../../types/sessions";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
@@ -29,6 +29,7 @@ import {
   sessionKey,
 } from "./terminalSessions";
 import { TerminalView, type TerminalViewHandle } from "./TerminalView";
+import { useTerminalKeyboard } from "./useTerminalKeyboard";
 
 export interface TerminalTabProps {
   sessions?: GobbySession[];
@@ -36,6 +37,11 @@ export interface TerminalTabProps {
   projectId?: string | null;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
+  /**
+   * The terminal took the whole tab (Expand, or a raised keyboard). The
+   * activity panel hides its tab bar while this holds.
+   */
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 interface StatePanelProps {
@@ -170,11 +176,69 @@ function PlusIcon() {
   );
 }
 
+function ChevronsUpIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m17 11-5-5-5 5" />
+      <path d="m17 18-5-5-5 5" />
+    </svg>
+  );
+}
+
+function ChevronsDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m7 6 5 5 5-5" />
+      <path d="m7 13 5 5 5-5" />
+    </svg>
+  );
+}
+
+function SmartphoneIcon() {
+  return (
+    <svg
+      width="28"
+      height="28"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+      <path d="M12 18h.01" />
+    </svg>
+  );
+}
+
 export function TerminalTab({
   sessions,
   projectId = null,
   focusSessionId = null,
   onFocusHandled,
+  onExpandedChange,
 }: TerminalTabProps) {
   const {
     sessions: tmuxSessions,
@@ -218,8 +282,17 @@ export function TerminalTab({
   const [focusNotice, setFocusNotice] = useState<string | null>(null);
   const [scope, setScope] = useState<SessionScope>(loadStoredSessionScope);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const isMobile = useIsMobile();
+  const coarsePointer = useCoarsePointer();
+  const rootRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<TerminalViewHandle>(null);
+  const keyboard = useTerminalKeyboard({
+    rootRef,
+    viewRef,
+    expanded,
+    onExpandedChange: setExpanded,
+  });
   const streamingIdRef = useRef<string | null>(streamingId);
   const lastAttachedKeyRef = useRef<string | null>(null);
   const consumedFocusIdRef = useRef<string | null>(null);
@@ -576,6 +649,21 @@ export function TerminalTab({
     </Button>
   );
 
+  // The notices below replace the terminal and its Collapse button, so the
+  // expanded layout and a raised keyboard only hold while the terminal shows.
+  const terminalShown =
+    endedKey === null &&
+    (sessionsLoaded ? joinedSessions.length > 0 : selectedKey !== null);
+  const expandedShown = expanded && terminalShown;
+  useEffect(() => {
+    onExpandedChange?.(expandedShown);
+    return () => onExpandedChange?.(false);
+  }, [expandedShown, onExpandedChange]);
+  const closeKeyboard = keyboard.close;
+  useEffect(() => {
+    if (!terminalShown) closeKeyboard();
+  }, [closeKeyboard, terminalShown]);
+
   if (!sessionsLoaded && selectedKey === null) {
     return (
       <StatePanel
@@ -615,7 +703,11 @@ export function TerminalTab({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      ref={rootRef}
+      className="relative flex h-full min-h-0 flex-col"
+      style={keyboard.height === null ? undefined : { height: keyboard.height }}
+    >
       {focusNotice ? (
         <div
           className="absolute end-3 top-12 z-30 rounded-md border border-warning/40 bg-[var(--bg-secondary)] px-3 py-2 text-xs text-warning shadow-sm"
@@ -626,45 +718,71 @@ export function TerminalTab({
       ) : null}
 
       {/* Terminal list mirrors the sessions-list placement: rows on top,
-          the selected terminal's view below its status bar. */}
-      <div
-        className="min-h-0 overflow-y-auto"
-        style={{ height: `${listHeight}%` }}
-      >
-        <TerminalSessionList
-          sessions={visibleSessions}
-          value={selectedKey}
-          onChange={chooseSession}
-          onTerminate={terminateSession}
-        />
-        {visibleSessions.length === 0 ? (
-          <div className="flex flex-col items-start gap-2 px-3 py-3 text-sm text-muted-foreground">
-            <span>No agent terminals. Shells and other panes are hidden.</span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              dense
-              onClick={() => changeScope("all")}
-            >
-              Show all sessions
-            </Button>
+          the selected terminal's view below its status bar. Expanded, the
+          terminal takes the list's room. */}
+      {expanded ? null : (
+        <>
+          <div
+            className="min-h-0 overflow-y-auto"
+            style={{ height: `${listHeight}%` }}
+          >
+            <TerminalSessionList
+              sessions={visibleSessions}
+              value={selectedKey}
+              onChange={chooseSession}
+              onTerminate={terminateSession}
+            />
+            {visibleSessions.length === 0 ? (
+              <div className="flex flex-col items-start gap-2 px-3 py-3 text-sm text-muted-foreground">
+                <span>
+                  No agent terminals. Shells and other panes are hidden.
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  dense
+                  onClick={() => changeScope("all")}
+                >
+                  Show all sessions
+                </Button>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
 
-      <ResizeHandle
-        direction="vertical"
-        onResize={setListHeight}
-        panelHeight={listHeight}
-        minHeight={15}
-        maxHeight={70}
-      />
+          <ResizeHandle
+            direction="vertical"
+            onResize={setListHeight}
+            panelHeight={listHeight}
+            minHeight={15}
+            maxHeight={70}
+          />
+        </>
+      )}
 
       <div className="activity-panel-status-bar border-t">
         <span className="activity-panel-status-bar__title">
           {selected ? selected.label : "terminal"}
         </span>
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          dense
+          className={cn("ml-auto shrink-0", coarseHitAreaCls)}
+          aria-label={expanded ? "Collapse terminal" : "Expand terminal"}
+          title={expanded ? "Collapse terminal" : "Expand terminal"}
+          onMouseDown={keepTerminalFocus}
+          onClick={() => {
+            if (expanded) keyboard.close();
+            setExpanded(!expanded);
+          }}
+        >
+          {expanded ? <ChevronsDownIcon /> : <ChevronsUpIcon />}
+          <span className="activity-panel-action-btn__label">
+            {expanded ? "Collapse" : "Expand"}
+          </span>
+        </Button>
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--bg-primary)]">
@@ -688,11 +806,37 @@ export function TerminalTab({
           onProtocolResponse={sendTypedInput}
           minCols={isMobile ? 1 : undefined}
           readOnly={leaseLost}
+          keyboardOnDemand={coarsePointer}
           onFocus={takeControlOnFocus}
-          onBlur={releaseControl}
+          onBlur={() => {
+            keyboard.close();
+            releaseControl();
+          }}
           onPaste={sendPaste}
           onTakeControl={takeBackControl}
         />
+
+        {keyboard.rotatePrompt ? (
+          <div
+            className="absolute inset-0 z-10 grid place-items-center bg-[var(--bg-primary)]/72 p-4"
+            onClick={keyboard.close}
+          >
+            <div
+              className="flex max-w-xs flex-col items-center gap-2 rounded-lg border border-border bg-[var(--bg-secondary)] px-5 py-4 text-center"
+              role="status"
+            >
+              <span className="flex text-accent">
+                <SmartphoneIcon />
+              </span>
+              <p className="text-sm font-medium text-foreground">
+                Turn your phone upright to type
+              </p>
+              <p className="text-xs leading-snug text-muted-foreground">
+                With the keyboard up, landscape leaves about one terminal row.
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         {isAttaching ? (
           <div className="absolute inset-0 z-10 grid place-items-center bg-[var(--bg-primary)]/88 backdrop-blur-[1px]">
@@ -792,6 +936,11 @@ export function TerminalTab({
             sendInput={sendInput}
             ctrlArmed={ctrlArmed}
             onCtrlArmedChange={setCtrlArmed}
+            keyboard={
+              coarsePointer
+                ? { open: keyboard.open, onToggle: keyboard.toggle }
+                : undefined
+            }
           />
         </div>
       ) : null}

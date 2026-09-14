@@ -21,10 +21,7 @@ import {
   TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
   TERMINAL_WS_SAFE_INTEGER_MAX,
 } from "../terminalWsFragments";
-import {
-  TMUX_REQUEST_TIMEOUT_MS,
-  useTmuxSessions,
-} from "../useTmuxSessions";
+import { TMUX_REQUEST_TIMEOUT_MS, useTmuxSessions } from "../useTmuxSessions";
 import { TerminalTab } from "../../components/activity/terminal/TerminalTab";
 import type {
   TerminalViewHandle,
@@ -42,6 +39,7 @@ vi.mock("../../components/activity/terminal/TerminalView", () => ({
       useImperativeHandle(ref, () => ({
         write: () => undefined,
         getSize: () => ({ rows: 24, cols: 80 }),
+        setKeyboardOpen: () => undefined,
         applyAttachHistory: () => undefined,
       }));
       return createElement("div", {
@@ -695,7 +693,13 @@ describe("useTmuxSessions", () => {
     ws.send.mockClear();
 
     act(() => result.current.attachSession("term-a", "a"));
-    respondToAttach(ws, requestId(ws, "terminal_attach"), "term-a", "a", "stream-a");
+    respondToAttach(
+      ws,
+      requestId(ws, "terminal_attach"),
+      "term-a",
+      "a",
+      "stream-a",
+    );
     act(() => result.current.reportViewport(24, 80));
 
     // The daemon opens the output bridge on an attachment's first resize, so
@@ -722,7 +726,13 @@ describe("useTmuxSessions", () => {
         success: true,
       }),
     );
-    respondToAttach(ws, requestId(ws, "terminal_attach"), "term-b", "b", "stream-b");
+    respondToAttach(
+      ws,
+      requestId(ws, "terminal_attach"),
+      "term-b",
+      "b",
+      "stream-b",
+    );
 
     expect(sentMessages(ws, "terminal_resize")).toEqual([
       {
@@ -1507,7 +1517,10 @@ describe("useTmuxSessions", () => {
     // that follows it does not put a second take-control on the wire.
     act(() => result.current.sendInput("l"));
     expect(sentMessages(ws, "terminal_input")).toEqual([]);
-    expect(result.current.pendingWrite).toEqual({ kind: "input", payload: "l" });
+    expect(result.current.pendingWrite).toEqual({
+      kind: "input",
+      payload: "l",
+    });
     act(() => result.current.takeControl());
     expect(sentMessages(ws, "terminal_take_control")).toHaveLength(1);
 
@@ -1574,7 +1587,10 @@ describe("useTmuxSessions", () => {
     hold("a");
     // The second keystroke is refused with a visible cue, never queued.
     act(() => result.current.sendInput("b"));
-    expect(result.current.pendingWrite).toEqual({ kind: "input", payload: "a" });
+    expect(result.current.pendingWrite).toEqual({
+      kind: "input",
+      payload: "a",
+    });
     expect(result.current.writeRefusal).toBe(
       "Waiting for control of this terminal.",
     );

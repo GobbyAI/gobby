@@ -9,18 +9,27 @@ import {
 } from "../../lib/colorContrast";
 
 const AA_NORMAL_TEXT = 4.5;
+const AA_NON_TEXT = 3;
 const tokensCss = readFileSync(
   resolve(process.cwd(), "src/styles/tokens.css"),
   "utf8",
 );
-const lightTheme = tokensCss.slice(tokensCss.indexOf('[data-theme="light"]'));
+const lightThemeStart = tokensCss.indexOf('[data-theme="light"]');
+const themes = {
+  dark: tokensCss.slice(0, lightThemeStart),
+  light: tokensCss.slice(lightThemeStart),
+} as const;
+
+function themeToken(theme: keyof typeof themes, name: string): string {
+  const match = new RegExp(`--${name}:\\s*(oklch\\([^;]+\\));`).exec(
+    themes[theme],
+  );
+  if (!match) throw new Error(`Missing ${theme}-theme token --${name}`);
+  return match[1];
+}
 
 function token(name: string): string {
-  const match = new RegExp(`--${name}:\\s*(oklch\\([^;]+\\));`).exec(
-    lightTheme,
-  );
-  if (!match) throw new Error(`Missing light-theme token --${name}`);
-  return match[1];
+  return themeToken("light", name);
 }
 
 const surfaces = ["bg-primary", "bg-secondary", "bg-tertiary"] as const;
@@ -65,3 +74,39 @@ describe("light-theme semantic token contrast", () => {
     },
   );
 });
+
+describe.each(["dark", "light"] as const)(
+  "%s-theme terminal typing controls",
+  (theme) => {
+    it("keeps quick-key labels AA on the keycap", () => {
+      expect(
+        contrastRatio(
+          themeToken(theme, "quick-key-foreground"),
+          themeToken(theme, "quick-key"),
+        ),
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+
+    it("keeps the Expand label AA on its accent tint in the status bar", () => {
+      const accent = themeToken(theme, "accent");
+      expect(
+        contrastRatioOnSrgbTint(
+          accent,
+          accent,
+          0.1,
+          themeToken(theme, "bg-secondary"),
+        ),
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+
+    it("keeps the solid keyboard key, its ring, and its glyph at 3:1", () => {
+      const accent = themeToken(theme, "accent");
+      expect(
+        contrastRatio(accent, themeToken(theme, "bg-primary")),
+      ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+      expect(
+        contrastRatio(themeToken(theme, "accent-foreground"), accent),
+      ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    });
+  },
+);

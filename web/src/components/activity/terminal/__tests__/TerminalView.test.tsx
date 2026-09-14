@@ -220,6 +220,63 @@ describe("TerminalView", () => {
     expect(onBlur).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the soft keyboard down until asked for, without cycling the lease", async () => {
+    const onFocus = vi.fn();
+    const onBlur = vi.fn();
+    const terminalRef = createRef<TerminalViewHandle>();
+
+    render(
+      <TerminalFocusHarness>
+        <TerminalView
+          ref={terminalRef}
+          keyboardOnDemand
+          onFocus={onFocus}
+          onBlur={onBlur}
+        />
+      </TerminalFocusHarness>,
+    );
+    await settleAsyncWork();
+    const instance = latestInstance();
+
+    // Focused, but a tap to scroll or select must not raise the keyboard.
+    expect(document.activeElement).toBe(instance.textarea);
+    expect(instance.textarea).toHaveAttribute("inputmode", "none");
+    const focusesBeforeToggle = onFocus.mock.calls.length;
+
+    // Raising and lowering refocuses the input so the platform rereads
+    // inputmode; that refocus is not the user leaving the pane.
+    act(() => {
+      terminalRef.current?.setKeyboardOpen(true);
+    });
+    expect(instance.textarea).toHaveAttribute("inputmode", "text");
+    expect(document.activeElement).toBe(instance.textarea);
+    act(() => {
+      terminalRef.current?.setKeyboardOpen(false);
+    });
+    expect(instance.textarea).toHaveAttribute("inputmode", "none");
+    expect(document.activeElement).toBe(instance.textarea);
+    expect(onFocus).toHaveBeenCalledTimes(focusesBeforeToggle);
+    expect(onBlur).not.toHaveBeenCalled();
+
+    // Leaving the pane lowers a raised keyboard and releases the lease.
+    act(() => {
+      terminalRef.current?.setKeyboardOpen(true);
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "After terminal" }).focus();
+    });
+    expect(instance.textarea).toHaveAttribute("inputmode", "none");
+    expect(onBlur).toHaveBeenCalledTimes(1);
+
+    // Raising it from outside focuses the pane, which asks for the lease.
+    act(() => {
+      terminalRef.current?.setKeyboardOpen(true);
+    });
+    expect(document.activeElement).toBe(instance.textarea);
+    expect(instance.textarea).toHaveAttribute("inputmode", "text");
+    expect(onFocus).toHaveBeenCalledTimes(focusesBeforeToggle + 1);
+  });
+
   it("renders the read-only overlay and offers control back", async () => {
     const user = userEvent.setup();
     const onTakeControl = vi.fn();

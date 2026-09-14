@@ -57,4 +57,4 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 // variant, terminal tokens) without moving the pin; #22231 folded that in with a CSS ticker
 // clock, and #22281 moved that clock to Web Animations (it crashed iOS Safari), leaving only
 // the ticker's edge fade and inline-block promotion.
-export const CSS_TOTAL_LINE_PIN = 903;
+export const CSS_TOTAL_LINE_PIN = 913;

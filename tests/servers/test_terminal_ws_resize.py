@@ -13,12 +13,13 @@ from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.proxy_relay import ProxyAttachment
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 
-class _SizingServer(TerminalSizingMixin, TerminalWsMixin):
+class _SizingServer(TerminalSizingMixin, TerminalControlMixin, TerminalWsMixin):
     def __init__(self, row: Any, runtime: TmuxTerminalRuntime) -> None:
         self.lease_registry = TerminalLeaseRegistry()
         self.terminal_manager = MemoryTerminalStore(row)
@@ -32,6 +33,9 @@ class _SizingServer(TerminalSizingMixin, TerminalWsMixin):
         return self.runtime if backend == "tmux" else None
 
     async def _send_json(self, _websocket: Any, payload: dict[str, Any]) -> None:
+        self.sent.append(payload)
+
+    async def _send_control(self, _websocket: Any, payload: dict[str, Any]) -> None:
         self.sent.append(payload)
 
 
@@ -95,6 +99,7 @@ async def test_proxy_socket_failure_applies_re_elected_size(
     server = _SizingServer(row, runtime)
     web = await server.lease_registry.attach("term-1", viewer="web")
     gclient = await server.lease_registry.attach("term-1", viewer="gclient")
+    await server.lease_registry.take_control("term-1", web.attachment_id)
     websocket = object()
 
     await server._handle_terminal_resize(
@@ -124,4 +129,50 @@ async def test_proxy_socket_failure_applies_re_elected_size(
         ("resize-window", "-t", "%1", "-x", "120", "-y", "40"),
     ]
     frame.close.assert_awaited_once()
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+@pytest.mark.asyncio
+async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = replace(
+        make_memory_terminal(terminal_id="term-1", session_name="external-demo"),
+        ownership="external",
+    )
+    commands: list[tuple[str, ...]] = []
+
+    async def run_tmux(
+        _manager: TmuxSessionManager, *args: str, **_kwargs: object
+    ) -> tuple[int, str, str]:
+        commands.append(args)
+        return (0, "", "")
+
+    monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
+    runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
+    server = _SizingServer(row, runtime)
+    web = await server.lease_registry.attach("term-1", viewer="web")
+    websocket = object()
+    control = {"terminal_id": "term-1", "attachment_id": web.attachment_id}
+    pin = [
+        ("set-option", "-w", "-t", "%1", "window-size", "manual"),
+        ("resize-window", "-t", "%1", "-x", "80", "-y", "24"),
+    ]
+
+    # Watching: the phone's grid never reaches the shared window.
+    await server._handle_terminal_resize(
+        websocket,
+        {"attachment_id": web.attachment_id, "rows": 24, "cols": 80},
+    )
+    assert commands == []
+
+    await server._handle_terminal_take_control(websocket, control)
+    assert commands == pin
+
+    await server._handle_terminal_release_control(websocket, control)
+    assert commands[-1] == ("set-option", "-wu", "-t", "%1", "window-size")
+
+    # The row still records 24x80 after the release; typing again must re-pin.
+    await server._handle_terminal_take_control(websocket, control)
+    assert commands[-2:] == pin
     await server.lease_registry.shutdown_lifecycle_publication()

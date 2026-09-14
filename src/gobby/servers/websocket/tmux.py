@@ -186,15 +186,19 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalControlMixin, 
         registry = self._leases()
         viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
         record = await registry.attach(terminal_id, "proxy", websocket=websocket, viewer=viewer)
-        # A tmux client is a typing seat: the newest viewer holds the lease,
-        # exactly as every attached desktop client can type.
-        control = await registry.take_control(terminal_id, record.attachment_id, takeover=True)
-        if control.granted and control.displaced_attachment_id is not None:
-            await self._fanout_lease_lost(
-                control.displaced_attachment_id,
-                record.attachment_id,
-                control.lease_generation,
-            )
+        # A desktop tmux client is a typing seat: the newest one holds the lease,
+        # exactly as every attached desktop client can type. A web viewer attaches
+        # observe-only and takes control on focus or write, since holding the lease
+        # is what lets it size the shared window.
+        if viewer == "gclient":
+            control = await registry.take_control(terminal_id, record.attachment_id, takeover=True)
+            await self._apply_terminal_sizing(terminal_id, control.sizing)
+            if control.granted and control.displaced_attachment_id is not None:
+                await self._fanout_lease_lost(
+                    control.displaced_attachment_id,
+                    record.attachment_id,
+                    control.lease_generation,
+                )
         cancel_stale_reservations(self, terminal_id, websocket)
         self._tmux_pending[record.attachment_id] = PendingAttachment(
             terminal_id=terminal_id,

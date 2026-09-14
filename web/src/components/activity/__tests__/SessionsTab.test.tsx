@@ -161,6 +161,7 @@ vi.mock("../terminal/TerminalView", async () => {
         ReactModule.useImperativeHandle(ref, () => ({
           write: vi.fn(),
           getSize: () => ({ rows: 24, cols: 80 }),
+          setKeyboardOpen: vi.fn(),
           applyAttachHistory: vi.fn(),
         }));
         return <div role="log" aria-label="Terminal output (read-only)" />;

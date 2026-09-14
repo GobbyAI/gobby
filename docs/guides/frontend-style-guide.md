@@ -62,6 +62,16 @@ from destructive/error hues for deutan accessibility.
 | `--accent-soft` | `oklch(82% 0.20 125 / 0.18)` | `oklch(43% 0.18 125 / 0.18)` | Soft accent surfaces |
 | `--accent-tint` | `oklch(82% 0.20 125 / 0.10)` | `oklch(43% 0.18 125 / 0.10)` | Active nav and subtle emphasis |
 
+### Quick-Key Tokens
+
+The terminal keys bar renders its keycaps keyboard-gray, so they read as keys
+rather than as actions and stay distinct from the solid accent keyboard key.
+
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `--quick-key` | `oklch(68% 0.005 125)` | `oklch(80% 0.008 125)` | Terminal quick-key keycaps |
+| `--quick-key-foreground` | `oklch(15% 0.005 125)` | `oklch(20% 0.005 125)` | Keycap labels |
+
 ### Semantic Colors
 
 State colors must not rely on hue alone. Pair color with text, icon, position,
@@ -201,6 +211,8 @@ Use semantic Tailwind colors where mappings exist.
 | `bg-accent` | `--accent` |
 | `text-accent-foreground` | `--accent-foreground` |
 | `hover:bg-accent-hover` | `--accent-hover` |
+| `bg-quick-key` | `--quick-key` |
+| `text-quick-key-foreground` | `--quick-key-foreground` |
 | `border-border` | `--border` |
 | `bg-destructive` | `--color-destructive` |
 | `text-destructive-foreground` | `--color-destructive-foreground` |
@@ -339,6 +351,7 @@ import { Button } from '../ui/Button' // path relative to the caller
 | `ghost` | Tertiary actions in dense rows | Borderless, transparent, muted hover |
 | `destructive` | Quiet destructive actions | Transparent with error text; error-soft hover |
 | `outline` | Neutral bordered alternative | Transparent with border, foreground text |
+| `quick-key` | Terminal quick keys (keys sent to the PTY) | Solid keyboard-gray keycap |
 
 | Size | Classes |
 |------|---------|

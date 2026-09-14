@@ -66,6 +66,18 @@ vi.mock("../AgentsTab", () => ({
   AgentsTab: () => <div>Agents Tab</div>,
 }));
 
+vi.mock("../terminal/TerminalTab", () => ({
+  TerminalTab: ({
+    onExpandedChange,
+  }: {
+    onExpandedChange?: (expanded: boolean) => void;
+  }) => (
+    <button type="button" onClick={() => onExpandedChange?.(true)}>
+      Expand terminal
+    </button>
+  ),
+}));
+
 describe("ActivityPanel", () => {
   it("registers Terminal immediately after Sessions with the prompt icon", () => {
     const sessionsIndex = ACTIVITY_PANEL_TABS.findIndex(
@@ -111,6 +123,40 @@ describe("ActivityPanel", () => {
     expect(screen.queryByText("Terminal Tab")).not.toBeInTheDocument();
     expect(screen.queryByRole("log")).not.toBeInTheDocument();
   });
+
+  it.each([
+    [false, "Hide chat"],
+    [true, "Close panel"],
+  ] as const)(
+    "hides the tab bar while the terminal is expanded (mobile: %s)",
+    async (isMobile, closeLabel) => {
+      const user = userEvent.setup();
+      render(
+        <ActivityPanel
+          mode="split"
+          onToggleChat={vi.fn()}
+          panelWidth={320}
+          onWidthChange={vi.fn()}
+          activeTab="terminal"
+          onTabChange={vi.fn()}
+          plans={new Map()}
+          activePlan={null}
+          onOpenPlan={vi.fn()}
+          onSetPlanVersion={vi.fn()}
+          sessions={[]}
+          isMobile={isMobile}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: closeLabel }),
+      ).toBeInTheDocument();
+
+      await user.click(
+        await screen.findByRole("button", { name: "Expand terminal" }),
+      );
+      expect(screen.queryByRole("button", { name: closeLabel })).toBeNull();
+    },
+  );
 
   it("returns null in chat-only mode", () => {
     const { container } = render(

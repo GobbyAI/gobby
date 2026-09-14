@@ -25,6 +25,8 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.terminals import AttachLocator, Terminal
+from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -83,7 +85,9 @@ def server() -> WebSocketServer:
     config.ping_interval = 30
     config.ping_timeout = 10
     config.max_message_size = 1024
-    return WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    server.lease_registry = TerminalLeaseRegistry()
+    return server
 
 
 @pytest.fixture
@@ -294,6 +298,29 @@ class TestTmuxAttachReservation:
         # The first viewer's reservation is a second live socket's and stays.
         assert first_id in server._tmux_pending
         assert second_id in server._tmux_pending
+
+    async def test_a_web_viewer_attaches_observe_only(
+        self, server: WebSocketServer, row: Terminal
+    ) -> None:
+        ws = MockWebSocket()
+
+        with activation_harness(server, bridge=make_bridge(terminal_id=row.id)):
+            await server._handle_terminal_attach(
+                ws,
+                {
+                    "terminal_id": row.id,
+                    "frame_delivery": "proxy",
+                    "viewer": "web",
+                    "request_id": "r1",
+                },
+            )
+
+        result = ws.messages_of_type("terminal_attach_result")[0]
+        assert result["success"] is True
+        assert str(result["attachment_id"]) in server._tmux_pending
+        # The web takes control on focus or write. Holding the lease is what lets a
+        # viewer pin the shared window, so a phone that only watches must not hold it.
+        assert server.lease_registry.holder(row.id) is None
 
     async def test_native_rows_never_reserve_a_tmux_client(self, server: WebSocketServer) -> None:
         native = make_memory_terminal(backend="native", session_name="native-demo")
@@ -511,6 +538,11 @@ class TestTmuxBridgeInput:
         ws = MockWebSocket()
         runtime = FakeRuntime()
         server.terminal_runtime_registry = runtime_registry(runtime)
+        server.write_coordinator = WriteCoordinator(
+            cast(UnresolvedWriteStore, server.terminal_manager),
+            server.terminal_runtime_registry,
+            lease_registry=server.lease_registry,
+        )
 
         with activation_harness(server, bridge=make_bridge(terminal_id=row.id)):
             attachment_id = await reserve(server, ws, row)

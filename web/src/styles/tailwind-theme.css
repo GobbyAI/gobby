@@ -33,6 +33,8 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent-hover: var(--accent-hover);
+  --color-quick-key: var(--quick-key);
+  --color-quick-key-foreground: var(--quick-key-foreground);
   --color-border: var(--border);
   --color-destructive: var(--color-destructive);
   --color-destructive-foreground: var(--color-destructive-foreground);

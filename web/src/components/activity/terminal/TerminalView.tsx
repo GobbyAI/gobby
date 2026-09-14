@@ -53,6 +53,12 @@ interface TerminalSize {
 export interface TerminalViewHandle {
   write: (data: string) => void;
   getSize: () => TerminalSize | null;
+  /**
+   * Raise or lower the soft keyboard (with `keyboardOnDemand`). Call it inside
+   * the tap that asked for it: iOS only raises the keyboard for a focus made
+   * during a user gesture.
+   */
+  setKeyboardOpen: (open: boolean) => void;
   applyAttachHistory: (
     text: string,
     truncated: boolean,
@@ -72,6 +78,12 @@ export interface TerminalViewProps {
    * container does not touch-scroll on iOS.
    */
   minCols?: number;
+  /**
+   * Coarse pointers: the soft keyboard stays down until `setKeyboardOpen`
+   * raises it, so a tap to scroll or select does not raise it and squeeze
+   * the pane.
+   */
+  keyboardOnDemand?: boolean;
   /**
    * Another session holds the daemon's writer lease. The pane says so and
    * offers it back; it never silently swallows what the user types.
@@ -99,6 +111,7 @@ interface TerminalInstanceProps {
     TerminalViewProps["onProtocolResponse"]
   >;
   minColsRef: MutableRefObject<number>;
+  keyboardOnDemandRef: MutableRefObject<boolean>;
   onInitError: (resolution: RendererResolution, error: unknown) => void;
 }
 
@@ -228,6 +241,7 @@ function TerminalInstance({
   onReadyRef,
   onProtocolResponseRef,
   minColsRef,
+  keyboardOnDemandRef,
   onInitError,
 }: TerminalInstanceProps) {
   useLayoutEffect(() => {
@@ -275,7 +289,10 @@ function TerminalInstance({
           withAnyMotionMouseTracking(readyTerminal.bridge);
         }
         const input = readyTerminal.element.querySelector("textarea");
-        input?.setAttribute("inputmode", "text");
+        input?.setAttribute(
+          "inputmode",
+          keyboardOnDemandRef.current ? "none" : "text",
+        );
         input?.setAttribute("autocomplete", "on");
         input?.setAttribute("autocorrect", "on");
         input?.setAttribute("spellcheck", "true");
@@ -369,6 +386,7 @@ function TerminalInstance({
     };
   }, [
     container,
+    keyboardOnDemandRef,
     minColsRef,
     onInitError,
     onProtocolResponseRef,
@@ -391,6 +409,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       onReady,
       onProtocolResponse,
       minCols = MIN_TERMINAL_COLS,
+      keyboardOnDemand = false,
       readOnly = false,
       onFocus,
       onBlur,
@@ -406,6 +425,10 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     const onReadyRef = useRef(onReady);
     const onProtocolResponseRef = useRef(onProtocolResponse);
     const minColsRef = useRef(minCols);
+    const keyboardOnDemandRef = useRef(keyboardOnDemand);
+    // Set while setKeyboardOpen refocuses the input: that blur and focus are
+    // not the user leaving and entering the pane, so the lease stays put.
+    const refocusingRef = useRef(false);
     const [container, setContainer] = useState<HTMLDivElement | null>(null);
     const scrollElementRef = useRef<HTMLElement | null>(null);
     const [scrollGeneration, setScrollGeneration] = useState(0);
@@ -421,7 +444,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       onReadyRef.current = onReady;
       onProtocolResponseRef.current = onProtocolResponse;
       minColsRef.current = minCols;
-    }, [minCols, onProtocolResponse, onReady, onSizeChange]);
+      keyboardOnDemandRef.current = keyboardOnDemand;
+    }, [keyboardOnDemand, minCols, onProtocolResponse, onReady, onSizeChange]);
 
     const captureContainer = useCallback((node: HTMLDivElement | null) => {
       setContainer(node);
@@ -525,6 +549,26 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       () => ({
         write: (data: string) => terminalRef.current?.write(data),
         getSize: () => sizeRef.current,
+        setKeyboardOpen: (open: boolean) => {
+          const input = terminalRef.current?.element.querySelector("textarea");
+          if (!input) return;
+          input.setAttribute("inputmode", open ? "text" : "none");
+          if (document.activeElement !== input) {
+            // Focusing asks for the lease like any other focus: raising the
+            // keyboard is the user reaching to type.
+            if (open) input.focus({ preventScroll: true });
+            return;
+          }
+          // inputmode is read when focus lands, so an input that already has
+          // focus has to be refocused for the keyboard to rise or fall.
+          refocusingRef.current = true;
+          try {
+            input.blur();
+            input.focus({ preventScroll: true });
+          } finally {
+            refocusingRef.current = false;
+          }
+        },
         applyAttachHistory: (
           text: string,
           truncated: boolean,
@@ -586,11 +630,18 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       <div
         className="relative h-full min-h-0 w-full"
         onFocus={(event) => {
-          if (stayedInside(event)) return;
+          if (refocusingRef.current || stayedInside(event)) return;
           onFocus?.();
         }}
         onBlur={(event) => {
-          if (stayedInside(event)) return;
+          if (refocusingRef.current || stayedInside(event)) return;
+          // Leaving lowers the keyboard for good: the next tap back in is as
+          // likely a scroll as a reach to type.
+          if (keyboardOnDemandRef.current) {
+            terminalRef.current?.element
+              .querySelector("textarea")
+              ?.setAttribute("inputmode", "none");
+          }
           onBlur?.();
         }}
         onKeyDownCapture={(event) => {
@@ -633,6 +684,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
               onReadyRef={onReadyRef}
               onProtocolResponseRef={onProtocolResponseRef}
               minColsRef={minColsRef}
+              keyboardOnDemandRef={keyboardOnDemandRef}
               onInitError={handleInitError}
             />
           ) : null}

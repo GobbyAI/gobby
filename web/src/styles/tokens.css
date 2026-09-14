@@ -51,6 +51,11 @@
   --accent-soft: oklch(82% 0.2 125 / 0.18);
   --accent-tint: oklch(82% 0.2 125 / 0.1);
 
+  /* Terminal quick keys: keyboard-gray keycaps, distinct from the solid
+     accent keyboard key that sits beside them. */
+  --quick-key: oklch(68% 0.005 125);
+  --quick-key-foreground: oklch(15% 0.005 125);
+
   --color-info: oklch(70% 0.16 250);
   --color-info-bg: oklch(28% 0.08 250);
   --color-info-foreground: oklch(70% 0.16 250);
@@ -313,6 +318,9 @@
   --accent-foreground: oklch(99% 0 0);
   --accent-soft: oklch(43% 0.18 125 / 0.18);
   --accent-tint: oklch(43% 0.18 125 / 0.1);
+
+  --quick-key: oklch(80% 0.008 125);
+  --quick-key-foreground: oklch(20% 0.005 125);
 
   --color-info: oklch(48% 0.18 250);
   --color-info-bg: oklch(94% 0.05 250);

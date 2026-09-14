@@ -37,6 +37,7 @@ async def test_sizing_owner_follows_viewer_precedence() -> None:
     registry = TerminalLeaseRegistry()
     web = await registry.attach("term-1", viewer="web")
     gclient = await registry.attach("term-1", viewer="gclient")
+    await registry.take_control("term-1", web.attachment_id)
 
     web_resize = registry.resize_pty(web.attachment_id, rows=24, cols=80)
     gclient_resize = registry.resize_pty(gclient.attachment_id, rows=40, cols=120)
@@ -52,6 +53,43 @@ async def test_sizing_owner_follows_viewer_precedence() -> None:
     assert finalized.sizing is not None
     assert finalized.sizing.owner_viewer == "gclient"
     assert (finalized.sizing.rows, finalized.sizing.cols) == (40, 120)
+
+
+@pytest.mark.asyncio
+async def test_web_viewer_sizes_only_while_holding_the_input_lease() -> None:
+    registry = TerminalLeaseRegistry()
+    web = await registry.attach("term-1", viewer="web")
+    gclient = await registry.attach("term-1", viewer="gclient")
+
+    watching = registry.resize_pty(web.attachment_id, rows=24, cols=80)
+    assert watching.ok is True
+    assert watching.applied is False
+    assert watching.owner_viewer is None
+    assert registry.resize_pty(gclient.attachment_id, rows=40, cols=120).applied is True
+
+    typing = await registry.take_control("term-1", web.attachment_id)
+    assert typing.sizing is not None
+    assert typing.sizing.owner_viewer == "web"
+    assert (typing.sizing.rows, typing.sizing.cols) == (24, 80)
+
+    released = await registry.release_control(web.attachment_id)
+    assert released.sizing is not None
+    assert released.sizing.owner_viewer == "gclient"
+    assert (released.sizing.rows, released.sizing.cols) == (40, 120)
+
+
+@pytest.mark.asyncio
+async def test_releasing_the_only_sizing_web_viewer_unpins_the_terminal() -> None:
+    registry = TerminalLeaseRegistry()
+    web = await registry.attach("term-1", viewer="web")
+    await registry.take_control("term-1", web.attachment_id)
+    assert registry.resize_pty(web.attachment_id, rows=24, cols=80).applied is True
+
+    released = await registry.release_control(web.attachment_id)
+
+    assert released.sizing is not None
+    assert released.sizing.owner_viewer is None
+    assert released.sizing.applied is False
 
 
 @pytest.mark.asyncio
