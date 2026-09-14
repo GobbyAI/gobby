@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
@@ -26,11 +27,13 @@ async def dispatch_live_wakes(
         return []
 
     locks: list[asyncio.Lock] = []
+    loop_ref = weakref.ref(asyncio.get_running_loop())
     for session_id in sorted(set(session_ids)):
-        lock = dispatcher._live_wake_locks.get(session_id)
+        lock_key = (loop_ref, session_id)
+        lock = dispatcher._live_wake_locks.get(lock_key)
         if lock is None:
             lock = asyncio.Lock()
-            dispatcher._live_wake_locks[session_id] = lock
+            dispatcher._live_wake_locks[lock_key] = lock
         locks.append(lock)
 
     async with AsyncExitStack() as stack:

@@ -14,6 +14,7 @@ import pytest
 
 from gobby.agents import terminal_delivery
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.events.wake import WakeDispatcher
 from gobby.storage.hub.operation_deadline import (
     current_database_operation_deadline,
     database_operation_deadline,
@@ -593,6 +594,64 @@ async def test_terminal_delivery_wakes_durable_subscribers_when_registry_is_empt
             ("run-1", ["session-a", "session-b"]),
         )
     ]
+    assert "no in-memory completion subscribers" in caplog.text
+
+
+async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A fresh registry falls back through durable rows to the real wake dispatcher."""
+    db = DurableDb(["session-a"])
+    session = SimpleNamespace(
+        id="session-a",
+        agent_depth=0,
+        terminal_context={"tmux_pane": "%7"},
+        status="paused",
+        turn_count=0,
+        session_type="terminal",
+        source="codex",
+    )
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+    ism_manager = MagicMock()
+    tmux_pane_sender = AsyncMock()
+
+    async def run_inline(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    before_restart = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=ism_manager,
+        tmux_pane_sender=tmux_pane_sender,
+        run_db=run_inline,
+    )
+    first_wake = await before_restart.dispatch_live_wake("session-a")
+    assert first_wake["delivered"] is True
+
+    after_restart = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=ism_manager,
+        tmux_pane_sender=tmux_pane_sender,
+        run_db=run_inline,
+    )
+    restarted_registry = CompletionEventRegistry(wake_callback=after_restart.wake)
+
+    with caplog.at_level(logging.WARNING):
+        await _handler(db, completion_registry=restarted_registry).notify_terminal_completion(
+            "run-1",
+            result={"status": "completed"},
+            message="Agent terminal",
+        )
+
+    assert tmux_pane_sender.await_count == 2
+    assert ism_manager.create_message.call_count == 1
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]
+    assert "notify() called for unregistered ID run-1" in caplog.text
     assert "no in-memory completion subscribers" in caplog.text
 
 

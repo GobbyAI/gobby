@@ -140,9 +140,10 @@ class WakeDispatcher:
         self._lifecycle_refresh = lifecycle_refresh
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
-        self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
-            weakref.WeakValueDictionary()
-        )
+        # Asyncio locks are loop-affine; weak loop refs avoid extending either lifetime.
+        self._live_wake_locks: weakref.WeakValueDictionary[
+            tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], str], asyncio.Lock
+        ] = weakref.WeakValueDictionary()
 
     def set_web_chat_session_registry(
         self,
@@ -204,10 +205,11 @@ class WakeDispatcher:
         priority: str = "normal",
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
-        lock = self._live_wake_locks.get(session_id)
+        lock_key = (weakref.ref(asyncio.get_running_loop()), session_id)
+        lock = self._live_wake_locks.get(lock_key)
         if lock is None:
             lock = asyncio.Lock()
-            self._live_wake_locks[session_id] = lock
+            self._live_wake_locks[lock_key] = lock
         async with lock:
             if self._lifecycle_refresh is not None:
                 try:
@@ -709,14 +711,16 @@ class WakeDispatcher:
 
     def _prune_live_wake_state(self, stale_before: float) -> None:
         """Drop stale wake timestamps and unused per-session locks."""
+        loop_ref = weakref.ref(asyncio.get_running_loop())
         for recorded_session_id, (_, recorded_ts) in tuple(self._last_live_wake.items()):
             if recorded_ts >= stale_before:
                 continue
-            lock = self._live_wake_locks.get(recorded_session_id)
+            lock_key = (loop_ref, recorded_session_id)
+            lock = self._live_wake_locks.get(lock_key)
             if lock is not None and lock.locked():
                 continue
             self._last_live_wake.pop(recorded_session_id, None)
-            self._live_wake_locks.pop(recorded_session_id, None)
+            self._live_wake_locks.pop(lock_key, None)
 
     def _should_send_live_wake(self, session_id: str, session: Any) -> bool:
         """Decide whether to send a live wake signal to a session.
