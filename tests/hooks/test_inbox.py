@@ -161,7 +161,7 @@ async def test_barrier_timeout_reports_unresolved_run_and_session(tmp_path: Path
     )
     drain.assert_awaited_once()
     assert drain.await_args is not None
-    assert drain.await_args.kwargs == {"include_fresh": True}
+    assert drain.await_args.kwargs["include_fresh"] is True
 
 
 @pytest.mark.asyncio
@@ -898,6 +898,148 @@ def _delivery_receipt_envelope() -> dict[str, Any]:
         "original_envelope_id": "n-0000000000001-abcd",
         "delivery_generation": 1,
     }
+
+
+def _write_named_inbox_envelope(
+    inbox_dir: Path,
+    *,
+    timestamp_ms: int,
+    envelope: dict[str, Any],
+    suffix: str = "abcd",
+) -> Path:
+    path = inbox_dir / f"n-{timestamp_ms}-{suffix}.json"
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_barrier_horizon_skips_live_hook_and_consumes_receipt(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    live_ts = 2_000
+    live = _valid_envelope()
+    live["headers"] = {"X-Gobby-Agent-Run-Id": "run-live"}
+    live_path = _write_named_inbox_envelope(
+        inbox_dir, timestamp_ms=live_ts, envelope=live, suffix="live"
+    )
+    receipt_path = _write_named_inbox_envelope(
+        inbox_dir,
+        timestamp_ms=live_ts + 1,
+        envelope=_delivery_receipt_envelope(),
+        suffix="ack",
+    )
+    post = AsyncMock(return_value=MagicMock(status_code=200))
+
+    with patch("gobby.hooks.inbox._post_envelope", new=post):
+        result = await drain_hook_inbox_barrier(
+            FastAPI(),
+            inbox_dir,
+            timeout_seconds=0.2,
+            restart_horizon_ms=1_500,
+        )
+
+    assert result.timed_out is False
+    assert result.unresolved_run_ids == ()
+    assert result.live_hook_count == 1
+    assert result.receipt_count == 0
+    assert result.residue_hook_count == 0
+    assert live_path.exists()
+    assert not receipt_path.exists()
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_barrier_horizon_times_out_on_pre_horizon_hook(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    residue = _valid_envelope()
+    residue["input_data"] = {"terminal_context": {"gobby_agent_run_id": "run-stale"}}
+    residue_path = _write_named_inbox_envelope(
+        inbox_dir, timestamp_ms=1_000, envelope=residue, suffix="stale"
+    )
+    live = _valid_envelope()
+    live["headers"] = {"X-Gobby-Agent-Run-Id": "run-live"}
+    live_path = _write_named_inbox_envelope(
+        inbox_dir, timestamp_ms=2_000, envelope=live, suffix="live"
+    )
+
+    with patch(
+        "gobby.hooks.inbox._drain_hook_inbox_once_locked",
+        new=AsyncMock(return_value=0),
+    ):
+        result = await drain_hook_inbox_barrier(
+            FastAPI(),
+            inbox_dir,
+            timeout_seconds=0,
+            restart_horizon_ms=1_500,
+        )
+
+    assert result.timed_out is True
+    assert result.unresolved_run_ids == ("run-stale",)
+    assert result.residue_hook_count == 1
+    assert result.live_hook_count == 1
+    assert residue_path.exists()
+    assert live_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_barrier_horizon_replays_pre_horizon_and_skips_live(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    residue = _valid_envelope()
+    residue_path = _write_named_inbox_envelope(
+        inbox_dir, timestamp_ms=1_000, envelope=residue, suffix="stale"
+    )
+    live = _valid_envelope()
+    live["headers"] = {"X-Gobby-Agent-Run-Id": "run-live"}
+    live_path = _write_named_inbox_envelope(
+        inbox_dir, timestamp_ms=2_000, envelope=live, suffix="live"
+    )
+    post = AsyncMock(return_value=MagicMock(status_code=200))
+
+    with patch("gobby.hooks.inbox._post_envelope", new=post):
+        result = await drain_hook_inbox_barrier(
+            FastAPI(),
+            inbox_dir,
+            timeout_seconds=1.0,
+            restart_horizon_ms=1_500,
+        )
+
+    assert result.timed_out is False
+    assert result.unresolved_run_ids == ()
+    assert not residue_path.exists()
+    assert live_path.exists()
+    post.assert_awaited_once()
+    assert post.await_args is not None
+    assert post.await_args.kwargs == {"envelope_id": "n-1000-stale"}
+
+
+@pytest.mark.asyncio
+async def test_barrier_extracts_agent_run_id_header_for_residue_only(
+    tmp_path: Path,
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    residue = _valid_envelope()
+    residue["headers"] = {"X-Gobby-Agent-Run-Id": "run-header"}
+    _write_named_inbox_envelope(inbox_dir, timestamp_ms=1_000, envelope=residue, suffix="hdr")
+    live = _valid_envelope()
+    live["headers"] = {"X-Gobby-Agent-Run-Id": "run-live"}
+    _write_named_inbox_envelope(inbox_dir, timestamp_ms=2_000, envelope=live, suffix="live")
+
+    with patch(
+        "gobby.hooks.inbox._drain_hook_inbox_once_locked",
+        new=AsyncMock(return_value=0),
+    ):
+        result = await drain_hook_inbox_barrier(
+            FastAPI(),
+            inbox_dir,
+            timeout_seconds=0,
+            restart_horizon_ms=1_500,
+        )
+
+    assert result.timed_out is True
+    assert result.unresolved_run_ids == ("run-header",)
 
 
 def test_load_envelope_accepts_delivery_receipt_without_hook_type(tmp_path: Path) -> None:

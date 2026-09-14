@@ -518,9 +518,11 @@ async def _run_agent_hook_replay_barrier(
 
     from gobby.hooks.inbox import drain_hook_inbox_barrier
 
+    horizon = getattr(runner, "http_bound_at_ms", None)
     result = await drain_hook_inbox_barrier(
         app,
         timeout_seconds=timeout_seconds,
+        restart_horizon_ms=horizon if isinstance(horizon, int) else None,
     )
     if not result.timed_out:
         return True
@@ -541,9 +543,13 @@ async def _run_agent_hook_replay_barrier(
     if not unresolved_run_ids:
         logger.info(
             "Hook inbox replay timed out after replaying %d envelope(s); "
-            "%d session identity/identities produced no agent runs",
+            "%d session identity/identities produced no agent runs "
+            "(residue_hooks=%d live_hooks=%d receipts=%d)",
             result.replayed,
             len(unresolved_session_ids),
+            result.residue_hook_count,
+            result.live_hook_count,
+            result.receipt_count,
         )
         return True
     if agent_runner is None:
@@ -593,9 +599,14 @@ async def _run_agent_hook_replay_barrier(
     if active_run_ids or unclassified_run_ids:
         logger.warning(
             "Agent hook replay barrier timed out with %d active fenced run(s) and "
-            "%d unclassified run lookup(s)",
+            "%d unclassified run lookup(s) (runs=%s residue_hooks=%d live_hooks=%d "
+            "receipts=%d)",
             len(active_run_ids),
             len(unclassified_run_ids),
+            ",".join(sorted(active_run_ids)) or "-",
+            result.residue_hook_count,
+            result.live_hook_count,
+            result.receipt_count,
         )
         return False
     return True

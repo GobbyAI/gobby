@@ -1068,7 +1068,10 @@ class TestReclassifyReconciliationPendingRuns:
         assert settled is False
         drain.assert_awaited_once()
         assert drain.await_args is not None
-        assert drain.await_args.kwargs == {"timeout_seconds": 1.0}
+        assert drain.await_args.kwargs == {
+            "timeout_seconds": 1.0,
+            "restart_horizon_ms": None,
+        }
         run_storage.merge_resume_metadata.assert_called_once_with(
             self._RUN_ID, {"reconciliation_pending": True}
         )
@@ -1077,6 +1080,7 @@ class TestReclassifyReconciliationPendingRuns:
             record.levelno == logging.WARNING
             and "1 active fenced run(s)" in record.getMessage()
             and "0 unclassified run lookup(s)" in record.getMessage()
+            and self._RUN_ID in record.getMessage()
             for record in caplog.records
         )
         assert any(
@@ -1084,6 +1088,33 @@ class TestReclassifyReconciliationPendingRuns:
             and "1 terminal and 0 missing run reference(s)" in record.getMessage()
             for record in caplog.records
         )
+
+    @pytest.mark.asyncio
+    async def test_barrier_passes_http_bound_horizon(self) -> None:
+        run_storage = SimpleNamespace(
+            get=MagicMock(),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        runner.http_bound_at_ms = 1_700_000_000_000
+        drain = AsyncMock(
+            return_value=HookInboxBarrierResult(
+                replayed=0,
+                timed_out=False,
+                unresolved_run_ids=(),
+                unresolved_session_ids=(),
+            )
+        )
+
+        with patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain):
+            settled = await _run_agent_hook_replay_barrier(runner)
+
+        assert settled is True
+        assert drain.await_args is not None
+        assert drain.await_args.kwargs == {
+            "timeout_seconds": 5.0,
+            "restart_horizon_ms": 1_700_000_000_000,
+        }
 
     @pytest.mark.asyncio
     async def test_barrier_timeout_keeps_lookup_failures_unclassified(

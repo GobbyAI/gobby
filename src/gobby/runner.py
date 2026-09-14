@@ -118,6 +118,7 @@ class GobbyRunner:
     verbose: bool
     machine_id: str | None
     _shutdown_requested: bool
+    http_bound_at_ms: int | None
     _shutdown_intent: ShutdownIntent
     _drain_terminals_on_shutdown: bool
     _metrics_cleanup_task: asyncio.Task[None] | None
@@ -279,6 +280,7 @@ class GobbyRunner:
         # Captured by run_daemon once the daemon's long-lived loop is running;
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
+        self.http_bound_at_ms: int | None = None
 
     def _initialize_storage(self, config_path: Path | None, verbose: bool) -> None:
         from gobby.runner_init import init_storage_and_config

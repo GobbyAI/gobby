@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from contextlib import nullcontext
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -254,6 +255,7 @@ async def run_daemon(
                 await asyncio.sleep(0.01)
 
             if server.started and not runner._shutdown_requested:
+                runner.http_bound_at_ms = int(time.time() * 1000)
                 clear_active_shutdown_intent()
                 await _start_web_chat_runtime(runner)
                 runner._subsystem_init_task = asyncio.create_task(

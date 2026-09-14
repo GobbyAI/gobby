@@ -22,6 +22,7 @@ from gobby.hooks.envelope_dedupe import (
     DirectoryPruneResult,
     clear_stale_envelope_processing_marker,
     envelope_id_from_inbox_path,
+    envelope_timestamp_ms_from_inbox_path,
     get_processed_envelope_dir,
     is_envelope_processed,
     is_envelope_processing_active,
@@ -395,6 +396,9 @@ class HookInboxBarrierResult:
     timed_out: bool
     unresolved_run_ids: tuple[str, ...]
     unresolved_session_ids: tuple[str, ...]
+    residue_hook_count: int = 0
+    live_hook_count: int = 0
+    receipt_count: int = 0
 
 
 def _get_hook_inbox_drain_lock(app: Any) -> asyncio.Lock:
@@ -411,6 +415,7 @@ async def _drain_hook_inbox_once_locked(
     inbox_dir: Path | None = None,
     *,
     include_fresh: bool = False,
+    restart_horizon_ms: int | None = None,
 ) -> int:
     """Replay pending envelopes while the app-scoped drain lock is held."""
     pending_dir = inbox_dir or get_hook_inbox_dir()
@@ -448,6 +453,12 @@ async def _drain_hook_inbox_once_locked(
                 processed_dir=processed_dir,
             )
             replayed += 1
+            continue
+
+        if restart_horizon_ms is not None and not _is_restart_residue(
+            path, envelope, restart_horizon_ms
+        ):
+            logger.debug("Skipping live hook inbox envelope %s", path.name)
             continue
 
         if not envelope_has_hook_response_capability(envelope.get("response_capability")):
@@ -571,12 +582,77 @@ async def drain_hook_inbox_once(
         )
 
 
-async def _replay_inbox_holding_lock(app: Any, lock: asyncio.Lock, pending_dir: Path) -> int:
+async def _replay_inbox_holding_lock(
+    app: Any,
+    lock: asyncio.Lock,
+    pending_dir: Path,
+    restart_horizon_ms: int | None = None,
+) -> int:
     """Run one replay pass over an acquired drain lock and release it after."""
     try:
-        return await _drain_hook_inbox_once_locked(app, pending_dir, include_fresh=True)
+        return await _drain_hook_inbox_once_locked(
+            app,
+            pending_dir,
+            include_fresh=True,
+            restart_horizon_ms=restart_horizon_ms,
+        )
     finally:
         lock.release()
+
+
+def _is_restart_residue(
+    path: Path,
+    envelope: dict[str, Any] | None,
+    restart_horizon_ms: int | None,
+) -> bool:
+    """Return whether a file is crash-window residue for restart classification."""
+    if envelope is not None and envelope.get("kind") == "delivery-receipt":
+        return False
+    if restart_horizon_ms is None:
+        return True
+    timestamp_ms = envelope_timestamp_ms_from_inbox_path(path)
+    if timestamp_ms is None:
+        return True
+    return timestamp_ms < restart_horizon_ms
+
+
+def _classify_inbox_files(
+    paths: list[Path],
+    restart_horizon_ms: int | None,
+) -> tuple[list[Path], int, int]:
+    residue: list[Path] = []
+    live_hooks = 0
+    receipts = 0
+    for path in paths:
+        envelope = _load_envelope(path)
+        if envelope is not None and envelope.get("kind") == "delivery-receipt":
+            receipts += 1
+            continue
+        if _is_restart_residue(path, envelope, restart_horizon_ms):
+            residue.append(path)
+        else:
+            live_hooks += 1
+    return residue, live_hooks, receipts
+
+
+def _barrier_result(
+    replayed: int,
+    *,
+    timed_out: bool,
+    pending_files: list[Path],
+    restart_horizon_ms: int | None,
+) -> HookInboxBarrierResult:
+    residue, live_hooks, receipts = _classify_inbox_files(pending_files, restart_horizon_ms)
+    run_ids, session_ids = _unresolved_envelope_identities(residue) if timed_out else (set(), set())
+    return HookInboxBarrierResult(
+        replayed,
+        timed_out,
+        tuple(sorted(run_ids)),
+        tuple(sorted(session_ids)),
+        residue_hook_count=len(residue),
+        live_hook_count=live_hooks,
+        receipt_count=receipts,
+    )
 
 
 async def drain_hook_inbox_barrier(
@@ -585,8 +661,9 @@ async def drain_hook_inbox_barrier(
     *,
     timeout_seconds: float = 5.0,
     poll_interval_seconds: float = 0.05,
+    restart_horizon_ms: int | None = None,
 ) -> HookInboxBarrierResult:
-    """Replay fresh and stale envelopes before agent restart classification."""
+    """Replay crash-window envelopes before agent restart classification."""
     pending_dir = inbox_dir or get_hook_inbox_dir()
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     replayed = 0
@@ -602,11 +679,26 @@ async def drain_hook_inbox_barrier(
         async with timeout:
             while True:
                 await lock.acquire()
-                replay = create_background_task(_replay_inbox_holding_lock(app, lock, pending_dir))
+                replay = create_background_task(
+                    _replay_inbox_holding_lock(
+                        app,
+                        lock,
+                        pending_dir,
+                        restart_horizon_ms=restart_horizon_ms,
+                    )
+                )
                 replayed += await asyncio.shield(replay)
                 pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
-                if not pending_files:
-                    return HookInboxBarrierResult(replayed, False, (), ())
+                residue, _live_hooks, _receipts = _classify_inbox_files(
+                    pending_files, restart_horizon_ms
+                )
+                if not residue:
+                    return _barrier_result(
+                        replayed,
+                        timed_out=False,
+                        pending_files=pending_files,
+                        restart_horizon_ms=restart_horizon_ms,
+                    )
                 if time.monotonic() >= deadline:
                     break
                 await asyncio.sleep(poll_interval_seconds)
@@ -618,9 +710,11 @@ async def drain_hook_inbox_barrier(
     # drain's lock owner remains untouched. Report pending identities so
     # startup can fence runs until a later barrier sees them settle.
     pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
-    run_ids, session_ids = _unresolved_envelope_identities(pending_files)
-    return HookInboxBarrierResult(
-        replayed, True, tuple(sorted(run_ids)), tuple(sorted(session_ids))
+    return _barrier_result(
+        replayed,
+        timed_out=True,
+        pending_files=pending_files,
+        restart_horizon_ms=restart_horizon_ms,
     )
 
 
@@ -632,21 +726,23 @@ def _unresolved_envelope_identities(paths: list[Path]) -> tuple[set[str], set[st
         if envelope is None:
             continue
         input_data = envelope.get("input_data")
-        if not isinstance(input_data, dict):
-            continue
-        terminal_context = input_data.get("terminal_context")
-        if isinstance(terminal_context, dict):
-            run_id = terminal_context.get("gobby_agent_run_id")
-            if isinstance(run_id, str) and run_id:
-                run_ids.add(run_id)
-            session_id = terminal_context.get("gobby_session_id")
-            if isinstance(session_id, str) and session_id:
-                session_ids.add(session_id)
+        if isinstance(input_data, dict):
+            terminal_context = input_data.get("terminal_context")
+            if isinstance(terminal_context, dict):
+                run_id = terminal_context.get("gobby_agent_run_id")
+                if isinstance(run_id, str) and run_id:
+                    run_ids.add(run_id)
+                session_id = terminal_context.get("gobby_session_id")
+                if isinstance(session_id, str) and session_id:
+                    session_ids.add(session_id)
         headers = envelope.get("headers")
         if isinstance(headers, dict):
             session_id = headers.get("X-Gobby-Session-Id") or headers.get("x-gobby-session-id")
             if isinstance(session_id, str) and session_id:
                 session_ids.add(session_id)
+            run_id = headers.get("X-Gobby-Agent-Run-Id") or headers.get("x-gobby-agent-run-id")
+            if isinstance(run_id, str) and run_id:
+                run_ids.add(run_id)
     return run_ids, session_ids
 
 
