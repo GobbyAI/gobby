@@ -169,10 +169,11 @@ async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
     await server._handle_terminal_take_control(websocket, control)
     assert commands == pin
 
+    unpin = [("set-option", "-wu", "-t", "%1", "window-size")]
     await server._handle_terminal_release_control(websocket, control)
-    assert commands[-1] == ("set-option", "-wu", "-t", "%1", "window-size")
+    assert commands == pin + unpin
 
     # The row still records 24x80 after the release; typing again must re-pin.
     await server._handle_terminal_take_control(websocket, control)
-    assert commands[-2:] == pin
+    assert commands == pin + unpin + pin
     await server.lease_registry.shutdown_lifecycle_publication()

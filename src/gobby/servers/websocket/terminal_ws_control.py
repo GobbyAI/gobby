@@ -77,5 +77,3 @@ class TerminalControlMixin:
                 "lease_generation": result.lease_generation,
             },
         )
-        if record is not None:
-            await self._apply_terminal_sizing(record.terminal_id, result.sizing)

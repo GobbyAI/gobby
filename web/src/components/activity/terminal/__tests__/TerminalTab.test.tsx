@@ -4,15 +4,15 @@ import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalAttachHistory } from "../../../../hooks/terminalOutputSink";
-import { EMPTY_WRITE_SETTLEMENT } from "../../../../hooks/terminalWriteSettlement";
-import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
-import type { useTmuxSessions } from "../../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../../types/sessions";
 import type { JoinedTerminalSession } from "../terminalSessions";
 import type { TerminalViewHandle, TerminalViewProps } from "../TerminalView";
 import { TerminalTab } from "../TerminalTab";
-
-type HookResult = ReturnType<typeof useTmuxSessions>;
+import {
+  makeHookState,
+  makeTmuxSession,
+  type HookResult,
+} from "./terminalTabFixtures";
 
 const mockUseTmuxSessions = vi.hoisted(() => vi.fn<() => HookResult>());
 const terminalViewState = vi.hoisted(() => ({ mounts: 0 }));
@@ -120,34 +120,6 @@ vi.mock("../TerminalView", () => ({
   ),
 }));
 
-function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
-  const name = overrides.name ?? "shell";
-  const socket = overrides.socket ?? "default";
-  return {
-    terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
-    backend: "tmux",
-    ownership: socket === "gobby" ? "gobby" : "external",
-    state: "live",
-    title: name,
-    session_id: overrides.session_id ?? overrides.gobby_session_id ?? null,
-    agent_run_id: overrides.agent_run_id ?? null,
-    dims: null,
-    name,
-    socket,
-    pane_pid: 123,
-    pane_dead: false,
-    pane_title: null,
-    pane_command: null,
-    pane_path: null,
-    window_name: null,
-    session_title: null,
-    gobby_session_id: null,
-    agent_managed: false,
-    attached_bridge: null,
-    ...overrides,
-  };
-}
-
 function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
   return {
     id: "session-1",
@@ -174,47 +146,6 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: null,
-    ...overrides,
-  };
-}
-
-function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
-  return {
-    sessions: [],
-    connected: true,
-    sessionsLoaded: false,
-    attachedTarget: null,
-    streamingId: null,
-    isLoading: false,
-    sessionEnded: false,
-    requestPending: false,
-    attachError: null,
-    createdSession: null,
-    attachSession: vi.fn(),
-    detachSession: vi.fn(),
-    clearAttachError: vi.fn(),
-    refreshTerminal: vi.fn(),
-    reportViewport: vi.fn(),
-    createSession: vi.fn(),
-    killSession: vi.fn(),
-    refreshSessions: vi.fn(),
-    dismissEndedSession: vi.fn(),
-    hasControl: false,
-    controlPending: false,
-    leaseLost: false,
-    pendingWrite: null,
-    writeRefusal: null,
-    writeSettlement: EMPTY_WRITE_SETTLEMENT,
-    takeControl: vi.fn(),
-    releaseControl: vi.fn(),
-    sendInput: vi.fn(),
-    sendPaste: vi.fn(),
-    retryWrite: vi.fn(),
-    discardWrite: vi.fn(),
-    dismissWriteRefusal: vi.fn(),
-    resizeTerminal: vi.fn(),
-    onOutput: vi.fn(),
-    onAttachHistory: vi.fn(),
     ...overrides,
   };
 }
@@ -1093,7 +1024,7 @@ describe("typing mode", () => {
 
       // The keyboard slides up, then iOS scrolls the visual viewport. The
       // root follows both, and the pane's ResizeObserver refits the rows
-      // from that box (covered by the TerminalView padding-box fit test).
+      // from that box (covered end to end in TerminalTabViewport.test.tsx).
       act(() => {
         viewport.height = 460;
         viewport.dispatchEvent(new Event("resize"));
