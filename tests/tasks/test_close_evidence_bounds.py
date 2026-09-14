@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -163,6 +164,49 @@ def test_referenced_uncredited_commands_precede_large_diagnostic_sample() -> Non
     assert wrapped["core_command"] is None
     assert wrapped["wrapped"] is True
     assert all(run["core_command"] != "npm ci" for run in gate.details["latest_runs"])
+
+
+def test_excluded_runs_and_nearest_observed_run_are_byte_bounded() -> None:
+    commands = [f"python -c 'unrelated_{index} " + "x" * 6_000 + "'" for index in range(20)]
+    edit = TranscriptEdit(
+        session_id="linked-session",
+        source="codex",
+        path="src/gobby/tasks/close_checklist.py",
+        timestamp=datetime(2026, 9, 5, tzinfo=UTC) + timedelta(seconds=50),
+        order=50,
+        tool_name="apply_patch",
+    )
+    gate = evaluate_validation_commands(
+        task_category="manual",
+        evidence=TranscriptEvidence(
+            command_runs=tuple(_run(command, index + 1) for index, command in enumerate(commands)),
+            edits=(edit,),
+            sessions=("linked-session",),
+        ),
+        has_attributed_edits=True,
+    )
+    excluded = gate.details["excluded_runs"]
+    nearest = gate.details["nearest_observed_run"]
+    assert len(excluded) == 16
+    assert nearest is not None
+    assert len(json.dumps(excluded)) < 32_768
+    assert len(json.dumps(nearest)) < 4_096
+    newest = commands[-1]
+    digest = hashlib.sha256(newest.encode()).hexdigest()
+    assert nearest["command"].startswith(newest[:256])
+    assert "command excerpt" in nearest["command"]
+    assert digest in nearest["command"]
+    assert nearest["reason"]
+    assert nearest["remedy"]
+    assert nearest["invalidating_edit"]["path"] == "src/gobby/tasks/close_checklist.py"
+    assert nearest.get("core_command") in {None, nearest["command"]}
+    assert nearest in excluded
+    for record in excluded:
+        assert "command excerpt" in record["command"]
+        assert "sha256=" in record["command"]
+        assert record["reason"]
+        assert record["remedy"]
+        assert record["invalidating_edit"]["path"] == "src/gobby/tasks/close_checklist.py"
 
 
 def test_oversized_script_is_omitted_without_exact_command_credit() -> None:
