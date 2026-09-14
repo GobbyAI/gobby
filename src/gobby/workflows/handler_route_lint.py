@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.safe_evaluator import (
+    SafeExpressionEvaluator,
+    build_agent_workflow_allowed_funcs,
+)
 
 # Spawn infrastructure injects these before an agent's step workflow starts.
 _RUNTIME_HANDLER_VARIABLES = {
@@ -214,9 +217,11 @@ def _condition_variables(condition: str) -> set[str]:
 
 
 def _false_with_defaults(condition: str, defaults: dict[str, Any]) -> bool:
+    context = {"vars": defaults, "tool_input": {}, "tool_output": {}}
     try:
         return not SafeExpressionEvaluator(
-            {"vars": defaults, "tool_input": {}, "tool_output": {}}, {}
+            context,
+            build_agent_workflow_allowed_funcs(context),
         ).evaluate(condition)
     except ValueError:
         return False
