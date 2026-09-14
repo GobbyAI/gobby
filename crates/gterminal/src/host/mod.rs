@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::ipc::{prepare_socket_path, restrict_socket_permissions};
 
+mod backpressure;
 mod config;
 mod control;
 mod embed;
@@ -239,6 +240,21 @@ impl HostArgs {
                 }
                 "--tmux-poll-backoff-ceiling-ms" => {
                     host_config.tmux_poll_backoff_ceiling_ms = parse_u32(args.next());
+                }
+                "--delta-queue-bytes" => {
+                    host_config.delta_queue_bytes = parse_u32(args.next());
+                }
+                "--lag-timeout-ms" => {
+                    host_config.lag_timeout_ms = parse_u32(args.next());
+                }
+                "--control-deadline-ms" => {
+                    host_config.control_deadline_ms = parse_u32(args.next());
+                }
+                "--control-queue-entries" => {
+                    host_config.control_queue_entries = parse_u32(args.next());
+                }
+                "--event-queue-bytes" => {
+                    host_config.event_queue_bytes = parse_u32(args.next());
                 }
                 _ => {}
             }

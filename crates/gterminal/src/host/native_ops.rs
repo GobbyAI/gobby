@@ -8,13 +8,14 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
+use super::backpressure::PushResult;
 use super::helpers::{err, native_entitlements, push_terminal_ansi, s, truncate_title};
 #[cfg(feature = "vt-engine")]
 use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
 use crate::protocol::{
-    validate_dimensions, RenderEncoding, ServerMessage, DELTA_LAG_TIMEOUT_MS,
-    SNAPSHOT_DEFAULT_MAX_BYTES, SNAPSHOT_DEFAULT_MAX_LINES,
+    validate_dimensions, RenderEncoding, ServerMessage, SNAPSHOT_DEFAULT_MAX_BYTES,
+    SNAPSHOT_DEFAULT_MAX_LINES,
 };
 
 #[derive(Debug)]
@@ -95,10 +96,14 @@ fn targets_tmux(inner: &super::state::Inner, extra: &Map<String, Value>) -> bool
 
 fn remove_slot_attachments(inner: &mut super::state::Inner, slot: &TerminalSlot) {
     for attachment_id in &slot.user_attachments {
-        inner.attachments.remove(attachment_id);
+        if let Some(att) = inner.attachments.remove(attachment_id) {
+            att.mailbox.close();
+        }
     }
     if let ObserverBind::Bound { attachment_id, .. } = &slot.observer_bind {
-        inner.attachments.remove(attachment_id);
+        if let Some(att) = inner.attachments.remove(attachment_id) {
+            att.mailbox.close();
+        }
     }
 }
 
@@ -541,6 +546,9 @@ impl HostState {
 
     pub async fn broadcast_frames(self: &Arc<Self>) {
         let mut inner = self.inner.lock().await;
+        let cap = self.config.delta_queue_bytes as usize;
+        let lag = self.config.lag_timeout();
+        let mut lagged = Vec::new();
         let ids: Vec<u64> = inner.attachments.keys().copied().collect();
         for id in ids {
             let (host_id, rows, cols, scroll, encoding) = {
@@ -609,31 +617,48 @@ impl HostState {
                 )
             };
             if let Some(att) = inner.attachments.get_mut(&id) {
+                if att.mailbox.is_lagged(lag) {
+                    att.mailbox.close_with(ServerMessage::Error {
+                        code: "lagged".into(),
+                        message: None,
+                    });
+                    lagged.push(id);
+                    continue;
+                }
                 let sent = match encoding {
                     RenderEncoding::SemanticFrame => {
-                        match att.tx.try_send(ServerMessage::Frame(frame)) {
-                            Ok(()) => {
+                        let msg = ServerMessage::Frame(frame);
+                        match att.mailbox.try_push(&msg, cap) {
+                            PushResult::Queued => {
                                 att.last_send = Instant::now();
                                 att.desynced = false;
                                 true
                             }
-                            Err(_) => {
+                            PushResult::Overflow => {
+                                att.mailbox.replace_with_keyframe(&msg);
+                                att.last_send = Instant::now();
                                 att.desynced = true;
-                                false
+                                true
                             }
+                            PushResult::Closed => false,
                         }
                     }
-                    RenderEncoding::TerminalAnsi => push_terminal_ansi(att, &frame, seq),
+                    RenderEncoding::TerminalAnsi => push_terminal_ansi(att, &frame, seq, cap),
                 };
                 if sent {
                     att.delta_len = att.delta_len.saturating_add(1);
+                    att.delta_bytes = att.mailbox.queued_bytes();
                 }
             }
+        }
+        drop(inner);
+        for id in lagged {
+            self.detach(id).await;
         }
     }
 
     pub fn lag_timeout(&self) -> Duration {
-        Duration::from_millis(DELTA_LAG_TIMEOUT_MS)
+        self.config.lag_timeout()
     }
 }
 

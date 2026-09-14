@@ -7,7 +7,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::protocol::{EVENT_QUEUE_BYTES, EVENT_QUEUE_ENTRIES};
+use super::backpressure;
+use crate::protocol::EVENT_QUEUE_ENTRIES;
 
 struct EventSubscriber {
     tx: mpsc::Sender<Value>,
@@ -24,6 +25,7 @@ struct EventState {
 #[derive(Clone)]
 pub(crate) struct HostEvents {
     epoch: String,
+    event_queue_bytes: usize,
     state: Arc<Mutex<EventState>>,
 }
 
@@ -42,9 +44,10 @@ impl EventReceiver {
 }
 
 impl HostEvents {
-    pub fn new(epoch: String) -> Self {
+    pub fn new(epoch: String, event_queue_bytes: usize) -> Self {
         Self {
             epoch,
+            event_queue_bytes,
             state: Arc::new(Mutex::new(EventState {
                 seq: 0,
                 ring: VecDeque::new(),
@@ -66,7 +69,7 @@ impl HostEvents {
         let gap = since.is_some_and(|cursor| !cursor_is_replayable(&state, cursor));
         if let Some(cursor) = since.filter(|_| !gap) {
             for (_, _, event) in state.ring.iter().filter(|(seq, _, _)| *seq > cursor) {
-                if !queue_event(&tx, &queued_bytes, event.clone()) {
+                if !queue_event(&tx, &queued_bytes, event.clone(), self.event_queue_bytes) {
                     break;
                 }
             }
@@ -112,13 +115,18 @@ impl HostEvents {
         let bytes = encoded_len(&event);
         state.ring.push_back((seq, bytes, event.clone()));
         state.ring_bytes += bytes;
-        while state.ring.len() > EVENT_QUEUE_ENTRIES || state.ring_bytes > EVENT_QUEUE_BYTES {
+        while state.ring.len() > EVENT_QUEUE_ENTRIES || state.ring_bytes > self.event_queue_bytes {
             if let Some((_, removed, _)) = state.ring.pop_front() {
                 state.ring_bytes = state.ring_bytes.saturating_sub(removed);
             }
         }
         state.subscribers.retain(|subscriber| {
-            queue_event(&subscriber.tx, &subscriber.queued_bytes, event.clone())
+            queue_event(
+                &subscriber.tx,
+                &subscriber.queued_bytes,
+                event.clone(),
+                self.event_queue_bytes,
+            )
         });
     }
 }
@@ -136,18 +144,13 @@ fn cursor_is_replayable(state: &EventState, cursor: u64) -> bool {
         .is_some_and(|(oldest, _, _)| cursor.saturating_add(1) >= *oldest)
 }
 
-fn queue_event(tx: &mpsc::Sender<Value>, queued_bytes: &AtomicUsize, event: Value) -> bool {
-    let bytes = encoded_len(&event);
-    let previous = queued_bytes.fetch_add(bytes, Ordering::AcqRel);
-    if previous.saturating_add(bytes) > EVENT_QUEUE_BYTES {
-        queued_bytes.fetch_sub(bytes, Ordering::AcqRel);
-        return false;
-    }
-    if tx.try_send(event).is_err() {
-        queued_bytes.fetch_sub(bytes, Ordering::AcqRel);
-        return false;
-    }
-    true
+fn queue_event(
+    tx: &mpsc::Sender<Value>,
+    queued_bytes: &AtomicUsize,
+    event: Value,
+    cap: usize,
+) -> bool {
+    backpressure::queue_event(tx, queued_bytes, event, cap, encoded_len)
 }
 
 fn encoded_len(value: &Value) -> usize {

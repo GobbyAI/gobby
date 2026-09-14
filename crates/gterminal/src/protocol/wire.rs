@@ -39,14 +39,24 @@ pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
 
 pub const DELTA_QUEUE_ENTRIES: usize = 64;
 pub const DELTA_QUEUE_BYTES: usize = MAX_FRAME_SIZE;
+pub const MIN_DELTA_QUEUE_BYTES: u32 = 1;
+pub const MAX_DELTA_QUEUE_BYTES: u32 = MAX_FRAME_SIZE as u32;
 pub const CONTROL_QUEUE_ENTRIES: usize = 16;
 pub const CONTROL_QUEUE_BYTES: usize = 64 * 1024;
+pub const MIN_CONTROL_QUEUE_ENTRIES: u32 = 1;
+pub const MAX_CONTROL_QUEUE_ENTRIES: u32 = CONTROL_QUEUE_ENTRIES as u32;
 pub const CONTROL_DELIVERY_DEADLINE_MS: u64 = 2_000;
+pub const MIN_CONTROL_DEADLINE_MS: u32 = 1;
+pub const MAX_CONTROL_DEADLINE_MS: u32 = 60_000;
 pub const DELTA_LAG_TIMEOUT_MS: u64 = 5_000;
+pub const MIN_LAG_TIMEOUT_MS: u32 = 1;
+pub const MAX_LAG_TIMEOUT_MS: u32 = 60_000;
 pub const SNAPSHOT_DEFAULT_MAX_BYTES: usize = 256 * 1024;
 pub const SNAPSHOT_DEFAULT_MAX_LINES: usize = 500;
 pub const EVENT_QUEUE_ENTRIES: usize = 256;
 pub const EVENT_QUEUE_BYTES: usize = 256 * 1024;
+pub const MIN_EVENT_QUEUE_BYTES: u32 = 1;
+pub const MAX_EVENT_QUEUE_BYTES: u32 = EVENT_QUEUE_BYTES as u32;
 pub const OPERATION_LEDGER_SIZE: usize = 64;
 pub const LIFECYCLE_RESERVED_SLOTS: usize = 4;
 

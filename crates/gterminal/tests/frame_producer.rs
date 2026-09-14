@@ -2,22 +2,22 @@
 
 mod host_support;
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use gobby_terminal::pane::{PaneShellConfig, ShellMode};
 use gobby_terminal::protocol::{
-    read_message, write_message, ClientMessage, FrameData, RenderEncoding, ServerMessage,
-    MAX_FRAME_SIZE, PROTOCOL_VERSION,
+    read_message, write_message, ClientMessage, FrameData, FramingError, RenderEncoding,
+    ServerMessage, MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 use gobby_terminal::runtime::TerminalRuntime;
 use gobby_terminal::terminal_theme::TerminalTheme;
 use host_support::{
-    connect, hello_control, recv_json, rpc, send_json, spawn_host, wait_exit, wait_socket,
-    write_token, CONTROL_SOCKET, FRAMES_SOCKET,
+    connect, hello_control, recv_json, rpc, send_json, spawn_host, spawn_host_with_args, wait_exit,
+    wait_socket, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use serde_json::json;
 
@@ -194,4 +194,356 @@ async fn end_to_end_without_ratatui_frame() {
     assert_eq!(resized.cells.len(), 100 * 30);
 
     runtime.shutdown();
+}
+
+fn is_timeout(err: &FramingError) -> bool {
+    match err {
+        FramingError::Io(error) => matches!(
+            error.kind(),
+            ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+        ),
+        _ => false,
+    }
+}
+
+fn is_keyframe(message: &ServerMessage) -> bool {
+    match message {
+        ServerMessage::Terminal(frame) => frame.full,
+        ServerMessage::Frame(_) => true,
+        _ => false,
+    }
+}
+
+fn encoded_bytes(message: &ServerMessage) -> usize {
+    let mut buf = Vec::new();
+    write_message(&mut buf, message)
+        .map(|()| buf.len())
+        .unwrap_or(0)
+}
+
+fn drain_frames(stream: &mut UnixStream, idle: Duration) -> Vec<ServerMessage> {
+    if stream.set_read_timeout(Some(idle)).is_err() {
+        return Vec::new();
+    }
+    let max = Instant::now() + Duration::from_millis(100);
+    let mut frames = Vec::new();
+    while Instant::now() < max {
+        match read_message(stream, MAX_FRAME_SIZE) {
+            Ok(message) => frames.push(message),
+            Err(err) if is_timeout(&err) => break,
+            Err(_) => break,
+        }
+    }
+    frames
+}
+
+fn attach_observer(
+    frames_path: &Path,
+    host_terminal_id: &str,
+    encoding: RenderEncoding,
+    rows: u16,
+    cols: u16,
+) -> UnixStream {
+    let mut stream = connect(frames_path);
+    send_frame(
+        &mut stream,
+        &ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            encoding,
+            local_token: "local-token".into(),
+            cols,
+            rows,
+            tmux_identity: None,
+        },
+    );
+    assert!(matches!(
+        recv_frame(&mut stream),
+        ServerMessage::Welcome { .. }
+    ));
+    send_frame(
+        &mut stream,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.to_string(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    match recv_frame(&mut stream) {
+        ServerMessage::Attached { .. } => stream,
+        other => panic!("expected Attached, got {other:?}"),
+    }
+}
+
+fn try_attach_observer(
+    frames_path: &Path,
+    host_terminal_id: &str,
+    encoding: RenderEncoding,
+    rows: u16,
+    cols: u16,
+) -> Result<UnixStream, String> {
+    let mut stream = connect(frames_path);
+    send_frame(
+        &mut stream,
+        &ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            encoding,
+            local_token: "local-token".into(),
+            cols,
+            rows,
+            tmux_identity: None,
+        },
+    );
+    assert!(matches!(
+        recv_frame(&mut stream),
+        ServerMessage::Welcome { .. }
+    ));
+    send_frame(
+        &mut stream,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.to_string(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    match recv_frame(&mut stream) {
+        ServerMessage::Attached { .. } => Ok(stream),
+        ServerMessage::Error { code, .. } => Err(code),
+        other => panic!("expected Attached or Error, got {other:?}"),
+    }
+}
+
+fn spawn_committed(
+    control: &mut UnixStream,
+    terminal_id: &str,
+    argv: &[&str],
+    rows: u16,
+    cols: u16,
+) -> String {
+    let reserve_key = format!("rk-{terminal_id}");
+    let spawn_key = format!("sk-{terminal_id}");
+    let reserved = rpc(
+        control,
+        "reserve_observer",
+        json!({"terminal_id": terminal_id, "reserve_key": reserve_key}),
+    );
+    let prepared = rpc(
+        control,
+        "spawn",
+        json!({
+            "operation_seq": 1,
+            "terminal_id": terminal_id,
+            "spawn_key": spawn_key,
+            "reservation_id": reserved["reservation_id"],
+            "reserve_key": reserve_key,
+            "argv": argv,
+            "cwd": "/",
+            "rows": rows,
+            "cols": cols,
+            "commit_deadline_ms": 8000,
+        }),
+    );
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    let host_terminal_id = prepared["host_terminal_id"]
+        .as_str()
+        .expect("host_terminal_id")
+        .to_string();
+    assert_eq!(
+        rpc(
+            control,
+            "spawn_commit",
+            json!({"terminal_id": terminal_id, "spawn_key": spawn_key}),
+        )["ok"],
+        true
+    );
+    host_terminal_id
+}
+
+fn read_frames_for(stream: &mut UnixStream, duration: Duration) -> usize {
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(80)))
+        .is_err()
+    {
+        return 0;
+    }
+    let deadline = Instant::now() + duration;
+    let mut count = 0usize;
+    while Instant::now() < deadline {
+        match read_message(stream, MAX_FRAME_SIZE) {
+            Ok(ServerMessage::Frame(_) | ServerMessage::Terminal(_)) => count += 1,
+            Ok(_) => {}
+            Err(err) if is_timeout(&err) => {}
+            Err(_) => break,
+        }
+    }
+    count
+}
+
+fn start_host(dir: &Path, extra: &[&str]) -> (host_support::HostProc, UnixStream, PathBuf) {
+    write_token(dir, "frame-backpressure");
+    let child = spawn_host_with_args(dir, extra);
+    wait_socket(&dir.join(CONTROL_SOCKET));
+    wait_socket(&dir.join(FRAMES_SOCKET));
+    let mut control = connect(&dir.join(CONTROL_SOCKET));
+    assert_eq!(
+        hello_control(&mut control, "frame-backpressure")["ok"],
+        true
+    );
+    (child, control, dir.join(FRAMES_SOCKET))
+}
+
+#[test]
+fn slow_observer_resyncs_with_one_keyframe() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rows = 8;
+    let cols = 24;
+    let cap = 400u32;
+    let (_child, mut control, frames_path) = start_host(
+        dir.path(),
+        &["--delta-queue-bytes", "400", "--lag-timeout-ms", "1500"],
+    );
+    let host_terminal_id = spawn_committed(
+        &mut control,
+        "term-keyframe",
+        &[
+            "/bin/sh",
+            "-c",
+            "i=0; while :; do i=$((i+1)); printf '%048d\\n' \"$i\"; sleep 0.01; done",
+        ],
+        rows,
+        cols,
+    );
+
+    let mut slow = attach_observer(
+        &frames_path,
+        &host_terminal_id,
+        RenderEncoding::SemanticFrame,
+        rows,
+        cols,
+    );
+    let mut fast = attach_observer(
+        &frames_path,
+        &host_terminal_id,
+        RenderEncoding::SemanticFrame,
+        rows,
+        cols,
+    );
+    let initial = drain_frames(&mut slow, Duration::from_millis(80));
+    assert!(
+        initial.iter().any(is_keyframe),
+        "slow observer should see the initial keyframe before pause: {initial:?}"
+    );
+    let _ = drain_frames(&mut fast, Duration::from_millis(80));
+    let during = read_frames_for(&mut fast, Duration::from_millis(600));
+    assert!(
+        during >= 1,
+        "continuously reading observer must keep receiving frames while the slow one pauses; got {during}"
+    );
+
+    let resumed = drain_frames(&mut slow, Duration::from_millis(80));
+    let queued_bytes: usize = resumed.iter().map(encoded_bytes).sum();
+    assert!(
+        resumed.iter().all(is_keyframe),
+        "semantic resync frames are keyframes; got {resumed:?}"
+    );
+    assert!(
+        (1..=16).contains(&resumed.len()),
+        "overflow must replace the host queue with one keyframe rather than a 64-deep backlog; got {} messages",
+        resumed.len()
+    );
+    assert!(
+        queued_bytes > 0,
+        "resync must deliver the replacement keyframe; cap={cap}"
+    );
+
+    slow.set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("slow timeout");
+    match read_message(&mut slow, MAX_FRAME_SIZE) {
+        Ok(ServerMessage::Terminal(_) | ServerMessage::Frame(_)) => {}
+        Ok(ServerMessage::Error { code, .. }) => {
+            panic!("slow observer was closed after draining: {code}")
+        }
+        other => panic!("slow observer should stay connected, got {other:?}"),
+    }
+
+    send_json(
+        &mut control,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    let _ = recv_json(&mut control);
+}
+
+#[test]
+fn lagged_observer_is_closed_and_released() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rows = 8;
+    let cols = 24;
+    let (_child, mut control, frames_path) = start_host(
+        dir.path(),
+        &[
+            "--max-attachments-per-terminal",
+            "2",
+            "--lag-timeout-ms",
+            "200",
+            "--delta-queue-bytes",
+            "4096",
+        ],
+    );
+    let host_terminal_id = spawn_committed(
+        &mut control,
+        "term-lagged",
+        &["/bin/sleep", "30"],
+        rows,
+        cols,
+    );
+
+    let mut slow = attach_observer(
+        &frames_path,
+        &host_terminal_id,
+        RenderEncoding::SemanticFrame,
+        rows,
+        cols,
+    );
+    let mut fast = attach_observer(
+        &frames_path,
+        &host_terminal_id,
+        RenderEncoding::SemanticFrame,
+        rows,
+        cols,
+    );
+    assert_eq!(
+        try_attach_observer(
+            &frames_path,
+            &host_terminal_id,
+            RenderEncoding::SemanticFrame,
+            rows,
+            cols,
+        )
+        .err()
+        .as_deref(),
+        Some("capacity"),
+        "both observer slots should be occupied"
+    );
+    let _ = drain_frames(&mut fast, Duration::from_millis(80));
+    let _ = drain_frames(&mut slow, Duration::from_millis(80));
+    let during = read_frames_for(&mut fast, Duration::from_millis(500));
+    let log = std::fs::read_to_string(dir.path().join("gterm.log")).unwrap_or_default();
+    assert!(
+        during >= 1,
+        "the remaining observer must keep receiving frames; got {during}; log={log}"
+    );
+    try_attach_observer(
+        &frames_path,
+        &host_terminal_id,
+        RenderEncoding::SemanticFrame,
+        rows,
+        cols,
+    )
+    .expect("lagged observer slot must be released");
+    drop(slow);
+
+    send_json(
+        &mut control,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    let _ = recv_json(&mut control);
 }

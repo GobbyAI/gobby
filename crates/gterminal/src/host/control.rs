@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex as StdMutex};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{unix::OwnedReadHalf, UnixStream};
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
@@ -75,17 +75,6 @@ async fn read_request(
     }
 }
 
-async fn write_json(writer: &mut tokio::net::unix::OwnedWriteHalf, value: Value) -> io::Result<()> {
-    let mut line = value.to_string();
-    if line.len() >= 2 * 1024 * 1024 {
-        let id = value.get("id").cloned();
-        line = with_id(json!({"ok": false, "error": "response_too_large"}), &id).to_string();
-    }
-    line.push('\n');
-    writer.write_all(line.as_bytes()).await?;
-    writer.flush().await
-}
-
 fn with_id(mut value: Value, id: &Option<Value>) -> Value {
     if let (Some(id), Some(obj)) = (id, value.as_object_mut()) {
         obj.insert("id".to_string(), id.clone());
@@ -95,19 +84,17 @@ fn with_id(mut value: Value, id: &Option<Value>) -> Value {
 
 pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let conn_id = state.alloc_conn();
-    let (reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut request_buffer = Vec::new();
     let mut authed = false;
     let in_flight = Arc::new(StdMutex::new(HashSet::<String>::new()));
     let permits = Arc::new(Semaphore::new(MAX_INFLIGHT_PER_CONNECTION));
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<Value>(MAX_INFLIGHT_PER_CONNECTION * 2);
+    let outbound_cap = state.config.control_queue_entries.max(1) as usize;
+    let deadline = state.config.control_deadline();
+    let (outbound_tx, outbound_rx) = mpsc::channel::<Value>(outbound_cap);
     let writer_task = tokio::spawn(async move {
-        while let Some(value) = outbound_rx.recv().await {
-            if write_json(&mut writer, value).await.is_err() {
-                break;
-            }
-        }
+        let _ = super::backpressure::write_outbound(writer, outbound_rx, deadline).await;
     });
     let event_tasks = Arc::new(StdMutex::new(Vec::new()));
     let mut dispatch_tasks = JoinSet::new();
