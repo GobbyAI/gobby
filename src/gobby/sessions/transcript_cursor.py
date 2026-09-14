@@ -4,7 +4,9 @@ Before the daemon types a handoff command it interrupts the running turn. A CLI
 that did not actually stop queues the typed command as the next user message, so
 the interrupt is confirmed from fresh transcript records rather than assumed:
 Codex appends ``turn_aborted`` to its rollout, Claude Code appends a user record
-carrying ``[Request interrupted by user...]`` or a user-rejected tool result.
+carrying ``[Request interrupted by user...]`` or a user-rejected tool result, and
+Grok appends a cancelled ``turn_ended`` to the ``events.jsonl`` beside its
+registered ``updates.jsonl`` transcript.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ __all__ = [
     "INTERRUPT_OBSERVED_SOURCES",
     "ClaudeTranscriptCursor",
     "CodexRolloutCursor",
+    "GROK_EVENTS_FILENAME",
+    "GrokEventsCursor",
     "InterruptObserver",
     "TranscriptObservationError",
     "TranscriptTailCursor",
@@ -35,10 +39,13 @@ logger = logging.getLogger(__name__)
 InterruptObserver = Callable[[], bool | None]
 
 # CLIs whose transcripts record interrupts; every other CLI keeps the blind path.
-INTERRUPT_OBSERVED_SOURCES = frozenset({"claude", "codex"})
+INTERRUPT_OBSERVED_SOURCES = frozenset({"claude", "codex", "grok"})
 
 CLAUDE_INTERRUPT_PREFIX = "[Request interrupted by user"
 CLAUDE_USER_REJECTED = "user-rejected"
+# Grok registers ``updates.jsonl`` as its transcript; turn outcomes land in this
+# sibling file of the same session directory.
+GROK_EVENTS_FILENAME = "events.jsonl"
 
 
 class TranscriptObservationError(RuntimeError):
@@ -183,6 +190,31 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
         return False
 
 
+@dataclass
+class GrokEventsCursor(TranscriptTailCursor):
+    """Grok events cursor: a fresh cancelled ``turn_ended`` confirms the interrupt."""
+
+    @classmethod
+    def beside_transcript(cls, transcript_path: str | Path | None) -> Self:
+        """Create a cursor on the events file next to Grok's registered transcript."""
+        if transcript_path is None or not str(transcript_path).strip():
+            raise TranscriptObservationError("session has no transcript path")
+        try:
+            events_path = Path(transcript_path).expanduser().with_name(GROK_EVENTS_FILENAME)
+        except ValueError as exc:
+            raise TranscriptObservationError(
+                f"transcript path has no file name: {transcript_path}"
+            ) from exc
+        return cls.at_eof(events_path)
+
+    def saw_fresh_turn_cancelled(self) -> bool:
+        """Return whether newly appended records contain a cancelled turn_ended."""
+        for record in self.fresh_records():
+            if record.get("type") == "turn_ended" and record.get("outcome") == "cancelled":
+                return True
+        return False
+
+
 def build_interrupt_observer(
     source: str | None,
     transcript_path: str | Path | None,
@@ -200,6 +232,8 @@ def build_interrupt_observer(
     observe: Callable[[], bool]
     if source == "codex":
         observe = CodexRolloutCursor.at_eof(transcript_path).saw_fresh_turn_aborted
+    elif source == "grok":
+        observe = GrokEventsCursor.beside_transcript(transcript_path).saw_fresh_turn_cancelled
     else:
         observe = ClaudeTranscriptCursor.at_eof(transcript_path).saw_fresh_interrupt
 

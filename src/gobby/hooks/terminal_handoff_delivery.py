@@ -256,6 +256,11 @@ def schedule_terminal_handoff_delivery(
     with _delivery_futures_lock:
         _delivery_futures.add(future)
     future.add_done_callback(lambda done: _log_delivery_completion(done, claimed))
+    logger.info(
+        "Terminal handoff delivery scheduled for session %s attempt %s",
+        claimed.session_id,
+        claimed.attempt_id,
+    )
     return True
 
 
@@ -321,6 +326,14 @@ async def _settle_delivery(
                     }
                 },
             )
+        logger.info(
+            "Terminal handoff delivered for session %s attempt %s (clear_session=%s cli=%s via=%s)",
+            claimed.session_id,
+            claimed.attempt_id,
+            claimed.clear_session,
+            result.get("cli"),
+            result.get("via"),
+        )
         return
     reason = result.get("reason") or result.get("error") or "terminal delivery failed"
     _compensate_delivery_failure(db, claimed, str(reason))

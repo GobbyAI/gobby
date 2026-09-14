@@ -6,6 +6,8 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -117,6 +119,14 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
         record.getMessage()
         for record in caplog.records
         if record.name == LOGGER_NAME and record.levelno >= logging.WARNING
+    ]
+
+
+def _infos(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == LOGGER_NAME and record.levelno == logging.INFO
     ]
 
 
@@ -333,7 +343,7 @@ def test_unclaimed_completion_is_logged(caplog: pytest.LogCaptureFixture) -> Non
 def test_duplicate_completion_schedules_only_the_claimed_attempt(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
     event = _completion(SessionSource.CODEX, _staged_output())
     claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
     session_manager = MagicMock()
@@ -380,6 +390,9 @@ def test_duplicate_completion_schedules_only_the_claimed_attempt(
     coroutine.close()
     completion_callback = scheduled.add_done_callback.call_args.args[0]
     completion_callback(scheduled)
+    assert _infos(caplog) == [
+        f"Terminal handoff delivery scheduled for session {SESSION_ID} attempt {ATTEMPT_ID}"
+    ]
     assert _warnings(caplog) == [
         f"Terminal handoff delivery skipped for session {SESSION_ID} attempt {ATTEMPT_ID}: "
         f"no {PENDING_HANDOFF_VARIABLE} marker"
@@ -525,4 +538,144 @@ def test_non_terminal_source_completion_is_failed_with_retry_guidance(
     assert _warnings(caplog) == [
         f"Terminal handoff delivery failed for session {SESSION_ID} attempt {ATTEMPT_ID}: "
         "session source 'pipeline' is not a terminal CLI"
+    ]
+
+
+GROK_REJECTION = "'/compact' is disabled while a task is in progress"
+
+
+class _RejectingGrokPane:
+    """Grok pane fake: Ctrl+C cancels the turn in events.jsonl; /compact stays rejected."""
+
+    backend = "native"
+    target = "term-grok"
+
+    def __init__(self, events_path: Path) -> None:
+        self.keys: list[str] = []
+        self.typed: list[str] = []
+        self.screen = "working...\n> "
+        self._events_path = events_path
+
+    async def send_key(self, key: str) -> tuple[bool, str | None]:
+        self.keys.append(key)
+        if key == "ctrl_c":
+            with self._events_path.open("ab") as stream:
+                stream.write(json.dumps({"type": "turn_ended", "outcome": "cancelled"}).encode())
+                stream.write(b"\n")
+        elif key == "enter":
+            self.screen += f"\n{GROK_REJECTION}\n> "
+        return True, None
+
+    async def type_text(self, text: str) -> tuple[bool, str | None]:
+        self.typed.append(text)
+        return True, None
+
+    async def snapshot(self, lines: int = 12) -> str | None:
+        return self.screen
+
+
+async def _run_operation(
+    _run_id: str,
+    operation: Callable[[], Awaitable[dict[str, Any]]],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    return await operation()
+
+
+@pytest.mark.asyncio
+async def test_rejected_grok_compaction_settles_as_delivery_failed(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    transcript = tmp_path / "updates.jsonl"
+    transcript.write_bytes(b"")
+    events = tmp_path / "events.jsonl"
+    events.write_bytes(b"")
+    pane = _RejectingGrokPane(events)
+    session = SimpleNamespace(id=SESSION_ID, source="grok", transcript_path=str(transcript))
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+    claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
+    restore = MagicMock(return_value=True)
+    clear_pending = MagicMock(return_value=True)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery._resolve_pane_io",
+            return_value=(pane, None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery."
+            "mark_handoff_compact_continuation_pending",
+            return_value=True,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery."
+            "clear_handoff_compact_continuation_pending",
+            clear_pending,
+        ),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+        patch("gobby.hooks.terminal_handoff_delivery.restore_staged_handoff", restore),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    # Grok is interrupted with Ctrl+C (never Esc) and the rejected /compact is retried once.
+    assert pane.keys[0] == "ctrl_c"
+    assert "escape" not in pane.keys
+    assert pane.typed == ["/compact", "/compact"]
+    clear_pending.assert_called_once()
+    restore.assert_called_once()
+    assert restore.call_args.args[1:] == (SESSION_ID, ATTEMPT_ID)
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["delivery_failed"] is True
+    assert failure["delivery_pending"] is False
+    assert failure["reason"] == GROK_REJECTION
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery failed for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        f"{GROK_REJECTION}"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_background_delivery_success_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
+    delivered = {"compacted": True, "command": "/compact", "cli": "grok", "via": "native"}
+    deliver = AsyncMock(return_value=delivered)
+    restore = MagicMock(return_value=True)
+
+    with (
+        patch("gobby.hooks.terminal_handoff_delivery.deliver_staged_compact_handoff", deliver),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+        patch("gobby.hooks.terminal_handoff_delivery.restore_staged_handoff", restore),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=MagicMock(),
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    deliver.assert_awaited_once()
+    assert deliver.await_args is not None
+    assert deliver.await_args.args == (SESSION_ID, ATTEMPT_ID, "handoff-1")
+    restore.assert_not_called()
+    assert _warnings(caplog) == []
+    assert _infos(caplog) == [
+        f"Terminal handoff delivered for session {SESSION_ID} attempt {ATTEMPT_ID} "
+        "(clear_session=False cli=grok via=native)"
     ]

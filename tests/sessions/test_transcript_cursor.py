@@ -1,4 +1,4 @@
-"""Claude transcript interrupt observation and the per-CLI observer factory."""
+"""Claude and Grok transcript interrupt observation and the per-CLI observer factory."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 
 from gobby.sessions.transcript_cursor import (
     ClaudeTranscriptCursor,
+    GrokEventsCursor,
     TranscriptObservationError,
     build_interrupt_observer,
 )
@@ -52,6 +53,31 @@ ASSISTANT_RECORD = (
 PLAIN_USER_RECORD = (
     json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}).encode() + b"\n"
 )
+# Grok 1.0.30 events.jsonl rows: a Ctrl+C cancel observed on 2026-09-14 (#22358).
+GROK_CANCELLED_RECORD = (
+    json.dumps(
+        {
+            "ts": "2026-09-14T16:14:26.305Z",
+            "type": "turn_ended",
+            "outcome": "cancelled",
+            "cancellation_category": "mid_turn_abort",
+            "cancellation_context": {"trigger": "ctrl_c"},
+        }
+    ).encode()
+    + b"\n"
+)
+GROK_COMPLETED_RECORD = (
+    json.dumps(
+        {"ts": "2026-09-14T16:14:00.000Z", "type": "turn_ended", "outcome": "completed"}
+    ).encode()
+    + b"\n"
+)
+GROK_TOOL_CANCELLED_RECORD = (
+    json.dumps(
+        {"ts": "2026-09-14T16:14:26.305Z", "type": "tool_ended", "outcome": "cancelled"}
+    ).encode()
+    + b"\n"
+)
 
 
 def _append_bytes(path: Path, content: bytes) -> None:
@@ -91,7 +117,20 @@ def test_claude_cursor_requires_a_readable_transcript(tmp_path: Path) -> None:
         ClaudeTranscriptCursor.at_eof(None)
 
 
-def test_observer_factory_covers_claude_and_codex_only(tmp_path: Path) -> None:
+def test_grok_cursor_confirms_only_a_fresh_cancelled_turn(tmp_path: Path) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_bytes(GROK_CANCELLED_RECORD)
+    cursor = GrokEventsCursor.at_eof(events)
+
+    assert cursor.saw_fresh_turn_cancelled() is False
+    _append_bytes(events, GROK_COMPLETED_RECORD + GROK_TOOL_CANCELLED_RECORD)
+    assert cursor.saw_fresh_turn_cancelled() is False
+    _append_bytes(events, GROK_CANCELLED_RECORD)
+    assert cursor.saw_fresh_turn_cancelled() is True
+    assert cursor.saw_fresh_turn_cancelled() is False
+
+
+def test_observer_factory_covers_claude_codex_and_grok(tmp_path: Path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_bytes(b"")
 
@@ -104,6 +143,26 @@ def test_observer_factory_covers_claude_and_codex_only(tmp_path: Path) -> None:
     _append_bytes(transcript, REJECTED_TOOL_RECORD)
     assert claude() is True
     assert codex() is False
+
+
+def test_grok_observer_reads_events_beside_the_registered_transcript(tmp_path: Path) -> None:
+    updates = tmp_path / "updates.jsonl"
+    updates.write_bytes(b"")
+    with pytest.raises(TranscriptObservationError, match="unavailable"):
+        build_interrupt_observer("grok", updates, session_id="#1")
+    with pytest.raises(TranscriptObservationError, match="no file name"):
+        build_interrupt_observer("grok", "/", session_id="#1")
+
+    events = tmp_path / "events.jsonl"
+    events.write_bytes(GROK_COMPLETED_RECORD)
+    grok = build_interrupt_observer("grok", updates, session_id="#1")
+    assert grok is not None
+    assert grok() is False
+    _append_bytes(updates, GROK_CANCELLED_RECORD)
+    assert grok() is False
+    _append_bytes(events, GROK_CANCELLED_RECORD)
+    assert grok() is True
+    assert grok() is False
 
 
 def test_observer_factory_fails_closed_then_reports_lost_observation(tmp_path: Path) -> None:
