@@ -10,13 +10,32 @@ import pytest
 
 from gobby.sessions.message_stats import TURN_BOUNDARY_CONTENT_TYPE
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
-from gobby.sessions.transcripts.agy import AgyTranscriptParser
+from gobby.sessions.transcripts.agy import AgyTranscriptParser, read_current_user_prompt
 from gobby.sessions.transcripts.base import (
     UNMODELED_RECORD_CONTENT_TYPE,
     ParsedMessage,
     ParsedToolEvent,
     RawLine,
 )
+
+
+@pytest.mark.parametrize(
+    "last_record",
+    [
+        {"source": "MODEL", "type": "PLANNER_RESPONSE", "content": "Done"},
+        {"source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "x" * 70_000},
+    ],
+)
+def test_current_prompt_never_reuses_old_help(tmp_path: Path, last_record: dict[str, Any]) -> None:
+    transcript = tmp_path / "transcript_full.jsonl"
+    transcript.write_text(
+        json.dumps({"source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "/gobby"})
+        + "\n"
+        + json.dumps(last_record)
+        + "\n"
+    )
+    assert read_current_user_prompt(str(transcript)) is None
+
 
 pytestmark = pytest.mark.unit
 

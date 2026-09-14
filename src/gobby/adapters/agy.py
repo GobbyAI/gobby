@@ -28,6 +28,7 @@ from gobby.hooks.events import (
     correlate_hook_lifecycle,
 )
 from gobby.hooks.normalization import normalize_tool_outcome
+from gobby.skills.capability_routing import gobby_help_prefix
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -79,6 +80,12 @@ class AgyAdapter(ACPHookAdapter):
             None,
         ):
             event.event_type = HookEventType.BEFORE_MODEL
+        if event.event_type is HookEventType.BEFORE_AGENT and not event.data.get("prompt"):
+            from gobby.sessions.transcripts.agy import read_current_user_prompt
+
+            prompt = read_current_user_prompt(event.data.get("transcript_path"))
+            if prompt is not None:
+                event.data["prompt"] = prompt
         if event.event_type is HookEventType.AFTER_TOOL:
             event.data.pop("is_error", None)
             normalize_tool_outcome(
@@ -133,13 +140,31 @@ class AgyAdapter(ACPHookAdapter):
         claim = native_event.get("_gobby_startup_claim")
         if isinstance(claim, dict):
             original.metadata["_gobby_startup_claim"] = claim
+        self._hook_manager = hook_manager
+        if original.event_type == HookEventType.BEFORE_AGENT and gobby_help_prefix(
+            original.data.get("prompt")
+        ):
+            return self.translate_from_hook_response(
+                hook_manager.handle(original), hook_type="PreInvocation"
+            )
         start_event = replace(
             original,
             event_type=HookEventType.SESSION_START,
             metadata={**original.metadata, "_synthetic_session_start": True},
         )
-        self._hook_manager = hook_manager
         start_response = hook_manager.handle(start_event)
+        started_session_id = start_event.metadata.get("_platform_session_id")
+        if (
+            started_session_id
+            and start_response.context
+            and start_response.decision == "allow"
+            and hook_manager._session_manager is not None
+        ):
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            SessionVariableManager(hook_manager._session_manager.db).merge_variables(
+                started_session_id, {"_help_deferred_activation": False}
+            )
         original_response = hook_manager.handle(original)
         start_system_message = start_response.system_message
         if start_response.metadata.get(

@@ -439,6 +439,51 @@ class TestAgyCamelCasePayload:
 
 
 class TestAgyHandleNativeSynthesis:
+    @pytest.mark.parametrize("prompt", ["/gobby", "/gobby help"])
+    def test_help_reads_native_transcript_without_synthetic_startup(
+        self, tmp_path: Path, prompt: str
+    ) -> None:
+        transcript = tmp_path / "transcript_full.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "content": prompt,
+                }
+            )
+            + "\n"
+        )
+        event = _agy_pre_invocation_event(extra_input={"transcriptPath": str(transcript)})
+        manager = MagicMock()
+        manager.handle.return_value = HookResponse(context="# Gobby\n\n/gobby tasks")
+        adapter = AgyAdapter()
+        for _ in range(2):
+            result = adapter.handle_native(event, manager)
+            assert "# Gobby" in "\n".join(_inject_step_values(result))
+        assert [call.args[0].event_type for call in manager.handle.call_args_list] == [
+            HookEventType.BEFORE_AGENT,
+            HookEventType.BEFORE_AGENT,
+        ]
+        assert manager.handle.call_args.args[0].data["prompt"] == prompt
+
+        transcript.write_text(
+            json.dumps(
+                {
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "content": "Implement a change",
+                }
+            )
+            + "\n"
+        )
+        manager.reset_mock()
+        adapter.handle_native(event, manager)
+        assert [call.args[0].event_type for call in manager.handle.call_args_list] == [
+            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
+        ]
+
     def test_pre_invocation_dispatches_session_start_then_before_agent(self) -> None:
         hook_manager = MagicMock()
         hook_manager.handle.return_value = HookResponse(decision="allow")

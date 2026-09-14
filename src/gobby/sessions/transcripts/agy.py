@@ -32,6 +32,40 @@ _TOKEN_EFFICIENT_BASENAME = "transcript.jsonl"
 _TURN_COMPLETED_CONTENT_TYPE = "turn_completed"
 
 
+def read_current_user_prompt(transcript_path: object) -> str | None:
+    """Read AGY's current user turn, absent from its PreInvocation payload.
+
+    A bounded tail suffices for short router requests. Never reuse a user turn
+    once a model record follows it, or substitute an older turn for a large one.
+    """
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    try:
+        with Path(transcript_path).open("rb") as stream:
+            size = stream.seek(0, 2)
+            start = max(0, size - 65_536)
+            stream.seek(start)
+            lines = stream.read(65_536).splitlines()
+        if start:
+            lines = lines[1:]
+        for line in reversed(lines):
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                return None
+            if record.get("source") == "MODEL":
+                return None
+            if record.get("source") == "USER_EXPLICIT":
+                content = record.get("content")
+                return (
+                    content
+                    if record.get("type") == "USER_INPUT" and isinstance(content, str)
+                    else None
+                )
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def _parse_timestamp(raw: Any) -> datetime:
     if not isinstance(raw, str) or not raw:
         return datetime.now(UTC)

@@ -183,6 +183,7 @@ class WorkflowRuleEvaluator:
                     # Help itself becomes transcript activity; explicitly retain
                     # first-work-turn injection instead of treating it as a resume.
                     updates["_agent_context_rehydrate_pending"] = True
+                    updates["_help_deferred_activation"] = True
                 manager.merge_variables(session_id, updates)
             return True
         if (

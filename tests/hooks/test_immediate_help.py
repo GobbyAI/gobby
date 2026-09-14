@@ -271,7 +271,11 @@ def test_help_stop_defers_housekeeping_and_preserves_first_work_injection() -> N
         assert evaluator.evaluate(event) == (None, None)
         manager.merge_variables.assert_called_once_with(
             "session-1",
-            {"_current_user_prompt": "$gobby", "_agent_context_rehydrate_pending": True},
+            {
+                "_current_user_prompt": "$gobby",
+                "_agent_context_rehydrate_pending": True,
+                "_help_deferred_activation": True,
+            },
         )
         event.event_type = HookEventType.STOP
         manager.get_variables.return_value = {"_current_user_prompt": "$gobby"}

@@ -96,6 +96,41 @@ def _rows_for_conversation(db: HubDatabase, conversation_id: str) -> list[dict[s
 
 
 class TestResolveOrAdoptOrRegister:
+    @pytest.mark.parametrize("prompt", ["/gobby", "/gobby help"])
+    def test_help_leaves_startup_claim_for_next_work(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        prompt: str,
+    ) -> None:
+        project_id = _project(isolated_checkout_factory, temp_db, "help-preflight")
+        workspace = _workspace(tmp_path, "ws", project_id)
+        transcript = tmp_path / "transcript_full.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "content": prompt,
+                }
+            )
+            + "\n"
+        )
+        payload = _payload(workspace=workspace)
+        payload["input_data"]["transcriptPath"] = str(transcript)
+        manager = _hook_manager(temp_db)
+        assert preflight_agy_startup_claim(payload, manager) is None
+        assert payload["input_data"]["prompt"] == prompt
+        assert "_gobby_startup_claim" not in payload
+        assert _rows_for_conversation(temp_db, CONVERSATION) == []
+
+        work = _payload(workspace=workspace)
+        work["input_data"]["prompt"] = "Implement the change"
+        lease = preflight_agy_startup_claim(work, manager)
+        assert lease is not None
+        assert lease.generation == 1
+
     def test_first_event_registers_the_canonical_row_once(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,

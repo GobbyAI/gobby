@@ -147,6 +147,23 @@ def preflight_agy_startup_claim(
     if not _payload_is_agy_pre_invocation(payload):
         return None
 
+    from gobby.sessions.transcripts.agy import read_current_user_prompt
+    from gobby.skills.capability_routing import gobby_help_prefix
+
+    input_data = payload.get("input_data")
+    if isinstance(input_data, dict) and input_data.get(
+        "invocationNum", input_data.get("invocation_num", 0)
+    ) in (0, "0", None):
+        if not input_data.get("prompt"):
+            prompt = read_current_user_prompt(
+                input_data.get("transcriptPath", input_data.get("transcript_path"))
+            )
+            if prompt is not None:
+                input_data["prompt"] = prompt
+        if gobby_help_prefix(input_data.get("prompt")):
+            # Help must not allocate a startup generation or delivery receipt.
+            return None
+
     session_manager = _session_manager(hook_manager)
     db = getattr(session_manager, "db", None)
     if session_manager is None or db is None:
