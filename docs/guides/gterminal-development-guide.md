@@ -183,7 +183,13 @@ root with `DATABASE_URL` pointed at the isolated test hub
    whole web suite under Vitest 4.
 7. Host leak check: the set of `gterm host` PIDs after groups 2–3 equals the set
    before, and no surviving `gterm host` references a state directory the run
-   created.
+   created. For group 2 this is deterministic: the session fixture
+   `_assert_no_leaked_hosts` in `tests/terminals/conftest.py` fails the run when a
+   host under the run's temp roots survives or when a durable host (state directory
+   outside every temp root, such as the daemon's `~/.gobby` host) that existed
+   before the session is gone after it, so a green group 2 is the group 7 evidence
+   for that group. Group 3 has no such fixture; compare `ps -Ao pid,lstart,comm`
+   snapshots around it by hand.
 
 The following records historical carve-outs, which ended when their owners
 closed; they are not present-day exemptions. From 1.1
@@ -324,11 +330,14 @@ All `gobby-terminal` dependencies are third-party; it depends on no workspace
 crates, so a `gcore` change does not invalidate a built `gterm`. Compare hashes
 of built and installed binaries rather than inferring staleness from mtime.
 
-**Group 7: record the host PID set.** Capture the set of `gterm host` PIDs before
-the socket-dependent groups and compare it after each of groups 2, 3, and 6.
-Record start times to distinguish PID reuse. If the worker sandbox denies process
-inspection, obtain this evidence from the coordinator; mark the worker check
-unvalidated rather than attempting `ps`/`pgrep` repeatedly. Never stop the
-operator's baseline host to make the sets match.
+**Group 7: record the host PID set.** Group 2 checks itself: its session fixture
+in `tests/terminals/conftest.py` asserts that no host under the run's temp roots
+survives and that every durable host present before the session is still present
+after it. For groups 3 and 6, capture the set of `gterm host` PIDs before the
+socket-dependent group and compare it after. Record start times to distinguish
+PID reuse. If the worker sandbox denies process inspection, obtain this evidence
+from the coordinator; mark the worker check unvalidated rather than attempting
+`ps`/`pgrep` repeatedly. Never stop the operator's baseline host to make the sets
+match.
 
 _Last verified: 2026-09-12_

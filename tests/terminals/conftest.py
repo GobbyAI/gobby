@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -79,8 +80,23 @@ def _finalize_pidfile_host(pid: int, socket_dir: Path, roots: tuple[Path, ...]) 
         return
 
 
+def _durable_hosts(hosts: dict[int, Path], temp_roots: tuple[Path, ...]) -> dict[int, Path]:
+    """Hosts whose state directory is outside every temp root: the daemon's own host."""
+    return {
+        pid: socket_dir
+        for pid, socket_dir in hosts.items()
+        if not any(_under(socket_dir, root) for root in temp_roots)
+    }
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Guard set G group 7 for this suite: no host leaks, no durable host ends.
+
+    A durable host (state directory outside every temp root, such as the daemon's
+    ``~/.gobby`` host) that exists before the session must still exist after it;
+    ending one would take every native terminal on the machine down with it.
+    """
     before = _gterm_hosts()
     yield
 
@@ -88,6 +104,11 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
     roots: tuple[Path, ...] = (tmp_path_factory.getbasetemp().resolve(),)
     if run_tmp:
         roots += (Path(run_tmp).resolve(),)
+    temp_roots: tuple[Path, ...] = (
+        *roots,
+        Path(tempfile.gettempdir()).resolve(),
+        Path("/tmp").resolve(),
+    )
     after = _gterm_hosts()
     leaked = {
         pid: socket_dir
@@ -106,6 +127,15 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
     assert not remaining, (
         "tests/terminals leaked gterm host processes that use this session's temp roots: "
         f"before={sorted(before)} after={sorted(final)} remaining={sorted(remaining)}"
+    )
+    ended = {
+        pid: socket_dir
+        for pid, socket_dir in _durable_hosts(before, temp_roots).items()
+        if final.get(pid) != socket_dir
+    }
+    assert not ended, (
+        "tests/terminals ended durable gterm host processes it did not start: "
+        f"before={sorted(before)} after={sorted(final)} ended={sorted(ended)}"
     )
 
 
