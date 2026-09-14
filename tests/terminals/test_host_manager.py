@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import stat
 import threading
 import tomllib
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -18,8 +19,9 @@ import pytest
 
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
+from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager, native_locator_key
 from gobby.terminals import host_events
+from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import HostManagerStopped
 from gobby.terminals.host_events import HostInventorySnapshot, TerminalExitedEvent
 from gobby.terminals.host_protocol import HostListRow
@@ -1529,7 +1531,214 @@ async def test_stop_fences_restart_creation_and_publication(
 
     await manager.start()
     manager._client = None
-    manager._sleep = AsyncMock(return_value=None)
+
+    # start() found no pidfile, so it armed the health loop on the mismatch
+    # path (#22337); its ticks must yield or they starve ensure_restart.
+    async def yielding(delay: float) -> None:
+        del delay
+        await asyncio.sleep(0)
+
+    manager._sleep = yielding
     assert await manager.ensure_restart() == client.host_epoch
     assert spawner.call_count == 1
     await manager.stop_producers()
+
+
+# --- adoption retry after a mismatch at start (#22337) ---------------------
+
+_WIRE_GOLDEN = (
+    Path(__file__).resolve().parents[2]
+    / "crates"
+    / "gterminal"
+    / "tests"
+    / "fixtures"
+    / "wire_golden"
+)
+
+
+class _Ticks:
+    """Health-loop sleep double: run `before_tick` ahead of each tick, then park.
+
+    After `count` ticks the loop parks on an event that is never set and `done`
+    is set, so a test asserts on settled state before `stop()` cancels the loop.
+    """
+
+    def __init__(self, count: int, before_tick: Callable[[int], None] | None = None) -> None:
+        self.count = count
+        self.before_tick = before_tick
+        self.calls = 0
+        self.done = asyncio.Event()
+
+    async def __call__(self, delay: float) -> None:
+        del delay
+        self.calls += 1
+        if self.calls > self.count:
+            self.done.set()
+            await asyncio.Event().wait()
+        if self.before_tick is not None:
+            self.before_tick(self.calls)
+
+
+class _NullWriter:
+    def write(self, data: bytes) -> None:
+        return None
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+async def test_mismatch_retries_and_adopts_after_pidfile_recovers(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    """A stale pidfile at start mismatches; the next health tick adopts in place."""
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    epoch = str(uuid.uuid4())
+    client = FakeControlClient(host_epoch=epoch, host_pid=4242)
+    write_pidfile(tmp_path, 1111)
+    host = _host(tmp_path, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
+
+    def pidfile_recovers(tick: int) -> None:
+        if tick == 1:
+            write_pidfile(tmp_path, 4242)
+
+    ticks = _Ticks(count=2, before_tick=pidfile_recovers)
+    host._sleep = ticks
+
+    await host.start()
+    assert host.adopted is False
+    assert host.native_available is False
+    assert host.host_epoch is None
+    assert host._health_task is not None, "a mismatch must arm the health loop"
+
+    await asyncio.wait_for(ticks.done.wait(), 5)
+    assert host.adopted is True
+    assert host.native_available is True
+    assert host.running is True
+    assert host.host_epoch == epoch
+    assert host.host_pid == 4242
+    assert host.host_mismatch is None
+    assert host.spawned_this_construction is False
+    await host.stop()
+
+
+async def test_mismatch_retry_never_spawns_second_host(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A mismatch persisting across ticks leaves the live host untouched."""
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.host_protocol import CONTROL_TOKEN_FILE_NAME, write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4242)
+    write_pidfile(tmp_path, 1111)
+    spawn_calls = {"n": 0}
+
+    def refuse_spawn() -> FakeHostProcess:
+        spawn_calls["n"] += 1
+        raise AssertionError("a live host must never be replaced")
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        terminal_config=TerminalConfig(),
+        terminal_manager=terminals,
+        run_manager=FakeRunManager(),
+        connector=_connector_for(client),
+        spawner=refuse_spawn,
+        pid_identity=lambda _pid: True,
+    )
+    token_before = host.ensure_control_token()
+    ticks = _Ticks(count=4)
+    host._sleep = ticks
+
+    with caplog.at_level(logging.WARNING):
+        await host.start()
+        await asyncio.wait_for(ticks.done.wait(), 5)
+
+    assert ticks.calls == 5, "four retries ran on the health interval"
+    assert spawn_calls["n"] == 0
+    assert host.adopted is False
+    assert host.spawned_this_construction is False
+    assert host.native_available is False
+    assert host.host_epoch is None
+    assert host.health_state()["host_mismatch"]
+    assert client.shutdown_calls == []
+    assert client.kill_calls == []
+    assert (tmp_path / CONTROL_TOKEN_FILE_NAME).read_text() == token_before, "no rotation"
+    reported = [r for r in caplog.records if "not adoptable" in r.getMessage()]
+    assert len(reported) == 1, "an unchanged mismatch is reported once, not every tick"
+    await host.stop()
+    assert client.shutdown_calls == []
+
+
+async def test_mismatch_warning_does_not_advise_draining_terminals(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4242)
+    write_pidfile(tmp_path, 1111)
+    host = _host(tmp_path, terminals, client, pid_ok=True)
+
+    with caplog.at_level(logging.WARNING):
+        await host.start()
+
+    messages = [r.getMessage() for r in caplog.records if "not adoptable" in r.getMessage()]
+    assert messages, caplog.text
+    for message in messages:
+        assert "stop --terminals" not in message
+        assert "retried" in message
+        assert "gobby restart" in message
+    await host.stop()
+
+
+async def test_stale_pidfile_at_start_recovers_without_restart(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    """The 2026-09-14 07:10 outage end to end, minus the daemon restart it needed."""
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    # welcome.bin carries host epoch "epoch-1"; the live host reports the same.
+    client = FakeControlClient(host_epoch="epoch-1", host_pid=4242)
+    write_pidfile(tmp_path, 1111)
+    host = _host(tmp_path, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
+
+    def pidfile_recovers(tick: int) -> None:
+        if tick == 1:
+            write_pidfile(tmp_path, 4242)
+
+    ticks = _Ticks(count=1, before_tick=pidfile_recovers)
+    host._sleep = ticks
+
+    await host.start()
+    assert host.adopted is False
+    assert host.host_epoch is None
+
+    await asyncio.wait_for(ticks.done.wait(), 5)
+    assert host.adopted is True
+    assert host.native_available is True
+    assert host.host_epoch == "epoch-1"
+
+    incoming = asyncio.StreamReader()
+    incoming.feed_data((_WIRE_GOLDEN / "welcome.bin").read_bytes())
+    frame = FrameClient(incoming, cast(Any, _NullWriter()))
+    locator = AttachLocator(backend="native", frame_host_epoch="epoch-1", host_terminal_id="ht-1")
+    await frame.handshake(locator, local_token="token")
+    assert frame.closed is False
+    await host.stop()

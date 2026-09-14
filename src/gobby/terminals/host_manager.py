@@ -105,7 +105,7 @@ class TerminalHostManager:
         self.last_error: str | None = None
         # A surviving host we could reach but not adopt (protocol, token, or
         # pid identity disagreed). It stays alive and untouched; native launches
-        # degrade until the operator drains it (#22002).
+        # degrade until a health tick adopts it (#22002, #22337).
         self.host_mismatch: str | None = None
         # Set once `stop(drain_host=True)` took the host down, so the child
         # reaper no longer holds its pid back.
@@ -189,18 +189,15 @@ class TerminalHostManager:
         try:
             outcome = await self._try_adopt()
             if outcome is _Adopt.ADOPTED:
-                self.native_available = True
-                self.running = True
-                self.last_error = None
-                await self.reconcile()
-                self._healthy_since = self._monotonic()
-                self._arm_events()
-                self._arm_health()
+                await self._activate_adopted()
                 return
             if outcome is _Adopt.MISMATCH:
                 # Never race a live host: no second spawn, no token rotation.
+                # The health loop re-probes it on its interval and adopts once
+                # pidfile, ping, and live identity agree again (#22337).
                 self.running = False
                 self.native_available = False
+                self._arm_health()
                 return
             await self._spawn_and_connect()
             self.native_available = True
@@ -214,6 +211,29 @@ class TerminalHostManager:
             self.native_available = False
             self.last_error = str(exc)
             logger.warning("gterm host unavailable; native launches degraded: %s", exc)
+
+    async def _activate_adopted(self) -> None:
+        """Bring an adopted host into service; shared by start and retry."""
+        self.native_available = True
+        self.running = True
+        self.last_error = None
+        await self.reconcile()
+        self._healthy_since = self._monotonic()
+        self._arm_events()
+        self._arm_health()
+
+    async def _retry_adoption(self) -> None:
+        """Re-probe a host that was alive but unadoptable at start (#22337).
+
+        Runs on the health interval with no client held. Adopts the host in
+        place once it matches; never spawns and never rotates the token.
+        """
+        try:
+            if await self._try_adopt() is _Adopt.ADOPTED:
+                logger.info("adopted gterm host pid %s after earlier mismatch", self.host_pid)
+                await self._activate_adopted()
+        except Exception as exc:
+            self.last_error = str(exc)
 
     async def stop(self, *, drain_host: bool = False) -> None:
         """Detach from the host; drain it only on explicit opt-in.
@@ -518,6 +538,7 @@ class TerminalHostManager:
             # Nobody is listening: a stale socket file, not a live host.
             self.last_error = str(exc)
             return _Adopt.ABSENT
+        previous_mismatch = self.host_mismatch
         self.host_mismatch = None
         try:
             hello, ping = await self._handshake(client)
@@ -539,12 +560,15 @@ class TerminalHostManager:
             await self._close_client(client)
             self.host_mismatch = str(exc)
             self.last_error = str(exc)
-            logger.warning(
-                "gterm host at %s is alive but not adoptable (%s); leaving it and its "
-                "terminals running. Drain it with `gobby stop --terminals` to replace it.",
-                socket_path,
-                exc,
-            )
+            if self.host_mismatch != previous_mismatch:
+                logger.warning(
+                    "gterm host at %s is alive but not adoptable (%s); leaving it and its "
+                    "terminals running. Adoption is retried every %ss; `gobby restart` "
+                    "re-probes immediately.",
+                    socket_path,
+                    exc,
+                    self.config.health_interval_seconds,
+                )
             return _Adopt.MISMATCH
         self._client = client
         self.host_epoch = ping.host_epoch or hello.host_epoch
@@ -892,6 +916,8 @@ class TerminalHostManager:
             await self._sleep(interval)
             client = self._client
             if client is None:
+                if self.host_mismatch is not None:
+                    await self._retry_adoption()
                 continue
             try:
                 ping = await client.ping()

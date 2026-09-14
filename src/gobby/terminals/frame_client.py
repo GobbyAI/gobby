@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import MAX_FRAME_SIZE
-from gobby.terminals.host_client import HostEpochChangedError
+from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
 from gobby.utils.local_token import local_token_path
 
 PROTOCOL_VERSION = 1
@@ -456,6 +456,11 @@ class FrameClient:
         cols: int = 80,
         rows: int = 24,
     ) -> None:
+        if not locator.frame_host_epoch:
+            # No adopted host means no epoch to verify a welcome against; report
+            # that rather than a change that never happened (#22337).
+            await self.close()
+            raise HostNotAdoptedError()
         token = local_token if local_token is not None else _read_local_cli_token()
         await self._send(
             {
