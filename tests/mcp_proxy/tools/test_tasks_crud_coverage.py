@@ -271,6 +271,7 @@ class TestUpdateTaskTool:
     @pytest.fixture(autouse=True)
     def _existing_task_has_contract(self, mock_task_manager: MagicMock) -> None:
         mock_task_manager.get_task.return_value = SimpleNamespace(
+            project_id="550e8400-e29b-41d4-a716-446655440100",
             task_type="task",
             category="research",
             validation_criteria="The requested task metadata is stored.",
@@ -677,14 +678,23 @@ class TestUpdateTaskTool:
     async def test_update_task_replaces_affected_files(self, mock_task_manager: MagicMock) -> None:
         registry = create_task_registry(mock_task_manager)
 
-        result = await registry.call(
-            "update_task",
-            {
-                "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "affected_files": ["src/a.py", "src/b.py"],
-            },
-        )
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._crud.targets_not_found_for_request", return_value=[]
+        ) as target_check:
+            result = await registry.call(
+                "update_task",
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "affected_files": ["src/a.py", "src/b.py"],
+                },
+            )
 
+        assert target_check.call_args.kwargs == {
+            "project_id": "550e8400-e29b-41d4-a716-446655440100",
+            "session_id": None,
+            "description": None,
+            "affected_files": ["src/a.py", "src/b.py"],
+        }
         mock_task_manager.update_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000",
             affected_files=["src/a.py", "src/b.py"],

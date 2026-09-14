@@ -148,6 +148,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         child_session_id="child-123",
         backend="none",
         pid=None,
+        retryable_infrastructure=False,
     )
     isolation_context = SimpleNamespace(
         worktree_id="worktree-123",

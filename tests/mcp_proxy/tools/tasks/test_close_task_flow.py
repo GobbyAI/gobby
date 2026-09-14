@@ -887,7 +887,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     async def spawn_validator(*_args: object, **_kwargs: object) -> dict[str, object]:
         spawn_started.set()
         await release_spawn.wait()
-        return {"success": True, "run_id": "validator-run"}
+        return {"success": True, "run_id": "00000000-0000-4000-8000-000000000778"}
 
     agent_registry = SimpleNamespace(call=AsyncMock(side_effect=spawn_validator))
     ctx = _ctx(task, validator=object(), agent_registry=agent_registry)
@@ -963,7 +963,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["review_id"] == "review-id"
-    assert result["validator_run_id"] == "validator-run"
+    assert result["validator_run_id"] == "00000000-0000-4000-8000-000000000778"
     assert result["criteria_review_duration_ms"] == 4.25
     assert pending_result["error"] == "agentic_review_pending"
     assert pending_result["review_id"] == "review-id"
@@ -971,7 +971,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     assert task.claimed_by_session_id == "00000000-0000-4000-8000-000000000301"
     cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
     assert store.create_or_get_active.call_count == 2
-    store.bind_run.assert_called_once_with("review-id", "validator-run")
+    store.bind_run.assert_called_once_with("review-id", "00000000-0000-4000-8000-000000000778")
     agent_registry.call.assert_awaited_once()
     prompt = agent_registry.call.await_args.args[1]["prompt"]
     assert 'changes_summary="Implemented and tested."' in prompt

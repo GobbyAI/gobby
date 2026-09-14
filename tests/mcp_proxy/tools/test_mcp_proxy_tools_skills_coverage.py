@@ -184,8 +184,11 @@ class TestGetSkill:
     async def test_get_skill_no_params(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("get_skill", {})
-        assert result["success"] is False
-        assert "required" in result["error"]
+        assert result == {
+            "success": False,
+            "error_code": "invalid_request",
+            "message": "Either name or skill_id is required",
+        }
 
     @pytest.mark.asyncio
     async def test_get_skill_by_name(self, mock_db: MagicMock) -> None:
@@ -205,8 +208,7 @@ class TestGetSkill:
 
         result = await registry.call("get_skill", {"skill_id": "skill-1"})
         assert result["success"] is True
-        assert result["skill"]["id"] == "skill-1"
-        assert result["skill"]["name"] == "test-skill"
+        assert result["skill"] == {"name": "test-skill", "content": "# Skill Content"}
         registry._mock_storage.get_skill_with_manifest.assert_called_once_with(
             skill_id="skill-1",
             name=None,
@@ -221,8 +223,11 @@ class TestGetSkill:
         registry._mock_storage.get_skill_with_manifest.return_value = None
 
         result = await registry.call("get_skill", {"name": "nope"})
-        assert result["success"] is False
-        assert "not found" in result["error"]
+        assert result == {
+            "success": False,
+            "error_code": "not_found",
+            "message": "Skill not found: nope",
+        }
 
     @pytest.mark.asyncio
     async def test_get_skill_records_usage(self, mock_db: MagicMock) -> None:
@@ -449,11 +454,11 @@ class TestUpdateSkill:
 
         registry = _create_registry(mock_db)
         registry._mock_storage.get_by_name.return_value = skill
-        registry._mock_updater.update_skill.return_value = update_result
+        registry._mock_updater.update_skill_async = AsyncMock(return_value=update_result)
 
         result = await registry.call("update_skill", {"name": "test-skill"})
-        assert result["success"] is True
-        assert result["updated"] is True
+        assert result == {"success": True, "updated": True, "skipped": False, "skip_reason": None}
+        registry._mock_updater.update_skill_async.assert_awaited_once_with("skill-1")
 
     @pytest.mark.asyncio
     async def test_update_with_error(self, mock_db: MagicMock) -> None:
@@ -463,10 +468,10 @@ class TestUpdateSkill:
 
         registry = _create_registry(mock_db)
         registry._mock_storage.get_by_name.return_value = skill
-        registry._mock_updater.update_skill.return_value = update_result
+        registry._mock_updater.update_skill_async = AsyncMock(return_value=update_result)
 
         result = await registry.call("update_skill", {"name": "test-skill"})
-        assert result["success"] is False
+        assert result == {"success": False, "error": "source not available"}
 
     @pytest.mark.asyncio
     async def test_update_not_found(self, mock_db: MagicMock) -> None:

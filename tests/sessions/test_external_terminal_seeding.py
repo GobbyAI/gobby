@@ -10,6 +10,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import ProjectOwnershipConflictError, TerminalManager
 from gobby.terminals.discovery import seed_external_terminal
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -108,12 +109,12 @@ def test_concurrent_and_replayed_discovery_is_idempotent(
 
 
 def test_cross_project_discovery_is_conflict_until_exit(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    isolated_checkout_factory: IsolatedCheckoutFactory,
 ) -> None:
-    from gobby.storage.projects import LocalProjectManager
-
     manager = _manager(temp_db)
-    other = LocalProjectManager(temp_db).create("other-project", "/tmp/other").id
+    other = isolated_checkout_factory(temp_db, "other-project").project.id
     generation = {
         "socket_path": _SOCKET,
         "server_pid": 1,

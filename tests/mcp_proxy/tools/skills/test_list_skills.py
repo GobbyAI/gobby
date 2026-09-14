@@ -592,7 +592,8 @@ async def test_exclusions_and_help_limit_span_catalog_pages(populated_db: HubDat
         source="custom",
         definition_json=(
             '{"name":"limited","prompts":{"agent":"Test discovery"},'
-            '"workflows":{"skill_selectors":{"include":[],"exclude":["name:code-*"]}}}'
+            '"workflows":{"rule_selectors":{"include":[]},'
+            '"skill_selectors":{"include":[],"exclude":["name:code-*"]}}}'
         ),
     )
     session = SessionManager(populated_db).register(
