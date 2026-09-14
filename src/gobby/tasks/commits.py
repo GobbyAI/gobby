@@ -693,7 +693,7 @@ async def unlinked_task_tagged_commits_async(
     The first list holds commits reachable from HEAD, the second those reachable
     only from other refs. Neither owner window applies: the scan starts at
     ``since`` (the task's creation) so a commit tagged for the task before its
-    current claim still surfaces (#21531). A failed log scans as empty.
+    current claim still surfaces (#21531). A failed log raises ``RuntimeError``.
     """
     task_filter = _resolve_task_filter(task_manager, task_id, project_id)
     if task_filter is None:

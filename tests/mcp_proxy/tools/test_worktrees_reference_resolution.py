@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -91,7 +91,9 @@ class TestPrefixRefsActOnTheMatchingWorktree:
     ) -> None:
         git_manager = MagicMock()
         git_manager.repo_path = "/tmp/repo"
-        git_manager.run_git_command.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        git_manager.run_git_command = AsyncMock(
+            return_value=MagicMock(returncode=0, stdout="", stderr="")
+        )
         registry = create_worktrees_registry(worktree_storage=storage, git_manager=git_manager)
 
         result = await registry.call("mark_worktree_merged", {"worktree_id": _PREFIX})

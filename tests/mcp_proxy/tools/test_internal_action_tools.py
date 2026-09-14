@@ -205,7 +205,8 @@ class TestSessionCaptureBaselineDirtyFiles:
     @pytest.mark.asyncio
     async def test_returns_dirty_files(self, session_registry) -> None:
         with patch(
-            "gobby.mcp_proxy.tools.sessions._actions.get_dirty_files",
+            "gobby.mcp_proxy.tools.sessions._actions.get_dirty_files_async",
+            new_callable=AsyncMock,
         ) as mock_fn:
             mock_fn.return_value = {"file1.py", "file2.py"}
             result = await session_registry.call(

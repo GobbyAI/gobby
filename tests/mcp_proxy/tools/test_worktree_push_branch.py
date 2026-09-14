@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_push_branch_pushes_worktree_branch_with_force_lease() -> None:
     git_manager = MagicMock()
-    git_manager.run_git_command.return_value = GitResult(0, stdout="ok")
+    git_manager.run_git_command = AsyncMock(return_value=GitResult(0, stdout="ok"))
     worktree_storage = MagicMock()
     worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
@@ -54,7 +54,7 @@ async def test_push_branch_pushes_worktree_branch_with_force_lease() -> None:
 @pytest.mark.asyncio
 async def test_push_branch_omits_force_lease_by_default() -> None:
     git_manager = MagicMock()
-    git_manager.run_git_command.return_value = GitResult(0, stdout="ok")
+    git_manager.run_git_command = AsyncMock(return_value=GitResult(0, stdout="ok"))
     worktree_storage = MagicMock()
     worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
@@ -101,7 +101,7 @@ async def test_push_branch_reports_missing_worktree() -> None:
 @pytest.mark.asyncio
 async def test_push_branch_returns_push_failure() -> None:
     git_manager = MagicMock()
-    git_manager.run_git_command.return_value = GitResult(1, stderr="rejected")
+    git_manager.run_git_command = AsyncMock(return_value=GitResult(1, stderr="rejected"))
     worktree_storage = MagicMock()
     worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
@@ -127,7 +127,7 @@ async def test_push_branch_returns_push_failure() -> None:
 @pytest.mark.asyncio
 async def test_push_branch_uses_custom_remote_and_source_branch() -> None:
     git_manager = MagicMock()
-    git_manager.run_git_command.return_value = GitResult(0, stdout="ok")
+    git_manager.run_git_command = AsyncMock(return_value=GitResult(0, stdout="ok"))
     worktree_storage = MagicMock()
     worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(

@@ -8,6 +8,7 @@ no-op when no plan artifact is recorded.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import threading
@@ -411,7 +412,10 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
 
 @pytest.mark.asyncio
 async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path) -> None:
-    from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import (
+        _spawn_background_tasks,
+        spawn_agent_impl,
+    )
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -472,6 +476,8 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
             isolation="none",
             daemon_config=daemon_config,
         )
+        # The spawn phase runs as a background task; finish it while execute_spawn is patched.
+        await asyncio.gather(*_spawn_background_tasks.values())
 
     assert result["success"] is True, result
     await_args = execute.await_args

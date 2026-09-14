@@ -79,8 +79,9 @@ async def test_remote_sessions_skipped() -> None:
             "gobby.sessions.machine_scope.get_machine_id",
             return_value=LOCAL_MACHINE_ID,
         ),
-        patch(
-            "gobby.sessions.summarize.Path.exists",
+        patch.object(
+            TranscriptReader,
+            "get_summary_records",
             side_effect=AssertionError("remote transcript was probed"),
         ),
     ):
@@ -140,8 +141,9 @@ async def test_on_demand_summary_refuses_remote_sessions() -> None:
             "gobby.sessions.machine_scope.get_machine_id",
             return_value=LOCAL_MACHINE_ID,
         ),
-        patch(
-            "gobby.sessions.summarize.Path.exists",
+        patch.object(
+            TranscriptReader,
+            "get_summary_records",
             side_effect=AssertionError("remote transcript was probed"),
         ),
     ):

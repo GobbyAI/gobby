@@ -1,6 +1,9 @@
 """Tests for commit linking and diff functionality."""
 
-from typing import cast
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -13,8 +16,25 @@ from gobby.tasks.commits import (
     resolve_task_tagged_commits,
     unlinked_task_tagged_commits,
 )
+from gobby.utils.daemon_git import GitFailed, GitOk
 
 pytestmark = pytest.mark.unit
+
+
+@contextmanager
+def _patch_git_log(**mock_kwargs: Any) -> Iterator[MagicMock]:
+    """Drive ``daemon_git.run`` from a mock returning ``git log`` stdout, or None to fail."""
+    mock_git = MagicMock(**mock_kwargs)
+
+    async def run(args: Sequence[str], *, cwd: str | Path, **_: Any) -> GitOk | GitFailed:
+        argv = ("git", *args)
+        stdout = mock_git(list(argv), cwd=cwd)
+        if stdout is None:
+            return GitFailed("failed", argv, 128, "", "fatal: git log failed")
+        return GitOk("ok", argv, stdout, "")
+
+    with patch("gobby.tasks.commits.daemon_git.run", side_effect=run):
+        yield mock_git
 
 
 class TestExtractTaskIdsFromMessage:
@@ -202,7 +222,7 @@ class TestAutoLinkCommits:
         mock_task.commits = []
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             # Mock git log output with commit mentioning task
             mock_git.return_value = f"abc123|Fix bug [{project_name}-#1]\ndef456|Unrelated commit\n"
 
@@ -221,7 +241,7 @@ class TestAutoLinkCommits:
         mock_task.commits = []
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = "abc123|[gobby-#1] commit\n"
 
             auto_link_commits(
@@ -245,7 +265,7 @@ class TestAutoLinkCommits:
         mock_task.commits = ["abc123"]  # Already linked
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = "abc123|[gobby-#1] existing commit\n"
 
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
@@ -273,7 +293,7 @@ class TestAutoLinkCommits:
 
         mock_task_manager.get_task.side_effect = get_task_side_effect
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = "abc123|[gobby-#1] first task\ndef456|Fixes gobby-#2\n"
 
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
@@ -285,7 +305,7 @@ class TestAutoLinkCommits:
         """Test that commits mentioning non-existent tasks are skipped."""
         mock_task_manager.get_task.side_effect = ValueError("Task not found")
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = "abc123|[gobby-#999] commit\n"
 
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
@@ -316,7 +336,7 @@ class TestAutoLinkCommits:
             task2.id: task2,
         }[task_id]
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = (
                 "abc123|[gobby-#1] first valid task\n"
                 "def456|[gobby-#999] removed task\n"
@@ -335,8 +355,8 @@ class TestAutoLinkCommits:
         assert result.skipped == 1
         assert result.skipped_refs == {"#999": ["def456"]}
         assert mock_task_manager.link_commit.call_args_list == [
-            call(task1.id, "abc123", cwd="/tmp/repo"),
-            call(task2.id, "fed987", cwd="/tmp/repo"),
+            call(task1.id, "abc123"),
+            call(task2.id, "fed987"),
         ]
 
     def test_returns_count_of_linked_commits(self, mock_task_manager: MagicMock) -> None:
@@ -346,7 +366,7 @@ class TestAutoLinkCommits:
         mock_task.commits = []
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = "abc123|[gobby-#1] commit 1\ndef456|Fixes gobby-#1\n"
 
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
@@ -362,7 +382,7 @@ class TestAutoLinkCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
-            patch("gobby.tasks.commits.run_git_command") as mock_git,
+            _patch_git_log() as mock_git,
         ):
             mock_git.return_value = (
                 "abc123|[gobby-#1] target task\ndef456|[gobby-#2] different task\n"
@@ -397,7 +417,7 @@ class TestAutoLinkCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
-            patch("gobby.tasks.commits.run_git_command") as mock_git,
+            _patch_git_log() as mock_git,
         ):
             mock_git.return_value = (
                 "bad111|[gobby-#999] removed task\ngood22|[gobby-#1] target task\n"
@@ -413,11 +433,7 @@ class TestAutoLinkCommits:
         assert result.skipped_refs == {"#999": ["bad111"]}
         assert result.linked_tasks == {"#1": ["good22"]}
         assert result.total_linked == 1
-        mock_task_manager.link_commit.assert_called_once_with(
-            "task-1",
-            "good22",
-            cwd="/tmp/repo",
-        )
+        mock_task_manager.link_commit.assert_called_once_with("task-1", "good22")
 
     def test_task_filter_reuses_resolved_task(self, mock_task_manager: MagicMock) -> None:
         task = MagicMock(id="task-1", seq_num=1, commits=[])
@@ -425,7 +441,7 @@ class TestAutoLinkCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
-            patch("gobby.tasks.commits.run_git_command", return_value="abc123|[gobby-#1] fix"),
+            _patch_git_log(return_value="abc123|[gobby-#1] fix"),
         ):
             result = auto_link_commits(
                 mock_task_manager,
@@ -448,10 +464,7 @@ class TestAutoLinkCommits:
             patch(
                 "gobby.tasks.commits._resolve_branch_for_task", return_value=None
             ) as resolve_branch,
-            patch(
-                "gobby.tasks.commits.run_git_command",
-                return_value="abc123|[gobby-#1] fix",
-            ),
+            _patch_git_log(return_value="abc123|[gobby-#1] fix"),
         ):
             result = auto_link_commits(
                 mock_task_manager,
@@ -473,7 +486,7 @@ class TestAutoLinkCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", return_value="feature"),
-            patch("gobby.tasks.commits.run_git_command") as mock_git,
+            _patch_git_log() as mock_git,
         ):
             mock_git.return_value = (
                 "old111|[gobby-#42] first\nskip22|[gobby-#43] other task\nnew333|Fixes gobby-#42\n"
@@ -508,7 +521,7 @@ class TestAutoLinkCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", return_value="wt-epic-gone"),
-            patch("gobby.tasks.commits.run_git_command") as mock_git,
+            _patch_git_log() as mock_git,
         ):
             # The epic's worktree row outlived its branch: the first log fails outright.
             mock_git.side_effect = [None, "head111|[gobby-#42] on the checkout\n"]
@@ -554,7 +567,7 @@ class TestAutoLinkCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
-            patch("gobby.tasks.commits.run_git_command") as mock_git,
+            _patch_git_log() as mock_git,
         ):
             mock_git.return_value = (
                 "f5d66e7|[gobby-#14205] docs: refresh worktree guide\n"
@@ -569,15 +582,11 @@ class TestAutoLinkCommits:
             )
 
             assert result.linked_tasks == {"#14205": ["f5d66e7"]}
-            mock_task_manager.link_commit.assert_called_once_with(
-                "task-uuid",
-                "f5d66e7",
-                cwd="/tmp/repo",
-            )
+            mock_task_manager.link_commit.assert_called_once_with("task-uuid", "f5d66e7")
 
     def test_handles_empty_git_log(self, mock_task_manager: MagicMock) -> None:
         """Test handling of empty git log output."""
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = ""
 
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo")
@@ -592,7 +601,7 @@ class TestAutoLinkCommits:
         mock_task.commits = ["abc123"]  # Already linked
         mock_task_manager.get_task.return_value = mock_task
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             mock_git.return_value = "abc123|[gobby-#1] already linked\n"
 
             result = auto_link_commits(mock_task_manager, cwd="/tmp/repo", project_name="gobby")
@@ -933,7 +942,7 @@ class TestUnlinkedTaskTaggedCommits:
 
         with (
             patch("gobby.tasks.commits._resolve_branch_for_task", branch_lookup),
-            patch("gobby.tasks.commits.run_git_command") as mock_git,
+            _patch_git_log() as mock_git,
         ):
             mock_git.side_effect = [
                 "aaa1111|[gobby-#42] linked\n"
@@ -961,12 +970,15 @@ class TestUnlinkedTaskTaggedCommits:
         ]
         branch_lookup.assert_not_called()
 
-    def test_failed_scan_reports_no_divergence(self) -> None:
+    def test_failed_scan_raises_instead_of_reporting_no_divergence(self) -> None:
         manager = MagicMock()
         manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
 
-        with patch("gobby.tasks.commits.run_git_command", return_value=None) as mock_git:
-            result = unlinked_task_tagged_commits(
+        with (
+            _patch_git_log(return_value=None) as mock_git,
+            pytest.raises(RuntimeError, match="git log unavailable"),
+        ):
+            unlinked_task_tagged_commits(
                 manager,
                 task_id="task-uuid",
                 since=self.SINCE,
@@ -976,14 +988,13 @@ class TestUnlinkedTaskTaggedCommits:
                 linked=[],
             )
 
-        assert result == ([], [])
-        assert mock_git.call_count == 2
+        assert mock_git.call_count == 1
 
     def test_unknown_task_skips_git(self) -> None:
         manager = MagicMock()
         manager.get_task.side_effect = TaskNotFoundError("missing")
 
-        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+        with _patch_git_log() as mock_git:
             result = unlinked_task_tagged_commits(
                 manager,
                 task_id="task-uuid",

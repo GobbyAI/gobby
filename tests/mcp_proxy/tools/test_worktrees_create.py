@@ -18,6 +18,11 @@ STORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 pytestmark = pytest.mark.unit
 
 
+def _canonical(path: str) -> str:
+    """Git calls receive the canonical checkout root (macOS resolves /tmp to /private/tmp)."""
+    return str(Path(path).expanduser().resolve())
+
+
 @pytest.fixture
 def mock_worktree_storage() -> MagicMock:
     return MagicMock()
@@ -79,7 +84,7 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
     assert result["worktree_path"] == "/tmp/wt/feature-test"
     assert result["event"]["event_type"] == "worktree_created"
     mock_git_manager.create_worktree.assert_called_once_with(
-        worktree_path="/tmp/wt/feature-test",
+        worktree_path=_canonical("/tmp/wt/feature-test"),
         branch_name="feature/test",
         base_branch="main",
         create_branch=True,
@@ -407,7 +412,7 @@ async def test_invalid_task_cleanup_preserves_preexisting_branch(
 
     assert result["success"] is False
     mock_git_manager.delete_worktree.assert_called_once_with(
-        "/tmp/wt/existing",
+        _canonical("/tmp/wt/existing"),
         force=True,
         delete_branch=False,
         force_delete_branch=False,
@@ -434,7 +439,7 @@ async def test_database_failure_cleanup_preserves_preexisting_branch(
 
     assert result["success"] is False
     mock_git_manager.delete_worktree.assert_called_once_with(
-        "/tmp/wt/existing",
+        _canonical("/tmp/wt/existing"),
         force=True,
         delete_branch=False,
         force_delete_branch=False,
@@ -532,7 +537,7 @@ async def test_create_worktree_use_local_explicit(
     )
     assert result["success"] is True
     mock_git_manager.create_worktree.assert_called_once_with(
-        worktree_path="/tmp/wt/feature-local",
+        worktree_path=_canonical("/tmp/wt/feature-local"),
         branch_name="feature/local",
         base_branch="develop",
         create_branch=True,
@@ -572,7 +577,7 @@ async def test_create_worktree_auto_detects_unpushed(
     assert result["success"] is True
     mock_git_manager.has_unpushed_commits.assert_called_once_with("main")
     mock_git_manager.create_worktree.assert_called_once_with(
-        worktree_path="/tmp/wt/feature-auto-local",
+        worktree_path=_canonical("/tmp/wt/feature-auto-local"),
         branch_name="feature/auto-local",
         base_branch="main",
         create_branch=True,
@@ -613,7 +618,7 @@ async def test_create_worktree_no_unpushed_uses_remote(
     assert result["success"] is True
     mock_git_manager.has_unpushed_commits.assert_called_once_with("main")
     mock_git_manager.create_worktree.assert_called_once_with(
-        worktree_path="/tmp/wt/feature-remote",
+        worktree_path=_canonical("/tmp/wt/feature-remote"),
         branch_name="feature/remote",
         base_branch="main",
         create_branch=True,

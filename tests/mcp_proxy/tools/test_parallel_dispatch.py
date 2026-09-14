@@ -8,12 +8,13 @@ Tests for:
 """
 
 import asyncio
-import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+
+from gobby.utils.daemon_git import GitFailed, GitOk
 
 pytestmark = pytest.mark.unit
 
@@ -566,9 +567,23 @@ class TestUpdateObservedFiles:
     def _make_ctx(self) -> MagicMock:
         ctx = MagicMock()
         ctx.task_manager = MagicMock()
+        ctx.get_project_repo_path.return_value = "/repo"
         return ctx
 
-    def test_no_commits_returns_empty(self) -> None:
+    @staticmethod
+    def _diff_tree(files_by_sha: dict[str, str] | None) -> AsyncMock:
+        """Fake ``daemon_git.run``: diff-tree stdout per commit, or None to fail every call."""
+
+        def run(args: Sequence[str], **_kwargs: object) -> GitOk | GitFailed:
+            argv = ("git", *args)
+            if files_by_sha is None:
+                return GitFailed("failed", argv, 128, "", "fatal: bad object")
+            return GitOk("ok", argv, files_by_sha[args[-1]], "")
+
+        return AsyncMock(side_effect=run)
+
+    @pytest.mark.asyncio
+    async def test_no_commits_returns_empty(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
 
         ctx = self._make_ctx()
@@ -584,13 +599,14 @@ class TestUpdateObservedFiles:
         ):
             registry = create_core_affected_files_registry(ctx)
             update_obs = _require_tool(registry, "update_observed_files")
-            result = update_obs(task_id="task-1")
+            result = await update_obs(task_id="task-1")
 
         assert result["commits_processed"] == 0
         assert result["files_observed"] == 0
         assert result["files"] == []
 
-    def test_commits_produce_file_annotations(self) -> None:
+    @pytest.mark.asyncio
+    async def test_commits_produce_file_annotations(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
 
         ctx = self._make_ctx()
@@ -599,6 +615,8 @@ class TestUpdateObservedFiles:
         task.id = "task-1"
         task.commits = ["abc123", "def456"]
         ctx.task_manager.get_task.return_value = task
+        # First commit changes 2 files, second changes 1 (with overlap)
+        git_run = self._diff_tree({"abc123": "src/a.py\nsrc/b.py", "def456": "src/b.py\nsrc/c.py"})
 
         with (
             patch(
@@ -608,24 +626,11 @@ class TestUpdateObservedFiles:
             patch(
                 "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
             ) as affected_file_manager_cls,
-            patch("subprocess.run") as mock_run,
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.daemon_git.run", git_run),
         ):
-            # First commit changes 2 files, second changes 1 (with overlap)
-            def run_side(cmd: list[str], **kwargs: Any) -> MagicMock:
-                sha = cmd[-1]
-                result = MagicMock()
-                result.returncode = 0
-                if sha == "abc123":
-                    result.stdout = "src/a.py\nsrc/b.py"
-                else:
-                    result.stdout = "src/b.py\nsrc/c.py"
-                return result
-
-            mock_run.side_effect = run_side
-
             registry = create_core_affected_files_registry(ctx)
             update_obs = _require_tool(registry, "update_observed_files")
-            result = update_obs(task_id="task-1")
+            result = await update_obs(task_id="task-1")
 
         affected_file_manager_cls.return_value.set_files.assert_called_once_with(
             "task-1",
@@ -637,7 +642,7 @@ class TestUpdateObservedFiles:
         assert sorted(result["files"]) == ["src/a.py", "src/b.py", "src/c.py"]
 
     @pytest.mark.asyncio
-    async def test_registry_call_offloads_git_subprocess(self) -> None:
+    async def test_registry_call_runs_diff_tree_through_daemon_git(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
 
         ctx = self._make_ctx()
@@ -646,17 +651,8 @@ class TestUpdateObservedFiles:
         task.project_id = "project-1"
         task.commits = ["abc123"]
         ctx.task_manager.get_task.return_value = task
-        ctx.get_project_repo_path.return_value = "/repo"
         affected_files = MagicMock()
-        event_loop_thread = threading.get_ident()
-        subprocess_threads: list[int] = []
-
-        def run_side(*_args: object, **_kwargs: object) -> MagicMock:
-            subprocess_threads.append(threading.get_ident())
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = "src/a.py"
-            return result
+        git_run = self._diff_tree({"abc123": "src/a.py"})
 
         with (
             patch(
@@ -667,17 +663,28 @@ class TestUpdateObservedFiles:
                 "gobby.mcp_proxy.tools.tasks._affected_files.resolve_task_id_for_mcp",
                 return_value="task-1",
             ),
-            patch("subprocess.run", side_effect=run_side),
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.daemon_git.run", git_run),
         ):
             registry = create_core_affected_files_registry(ctx)
             result = await registry.call("update_observed_files", {"task_id": "task-1"})
 
-        assert result["files"] == ["src/a.py"]
-        assert len(subprocess_threads) == 1
-        assert subprocess_threads[0] != event_loop_thread
+        assert result == {
+            "task_id": "task-1",
+            "commits_processed": 1,
+            "files_observed": 1,
+            "files": ["src/a.py"],
+        }
+        assert git_run.await_args_list == [
+            call(
+                ("diff-tree", "--no-commit-id", "--name-only", "-r", "abc123"),
+                cwd="/repo",
+                timeout=10,
+            )
+        ]
         affected_files.set_files.assert_called_once_with("task-1", ["src/a.py"], "observed")
 
-    def test_invalid_task_id_returns_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_invalid_task_id_returns_error(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
         from gobby.storage.tasks import TaskNotFoundError
 
@@ -689,11 +696,12 @@ class TestUpdateObservedFiles:
         ):
             registry = create_core_affected_files_registry(ctx)
             update_obs = _require_tool(registry, "update_observed_files")
-            result = update_obs(task_id="nonexistent")
+            result = await update_obs(task_id="nonexistent")
 
         assert "error" in result
 
-    def test_git_failure_handled_gracefully(self) -> None:
+    @pytest.mark.asyncio
+    async def test_git_failure_handled_gracefully(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
 
         ctx = self._make_ctx()
@@ -708,16 +716,15 @@ class TestUpdateObservedFiles:
                 "gobby.mcp_proxy.tools.tasks._affected_files.resolve_task_id_for_mcp",
                 return_value="task-1",
             ),
-            patch("subprocess.run") as mock_run,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.daemon_git.run",
+                self._diff_tree(None),
+            ),
         ):
-            result_mock = MagicMock()
-            result_mock.returncode = 128  # git error
-            result_mock.stdout = ""
-            mock_run.return_value = result_mock
-
             registry = create_core_affected_files_registry(ctx)
             update_obs = _require_tool(registry, "update_observed_files")
-            result = update_obs(task_id="task-1")
+            result = await update_obs(task_id="task-1")
 
         assert result["commits_processed"] == 0
         assert result["files_observed"] == 0
+        assert result["error"] == "Git is unavailable while inspecting commit abc123"
