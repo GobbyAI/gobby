@@ -18,7 +18,7 @@ from gobby.terminals.frame_client import (
     decode_frame,
     encode_frame,
 )
-from gobby.terminals.host_client import HostEpochChangedError
+from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
 
 pytestmark = pytest.mark.unit
 
@@ -282,3 +282,56 @@ async def test_handshake_failure_names_the_host_error_code() -> None:
         await client.handshake(locator, local_token="token")
 
     assert "stale" in str(failure.value)
+
+
+class _RecordingWriter:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+async def test_handshake_without_adopted_epoch_reports_not_adopted() -> None:
+    """No adopted epoch is reported as such, before any hello is sent (#22337)."""
+    incoming = asyncio.StreamReader()
+    incoming.feed_data(_golden("welcome.bin"))
+    writer = _RecordingWriter()
+    client = FrameClient(incoming, cast(Any, writer))
+    locator = AttachLocator(backend="native", frame_host_epoch="", host_terminal_id="ht-1")
+
+    with pytest.raises(HostNotAdoptedError) as failure:
+        await client.handshake(locator, local_token="token")
+
+    assert not isinstance(failure.value, HostEpochChangedError)
+    assert str(failure.value) == "host_not_adopted"
+    assert failure.value.detail == "gterm host not adopted"
+    assert writer.writes == [], "nothing was sent to the host"
+    assert writer.closed is True
+    assert client.attached is False
+
+
+async def test_handshake_with_changed_epoch_still_raises_host_epoch_changed() -> None:
+    """A genuine epoch change keeps its own type, so the two stay distinguishable."""
+    incoming = asyncio.StreamReader()
+    incoming.feed_data(_golden("welcome.bin"))
+    writer = _RecordingWriter()
+    client = FrameClient(incoming, cast(Any, writer))
+    locator = AttachLocator(backend="native", frame_host_epoch="epoch-old", host_terminal_id="ht-1")
+
+    with pytest.raises(HostEpochChangedError) as failure:
+        await client.handshake(locator, local_token="token")
+
+    assert not isinstance(failure.value, HostNotAdoptedError)
+    assert writer.writes, "the hello went out and the welcome epoch was compared"
+    assert writer.closed is True

@@ -59,6 +59,14 @@ class HostConnectionLost(HostUnavailableError):
     """The active control connection ended while requests were pending."""
 
 
+class HostNotAdoptedError(HostUnavailableError):
+    """The daemon holds no adopted host epoch, so nothing can be verified against one."""
+
+    def __init__(self, message: str = "gterm host not adopted") -> None:
+        HostCommandError.__init__(self, "host_not_adopted", detail=message)
+        self.message = message
+
+
 class CommitTransportError(HostUnavailableError):
     """Transport failure while committing, with an explicit write boundary."""
 
@@ -646,6 +654,7 @@ __all__ = [
     "HostDecodeError",
     "HostEpochChangedError",
     "HostManagerStopped",
+    "HostNotAdoptedError",
     "HostUnavailableError",
     "decode_control_line",
     "encode_control_line",

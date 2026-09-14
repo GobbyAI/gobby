@@ -22,6 +22,7 @@ from gobby.terminals.host_client import (
     HostDecodeError,
     HostEpochChangedError,
     HostManagerStopped,
+    HostNotAdoptedError,
     HostUnavailableError,
     encode_control_line,
 )
@@ -81,6 +82,8 @@ def classify_native_spawn_failure(
         return "host_stopped", exc.detail, "fail_pending"
     if isinstance(exc, HostEpochChangedError):
         return "host_epoch_changed", str(exc), "fail_pending"
+    if isinstance(exc, HostNotAdoptedError):
+        return "host_not_adopted", exc.detail, "fail_pending"
     if isinstance(exc, CommitTransportError):
         if exc.request_written:
             return "commit_indeterminate", exc.detail, "pending"
@@ -681,7 +684,9 @@ class NativeTerminalRuntime:
         directory = self._socket_dir()
         return AttachLocator(
             backend="native",
-            frame_host_epoch=str(terminal.host_epoch or getattr(self._client, "host_epoch", "")),
+            frame_host_epoch=str(
+                terminal.host_epoch or getattr(self._client, "host_epoch", "") or ""
+            ),
             host_socket=None if directory is None else str(frames_socket_path(directory)),
             host_terminal_id=None if host_id is None else str(host_id),
         )
@@ -745,6 +750,8 @@ class NativeTerminalRuntime:
         if not expected_epoch:
             raise HostEpochChangedError("host_epoch_changed")
         current_epoch = str(getattr(self._client, "host_epoch", "") or "")
+        if not current_epoch:
+            raise HostNotAdoptedError()
         if current_epoch != expected_epoch:
             raise HostEpochChangedError("host_epoch_changed")
         return expected_epoch
