@@ -37,7 +37,7 @@ def _mock_sync_targets(*, changed_target: str | None = None) -> ExitStack:
 
 def test_returned_diagnostics_reach_fanout_and_logs(caplog: pytest.LogCaptureFixture) -> None:
     warning = (
-        "tasks[custom].additional_skills: user-owned requirement preserved; "
+        "tasks[custom].additional_skills: runtime requirement preserved; "
         "replace tasks -> gobby:references/tasks/overview.md"
     )
     with (

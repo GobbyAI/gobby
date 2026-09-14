@@ -416,8 +416,13 @@ async def _drain_hook_inbox_once_locked(
     *,
     include_fresh: bool = False,
     restart_horizon_ms: int | None = None,
+    on_hook_settled: Callable[[], None] | None = None,
 ) -> int:
-    """Replay pending envelopes while the app-scoped drain lock is held."""
+    """Replay pending envelopes while the app-scoped drain lock is held.
+
+    ``on_hook_settled`` observes each hook envelope the pass settles. Delivery
+    receipts are bookkeeping, not replay progress, and never reach it.
+    """
     pending_dir = inbox_dir or get_hook_inbox_dir()
     if not pending_dir.exists():
         return 0
@@ -437,6 +442,13 @@ async def _drain_hook_inbox_once_locked(
         return 0
 
     replayed = 0
+
+    def hook_settled() -> None:
+        nonlocal replayed
+        replayed += 1
+        if on_hook_settled is not None:
+            on_hook_settled()
+
     processed_dir = get_processed_envelope_dir(pending_dir)
     for path in pending_files:
         envelope_id = envelope_id_from_inbox_path(path)
@@ -474,7 +486,7 @@ async def _drain_hook_inbox_once_locked(
                 reason="below_floor_response_capability",
                 detail="request-carried response_capability is below hook-response.v1",
             )
-            replayed += 1
+            hook_settled()
             continue
 
         hook_manager = getattr(getattr(app, "state", None), "hook_manager", None)
@@ -528,7 +540,7 @@ async def _drain_hook_inbox_once_locked(
                     reason="missing_envelope_id",
                     detail="Replay succeeded but the file name carries no envelope ID",
                 )
-                replayed += 1
+                hook_settled()
                 continue
 
             mark_envelope_processed(envelope_id, processed_dir=processed_dir)
@@ -542,10 +554,10 @@ async def _drain_hook_inbox_once_locked(
                     processed_dir=processed_dir,
                 ),
             ):
-                replayed += 1
+                hook_settled()
                 continue
             path.unlink(missing_ok=True)
-            replayed += 1
+            hook_settled()
             continue
 
         if response.status_code == 409:
@@ -587,6 +599,7 @@ async def _replay_inbox_holding_lock(
     lock: asyncio.Lock,
     pending_dir: Path,
     restart_horizon_ms: int | None = None,
+    on_hook_settled: Callable[[], None] | None = None,
 ) -> int:
     """Run one replay pass over an acquired drain lock and release it after."""
     try:
@@ -595,6 +608,7 @@ async def _replay_inbox_holding_lock(
             pending_dir,
             include_fresh=True,
             restart_horizon_ms=restart_horizon_ms,
+            on_hook_settled=on_hook_settled,
         )
     finally:
         lock.release()
@@ -663,18 +677,30 @@ async def drain_hook_inbox_barrier(
     poll_interval_seconds: float = 0.05,
     restart_horizon_ms: int | None = None,
 ) -> HookInboxBarrierResult:
-    """Replay crash-window envelopes before agent restart classification."""
+    """Replay crash-window envelopes before agent restart classification.
+
+    ``timeout_seconds`` bounds the wait without replay progress. Downtime
+    residue replays serially, so a healthy backlog can outlast any fixed
+    budget: each hook envelope the replay settles restarts the budget, while a
+    stalled replay or a held drain lock still times out.
+    """
     pending_dir = inbox_dir or get_hook_inbox_dir()
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    budget = max(0.0, timeout_seconds)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget
     replayed = 0
     lock = _get_hook_inbox_drain_lock(app)
+
+    def hook_settled() -> None:
+        nonlocal replayed
+        replayed += 1
 
     # The timeout bounds how long this caller waits, never a replay: a
     # cancelled replay would leave the envelope's processing lease live and
     # every later replay refused as a duplicate. Each replay runs in its own
     # task that owns the lock until it finishes, so a timed-out barrier
     # leaves it running and a later barrier waits on the lock.
-    timeout = asyncio.timeout(max(0.0, timeout_seconds))
+    timeout = asyncio.timeout_at(deadline)
     try:
         async with timeout:
             while True:
@@ -685,9 +711,20 @@ async def drain_hook_inbox_barrier(
                         lock,
                         pending_dir,
                         restart_horizon_ms=restart_horizon_ms,
+                        on_hook_settled=hook_settled,
                     )
                 )
-                replayed += await asyncio.shield(replay)
+                observed = replayed
+                while not replay.done():
+                    # wait() leaves the replay running when this barrier is cancelled.
+                    await asyncio.wait((replay,), timeout=poll_interval_seconds)
+                    if replayed != observed:
+                        # Only this task moves the deadline, and only while armed:
+                        # an expired timeout cancels the wait above first.
+                        observed = replayed
+                        deadline = loop.time() + budget
+                        timeout.reschedule(deadline)
+                replay.result()
                 pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
                 residue, _live_hooks, _receipts = _classify_inbox_files(
                     pending_files, restart_horizon_ms
@@ -699,7 +736,7 @@ async def drain_hook_inbox_barrier(
                         pending_files=pending_files,
                         restart_horizon_ms=restart_horizon_ms,
                     )
-                if time.monotonic() >= deadline:
+                if loop.time() >= deadline:
                     break
                 await asyncio.sleep(poll_interval_seconds)
     except TimeoutError:

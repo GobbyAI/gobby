@@ -1,5 +1,6 @@
 """Isolated storage coverage for retirement-time instruction migration."""
 
+import logging
 from typing import Any
 from unittest.mock import patch
 
@@ -277,3 +278,58 @@ def test_runtime_requirements_are_reported_without_rewriting_history(
             instance.id in warning and field in warning and "development-discipline ->" in warning
             for warning in result.warnings
         )
+
+
+def test_repeated_bundled_sync_skips_step_instances_past_revival_horizon(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sessions past the revival horizon never run again, so restarts stay silent for them."""
+    from gobby.sync_registry import sync_bundled_content_to_db
+    from gobby.utils.machine_id import require_machine_id
+    from gobby.workflows.agent_models import AgentStepWorkflowBody
+    from gobby.workflows.definitions import WorkflowStep
+    from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
+
+    agent = make_agent_definition(
+        name="runtime-fixture",
+        prompts={"agent": "Task instructions"},
+        step_workflow=AgentStepWorkflowBody(
+            variables={"required_skills": ["development-discipline"]},
+            steps=[WorkflowStep(name="work")],
+        ),
+    )
+    instances = AgentStepInstanceManager(temp_db)
+    session_ids: dict[str, str] = {}
+    for label, expired_for in (("dead", "25 hours"), ("revivable", "23 hours")):
+        session = session_manager.register(
+            external_id=f"reference-migration-{label}",
+            machine_id=require_machine_id(),
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        instances.save(build_step_instance(agent, session_id=session.id, step_workflow_id=None))
+        temp_db.execute(
+            "UPDATE sessions SET status = 'expired', updated_at = NOW() - %s::interval "
+            "WHERE id = %s",
+            (expired_for, session.id),
+        )
+        session_ids[label] = session.id
+
+    with caplog.at_level(logging.WARNING):
+        first = sync_bundled_content_to_db(temp_db, only={"skills"})
+        second = sync_bundled_content_to_db(temp_db, only={"skills"})
+
+    assert first["errors"] == []
+    assert second["errors"] == []
+    messages = [record.getMessage() for record in caplog.records]
+    assert [message for message in messages if session_ids["dead"] in message] == []
+    # A revivable session can still load its requirements: both starts report it.
+    revivable = [message for message in messages if session_ids["revivable"] in message]
+    assert len(revivable) == 4
+    assert all(
+        "runtime requirement preserved; replace development-discipline ->" in message
+        for message in revivable
+    )
