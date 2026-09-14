@@ -71,6 +71,9 @@ reasoning, context, and fact provenance. Rows are keyed by
 `(provider, canonical_model)` because the same model can expose different
 capabilities through different providers. `CapabilityResolver` matches the
 canonical ID or an explicit alias; it does not infer facts from model names.
+`spawn_agent` and `evaluate_spawn` reuse `CapabilityResolver.find_model` on
+those snapshots to reject an incompatible pair before allocating a terminal or
+worktree. When `model` is supplied, `provider` must be explicit.
 
 `GET /api/providers/models` returns this envelope for matrix-backed providers:
 

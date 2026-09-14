@@ -341,34 +341,38 @@ def create_spawn_agent_registry(
         write_paths_reason: str | None = None,
     ) -> dict[str, Any]:
         """
-                Spawn a subagent with the specified configuration.
+        Spawn a subagent with the specified configuration.
 
-                Args:
-                    prompt: Required - what the agent should do
-                    agent: Agent definition name (defaults to "default")
-                    task_id: Optional - link to task (supports N, #N, UUID)
-                    allow_closed_task: Permit spawning against a closed, non-escalated
-                        task for read-only review work (no auto-claim occurs)
-                    isolation: Isolation mode (none/worktree/clone)
-                    branch_name: Git branch name (auto-generated from task if not provided)
-                    base_branch: Base branch for worktree/clone
-                    clone_id: Existing clone ID to reuse
-                    worktree_id: Existing worktree ID to reuse
-                    cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
-                    workflow: Workflow/pipeline to use
-        provider: AI provider (claude/grok/qwen/codex/droid/agy)
-                    model: Model to use
-                    reasoning_effort: Optional reasoning override for supported providers/models
-                    reasoning_required: Fail instead of warning when requested reasoning is unsupported
-                    timeout: Timeout in seconds
-                    parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
-                    project_path: Project path override
-                    extra_write_paths: Explicit external directories authorized for this run
-                    write_paths_reason: Required authorization reason for nonempty external roots
-                    notify_parent_on_completion: Whether to notify the parent when the agent completes
+        Args:
+            prompt: Required - what the agent should do
+            agent: Agent definition name (defaults to "default")
+            task_id: Optional - link to task (supports N, #N, UUID)
+            allow_closed_task: Permit spawning against a closed, non-escalated
+                task for read-only review work (no auto-claim occurs)
+            isolation: Isolation mode (none/worktree/clone)
+            branch_name: Git branch name (auto-generated from task if not provided)
+            base_branch: Base branch for worktree/clone
+            clone_id: Existing clone ID to reuse
+            worktree_id: Existing worktree ID to reuse
+            cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
+            workflow: Workflow/pipeline to use
+            provider: Required when model is supplied. Otherwise resolved from
+                the agent definition, then the spawning session (explicit
+                argument always wins).
+            model: Model to use. When set, provider must be explicit and the
+                pair is checked against the provider capability matrix before
+                any terminal or worktree is allocated.
+            reasoning_effort: Optional reasoning override for supported providers/models
+            reasoning_required: Fail instead of warning when requested reasoning is unsupported
+            timeout: Timeout in seconds
+            parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
+            project_path: Project path override
+            extra_write_paths: Explicit external directories authorized for this run
+            write_paths_reason: Required authorization reason for nonempty external roots
+            notify_parent_on_completion: Whether to notify the parent when the agent completes
 
-                Returns:
-                    Dict with success status, run_id, child_session_id, isolation metadata
+        Returns:
+            Dict with success status, run_id, child_session_id, isolation metadata
         """
         # Resolve parent_session_id to UUID (accepts #N, N, UUID, or prefix)
         resolved_parent_session_id = parent_session_id

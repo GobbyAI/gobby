@@ -161,7 +161,7 @@ class CapabilityResolver:
         if route_value is not None:
             return ContextResolution(route_value, ContextSource.ROUTE_OVERRIDE)
 
-        capability = self._find_model(provider, model)
+        capability = self.find_model(provider, model)
         matrix_value = positive_context_window(
             capability.context_length if capability is not None else None
         )
@@ -212,7 +212,7 @@ class CapabilityResolver:
             # there is nothing to look up or verify.
             return ReasoningResolution(requested, None, ReasoningStatus.VERIFIED, None)
 
-        capability = self._find_model(provider, model)
+        capability = self.find_model(provider, model)
         if capability is not None and capability.reasoning is ReasoningSupport.UNSUPPORTED:
             return self._reject_reasoning(requested, "model does not support reasoning effort")
         if not transport_supports_effort:
@@ -244,7 +244,8 @@ class CapabilityResolver:
             return self._reject_reasoning(requested, f"unsupported reasoning effort: {requested}")
         return ReasoningResolution(requested, requested, ReasoningStatus.VERIFIED, None)
 
-    def _find_model(self, provider: str, model: str) -> ModelCapability | None:
+    def find_model(self, provider: str, model: str) -> ModelCapability | None:
+        """Return the provider snapshot row for ``model``, if the catalog has one."""
         snapshot = self._store.get_provider_snapshot(provider)
         if snapshot is None:
             return None
@@ -256,6 +257,14 @@ class CapabilityResolver:
             ),
             None,
         )
+
+    def has_provider_catalog(self, provider: str) -> bool:
+        """Return whether a capability snapshot is loaded for ``provider``."""
+        return self._store.get_provider_snapshot(provider) is not None
+
+    def providers_for_model(self, model: str, providers: tuple[str, ...]) -> tuple[str, ...]:
+        """Return providers in ``providers`` whose snapshot lists ``model``."""
+        return tuple(name for name in providers if self.find_model(name, model) is not None)
 
     def _find_reasoning_metadata(self, provider: str, model: str) -> _ReasoningMetadata | None:
         metadata = self._model_metadata_store.get_model_metadata(model)

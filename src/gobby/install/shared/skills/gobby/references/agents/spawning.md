@@ -3,8 +3,10 @@
 Load when authorized work calls for a Gobby-managed worker or batch. Inspect the
 installed spawn-capable definition, assigned task, parent session, and workspace
 before launching. `gobby-agents:can_spawn_agent` checks capacity/depth eligibility;
-`evaluate_spawn` offers a dry run of supported launch fields. Neither reserves
-capacity nor proves a later launch will succeed.
+`evaluate_spawn` offers a dry run of supported launch fields, including `model`.
+Neither reserves capacity nor proves a later launch will succeed. Supplying
+`model` requires an explicit `provider`; an incompatible pair is rejected
+before any terminal or worktree is created.
 
 Fetch `spawn_agent`'s schema. Supply a bounded prompt with deliverable, paths,
 constraints, and validation; use the existing task and explicit parent/workspace
