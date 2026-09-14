@@ -557,10 +557,11 @@ class EnforcementCheckMixin:
                     reason = self._record_enforcement_denial(
                         session_id=session_id,
                         rule="step-end-agent-run-blockers",
-                        target=f"mcp:{mcp_key}",
+                        target=f"mcp:{mcp_key.casefold()}",
                         reason=(
+                            f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             "An exit outside the exit step must list blockers. "
-                            f"Provide blockers to end the run from step '{step.name}'."
+                            f"Call `end_agent_run` with `blockers` from step '{step.name}'."
                         ),
                         step=step,
                         instance=instance,

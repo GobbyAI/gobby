@@ -1308,7 +1308,7 @@ class TestSendMessage:
         assert args[1][2] == "run-child"
 
     @pytest.mark.asyncio
-    async def test_interactive_send_message_to_parent(
+    async def test_interactive_send_message_to_parent_is_rejected(
         self,
         messaging_registry: InternalToolRegistry,
         mock_session_manager: MagicMock,
@@ -1325,8 +1325,9 @@ class TestSendMessage:
             result = await messaging_registry.call(
                 "send_message", {"target": "parent", "content": "status"}
             )
-        assert result["success"] is True
-        assert mock_message_manager.create_message.call_args.kwargs["to_session"] == "s-parent"
+        assert result["success"] is False
+        assert "only available to spawned agent sessions" in result["error"]
+        mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_spawned_agent_send_message_rejects_spoofed_sender(

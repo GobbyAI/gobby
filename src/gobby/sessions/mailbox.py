@@ -269,6 +269,10 @@ class MailboxService:
             sender = self._session_manager.get(from_session_id)
             if sender is None:
                 raise ValueError("Sender session not found")
+            # parent_session_id is lineage: an interactive session's parent is the
+            # clear predecessor it continues, which can resolve back to the sender.
+            if not (sender.agent_run_id or sender.agent_depth):
+                raise ValueError("target='parent' is only available to spawned agent sessions")
             if not sender.parent_session_id:
                 raise ValueError("Sender session has no parent")
             recipient_id = self._validate_direct_recipient(

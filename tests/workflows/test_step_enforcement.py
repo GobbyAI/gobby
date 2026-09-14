@@ -17,6 +17,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name, is_gobby_call_tool
+from gobby.workflows.engine.blocked_tool_recovery import extract_rule_name
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
@@ -2798,6 +2799,7 @@ async def test_end_agent_run_outside_exit_step_requires_blockers(
     response = await engine.evaluate(_end_agent_run_event(), session_id=SESSION_ID, variables={})
     assert response.decision == "block"
     assert "must list blockers" in (response.reason or "")
+    assert extract_rule_name(response.reason) == "step-enforcement:developer-workflow/claim"
 
 
 @pytest.mark.asyncio
