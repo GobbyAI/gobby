@@ -177,9 +177,16 @@ def evaluate_validation_commands(
     elif task_category in _TEST_REQUIRED_CATEGORIES:
         relevant = [record for record in records if "test" in record["categories"]]
     nearest = relevant[0] if relevant else None
-    details = {**gate.details, "excluded_runs": records[:16], "nearest_observed_run": nearest}
+    excluded_runs = [_bound_diagnostic_record(record) for record in records[:16]]
+    nearest_observed = None if nearest is None else _bound_diagnostic_record(nearest)
+    details = {
+        **gate.details,
+        "excluded_runs": excluded_runs,
+        "nearest_observed_run": nearest_observed,
+    }
     if len(records) > 16:
         details["omitted_excluded_run_count"] = len(records) - 16
+    details = _bound_review_details(details, validation_criteria)
     message = gate.message
     if gate.status == "failed" and gaps:
         messages = []
@@ -190,11 +197,11 @@ def evaluate_validation_commands(
                 None,
             )
             if observation is not None:
-                explanation = observed_message(observation)
+                explanation = observed_message(_bound_diagnostic_record(observation))
                 messages.append(explanation.split("Run `", 1)[0].rstrip())
         message = gate.message + " " + " ".join(messages)
-    elif gate.status == "failed" and nearest is not None:
-        message += " " + observed_message(nearest)
+    elif gate.status == "failed" and nearest_observed is not None:
+        message += " " + observed_message(nearest_observed)
     return replace(gate, message=message, details=details)
 
 
@@ -324,7 +331,6 @@ def _evaluate_validation_commands(
         "criterion_commands": criterion_commands,
         "criterion_command_gaps": criterion_command_gaps,
     }
-    details = _bound_review_details(details, validation_criteria)
 
     if criterion_command_gaps:
         return CloseGateResult(
@@ -566,6 +572,31 @@ def _failure_command_description(command: str) -> str:
     return f"{command[:256]}… [command excerpt; sha256={digest}]"
 
 
+def _bound_diagnostic_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Clamp diagnostic command text; keep reason, remedy, and invalidating_edit."""
+    bounded = dict(record)
+    command = str(bounded.get("command") or "")
+    bounded_command = _failure_command_description(command)
+    bounded["command"] = bounded_command
+    core = bounded.get("core_command")
+    if core == command:
+        del bounded["core_command"]
+    elif isinstance(core, str):
+        bounded_core = _failure_command_description(core)
+        bounded["core_command"] = bounded_core
+        if bounded_core != core:
+            for key in ("reason", "remedy"):
+                value = bounded.get(key)
+                if isinstance(value, str) and core in value:
+                    bounded[key] = value.replace(core, bounded_core)
+    if bounded_command != command:
+        for key in ("reason", "remedy"):
+            value = bounded.get(key)
+            if isinstance(value, str) and command in value:
+                bounded[key] = value.replace(command, bounded_command)
+    return bounded
+
+
 def _command_priority(
     record: Mapping[str, object],
     criteria: str,
@@ -646,6 +677,13 @@ def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, A
         "latest_runs": details["latest_runs"],
         "uncredited_runs": details["uncredited_runs"],
     }
+    limits: dict[str, int] = {
+        "latest_runs": _REVIEW_COMMAND_LIMIT,
+        "uncredited_runs": 16,
+    }
+    if "excluded_runs" in details:
+        records["excluded_runs"] = details["excluded_runs"]
+        limits["excluded_runs"] = 16
     selected: dict[str, list[dict[str, object]]] = {key: [] for key in records}
     criterion_cores = frozenset(
         equivalence.core_command.casefold()
@@ -660,13 +698,16 @@ def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, A
         for record in entries
     }
     remaining = _REVIEW_COMMAND_BUDGET
+    key_order = [
+        key for key in ("excluded_runs", "latest_runs", "uncredited_runs") if key in records
+    ]
     for priority in (3, 2, 1, 0):
-        for key, limit in (("latest_runs", _REVIEW_COMMAND_LIMIT), ("uncredited_runs", 16)):
+        for key in key_order:
             additions, remaining = _select_command_records(
                 records[key],
                 priorities=priorities,
                 budget=remaining,
-                limit=limit - len(selected[key]),
+                limit=limits[key] - len(selected[key]),
                 priority=priority,
             )
             selected[key].extend(additions)
@@ -687,6 +728,12 @@ def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, A
                 ),
             }
         )
+    if "excluded_runs" in records:
+        omitted_excluded = len(records["excluded_runs"]) - len(details["excluded_runs"])
+        if omitted_excluded:
+            details["omitted_excluded_run_count"] = (
+                int(details.get("omitted_excluded_run_count") or 0) + omitted_excluded
+            )
     return details
 
 
