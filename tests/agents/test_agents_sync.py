@@ -39,7 +39,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -68,7 +68,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -92,7 +92,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "filename-agent.yaml").write_text(
-            "name: null\ndescription: From filename\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: null\ndescription: From filename\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -114,7 +114,7 @@ class TestSyncBundledAgents:
         agents_dir.mkdir()
         yaml_file = agents_dir / "test-agent.yaml"
         yaml_file.write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -123,7 +123,7 @@ class TestSyncBundledAgents:
 
             # Modify the file
             yaml_file.write_text(
-                "name: test-agent\ndescription: Updated description\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+                "name: test-agent\ndescription: Updated description\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             )
 
             # Second sync — should update the installed row
@@ -155,7 +155,7 @@ class TestSyncBundledAgents:
             "name: merge-helper\n"
             "description: Merge helper\n"
             "provider: claude\n"
-            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             "step_workflow:\n"
             "  steps:\n"
             "    - name: merge\n"
@@ -225,6 +225,7 @@ class TestSyncBundledAgents:
             "  agent: |\n"
             "    PLACEHOLDER\n"
             "    placeholder_agent:analyst:not_implemented\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -239,6 +240,7 @@ class TestSyncBundledAgents:
                 "reasoning_effort: high\n"
                 "prompts:\n"
                 "  agent: Real ideation agent\n"
+                "workflows:\n  rule_selectors:\n    include: []\n"
             )
             result = sync_bundled_agents(db)
 
@@ -266,7 +268,7 @@ class TestSyncBundledAgents:
             "description: A test agent\n"
             "enabled: true\n"
             "provider: claude\n"
-            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -281,7 +283,7 @@ class TestSyncBundledAgents:
                 "description: Updated description\n"
                 "enabled: true\n"
                 "provider: claude\n"
-                "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+                "mode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             )
             result = sync_bundled_agents(db)
 
@@ -304,7 +306,7 @@ class TestSyncBundledAgents:
             "description: Active sample agent\n"
             "enabled: true\n"
             "provider: codex\n"
-            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             ""
         )
 
@@ -351,7 +353,7 @@ class TestSyncBundledAgents:
             "description: Active sample agent\n"
             "enabled: true\n"
             "provider: codex\n"
-            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             ""
         )
 
@@ -392,10 +394,10 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "agent-a.yaml").write_text(
-            "name: agent-a\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: agent-a\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
         (agents_dir / "agent-b.yaml").write_text(
-            "name: agent-b\nprovider: qwen\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: agent-b\nprovider: qwen\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -430,7 +432,7 @@ class TestSyncBundledAgents:
         deprecated_dir = agents_dir / "deprecated"
         deprecated_dir.mkdir(parents=True)
         (deprecated_dir / "old-agent.yaml").write_text(
-            "name: old-agent\ndescription: Deprecated agent\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: old-agent\ndescription: Deprecated agent\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -471,7 +473,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         mgr = _mgr(db)
@@ -500,7 +502,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: Bundled template\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: Bundled template\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         mgr = _mgr(db)
@@ -512,6 +514,7 @@ class TestSyncBundledAgents:
                     "provider": "claude",
                     "mode": "interactive",
                     "prompts": {"agent": "Run the assigned task."},
+                    "workflows": {"rule_selectors": {"include": []}},
                 }
             ),
             source="installed",
@@ -543,7 +546,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: Bundled template\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: Bundled template\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         mgr = _mgr(db)
@@ -579,7 +582,7 @@ class TestSyncBundledAgents:
         agents_dir.mkdir()
         agent_yaml = agents_dir / "test-agent.yaml"
         agent_yaml.write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -748,7 +751,7 @@ class TestSyncBundledAgents:
         agents_dir.mkdir()
         yaml_file = agents_dir / "toggle-agent.yaml"
         yaml_file.write_text(
-            "name: toggle-agent\nenabled: false\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "name: toggle-agent\nenabled: false\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
             sync_bundled_agents(db)
@@ -765,10 +768,10 @@ class TestSyncBundledAgents:
             )
             mgr.update(pinned.id, enabled=False)
             (agents_dir / "pinned-agent.yaml").write_text(
-                "name: pinned-agent\nenabled: true\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+                "name: pinned-agent\nenabled: true\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             )
             yaml_file.write_text(
-                "name: toggle-agent\nenabled: true\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+                "name: toggle-agent\nenabled: true\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
             )
             result = sync_bundled_agents(db)
 

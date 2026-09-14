@@ -261,7 +261,7 @@ class TestStageNativeEnhancer:
             "enhance_complete",
         ) in triples
 
-    def test_enhance_step_blocks_gate_verbs_and_premature_end(
+    def test_enhance_step_blocks_gate_verbs_but_not_end_agent_run(
         self, stage_native: AgentDefinitionBody
     ) -> None:
         enhance = find_step(
@@ -269,12 +269,9 @@ class TestStageNativeEnhancer:
         )
         assert enhance is not None
         blocked = enhance.blocked_mcp_tools or []
-        for tool in (
-            "gobby-tasks-ops:approve_review",
-            "gobby-tasks-ops:reject_review",
-            "gobby-agents:end_agent_run",
-        ):
+        for tool in ("gobby-tasks-ops:approve_review", "gobby-tasks-ops:reject_review"):
             assert tool in blocked, f"{tool} should be blocked in the enhance step"
+        assert "gobby-agents:end_agent_run" not in blocked
 
     def test_instructions_record_plan_enhancement_not_gate(
         self, stage_native: AgentDefinitionBody

@@ -75,8 +75,9 @@ class AgentRun:
     wait_kind: str | None = None
     blocked_on_parent: bool | None = None
     last_progress_at: datetime | None = None
-    progress_age_seconds: float | None = None
-    stall_suspected: bool = False
+    # Derived at read time from last_progress_at, so they vary between reads of one row.
+    progress_age_seconds: float | None = field(default=None, compare=False)
+    stall_suspected: bool = field(default=False, compare=False)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentRun:

@@ -25,6 +25,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import TerminalSpawnRequest
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
@@ -380,6 +381,7 @@ async def test_finalise_kills_remain_on_exit_session_and_agrees_with_terminal_li
     config.max_message_size = 1024
     ws_server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
     ws_server.terminal_manager = terminals
+    ws_server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     ws_server.session_manager = session_manager
     ws_server._tmux_mgr_gobby = tmux_manager
     ws_server._tmux_mgr_default = TmuxSessionManager(

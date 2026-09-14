@@ -55,7 +55,7 @@ def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     assert 'complete_stage(stage_name="epic_qa"' in status
     assert "gobby-tasks-ops:approve_review" in blocked
     assert "gobby-tasks-ops:reject_review" in blocked
-    assert "gobby-agents:end_agent_run" in blocked
+    assert "gobby-agents:end_agent_run" not in blocked
     assert (
         "gobby-agents:end_agent_run"
         in next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")[

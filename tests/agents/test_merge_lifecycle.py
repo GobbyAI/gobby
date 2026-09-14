@@ -493,8 +493,8 @@ async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase)
 
     assert response.decision == "block"
     assert response.reason is not None
-    assert "gobby-agents:end_agent_run" in response.reason
-    assert "merge" in response.reason
+    assert "`end_agent_run` with `blockers`" in response.reason
+    assert "step-enforcement:merge-worker/merge" in response.reason
 
 
 @pytest.mark.asyncio

@@ -62,16 +62,22 @@ def test_doc_reviewer_loads_required_skills() -> None:
     )
 
     assert agent["step_workflow"]["variables"]["required_skills"] == [
-        "code-index",
+        "gobby:references/code-index/overview.md",
         "tech-writer",
-        "tasks",
+        "gobby:references/tasks/overview.md",
     ]
     assert load_step["allowed_mcp_tools"] == [
         "gobby-skills:get_skill",
         "gobby-skills:get_skill_file",
     ]
-    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
-        assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
+    for requirement in agent["step_workflow"]["variables"]["required_skills"]:
+        skill_name, _, path = requirement.partition(":")
+        expected = (
+            f'get_skill_file(name="{skill_name}", path="{path}")'
+            if path
+            else f'get_skill(name="{skill_name}")'
+        )
+        assert expected in load_step["status_message"]
     assert "Do not call claim_task" in load_step["status_message"]
 
 

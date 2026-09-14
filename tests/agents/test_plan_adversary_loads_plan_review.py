@@ -308,8 +308,10 @@ class TestAdversaryTerminateStep:
         assert terminate is not None
         assert terminate.allowed_mcp_tools == ["gobby-agents:end_agent_run"]
 
-    def test_review_step_blocks_premature_end_agent_run(self, agent: AgentDefinitionBody) -> None:
+    def test_review_step_leaves_end_agent_run_to_engine_gate(
+        self, agent: AgentDefinitionBody
+    ) -> None:
         review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review is not None
         blocked = review.blocked_mcp_tools or []
-        assert "gobby-agents:end_agent_run" in blocked
+        assert "gobby-agents:end_agent_run" not in blocked
