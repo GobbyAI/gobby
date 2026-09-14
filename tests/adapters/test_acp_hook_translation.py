@@ -1,6 +1,7 @@
 """Tests for ACP hook adapter event and response translation."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,7 @@ class TestTranslateToHookEvent:
 
     def test_session_start_with_dispatcher_wrapper(self, adapter: QwenAdapter) -> None:
         """Translates SessionStart event with dispatcher wrapper format."""
-        native_event = {
+        native_event: dict[str, Any] = {
             "source": "qwen",
             "hook_type": "SessionStart",
             "input_data": {
@@ -34,7 +35,11 @@ class TestTranslateToHookEvent:
         assert event.session_id == "qwen-sess-123"
         assert event.source == SessionSource.GROK
         assert event.cwd == "/home/user/project"
-        assert event.data == native_event["input_data"]
+        assert event.data == {
+            **native_event["input_data"],
+            "canonical_code_index_recovery": [],
+            "canonical_code_navigation_segments": [],
+        }
 
     def test_session_start_without_wrapper(self, adapter: QwenAdapter) -> None:
         """Translates SessionStart event without dispatcher wrapper."""
@@ -856,7 +861,6 @@ class TestGrokCurrentHookContract:
         "hook_type",
         [
             "session_start",
-            "user_prompt_submit",
             "post_tool_use",
             "post_tool_use_failure",
             "pre_compact",

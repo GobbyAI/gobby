@@ -235,7 +235,6 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
 
     passive_hooks = {
         "session_start",
-        "user_prompt_submit",
         "post_tool_use",
         "post_tool_use_failure",
         "pre_compact",
@@ -251,6 +250,11 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
         assert hook is not None
         assert hook.context_channel is ContextChannel.NONE
         assert hook.decision_style is ProviderDecisionStyle.NONE
+
+    prompt = capabilities.get_hook("user_prompt_submit")
+    assert prompt is not None
+    assert prompt.context_channel is ContextChannel.NONE
+    assert prompt.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
 
 
 def test_grok_lifecycle_events_preserve_prompt_and_interaction_correlation() -> None:

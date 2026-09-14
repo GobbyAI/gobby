@@ -436,7 +436,7 @@ def _grok_capabilities() -> ProviderCapabilities:
         if hook_name == "pre_tool_use":
             decision_style = ProviderDecisionStyle.PRE_TOOL_USE
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
-        elif hook_name in {"stop", "subagent_stop"}:
+        elif hook_name in {"user_prompt_submit", "stop", "subagent_stop"}:
             decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
 
         events[hook_name] = HookCapability(

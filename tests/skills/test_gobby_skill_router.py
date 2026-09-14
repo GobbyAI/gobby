@@ -51,8 +51,8 @@ class TestGobbyRouterSkill:
         body = SKILL_PATH.read_text(encoding="utf-8")
 
         for text in (
-            "$gobby`, `$gobby help",
-            "/gobby`, `/gobby help",
+            "$gobby help",
+            "/gobby help",
             "$gobby <skill>",
             "/gobby <skill> [args]",
             "$gobby skill <skill> [args]",
@@ -63,23 +63,20 @@ class TestGobbyRouterSkill:
             "Trailing command arguments remain in the original user prompt",
             "must not be",
             "duplicated into `<gobby-context>`",
-            "Do not present `/gobby` as universal syntax.",
+            "Every displayed command uses the active provider's prefix",
         ):
             assert text in body
 
-    def test_references_dynamic_skill_and_mcp_discovery(self) -> None:
+    def test_help_finishes_without_discovery(self) -> None:
         body = SKILL_PATH.read_text(encoding="utf-8")
-
-        for text in (
-            "list_skills",
-            "progressive discovery",
-            "list_mcp_servers",
-            "list_tools",
-            "get_tool_schema",
-            "call_tool",
-            "bootstrap tools are exempt",
-        ):
-            assert text in body
+        help_section = body.split("## Help Requests", 1)[1].split("## Explicit Loading", 1)[0]
+        assert "Make zero tool calls" in help_section
+        assert "daemon-supplied help menu immediately and finish" in help_section
+        assert "Gobby help is unavailable." in help_section
+        for tool in ("list_skills", "get_skill_file", "get_tool_schema", "list_mcp_servers"):
+            assert tool not in help_section
+        assert 'get_skill_file(name="gobby", path="catalog.json")' in body
+        assert "This discovery applies only to explicit loading requests" in body
 
     def test_does_not_reintroduce_hard_coded_shortcuts(self) -> None:
         body = SKILL_PATH.read_text(encoding="utf-8")

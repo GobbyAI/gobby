@@ -177,6 +177,11 @@ class GrokAdapter(ACPHookAdapter):
     ) -> dict[str, Any]:
         """Translate Grok observe-only and recoverable stop responses."""
         canonical_hook = self.HOOK_EVENT_NAME_MAP.get(hook_type or "", hook_type or "")
+        if canonical_hook == "user_prompt_submit" and response.decision in {"deny", "block"}:
+            return {
+                "decision": "block",
+                "reason": response.reason or response.context or _GROK_POLICY_BLOCK_REASON,
+            }
         if canonical_hook in GROK_EVENT_MAP and canonical_hook not in {
             "pre_tool_use",
             "stop",

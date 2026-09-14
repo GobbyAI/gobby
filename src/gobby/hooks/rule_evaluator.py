@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.skills.capability_routing import gobby_help_prefix
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.block_audit import audit_source_block_sync
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
@@ -92,6 +93,8 @@ class WorkflowRuleEvaluator:
     def evaluate(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and return context or a blocking response."""
         try:
+            if self._defer_help_housekeeping(event):
+                return None, None
             with create_span("hook.rules.evaluate"):
                 workflow_response = self.workflow_handler.handle(
                     event,
@@ -164,6 +167,32 @@ class WorkflowRuleEvaluator:
                 )
                 return None, response
             return None, None
+
+    def _defer_help_housekeeping(self, event: HookEvent) -> bool:
+        """Leave pending work intact for the next work turn, including stop gates."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        session_id = event.metadata.get("_platform_session_id")
+        prompt = event.data.get("prompt")
+        if event.event_type == HookEventType.BEFORE_AGENT and gobby_help_prefix(prompt):
+            if self.database is not None and session_id:
+                manager = SessionVariableManager(self.database)
+                variables = manager.get_variables(session_id)
+                updates = {"_current_user_prompt": prompt}
+                if not variables.get("_agent_context_injected"):
+                    # Help itself becomes transcript activity; explicitly retain
+                    # first-work-turn injection instead of treating it as a resume.
+                    updates["_agent_context_rehydrate_pending"] = True
+                manager.merge_variables(session_id, updates)
+            return True
+        if (
+            event.event_type in {HookEventType.STOP, HookEventType.AFTER_AGENT}
+            and self.database is not None
+            and session_id
+        ):
+            variables = SessionVariableManager(self.database).get_variables(session_id)
+            return gobby_help_prefix(variables.get("_current_user_prompt")) is not None
+        return False
 
     def _audit_source_block(
         self,

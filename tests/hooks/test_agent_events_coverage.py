@@ -930,7 +930,7 @@ class TestGenerateHelpContent:
         ):
             result = handler._generate_help_content(session_id="sess-1")
 
-        assert result == "help"
+        assert "Gobby help is unavailable." in result
         handler.logger_mock.warning.assert_called_once()
         assert "excluded skills" in handler.logger_mock.warning.call_args.args[0]
 
@@ -995,8 +995,7 @@ class TestGenerateHelpContent:
         handler = _TestHandler()
         handler._skill_manager = None
 
-        with pytest.raises(RuntimeError):
-            handler._generate_help_content()
+        assert "Gobby help is unavailable." in handler._generate_help_content()
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ from .hook_commands import (
 )
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import install_cli_content, install_global_hooks, install_shared_content
+from .skill_install import install_router_skills_as_cli_skills
 
 
 def _global_hooks_dir() -> Path:
@@ -271,6 +272,8 @@ def install_agy(
         result["error"] = f"Failed to install AGY shared/CLI content: {exc}"
         return result
     result["commands_installed"] = cli.get("commands", [])
+    router_root = (Path.home() if mode == "global" else project_path) / ".gemini"
+    result["skills_installed"] = install_router_skills_as_cli_skills(router_root / "skills")
     result["plugins_installed"] = shared.get("plugins", [])
 
     try:

@@ -36,7 +36,7 @@ from gobby.hooks.hook_manager_dispatch import HookManagerDispatchMixin
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
-from gobby.hooks.session_materialize import activate_deferred_session
+from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.hooks.session_ref_resolution import (
     resolve_session_refs_in_tool_input,
 )
@@ -443,7 +443,9 @@ class HookManager(HookManagerDispatchMixin):
                         )
                     return HookResponse(decision="allow")
                 self._session_lookup.apply_session_mutations(event, platform_session_id)
-            if event.metadata.pop("_session_just_materialized", False):
+            if event.metadata.pop(
+                "_session_just_materialized", False
+            ) or has_deferred_help_activation(self, event):
                 try:
                     materialized_response = activate_deferred_session(
                         self,

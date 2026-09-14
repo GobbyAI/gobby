@@ -15,6 +15,23 @@ from gobby.hooks.event_handlers._session_start.materialize import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
+from gobby.skills.capability_routing import gobby_help_prefix
+from gobby.workflows.state_manager import SessionVariableManager
+
+_HELP_DEFERRED_ACTIVATION = "_help_deferred_activation"
+
+
+def has_deferred_help_activation(manager: Any, event: HookEvent) -> bool:
+    """Resume startup on the next work prompt, before producing its context."""
+    if event.event_type != HookEventType.BEFORE_AGENT or gobby_help_prefix(
+        event.data.get("prompt")
+    ):
+        return False
+    session_id = event.metadata.get("_platform_session_id")
+    if not session_id or manager._session_manager is None:
+        return False
+    variables = SessionVariableManager(manager._session_manager.db).get_variables(session_id)
+    return variables.get(_HELP_DEFERRED_ACTIVATION) is True
 
 
 def build_synthetic_session_start(event: HookEvent, session_id: str) -> HookEvent:
@@ -60,6 +77,15 @@ def activate_deferred_session(
     """Activate a just-created row and stage its startup packet on ``event``."""
     session_id = event.metadata.get("_platform_session_id")
     if not isinstance(session_id, str) or not session_id:
+        return None
+
+    variables = SessionVariableManager(manager._session_manager.db)
+    if event.event_type == HookEventType.BEFORE_AGENT and gobby_help_prefix(
+        event.data.get("prompt")
+    ):
+        # Do not produce, claim, or acknowledge startup instructions on help.
+        # The durable row exists for project-aware rendering; activation waits.
+        variables.merge_variables(session_id, {_HELP_DEFERRED_ACTIVATION: True})
         return None
 
     handlers = manager._event_handlers
@@ -172,4 +198,5 @@ def activate_deferred_session(
     event.metadata["_startup_system_message"] = startup_response.system_message
     if context_mode == "full":
         commit_stashed_startup_claim(handlers, session_id, event.metadata)
+    variables.merge_variables(session_id, {_HELP_DEFERRED_ACTIVATION: False})
     return None

@@ -42,6 +42,7 @@ from .shared import (
     install_global_hooks,
     install_shared_content,
 )
+from .skill_install import install_router_skills_as_cli_skills
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +563,8 @@ def install_codex(
     # 3. Install shared + CLI content
     shared = install_shared_content(codex_home, project_path)
     cli = install_cli_content("codex", codex_home)
+    result["skills_installed"] = install_router_skills_as_cli_skills(codex_home / "skills")
+    install_router_skills_as_cli_skills(codex_home.parent / ".agents" / "skills")
 
     result["workflows_installed"] = []  # DB-managed via sync_bundled_content_to_db()
     result["agents_installed"] = shared.get("agents", [])

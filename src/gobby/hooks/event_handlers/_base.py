@@ -71,7 +71,7 @@ class EventHandlersBase:
         """Advertise installed skills except explicit session exclusions."""
         if self._skill_manager is None:
             return []
-        skills = self._skill_manager.discover_core_skills(project_id)
+        skills = self._skill_manager.discover_core_skills(project_id, require_complete=True)
 
         if session_id and self._session_manager:
             try:
@@ -87,6 +87,7 @@ class EventHandlersBase:
                     session_id,
                     e,
                 )
+                raise
 
         return skills
 

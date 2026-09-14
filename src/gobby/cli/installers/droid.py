@@ -32,6 +32,7 @@ from .shared import (
     install_global_hooks,
     install_shared_content,
 )
+from .skill_install import install_router_skills_as_cli_skills
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,7 @@ def install_droid(
     )
     cli = install_cli_content("droid", droid_path)
     result["commands_installed"] = cli.get("commands", [])
+    result["skills_installed"] = install_router_skills_as_cli_skills(droid_path / "skills")
     result["plugins_installed"] = shared.get("plugins", [])
 
     mcp_result = configure_mcp_server_json(

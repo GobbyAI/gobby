@@ -10,27 +10,33 @@ import logging
 from pathlib import Path
 
 from gobby.cli.utils import get_install_dir
-from gobby.skills.capability_catalog import load_capability_catalog
-from gobby.skills.capability_routing import capability_menu
+from gobby.config.skills import SkillsConfig
 
 logger = logging.getLogger(__name__)
 
 
 def _router_carrier(source: Path) -> str:
-    """Project catalog metadata into provider carriers without reference bodies."""
-    catalog = load_capability_catalog(source.parent)
-    return (
-        source.read_text(encoding="utf-8")
-        + "\n## Available Capabilities\n\n"
-        + "Generated from the bundled catalog. Use the provider's active trigger.\n\n"
-        + capability_menu(catalog, "<trigger>")
-        + "\n"
-    )
+    """Install only the router; the daemon supplies current project help."""
+    from gobby.cli.runtime import get_cli_runtime
+
+    content = source.read_text(encoding="utf-8")
+    try:
+        runtime = get_cli_runtime()
+    except RuntimeError:
+        # Standalone filesystem installers also support an unconfigured install.
+        limit = SkillsConfig().bundled_max_content_size
+    else:
+        limit = runtime.require_config(apply_migrations=False).skills.bundled_max_content_size
+    if max(len(content), len(content.encode("utf-8"))) > limit:
+        raise ValueError(f"Router exceeds bundled content limit {limit}: {source}")
+    return content
 
 
 # Exact historical bundled bytes identify ownership; names and prefixes do not.
 _BUNDLED_GOBBY_HASHES = frozenset(
     {
+        "3dcb20b02e4007f57b42a8f7f4bfa859588b900ba5121a349558efbc44dec743",  # pre-immediate-help router
+        "64c78a0ff3c56ee133672d2cbc6f23a756c1bebcd3a4b9b07875cf77faa98ee2",  # pre-immediate-help carrier
         "619531082d1317fbc0b42e8b13ba92df4ae4ee21e88e786b12c9cf72039b7f4e",  # dc1a751129
         "358c8f3e7201905e6a30521c50b2f355e498a466b8b74661b21939d386b8f32d",  # dc1a751129 rendered
         "12b5b4402ff2dc8b90bd1d3d6502b24587c9729e96472f046d2fc036985b4bc1",  # ec5536f254

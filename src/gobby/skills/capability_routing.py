@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import textwrap
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -20,22 +22,52 @@ class GobbyRoute:
     unknown_name: str | None = None
 
 
-def capability_menu(catalog: CapabilityCatalog, prefix: str) -> str:
+def gobby_help_prefix(prompt: object) -> str | None:
+    """Recognize only bare and explicit-help router requests, never work requests."""
+    if not isinstance(prompt, str):
+        return None
+    match = re.fullmatch(r"([/$])gobby(?:\s+help)?\s*", prompt.strip(), re.IGNORECASE)
+    return f"{match[1]}gobby" if match else None
+
+
+def _menu_description(description: str, limit: int) -> str:
+    if not limit:
+        return ""
+    # Sentence boundaries require whitespace: .NET, .moat and ASP.NET are words.
+    sentence = re.split(r"(?<=[.!?])\s+", description.strip(), maxsplit=1)[0]
+    return textwrap.shorten(sentence, width=limit, placeholder="…")
+
+
+def _menu_entry(prefix: str, name: str, description: str, limit: int) -> str:
+    summary = _menu_description(description, limit)
+    return f"- `{prefix} {name}`" + (f" — {summary}" if summary else "")
+
+
+def capability_menu(catalog: CapabilityCatalog, prefix: str, description_limit: int = 120) -> str:
     """Render names and metadata only, using the caller's provider syntax."""
     return "\n".join(
-        f"- `{prefix} {item.name}` — {item.description}" for item in catalog.capabilities
+        _menu_entry(prefix, item.name, item.description, description_limit)
+        for item in catalog.capabilities
     )
 
 
-def standalone_menu(skills: Sequence[ParsedSkill], catalog: CapabilityCatalog, prefix: str) -> str:
+def standalone_menu(
+    skills: Sequence[ParsedSkill],
+    catalog: CapabilityCatalog,
+    prefix: str,
+    description_limit: int = 120,
+) -> str:
     names = {item.name for item in catalog.capabilities}
     lines = []
     for skill in sorted(skills, key=lambda item: item.name):
         if skill.name == "gobby" or skill.is_always_apply() or skill.is_internal():
             continue
         invocation = f"skill {skill.name}" if skill.name in names else skill.name
-        description = skill.description.split(".")[0] if skill.description else ""
-        lines.append(f"- `{prefix} {invocation}` — {description}")
+        description = skill.description or ""
+        # Language skills lead with their standards, then a long topic inventory.
+        if "coding standards" in description:
+            description = description.split(":", 1)[0]
+        lines.append(_menu_entry(prefix, invocation, description, description_limit))
     return "\n".join(lines)
 
 

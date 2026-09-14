@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import click
 import pytest
 
 from gobby.cli.installers.skill_install import (
@@ -10,6 +11,23 @@ from gobby.cli.installers.skill_install import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_router_install_honors_live_utf8_limit(tmp_path: Path) -> None:
+    from gobby.cli.installers.skill_install import _router_carrier
+    from gobby.cli.runtime import CliRuntime
+    from gobby.config.app import DaemonConfig
+    from gobby.config.skills import SkillsConfig
+
+    source = tmp_path / "SKILL.md"
+    source.write_text("界" * 600, encoding="utf-8")
+    runtime = CliRuntime(
+        None, config=DaemonConfig(skills=SkillsConfig(bundled_max_content_size=1000))
+    )
+    with click.Context(click.Command("install"), obj=runtime):
+        with pytest.raises(ValueError, match="limit 1000"):
+            _router_carrier(source)
+    assert source.read_text(encoding="utf-8") == "界" * 600
 
 
 def test_empty_custom_alias_directory_is_preserved(tmp_path: Path) -> None:
@@ -34,8 +52,9 @@ def test_verified_router_upgrade_is_repeatable(tmp_path: Path, layout: str, revi
     )
     assert install(tmp_path) == (["gobby.md"] if layout == "commands" else ["gobby/"])
     upgraded = target.read_bytes()
-    assert b"## Available Capabilities" in upgraded
-    assert b"visibility and explicit skill exclusions" in upgraded
+    assert b"## Available Capabilities" not in upgraded
+    assert b"Make zero tool calls" in upgraded
+    assert len(upgraded) <= 15_000
     assert install(tmp_path)
     assert target.read_bytes() == upgraded
 

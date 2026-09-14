@@ -15,6 +15,7 @@ from gobby.sessions.title_lifecycle import promote_heuristic_title
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import (
     capability_menu,
+    gobby_help_prefix,
     route_gobby_request,
     standalone_menu,
 )
@@ -165,6 +166,23 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     self.logger.warning(
                         "Failed to generate session summaries on %s: %s", prompt_lower, e
                     )
+
+        # Help is a terminal display operation, including the first parent turn.
+        # Leave instruction-injection markers untouched for the next work turn.
+        if gobby_help_prefix(stripped_prompt):
+            command_prefix = "$gobby" if event.source.value == "codex" else "/gobby"
+            content = self._generate_help_content(session_id, command_prefix, project_id)
+            if event.source.value == "grok":
+                # Grok discards allowing prompt-hook context, but displays a
+                # blocked prompt's reason before invoking the model.
+                self._end_turn_lifecycle(event, "completed")
+                return HookResponse(
+                    decision="block", reason=content.partition("\n\n")[2] or content
+                )
+            return HookResponse(
+                decision="allow",
+                context=content,
+            )
 
         # Skill interception — runs before lifecycle workflows
         if self._skill_manager and stripped_prompt:
@@ -382,32 +400,52 @@ class AgentEventHandlerMixin(EventHandlersBase):
         command_prefix: str = "/gobby",
         project_id: str | None = None,
     ) -> str:
-        """Generate help content listing all available skills."""
-        if self._skill_manager is None:
-            raise RuntimeError("skill_manager not initialized")
-        skills = self._router_skills(session_id, project_id)
+        """Render a complete menu within both the character and UTF-8 byte ceiling."""
+        from gobby.config.skills import SkillsConfig
+        from gobby.skills.authoring import resolve_bundled_max_content_size
 
-        catalog = load_capability_catalog()
-        skills_list = standalone_menu(skills, catalog, command_prefix)
-        capabilities_list = capability_menu(catalog, command_prefix)
-        fallback = (
-            "# Gobby\n\nCapabilities:\n\n"
-            + capabilities_list
-            + "\n\nInstalled standalone skills:\n\n"
-            + skills_list
-            + "\n\nMenus list choices only; do not execute listed operations. "
-            + f"Use `{command_prefix} <capability> references` for topics. "
-            + "Discover installed skills with list_skills on gobby-skills."
-        )
-        return _load_agent_prompt(
-            "help-content",
-            {
-                "skills_list": skills_list,
-                "capabilities_list": capabilities_list,
-                "command_prefix": command_prefix,
-            },
-            fallback,
-        )
+        directive = "Display this help immediately and finish. Make zero tool calls.\n\n"
+        try:
+            if self._skill_manager is None:
+                raise RuntimeError("skill_manager not initialized")
+            limit = SkillsConfig().bundled_max_content_size
+            if self._session_manager:
+                limit = resolve_bundled_max_content_size(self._session_manager.db)
+            skills = self._router_skills(session_id, project_id)
+            catalog = load_capability_catalog()
+            for description_limit in (120, 60, 0):
+                skills_list = (
+                    standalone_menu(skills, catalog, command_prefix, description_limit)
+                    or "No installed standalone skills."
+                )
+                capabilities_list = capability_menu(catalog, command_prefix, description_limit)
+                fallback = (
+                    directive
+                    + "# Gobby\n\nCapabilities:\n\n"
+                    + capabilities_list
+                    + "\n\nInstalled skills:\n\n"
+                    + skills_list
+                    + f"\n\nUse `{command_prefix} <capability> references` for topics."
+                )
+                content = _load_agent_prompt(
+                    "help-content",
+                    {
+                        "skills_list": skills_list,
+                        "capabilities_list": capabilities_list,
+                        "command_prefix": command_prefix,
+                    },
+                    fallback,
+                )
+                if max(len(content), len(content.encode("utf-8"))) <= limit:
+                    return content
+            return (
+                directive
+                + "Gobby help exceeds the display limit. "
+                + f"Use `{command_prefix} skills` to browse skills."
+            )
+        except Exception:
+            self.logger.exception("Gobby help unavailable for project %s", project_id)
+            return directive + "Gobby help is unavailable."
 
     def _skill_not_found_context(
         self,

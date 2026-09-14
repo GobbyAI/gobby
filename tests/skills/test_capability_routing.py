@@ -84,6 +84,6 @@ def test_provider_carriers_use_catalog_without_reference_bodies(tmp_path: Path) 
     skill = (skill_dir / "gobby" / "SKILL.md").read_text()
     assert command == skill
     for capability in load_capability_catalog().capabilities:
-        assert capability.description in command
+        assert capability.description not in command
     assert "get_skill_file" in command
     assert "## Exact Interactive Close Sequence" not in command

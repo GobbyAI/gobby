@@ -23,10 +23,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Upper bound for skill fetch queries — high enough to get all installed skills
-# without unbounded queries. Actual skill counts are typically < 200.
-_MAX_SKILL_FETCH = 10_000
-
 
 def _db_skill_to_parsed(skill: Any) -> ParsedSkill:
     """Convert a storage Skill to a ParsedSkill for backward compat.
@@ -131,7 +127,9 @@ class HookSkillManager:
 
             get_skill_change_notifier(db).add_listener(lambda _event: self.refresh())
 
-    def discover_core_skills(self, project_id: str | None = None) -> list[ParsedSkill]:
+    def discover_core_skills(
+        self, project_id: str | None = None, *, require_complete: bool = False
+    ) -> list[ParsedSkill]:
         """Discover skills — from DB (installed + enabled) or filesystem fallback.
 
         Returns:
@@ -154,6 +152,8 @@ class HookSkillManager:
                     logger.debug("Discovered %s hook skills from DB for %s", len(skills), scope)
                     return skills
             except Exception as e:
+                if require_complete:
+                    raise
                 logger.debug("DB skill loading failed, falling back to filesystem: %s", e)
 
         # Filesystem fallback
@@ -176,7 +176,7 @@ class HookSkillManager:
             project_id=project_id,
             enabled=True,
             include_deleted=False,
-            limit=_MAX_SKILL_FETCH,
+            limit=-1,
         )
 
         return [_db_skill_to_parsed(s) for s in db_skills]

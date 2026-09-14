@@ -19,6 +19,7 @@ from gobby.utils.deps import get_ghook_version
 
 from .hook_commands import rewrite_hook_template_commands, set_gobby_hook_timeouts
 from .shared import install_global_hooks, install_shared_content
+from .skill_install import install_router_skills_as_cli_skills
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,8 @@ def install_grok(
     shared = install_shared_content(content_path, project_path)
     result["agents_installed"] = shared.get("agents", [])
     result["plugins_installed"] = shared.get("plugins", [])
+    router_root = grok_home if mode == "global" else project_path / ".grok"
+    result["skills_installed"] = install_router_skills_as_cli_skills(router_root / "skills")
 
     compat_result = _disable_claude_hook_compat(grok_config_file)
     if not compat_result["success"]:

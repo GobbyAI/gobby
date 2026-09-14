@@ -18,6 +18,7 @@ from gobby.hooks import grok_pending_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.pending_messages import PendingMessageRenderResult, render_pending_messages
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
+from gobby.skills.capability_routing import gobby_help_prefix
 
 # Only inject full session metadata (IDs, terminal context) on context-building
 # events, never on lifecycle events like Stop or per-tool events.
@@ -122,6 +123,12 @@ class EventEnricher:
         for key in TERMINAL_CONTEXT_KEYS:
             if event.metadata.get(key):
                 response.metadata[key] = event.metadata[key]
+
+        # Leave pending messages undelivered until a subsequent work turn.
+        if event.event_type == HookEventType.BEFORE_AGENT and gobby_help_prefix(
+            event.data.get("prompt")
+        ):
+            return
 
         # Merge workflow context if present
         if workflow_context:

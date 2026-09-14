@@ -251,6 +251,9 @@ def _has_prior_context_evidence(session: Any | None, variables: dict[str, Any]) 
         return False
     if getattr(session, "startup_claim_state", None) == "committed":
         return True
+    if variables.get("_help_deferred_activation") is True:
+        # Help adds transcript activity without delivering startup context.
+        return False
     return _positive_count(getattr(session, "message_count", 0)) or _positive_count(
         getattr(session, "turn_count", 0)
     )

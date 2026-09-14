@@ -967,6 +967,48 @@
     {
       "surface": "mcp",
       "server": "gobby-ask",
+      "tool": "evidence",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.evidence"
+      },
+      "verification": [
+        "ask-public-readers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "read_answer",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.read_answer"
+      },
+      "verification": [
+        "ask-public-readers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
+      "tool": "read_citation",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/ask.py",
+        "symbol": "create_ask_registry.read_citation"
+      },
+      "verification": [
+        "ask-public-readers"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-ask",
       "tool": "start_ask_run",
       "reference": "src/gobby/install/shared/skills/gobby/references/code-index/ask.md",
       "implementation": {
@@ -1385,6 +1427,12 @@
       "kind": "tests",
       "command": "GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'binary(ask) | test(evidence::)' --status-level fail --final-status-level fail",
       "result": "16 passed in 2.066s; 1080 skipped. Built current merged native source; isolated native Ask lifecycle/export and evidence tests. No binary install needed for docs-only changes."
+    },
+    {
+      "id": "ask-public-readers",
+      "kind": "implementation-and-reference",
+      "command": "Inspect create_ask_registry.evidence/read_answer/read_citation and references/code-index/ask.md",
+      "result": "Direct interactive evidence documents caller-bound retrieval without a run; Export and verify documents read_answer and read_citation with provenance and paging. Added the three public MCP mappings omitted after their implementation landed."
     }
   ],
   "discrepancies": [

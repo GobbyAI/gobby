@@ -12,13 +12,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
 from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.session_materialize import activate_deferred_session
+from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.sessions.clear_continuation import (
     CLEAR_ATTEMPT_VARIABLE,
     resolve_clear_continuation,
@@ -33,7 +34,11 @@ from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.isolated_checkout import (
+    IsolatedCheckoutFactory,
+    install_isolated_checkout_project,
+)
+from tests.hooks.test_session_start_handlers import _register_context_claim_session
 
 pytestmark = pytest.mark.unit
 
@@ -68,6 +73,64 @@ def _event(data: dict[str, object], *, source: SessionSource = SessionSource.GRO
         project_id="project-1",
         metadata={"_platform_session_id": "platform-session"},
     )
+
+
+@pytest.mark.parametrize("suffix", ["", " help"])
+@pytest.mark.parametrize("source", list(SessionSource))
+def test_help_defers_startup_until_work(source: SessionSource, suffix: str) -> None:
+    session = SimpleNamespace(
+        id="platform-session", project_id=None, parent_session_id=None, transcript_path=_DERIVED
+    )
+    manager = _manager(session, None)
+    manager._event_handlers._compose_session_response.return_value = HookResponse(
+        context="Pending startup instructions", system_message="Session identity"
+    )
+    prompt = ("$gobby" if source == SessionSource.CODEX else "/gobby") + suffix
+    event = _event({"prompt": prompt}, source=source)
+    state: dict[str, object] = {}
+
+    def merge(session_id: str, values: dict[str, object]) -> None:
+        state.update(values)
+
+    with patch("gobby.hooks.session_materialize.SessionVariableManager") as variables:
+        variables.return_value.get_variables.return_value = state
+        variables.return_value.merge_variables.side_effect = merge
+        assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
+        assert not has_deferred_help_activation(manager, event)
+        assert "_startup_context" not in event.metadata
+        manager._event_handlers._activate_materialized_session.assert_not_called()
+        manager._evaluate_workflow_rules.assert_not_called()
+
+        event.data["prompt"] = "Implement the change"
+        assert has_deferred_help_activation(manager, event)
+        assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
+        assert event.metadata["_startup_context"] == "Pending startup instructions"
+        assert event.metadata["_startup_system_message"] == "Session identity"
+        assert not has_deferred_help_activation(manager, event)
+        manager._event_handlers._activate_materialized_session.assert_called_once()
+
+
+def test_help_transcript_does_not_consume_startup_claim(
+    temp_db: HubDatabase, isolated_checkout_factory: IsolatedCheckoutFactory
+) -> None:
+    session_id = _register_context_claim_session(
+        isolated_checkout_factory, temp_db, external_id="help-before-startup"
+    )
+    sessions = SessionManager(temp_db)
+    session = SimpleNamespace(startup_claim_state="idle", message_count=4, turn_count=2)
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(session_id, {"_help_deferred_activation": True})
+    handler = SimpleNamespace(_session_manager=sessions, logger=MagicMock())
+    decision = classify_session_start_context(
+        handler,
+        session_id=session_id,
+        session=session,
+        session_source="startup",
+        is_existing_session=True,
+    )
+    assert decision.mode == "full"
+    assert decision.claim is not None
+    assert decision.claim.state == "claimed"
 
 
 def test_deferred_grok_session_derives_and_persists_transcript_path() -> None:
