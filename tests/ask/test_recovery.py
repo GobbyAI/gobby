@@ -218,6 +218,22 @@ def waiting_run(
     return service, record, registry
 
 
+def test_status_does_not_load_evidence_ledger(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, record, _ = waiting_run
+
+    def unexpected_evidence_read(*args: object, **kwargs: object) -> object:
+        pytest.fail("status must not load the potentially unbounded evidence ledger")
+
+    monkeypatch.setattr(service.storage, "evidence_references", unexpected_evidence_read)
+    result = service.get(record.run_id, project_id=record.binding.project_id)
+    assert result.run_id == record.run_id
+    assert result.evidence == ()
+    assert len(result.model_dump_json()) < 5000
+
+
 @pytest.mark.asyncio
 async def test_stop_waits_for_owned_pipeline_cleanup(
     waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],

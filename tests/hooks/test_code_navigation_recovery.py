@@ -99,7 +99,7 @@ def event(repo: Path, command: str, output: str = "", *, failed: bool = False) -
         ("rg pattern web/dist/assets src", True),
         ("rg pattern web/dist/assets; rg pattern src", True),
         ("rg pattern src; rg pattern web/dist/assets", True),
-        ("head -n 40 src/constants.py", False),
+        ("head -n 40 src/constants.py", True),
         ("head -n 40 src/constants.py; cat src/other.py", True),
         ("gcode outline src/constants.py; cat src/other.py", True),
         ("rg pattern /var/log/system.log", False),

@@ -4014,9 +4014,6 @@ class TestRequireCodeIndexSkillStructure:
             "track-code-index-navigation",
             "track-turn-written-paths",
             "note-code-index-preflight-fail-open",
-            "prefer-gcode-for-code-search",
-            "prefer-gcode-for-file-navigation",
-            "prefer-gcode-for-source-read",
         }
         rules = {row.name for row in manager.list_all()}
         assert expected.issubset(rules)
@@ -4025,12 +4022,7 @@ class TestRequireCodeIndexSkillStructure:
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
-        for rule_name in (
-            "require-code-index-skill",
-            "prefer-gcode-for-code-search",
-            "prefer-gcode-for-file-navigation",
-            "prefer-gcode-for-source-read",
-        ):
+        for rule_name in ("require-code-index-skill",):
             row = manager.get_by_name(rule_name)
             assert row is not None
             body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -4050,7 +4042,7 @@ class TestCodeIndexNavigationRules:
     """Verify indexed-project gcode-first rule behavior."""
 
     @staticmethod
-    def _variables(*, loaded: bool = True, used: bool = False) -> dict[str, Any]:
+    def _variables(*, loaded: bool = False, used: bool = False) -> dict[str, Any]:
         return {
             "loaded_skill_references": ["gobby:references/code-index/overview.md"]
             if loaded
@@ -4101,6 +4093,63 @@ class TestCodeIndexNavigationRules:
         (linked_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
         return primary, linked
 
+    @pytest.mark.parametrize("reset_source", ["clear", "compact"])
+    @pytest.mark.asyncio
+    async def test_guidance_once_per_context_epoch(
+        self, db: HubDatabase, reset_source: str
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables()
+        commands = (
+            "rg pattern src",
+            "grep -R pattern src",
+            "sed -n '1,5p' src/app.py",
+            "awk 'NR < 5' src/app.py",
+            "cat src/app.py",
+        )
+        first = await engine.evaluate(
+            self._normalized_bash_event(commands[0]), session_id=SESSION_ID, variables=variables
+        )
+        assert first.decision == "block"
+        assert skill_fetch_directive("gobby:references/code-index/overview.md") in (
+            first.reason or ""
+        )
+        # The completed reference loader records this ledger; partial loads do not.
+        variables["loaded_skill_references"] = ["gobby:references/code-index/overview.md"]
+        for _ in range(2):
+            await engine.evaluate(
+                self._event(HookEventType.BEFORE_AGENT, {"prompt": "continue"}),
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            for command in commands:
+                response = await engine.evaluate(
+                    self._normalized_bash_event(command), session_id=SESSION_ID, variables=variables
+                )
+                assert response.decision == "allow", command
+        await engine.evaluate(
+            self._event(HookEventType.SESSION_START, {"source": reset_source}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert variables["loaded_skill_references"] == []
+        again = await engine.evaluate(
+            self._normalized_bash_event(commands[0]), session_id=SESSION_ID, variables=variables
+        )
+        assert again.decision == "block"
+
+    @pytest.mark.parametrize("command", ["printf 'grep pattern src'", "cp grep.txt copy.txt"])
+    @pytest.mark.asyncio
+    async def test_search_word_in_unrelated_command_does_not_teach(
+        self, db: HubDatabase, command: str
+    ) -> None:
+        _sync_bundled(db)
+        response = await RuleEngine(db).evaluate(
+            self._normalized_bash_event(command), session_id=SESSION_ID, variables=self._variables()
+        )
+        assert response.decision == "allow"
+
     @pytest.mark.asyncio
     async def test_first_rg_requires_code_index_skill(self, db: HubDatabase) -> None:
         _sync_bundled(db)
@@ -4142,7 +4191,7 @@ class TestCodeIndexNavigationRules:
                     session_id=SESSION_ID,
                     variables=variables,
                 )
-                assert response.decision == "block", (loaded, command)
+                assert response.decision == ("allow" if loaded else "block"), (loaded, command)
 
             shell_output_filter = await engine.evaluate(
                 self._normalized_bash_event("git log --oneline | grep handoff"),
@@ -4251,7 +4300,7 @@ class TestCodeIndexNavigationRules:
         assert unrelated.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_loaded_code_index_blocks_rg_with_gcode_grep_guidance(
+    async def test_loaded_code_index_allows_raw_search_without_failure(
         self, db: HubDatabase
     ) -> None:
         _sync_bundled(db)
@@ -4272,18 +4321,7 @@ class TestCodeIndexNavigationRules:
             variables=self._variables(loaded=True),
         )
 
-        assert response.decision == "block"
-        assert response.reason is not None
-        assert '`gcode search-symbol "name"`' in response.reason
-        assert '`gcode grep -w "identifier" -m 50`' in response.reason
-        assert '`gcode grep -F "literal" -m 50`' in response.reason
-        assert '`gcode search-content "text"`' in response.reason
-        assert '`gcode search "concept"`' in response.reason
-        assert "hybrid symbol search" in response.reason
-        assert "switch lanes" in response.reason
-        assert "Run any printed continuation command exactly" in response.reason
-        assert "follow the `recovery` directive" in response.reason
-        assert "do NOT re-run the failing gcode call" in response.reason
+        assert response.decision == "allow"
 
     @pytest.mark.parametrize(
         ("code_index_available", "warning_message"),
@@ -4303,7 +4341,7 @@ class TestCodeIndexNavigationRules:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         repo.mkdir()
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         variables["code_index_available"] = code_index_available
         variables["code_index_preflight_warning"] = {
             "preflight": "code_index",
@@ -4372,7 +4410,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is False
@@ -4397,7 +4435,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is False
@@ -4418,7 +4456,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
@@ -4440,7 +4478,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data.get("canonical_file_paths", []) == []
@@ -4462,7 +4500,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
@@ -4485,7 +4523,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
@@ -4515,7 +4553,7 @@ class TestCodeIndexNavigationRules:
             response = await RuleEngine(db).evaluate(
                 event,
                 session_id=SESSION_ID,
-                variables=self._variables(loaded=True),
+                variables=self._variables(loaded=False),
             )
 
             assert response.decision == expected_decision
@@ -4547,7 +4585,7 @@ class TestCodeIndexNavigationRules:
             response = await RuleEngine(db).evaluate(
                 event,
                 session_id=SESSION_ID,
-                variables=self._variables(loaded=True),
+                variables=self._variables(loaded=False),
             )
 
             assert response.decision == expected_decision
@@ -4578,10 +4616,9 @@ class TestCodeIndexNavigationRules:
                 session_id=SESSION_ID,
                 variables=self._variables(loaded=loaded),
             )
-            assert response.decision == "block", (loaded, command)
-            assert "gcode" in (response.reason or "")
-            if loaded:
-                assert "gcode tree" in (response.reason or "")
+            assert response.decision == ("allow" if loaded else "block"), (loaded, command)
+            if not loaded:
+                assert "gcode" in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_find_newer_filesystem_query_is_explicitly_allowed(self, db: HubDatabase) -> None:
@@ -4636,7 +4673,7 @@ class TestCodeIndexNavigationRules:
                 session_id=SESSION_ID,
                 variables=self._variables(loaded=loaded),
             )
-            assert response.decision == "block", loaded
+            assert response.decision == ("allow" if loaded else "block"), loaded
 
     @pytest.mark.parametrize(
         "command",
@@ -4661,7 +4698,7 @@ class TestCodeIndexNavigationRules:
                 session_id=SESSION_ID,
                 variables=self._variables(loaded=loaded),
             )
-            assert response.decision == "block", (loaded, command)
+            assert response.decision == ("allow" if loaded else "block"), (loaded, command)
 
     @pytest.mark.asyncio
     async def test_current_byte_verification_of_same_turn_write_is_explicitly_allowed(
@@ -4669,7 +4706,7 @@ class TestCodeIndexNavigationRules:
     ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         write = self._event(
             HookEventType.AFTER_TOOL,
             {
@@ -4693,7 +4730,7 @@ class TestCodeIndexNavigationRules:
             blocked = await engine.evaluate(
                 event,
                 session_id=SESSION_ID,
-                variables=self._variables(loaded=True),
+                variables=self._variables(loaded=False),
             )
 
             assert allowed.decision == "allow", command
@@ -4702,7 +4739,7 @@ class TestCodeIndexNavigationRules:
     @pytest.mark.asyncio
     async def test_gcode_fail_open_allows_fallback_search(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         variables["code_index_recoveries"] = [{"action": "search", "paths": ["src"]}]
         event = self._event(
             HookEventType.BEFORE_TOOL,
@@ -4736,7 +4773,7 @@ class TestCodeIndexNavigationRules:
         tmp_path: Path,
     ) -> None:
         _sync_bundled(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         completed_item = {
             "id": "gcode-error",
             "type": "dynamicToolCall",
@@ -4782,7 +4819,7 @@ class TestCodeIndexNavigationRules:
         ordinary_response = await RuleEngine(db).evaluate(
             raw_retry,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert variables["code_index_recoveries"]
@@ -4825,7 +4862,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "block"
@@ -4835,7 +4872,7 @@ class TestCodeIndexNavigationRules:
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
         _sync_bundled(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         outcome = self._normalized_bash_event(
             "gcode outline src/constants.py", cwd=str(tmp_path), project_path=str(tmp_path)
         )
@@ -4887,12 +4924,7 @@ class TestCodeIndexNavigationRules:
         assert len(clear_effects) == 1
         assert clear_effects[0].value == []
 
-        for rule_name in (
-            "require-code-index-skill",
-            "prefer-gcode-for-code-search",
-            "prefer-gcode-for-file-navigation",
-            "prefer-gcode-for-source-read",
-        ):
+        for rule_name in ("require-code-index-skill",):
             row = manager.get_by_name(rule_name)
             assert row is not None
             body = RuleDefinitionBody.model_validate(row.definition_json)
@@ -4954,7 +4986,7 @@ class TestCodeIndexNavigationRules:
                 variables=self._variables(loaded=loaded),
             )
 
-            assert response.decision == "block"
+            assert response.decision == ("allow" if loaded else "block")
 
     @pytest.mark.asyncio
     async def test_normalized_repo_search_still_blocks(
@@ -4972,7 +5004,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "block"
@@ -4993,7 +5025,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "allow"
@@ -5014,7 +5046,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "allow"
@@ -5042,7 +5074,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "allow"
@@ -5062,7 +5094,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "block"
@@ -5091,7 +5123,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert response.decision == "block"
@@ -5099,7 +5131,7 @@ class TestCodeIndexNavigationRules:
     @pytest.mark.asyncio
     async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         before = self._event(
             HookEventType.BEFORE_TOOL,
             {
@@ -5145,9 +5177,9 @@ class TestCodeIndexNavigationRules:
         ("rule_name", "command"),
         [
             ("require-code-index-skill", 'gcode search-content "query" src'),
-            ("prefer-gcode-for-code-search", 'gcode grep "pattern" src -m 50'),
-            ("prefer-gcode-for-file-navigation", "gcode tree src"),
-            ("prefer-gcode-for-source-read", "gcode outline src/gobby/workflows/engine/core.py"),
+            ("require-code-index-skill", 'gcode grep "pattern" src -m 50'),
+            ("require-code-index-skill", "gcode tree src"),
+            ("require-code-index-skill", "gcode outline src/gobby/workflows/engine/core.py"),
         ],
     )
     @pytest.mark.asyncio
@@ -5155,7 +5187,7 @@ class TestCodeIndexNavigationRules:
         self, db: HubDatabase, rule_name: str, command: str
     ) -> None:
         _sync_bundled(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         variables.update(
             {
                 "_last_blocked_tool": "Bash",
@@ -5181,7 +5213,7 @@ class TestCodeIndexNavigationRules:
     @pytest.mark.asyncio
     async def test_turn_start_resets_gcode_navigation_flag(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        variables = self._variables(loaded=True, used=True)
+        variables = self._variables(loaded=False, used=True)
         variables["turn_written_paths"] = ["src/app.py"]
         event = self._event(HookEventType.BEFORE_AGENT, {"prompt": "continue"})
 
@@ -5191,10 +5223,10 @@ class TestCodeIndexNavigationRules:
         assert variables["turn_written_paths"] == []
 
     @pytest.mark.asyncio
-    async def test_broad_cat_blocks_but_tight_line_read_allows(self, db: HubDatabase) -> None:
+    async def test_first_broad_and_tight_reads_teach_code_index(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
         broad = self._event(
             HookEventType.BEFORE_TOOL,
             {
@@ -5226,35 +5258,25 @@ class TestCodeIndexNavigationRules:
         narrow_response = await engine.evaluate(narrow, session_id=SESSION_ID, variables=variables)
 
         assert broad_response.decision == "block"
-        assert broad_response.reason is not None
-        assert (
-            "Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` "
-            "for the relevant result."
-        ) in broad_response.reason
-        assert "Request `--format json` or `--verbose` only when an ID is required" in (
-            broad_response.reason
+        assert skill_fetch_directive("gobby:references/code-index/overview.md") in (
+            broad_response.reason or ""
         )
-        assert "Ranged Read (offset/limit, ≤40 lines) is always available" in (
-            broad_response.reason
-        )
-        assert "follow the `recovery` directive" in broad_response.reason
-        assert "allows Read for that file" in broad_response.reason
-        assert narrow_response.decision == "allow"
+        assert narrow_response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_plain_sed_range_read_is_explicitly_allowed(self, db: HubDatabase) -> None:
+    async def test_first_plain_sed_range_teaches_code_index(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = self._normalized_bash_event("sed -n '10,40p' src/gobby/hooks/events.py")
 
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_source_line_count"] == 31
         assert event.data["canonical_narrow_source_context"] is True
-        assert response.decision == "allow"
+        assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_wc_line_count_is_explicitly_allowed(self, db: HubDatabase) -> None:
@@ -5264,7 +5286,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
         assert event.data["canonical_tool_kind"] == "execute"
@@ -5275,7 +5297,7 @@ class TestCodeIndexNavigationRules:
     async def test_compound_broad_shell_read_and_search_block(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = self._variables(loaded=True)
+        variables = self._variables(loaded=False)
 
         search_response = await engine.evaluate(
             self._normalized_bash_event("cd dir && rg pattern src"),
@@ -5292,17 +5314,17 @@ class TestCodeIndexNavigationRules:
         assert read_response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_compound_narrow_shell_read_allows(self, db: HubDatabase) -> None:
+    async def test_first_compound_narrow_read_teaches_code_index(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = self._normalized_bash_event("cd dir\nsed -n '1,40p' app.py")
 
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True),
+            variables=self._variables(loaded=False),
         )
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_wide_line_read_requires_prior_gcode_navigation(self, db: HubDatabase) -> None:
@@ -5324,12 +5346,12 @@ class TestCodeIndexNavigationRules:
         blocked = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True, used=False),
+            variables=self._variables(loaded=False, used=False),
         )
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=True, used=True),
+            variables=self._variables(loaded=False, used=True),
         )
 
         assert blocked.decision == "block"

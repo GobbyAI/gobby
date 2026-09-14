@@ -304,7 +304,6 @@ def navigation_requires_index(
             continue
         if (
             segment.get("canonical_code_index_navigation")
-            or not segment.get("canonical_code_navigation_broad")
             or segment.get("canonical_code_navigation_repo_scope") is False
             or segment.get("canonical_code_navigation_excluded")
             or segment.get("canonical_search_revision_scoped")

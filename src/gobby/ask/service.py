@@ -25,7 +25,6 @@ from gobby.ask.evidence_runtime import (
     AskSnapshotManager,
     EvidenceFactory,
     EvidenceManifestFactory,
-    evidence_references,
 )
 from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime, UnsupportedAskRuntime
 from gobby.ask.pipeline import AskPipelineExecutor, parse_ask_pipeline
@@ -689,10 +688,7 @@ class AskService:
         return record
 
     def _result(self, record: AskRunRecord) -> AskRunResult:
-        return self.stages.to_result(
-            record,
-            evidence=tuple(evidence_references(self.storage, record.run_id)),
-        )
+        return self.stages.to_result(record)
 
     def _required_state(self, run_id: str) -> AskOrchestrationState:
         state = self.stages.get(run_id)

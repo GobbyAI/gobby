@@ -11,6 +11,11 @@ Direct `gcode` navigation does not require loading this reference. Reference
 loads still use the normal skill-file schema gate and complete pagination.
 Loading an overview or menu never loads another topic.
 
+The first raw repository search, navigation, or source read teaches this preference
+by requesting this reference. Once it is fully loaded, raw tools remain available
+for the session epoch, without a preceding gcode failure. Ordinary turns do not
+repeat the warning; clear or compact resets the teaching gate.
+
 | Topic | Load when |
 | --- | --- |
 | [search](search.md) | Choosing search lanes or interpreting ranked matches |

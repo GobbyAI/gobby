@@ -6,7 +6,7 @@ tags: [code-index, gobby, default]
 # | same-repo primary/linked-worktree search | redirect | gcode indexes each checkout |
 # | simple find path/name/type/depth navigation | redirect | gcode tree |
 # | find live metadata/format/action predicates | allow | gcode must not emulate filesystem state/actions |
-# | sed/head/tail range of at most 40 lines | allow | exact current line context |
+# | sed/head/tail source range | teach | load reference once, then allow |
 # | wc byte/line counts | allow | exact current filesystem aggregate |
 # | read/search of a path written this turn | allow | verify current bytes before refresh |
 # | session scratchpad navigation | allow | scratchpads are never indexed |
@@ -99,7 +99,7 @@ rules:
           Code-index preflight reported this checkout unavailable or stale; raw filesystem navigation is allowed for this session.
 
   require-code-index-skill:
-    description: "Block first code navigation until code-index skill is loaded"
+    description: "Teach preferred code navigation once per session epoch"
     event: before_tool
     enabled: true
     priority: 30
@@ -114,46 +114,4 @@ rules:
       and navigation_requires_index(event.data)
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, choose by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
-
-  prefer-gcode-for-code-search:
-    description: "Block broad shell search in indexed projects after code-index is loaded"
-    event: before_tool
-    enabled: true
-    priority: 31
-    when: >
-      variables.get('code_index_available')
-      and skill_loaded('gobby:references/code-index/overview.md')
-      and not variables.get('code_index_preflight_warning')
-      and navigation_requires_index(event.data, 'search')
-    effects:
-      - type: block
-        reason: 'Use gcode by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search). After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. Bare grep patterns are Rust regex, not grep BRE: write alternation as `a|b`, because `a\|b` matches a literal pipe and silently returns nothing. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure allows fallback for the attempted paths and operation. Explicit generated or ignored targets are available directly; ordinary zero-match searches do not grant fallback.'
-
-  prefer-gcode-for-file-navigation:
-    description: "Block gcode-replicable find navigation in indexed checkouts"
-    event: before_tool
-    enabled: true
-    priority: 31
-    when: >
-      variables.get('code_index_available')
-      and skill_loaded('gobby:references/code-index/overview.md')
-      and not variables.get('code_index_preflight_warning')
-      and navigation_requires_index(event.data, 'enumerate')
-    effects:
-      - type: block
-        reason: 'Use `gcode tree [PATH...]` for indexed file and directory navigation; translate find name/path/type/depth predicates into path or glob filters and run any printed continuation command exactly.'
-
-  prefer-gcode-for-source-read:
-    description: "Block broad source reads in indexed projects after code-index is loaded"
-    event: before_tool
-    enabled: true
-    priority: 31
-    when: >
-      variables.get('code_index_available')
-      and skill_loaded('gobby:references/code-index/overview.md')
-      and not variables.get('code_index_preflight_warning')
-      and navigation_requires_index(event.data, 'read')
-    effects:
-      - type: block
-        reason: 'Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` for the relevant result. Request `--format json` or `--verbose` only when an ID is required. Ranged Read (offset/limit, ≤40 lines) is always available. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure allows Read for that file. Successful zero-symbol outline results also allow Read for that file; other indexed paths stay gated.'
+        reason: '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, raw search, navigation, and read tools are available for the rest of this session epoch; the teaching gate resets only after clear or compact. Prefer gcode by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
