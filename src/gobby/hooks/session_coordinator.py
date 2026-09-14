@@ -904,9 +904,9 @@ class SessionCoordinator:
     def _notify_agent_completion(self, run_id: str, status: str) -> None:
         """Fire completion event for an agent run (fail-open, idempotent).
 
-        This may be called from a sync context (hook handler thread) where no
-        event loop is running.  Uses run_coroutine_threadsafe with the stored
-        main loop reference to safely schedule the async notify call.
+        Always schedules onto the stored daemon loop, even from async callers:
+        completion and wake state are confined to that loop, and a caller's own
+        loop may be a throwaway ``asyncio.run`` loop that cancels the task unrun.
         """
         if not self._completion_registry:
             return
@@ -928,19 +928,13 @@ class SessionCoordinator:
                 run_db=run_terminal_delivery_offload,
             )
 
-            # Prefer the current running loop (if we happen to be in async context)
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(coro)
-                return
-            except RuntimeError:
-                pass
-
-            # Fall back to stored main event loop (cross-thread scheduling)
-            if self._event_loop and not self._event_loop.is_closed():
+            if self._event_loop is not None and self._event_loop.is_running():
                 asyncio.run_coroutine_threadsafe(coro, self._event_loop)
             else:
-                self.logger.debug("No event loop available to notify completion for run %s", run_id)
+                coro.close()
+                self.logger.warning(
+                    "No running daemon loop to notify completion for run %s", run_id
+                )
         except Exception:
             self.logger.debug(
                 "Failed to notify completion registry for run %s", run_id, exc_info=True

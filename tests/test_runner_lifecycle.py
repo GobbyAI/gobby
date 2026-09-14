@@ -3869,6 +3869,7 @@ class TestShutdownLoop:
                 services=SimpleNamespace(shutdown_in_progress=False),
             ),
             db_executor=SimpleNamespace(run=AsyncMock(), submit=MagicMock()),
+            wake_dispatcher=SimpleNamespace(bind_owner_loop=MagicMock()),
         )
 
     @pytest.mark.asyncio
@@ -3905,6 +3906,35 @@ class TestShutdownLoop:
             assert exc_info.value.code == 1
             readiness.assert_awaited_once_with(runner)
             rollback.assert_awaited_once_with(runner)
+
+    @pytest.mark.asyncio
+    async def test_wake_dispatcher_is_bound_to_the_main_loop(self, mock_config: MagicMock) -> None:
+        """Wakes share the owner loop that terminal delivery hands foreign callers to."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            for active_patch in patches:
+                stack.enter_context(active_patch)
+            runner = self._minimal_runner(mock_config)
+            stack.enter_context(
+                patch(
+                    "gobby.runner_service_readiness.require_managed_services_ready",
+                    new=AsyncMock(side_effect=RuntimeError("stop after owner-loop wiring")),
+                )
+            )
+            stack.enter_context(
+                patch("gobby.runner_rollback.rollback_runner_resources_async", new=AsyncMock())
+            )
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
+
+            with pytest.raises(SystemExit):
+                await runner_lifecycle.run_daemon(
+                    runner,
+                    ownership_resolution=FailOpenPidOwnership("test"),
+                )
+
+        runner.wake_dispatcher.bind_owner_loop.assert_called_once_with(asyncio.get_running_loop())
 
     @pytest.mark.asyncio
     async def test_web_chat_runtime_starts_after_http_bind(self, mock_config) -> None:

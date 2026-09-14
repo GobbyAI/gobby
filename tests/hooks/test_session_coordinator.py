@@ -1729,6 +1729,7 @@ class TestNotifyAgentCompletionDelivery:
             LocalAgentRunManager,
             SimpleNamespace(db=MagicMock()),
         )
+        coordinator._event_loop = asyncio.get_running_loop()
         return coordinator
 
     def _record_removals(
@@ -1745,9 +1746,11 @@ class TestNotifyAgentCompletionDelivery:
         monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
         return removals
 
-    def _schedule(self, coordinator: SessionCoordinator, run_id: str) -> asyncio.Task[Any]:
+    async def _schedule(self, coordinator: SessionCoordinator, run_id: str) -> asyncio.Task[Any]:
         before = asyncio.all_tasks()
         coordinator._notify_agent_completion(run_id, "completed")
+        # run_coroutine_threadsafe creates the task on the loop's next iteration.
+        await asyncio.sleep(0)
         new_tasks = asyncio.all_tasks() - before
         assert len(new_tasks) == 1
         return new_tasks.pop()
@@ -1761,7 +1764,7 @@ class TestNotifyAgentCompletionDelivery:
         removals = self._record_removals(monkeypatch, registry)
         coordinator = self._coordinator(registry)
 
-        task = self._schedule(coordinator, "run-1")
+        task = await self._schedule(coordinator, "run-1")
         await registry.started.wait()
         assert registry.notify_calls[0][1] == {"status": "completed", "run_id": "run-1"}
         assert removals == []
@@ -1783,7 +1786,7 @@ class TestNotifyAgentCompletionDelivery:
         removals = self._record_removals(monkeypatch, registry)
         coordinator = self._coordinator(registry)
 
-        await self._schedule(coordinator, "run-1")
+        await (await self._schedule(coordinator, "run-1"))
         assert removals == []
         assert registry.cleanup_calls == ["run-1"]
 
@@ -1796,7 +1799,7 @@ class TestNotifyAgentCompletionDelivery:
         removals = self._record_removals(monkeypatch, registry)
         coordinator = self._coordinator(registry)
 
-        task = self._schedule(coordinator, "run-1")
+        task = await self._schedule(coordinator, "run-1")
         await registry.started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -1860,6 +1863,30 @@ class TestNotifyAgentCompletionDelivery:
         assert registry.notify_calls == []
         assert removals == []
         assert registry.cleanup_calls == []
+
+    @pytest.mark.asyncio
+    async def test_throwaway_loop_caller_delivers_on_daemon_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+
+        async def notify_inside_asyncio_run() -> None:
+            coordinator._notify_agent_completion("run-1", "completed")
+
+        before = asyncio.all_tasks()
+        # asyncio.run cancels tasks left on its own loop, so delivery must land on the daemon loop.
+        await asyncio.to_thread(asyncio.run, notify_inside_asyncio_run())
+        await asyncio.wait_for(registry.started.wait(), timeout=2)
+        new_tasks = asyncio.all_tasks() - before
+        assert len(new_tasks) == 1
+
+        release.set()
+        await new_tasks.pop()
+        assert removals == [("run-1", ["sess-1"])]
+        assert registry.cleanup_calls == ["run-1"]
 
 
 class _AlreadyTerminalRunStorage:

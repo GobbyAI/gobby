@@ -140,10 +140,19 @@ class WakeDispatcher:
         self._lifecycle_refresh = lifecycle_refresh
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
-        # Asyncio locks are loop-affine; weak loop refs avoid extending either lifetime.
-        self._live_wake_locks: weakref.WeakValueDictionary[
-            tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], str], asyncio.Lock
-        ] = weakref.WeakValueDictionary()
+        self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_owner_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Confine wakes to the daemon loop that owns the per-session locks."""
+        self._owner_loop = loop
+
+    def _require_owner_loop(self) -> None:
+        # Terminal delivery hands foreign-loop callers to the owner loop before waking.
+        if self._owner_loop is not None and asyncio.get_running_loop() is not self._owner_loop:
+            raise RuntimeError("Wake dispatch must run on the daemon event loop")
 
     def set_web_chat_session_registry(
         self,
@@ -169,6 +178,7 @@ class WakeDispatcher:
             message: Human-readable notification message
             result: Structured result data
         """
+        self._require_owner_loop()
 
         def read_session() -> Any | None:
             with self._session_manager.db.bounded_transaction():
@@ -205,11 +215,11 @@ class WakeDispatcher:
         priority: str = "normal",
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
-        lock_key = (weakref.ref(asyncio.get_running_loop()), session_id)
-        lock = self._live_wake_locks.get(lock_key)
+        self._require_owner_loop()
+        lock = self._live_wake_locks.get(session_id)
         if lock is None:
             lock = asyncio.Lock()
-            self._live_wake_locks[lock_key] = lock
+            self._live_wake_locks[session_id] = lock
         async with lock:
             if self._lifecycle_refresh is not None:
                 try:
@@ -229,6 +239,7 @@ class WakeDispatcher:
         priority: str = "normal",
     ) -> list[dict[str, Any]]:
         """Batch eligible native-terminal wakes and preserve recipient order."""
+        self._require_owner_loop()
         from gobby.events.wake_batch import dispatch_live_wakes
 
         return await dispatch_live_wakes(self, session_ids, priority=priority)
@@ -711,16 +722,14 @@ class WakeDispatcher:
 
     def _prune_live_wake_state(self, stale_before: float) -> None:
         """Drop stale wake timestamps and unused per-session locks."""
-        loop_ref = weakref.ref(asyncio.get_running_loop())
         for recorded_session_id, (_, recorded_ts) in tuple(self._last_live_wake.items()):
             if recorded_ts >= stale_before:
                 continue
-            lock_key = (loop_ref, recorded_session_id)
-            lock = self._live_wake_locks.get(lock_key)
+            lock = self._live_wake_locks.get(recorded_session_id)
             if lock is not None and lock.locked():
                 continue
             self._last_live_wake.pop(recorded_session_id, None)
-            self._live_wake_locks.pop(lock_key, None)
+            self._live_wake_locks.pop(recorded_session_id, None)
 
     def _should_send_live_wake(self, session_id: str, session: Any) -> bool:
         """Decide whether to send a live wake signal to a session.

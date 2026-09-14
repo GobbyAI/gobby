@@ -36,10 +36,7 @@ class _DeliveryAttempt:
 
 _terminal_delivery_admission_open = True
 _in_flight_terminal_deliveries: dict[asyncio.Task[Any], str] = {}
-_in_flight_run_deliveries: dict[
-    tuple[asyncio.AbstractEventLoop, str],
-    asyncio.Future[_DeliveryAttempt],
-] = {}
+_in_flight_run_deliveries: dict[str, asyncio.Future[_DeliveryAttempt]] = {}
 _terminal_delivery_loop: asyncio.AbstractEventLoop | None = None
 
 
@@ -151,6 +148,17 @@ async def shielded_terminal_delivery[T](
             )
         return None
 
+    if _terminal_delivery_loop not in (None, asyncio.get_running_loop()):
+        # Workflow and build loops hand the scope to the daemon loop, which drains it.
+        try:
+            admitted = await submit_terminal_delivery(run_id, operation)
+        except TerminalDeliveryAdmissionClosedError:
+            if raise_if_closed:
+                raise
+            logger.info("Terminal delivery admission is closed for agent %s", run_id)
+            return None
+        return await _await_terminal_result(admitted)
+
     owned: asyncio.Task[T] = asyncio.create_task(
         operation(),
         name=f"terminal-delivery:{run_id}",
@@ -223,8 +231,13 @@ async def submit_terminal_delivery[T](
 
     if loop is asyncio.get_running_loop():
         admit()
-    else:
+    elif loop.is_running():
         loop.call_soon_threadsafe(admit)
+    else:
+        # A stopped owner loop never runs admit(); durable rows wait for startup recovery.
+        raise TerminalDeliveryAdmissionClosedError(
+            f"Terminal delivery owner loop is not running for agent {run_id}"
+        )
     await _await_terminal_result(admitted)
     return result
 
@@ -411,15 +424,27 @@ async def deliver_and_cleanup_terminal_run(
 ) -> dict[str, bool] | None:
     """Coalesce concurrent successful deliveries while preserving failed-wake retries."""
     loop = asyncio.get_running_loop()
-    key = (loop, run_id)
+    if _terminal_delivery_loop not in (None, loop):
+        # Completion registry and wake state are confined to the daemon loop.
+        async def on_owner_loop() -> dict[str, bool] | None:
+            return await deliver_and_cleanup_terminal_run(
+                db=db,
+                completion_registry=completion_registry,
+                run_id=run_id,
+                result=result,
+                message=message,
+                run_db=run_db,
+            )
+
+        return await run_terminal_delivery(run_id, on_owner_loop)
     while True:
-        in_flight = _in_flight_run_deliveries.get(key)
+        in_flight = _in_flight_run_deliveries.get(run_id)
         if in_flight is None:
             completed: asyncio.Future[_DeliveryAttempt] = loop.create_future()
             completed.add_done_callback(
                 lambda future: None if future.cancelled() else future.exception()
             )
-            _in_flight_run_deliveries[key] = completed
+            _in_flight_run_deliveries[run_id] = completed
             try:
                 attempt = await _deliver_and_cleanup_terminal_run_once(
                     db=db,
@@ -439,8 +464,8 @@ async def deliver_and_cleanup_terminal_run(
                 completed.set_result(attempt)
                 return attempt.delivery
             finally:
-                if _in_flight_run_deliveries.get(key) is completed:
-                    _in_flight_run_deliveries.pop(key, None)
+                if _in_flight_run_deliveries.get(run_id) is completed:
+                    _in_flight_run_deliveries.pop(run_id, None)
 
         try:
             attempt = await asyncio.shield(in_flight)
