@@ -15,6 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 
+from tests.native_binary_selection import select_native_binary
+
 
 class Screen:
     """Track ratatui's cursor-addressed cells, including fragmented escapes."""
@@ -145,10 +147,9 @@ class GclientDriver:
     """Run a real client with a controlling 120×40 PTY and bounded teardown."""
 
     def __init__(self, args: list[str], *, env: dict[str, str], cwd: Path) -> None:
-        binary_dir = Path(os.environ.get("GOBBY_NATIVE_BIN_DIR", Path.home() / ".gobby/bin"))
-        binary = binary_dir / "gclient"
-        if not binary.is_file():
-            raise AssertionError(f"Build and install gclient before this test: {binary}")
+        selected = select_native_binary("gclient", required=True)
+        assert selected is not None
+        binary = selected.path
         self.screen = Screen(120, 40)
         self.output = bytearray()
         self.exit_code: int | None = None
