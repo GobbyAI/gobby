@@ -8,9 +8,14 @@ import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
-import psutil
 import pytest
 
+from gobby.guard_set_g import (
+    durable_hosts as _durable_hosts,
+    finalize_pidfile_host as _finalize_pidfile_host,
+    leaked_hosts,
+    snapshot_gterm_hosts as _gterm_hosts,
+)
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
     select_native_binary,
@@ -27,68 +32,6 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
     return [selected.header()] if selected is not None else []
 
 
-def _gterm_socket_dir(cmdline: list[str]) -> Path | None:
-    if len(cmdline) < 2 or Path(cmdline[0]).name != "gterm" or cmdline[1] != "host":
-        return None
-    try:
-        socket_index = cmdline.index("--socket-dir") + 1
-        return Path(cmdline[socket_index]).resolve()
-    except (ValueError, IndexError):
-        return None
-
-
-def _gterm_hosts() -> dict[int, Path]:
-    hosts: dict[int, Path] = {}
-    for process in psutil.process_iter(["pid", "cmdline"]):
-        try:
-            socket_dir = _gterm_socket_dir(process.info.get("cmdline") or [])
-            if socket_dir is not None:
-                hosts[int(process.info["pid"])] = socket_dir
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            continue
-    return hosts
-
-
-def _under(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
-
-
-def _finalize_pidfile_host(pid: int, socket_dir: Path, roots: tuple[Path, ...]) -> None:
-    if not any(_under(socket_dir, root) for root in roots):
-        return
-    try:
-        recorded_pid = int((socket_dir / "gterm.pid").read_text().strip())
-    except (OSError, ValueError):
-        return
-    if recorded_pid != pid:
-        return
-    try:
-        process = psutil.Process(pid)
-        if _gterm_socket_dir(process.cmdline()) != socket_dir:
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=1.0)
-        except psutil.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=1.0)
-    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-        return
-
-
-def _durable_hosts(hosts: dict[int, Path], temp_roots: tuple[Path, ...]) -> dict[int, Path]:
-    """Hosts whose state directory is outside every temp root: the daemon's own host."""
-    return {
-        pid: socket_dir
-        for pid, socket_dir in hosts.items()
-        if not any(_under(socket_dir, root) for root in temp_roots)
-    }
-
-
 @pytest.fixture(scope="session", autouse=True)
 def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Guard set G group 7 for this suite: no host leaks, no durable host ends.
@@ -96,6 +39,8 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
     A durable host (state directory outside every temp root, such as the daemon's
     ``~/.gobby`` host) that exists before the session must still exist after it;
     ending one would take every native terminal on the machine down with it.
+    Ownership and cleanup come from ``gobby.guard_set_g`` so the executable
+    guard and this fixture cannot drift.
     """
     before = _gterm_hosts()
     yield
@@ -110,20 +55,12 @@ def _assert_no_leaked_hosts(tmp_path_factory: pytest.TempPathFactory) -> Iterato
         Path("/tmp").resolve(),
     )
     after = _gterm_hosts()
-    leaked = {
-        pid: socket_dir
-        for pid, socket_dir in after.items()
-        if before.get(pid) != socket_dir and any(_under(socket_dir, root) for root in roots)
-    }
+    leaked = leaked_hosts(before, after, roots)
     for pid, socket_dir in leaked.items():
         _finalize_pidfile_host(pid, socket_dir, roots)
 
     final = _gterm_hosts()
-    remaining = {
-        pid: socket_dir
-        for pid, socket_dir in final.items()
-        if before.get(pid) != socket_dir and any(_under(socket_dir, root) for root in roots)
-    }
+    remaining = leaked_hosts(before, final, roots)
     assert not remaining, (
         "tests/terminals leaked gterm host processes that use this session's temp roots: "
         f"before={sorted(before)} after={sorted(final)} remaining={sorted(remaining)}"
