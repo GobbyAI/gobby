@@ -473,11 +473,37 @@ async def _cleanup_missing_terminal_agent_run(
     run: Any,
     terminal_ref: str,
 ) -> bool:
-    """Park and immediately resume a run whose terminal did not survive restart."""
+    """Park and immediately resume a run whose terminal did not survive restart.
+
+    A close-review caller or closed-task run is left running instead: a resume
+    would start a session its review does not know about. Reporting it resolved
+    clears its fence so lifecycle reconciliation terminalizes it.
+    """
     config = runner.config_runtime.capture().snapshot.active
     monitor = runner.agent_lifecycle_monitor
     if monitor is None or runner.agent_runner is None:
         return False
+
+    if getattr(run, "task_id", None):
+        from gobby.agents.run_completion import (
+            bound_task_is_closed,
+            cooperative_close_handoff_pending,
+            ended_caller_close_review_outcome,
+        )
+
+        db = runner.agent_runner.run_storage.db
+        for claims_run in (
+            cooperative_close_handoff_pending,
+            bound_task_is_closed,
+            ended_caller_close_review_outcome,
+        ):
+            if await _run_db(runner, claims_run, db, run):
+                logger.info(
+                    "Leaving agent %s to task reconciliation after missing terminal %r",
+                    run.id,
+                    terminal_ref,
+                )
+                return True
 
     from gobby.agents.resume_executor import resume_agent_run
 

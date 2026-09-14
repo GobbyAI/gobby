@@ -28,10 +28,6 @@ DELIBERATE_STOP_TERMINAL_REASONS: tuple[AgentRunTerminalReason, ...] = (
     "spawn_rollback",
 )
 
-# SESSION_END uses this prefix when a step workflow is still open. Closed-task
-# reconciliation may revive an error that starts with this string.
-INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
-
 STATUS_PENDING: AgentRunStatus = "pending"
 STATUS_RUNNING: AgentRunStatus = "running"
 STATUS_SUCCESS: AgentRunStatus = "success"

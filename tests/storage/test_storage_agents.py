@@ -641,6 +641,26 @@ class TestLocalAgentRunManager:
         result = agent_manager.complete("00000000-0000-0000-0000-0000000000ff", result="test")
         assert result is None
 
+    def test_complete_does_not_revive_failed_run(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        """A late completion cannot overwrite a session-end failure."""
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="grok",
+            prompt="Close after review",
+        )
+        agent_manager.start(agent_run.id)
+        error = "Agent session ended before step workflow completed; workflow=backend-developer"
+        assert agent_manager.fail(agent_run.id, error=error) is not None
+
+        assert agent_manager.complete(agent_run.id, result="late close") is None
+        stored = agent_manager.get(agent_run.id)
+        assert stored is not None
+        assert (stored.status, stored.error) == ("error", error)
+
     def test_fail_agent_run(
         self,
         agent_manager: LocalAgentRunManager,

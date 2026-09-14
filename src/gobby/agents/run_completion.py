@@ -6,8 +6,9 @@ import asyncio
 import json
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
+from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.lifecycle_checkout import resolve_session_checkout_root
 from gobby.agents.terminal_delivery import (
     configure_terminal_delivery_offload as configure_terminal_delivery_offload,
@@ -20,7 +21,7 @@ from gobby.agents.terminal_delivery import (
 from gobby.agents.terminal_delivery import (
     reset_terminal_delivery_offload as reset_terminal_delivery_offload,
 )
-from gobby.storage.agents import INCOMPLETE_STEP_WORKFLOW_ERROR
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -38,16 +39,10 @@ if TYPE_CHECKING:
     from gobby.storage.agents import AgentRunTerminalReason
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.task_close_reviews import TaskCloseReview
 
 
 logger = logging.getLogger(__name__)
-
-_BUDGET_TURN_STOP_REASONS = frozenset(
-    {"max_turns", "MaxTurnRequests", "max_session_turns", "max-turns"}
-)
-_BUDGET_CONTEXT_STOP_REASONS = frozenset(
-    {"max_tokens", "MaxTokens", "max_context", "context_overflow", "context_window"}
-)
 
 
 def _agent_run_checkout_root(
@@ -243,30 +238,6 @@ def closed_task_run_completion_result(
     )
 
 
-def budget_ceiling_error(stop_reason: str | None) -> str | None:
-    """Return a named ceiling error when SESSION_END reports a turn/token budget."""
-    if not isinstance(stop_reason, str):
-        return None
-    normalized = stop_reason.strip()
-    if not normalized:
-        return None
-    if normalized in _BUDGET_TURN_STOP_REASONS:
-        return (
-            f"Agent session ended because the turn ceiling was reached (stop_reason={normalized})"
-        )
-    if normalized in _BUDGET_CONTEXT_STOP_REASONS:
-        return (
-            "Agent session ended because the context ceiling was reached "
-            f"(stop_reason={normalized})"
-        )
-    return None
-
-
-def is_incomplete_workflow_error(error: str | None) -> bool:
-    """True when a run failed only because SESSION_END saw a nonterminal step."""
-    return isinstance(error, str) and error.startswith(INCOMPLETE_STEP_WORKFLOW_ERROR)
-
-
 def bound_task_is_closed(db: HubDatabase, run: Any) -> bool:
     """True when the run's bound task already has close metadata."""
     task_id = getattr(run, "task_id", None)
@@ -288,40 +259,79 @@ def bound_task_is_closed(db: HubDatabase, run: Any) -> bool:
 def cooperative_close_handoff_pending(db: HubDatabase, run: Any) -> bool:
     """True when session-end/dead-PID must not fail a close-review caller.
 
-    An in-flight or undelivered agentic close review still owns the caller.
-    After delivery, a live caller can cooperative-end; an expired caller
-    cannot, so closed-task reconciliation should complete the run.
+    An in-flight agentic close review owns the caller. A live caller also
+    waits for a closed verdict's delivery, then can cooperative-end until it
+    stagnates. An ended caller can do neither, so its review state decides.
     """
     from gobby.autonomous.progress_tracker import ProgressTracker
-    from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+
+    review = _latest_caller_close_review(db, run)
+    if review is None:
+        return False
+    if review.active:
+        return True
+    if review.status != "closed" or not _caller_session_is_live(db, review.caller_session_id):
+        return False
+    return review.delivered_at is None or not ProgressTracker(db).is_stagnant(
+        review.caller_session_id
+    )
+
+
+def ended_caller_close_review_outcome(
+    db: HubDatabase,
+    run: Any,
+    *,
+    caller_ended: bool = False,
+) -> tuple[Literal["complete", "fail"], str] | None:
+    """Terminal action for an open-task run whose caller ended after its close review.
+
+    ``external_pending`` completes, as a live caller following that verdict
+    would. Every other terminal status fails, including ``closed``: close
+    commits the task before finishing the review, so an open task was reopened.
+    SESSION_END passes ``caller_ended`` because it runs before the session row
+    leaves its live status.
+    """
+    review = _latest_caller_close_review(db, run)
+    if (
+        review is None
+        or review.active
+        or (not caller_ended and _caller_session_is_live(db, review.caller_session_id))
+        or bound_task_is_closed(db, run)
+    ):
+        return None
+    if review.status == "external_pending":
+        return (
+            "complete",
+            "Agent session ended with its close review external_pending: coordinator-owned "
+            f"live criteria remain pending verification; task={review.task_ref} remains open; "
+            f"review_id={review.id}",
+        )
+    return (
+        "fail",
+        "Agent session ended before its close review closed the task; "
+        f"review_status={review.status}; task={review.task_ref} remains open; "
+        f"review_id={review.id}",
+    )
+
+
+def _latest_caller_close_review(db: HubDatabase, run: Any) -> TaskCloseReview | None:
     from gobby.storage.task_close_reviews import TaskCloseReviewStore
 
     task_id = getattr(run, "task_id", None)
     child_session_id = getattr(run, "child_session_id", None)
     if not isinstance(task_id, str) or not task_id:
-        return False
+        return None
     if not isinstance(child_session_id, str) or not child_session_id:
-        return False
-
-    review = TaskCloseReviewStore(db).get_latest_agentic_for_task_caller(
+        return None
+    return TaskCloseReviewStore(db).get_latest_agentic_for_task_caller(
         task_id=task_id,
         caller_session_id=child_session_id,
     )
-    if review is None or (not review.active and review.status != "closed"):
-        return False
-    if review.active or review.delivered_at is None:
-        return True
-    if _caller_session_is_live(db, child_session_id, live_statuses=LIVE_SESSION_STATUSES):
-        return not ProgressTracker(db).is_stagnant(child_session_id)
-    return False
 
 
-def _caller_session_is_live(
-    db: HubDatabase,
-    session_id: str,
-    *,
-    live_statuses: frozenset[str],
-) -> bool:
+def _caller_session_is_live(db: HubDatabase, session_id: str) -> bool:
+    from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+
     try:
         with db.transaction() as conn:
             row = conn.execute(
@@ -329,12 +339,13 @@ def _caller_session_is_live(
                 (session_id,),
             ).fetchone()
     except Exception:
-        logger.debug("Failed to read caller session %s liveness", session_id, exc_info=True)
-        return False
+        # Unknown liveness must not terminalize a caller that may still be working.
+        logger.warning("Failed to read caller session %s liveness", session_id, exc_info=True)
+        return True
     if not isinstance(row, Mapping):
         return False
     status = row["status"]
-    return isinstance(status, str) and status in live_statuses
+    return isinstance(status, str) and status in LIVE_SESSION_STATUSES
 
 
 def _task_completion_state(db: HubDatabase, task_id: str | None) -> TaskCompletionState:
@@ -411,19 +422,23 @@ async def complete_and_notify_agent_run(
             with runner.run_storage.db.bounded_transaction():
                 return runner.get_run(run_id)
 
-        if terminal_reason is None:
-            completed = await run_terminal_delivery_offload(
-                runner.complete_run,
-                run_id,
-                result=completion_result,
-            )
-        else:
-            completed = await run_terminal_delivery_offload(
-                runner.complete_run,
-                run_id,
-                result=completion_result,
-                terminal_reason=terminal_reason,
-            )
+        run = await run_terminal_delivery_offload(read_terminal_run)
+        if run is None:
+            return False
+        tool_calls_count, turns_used = await resolve_completion_stats(
+            run,
+            session_manager=runner._session_manager,
+            transcript_reader=TranscriptReader(runner._session_manager),
+            run_db=run_terminal_delivery_offload,
+        )
+        completed = await run_terminal_delivery_offload(
+            runner.complete_run,
+            run_id,
+            result=completion_result,
+            terminal_reason=terminal_reason,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
+        )
 
         current = await run_terminal_delivery_offload(read_terminal_run)
         if current is None or current.status not in {"success", "error", "timeout", "cancelled"}:
