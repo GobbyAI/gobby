@@ -27,7 +27,13 @@ from gobby.sessions.transcript_index import (
 from gobby.sessions.transcripts import PARSER_REGISTRY
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.sessions.transcripts.grok import GrokTranscriptParser
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import TokenEvent
+from gobby.workflows.observer_context_usage import (
+    PRESSURE_BAND_VARIABLE,
+    detect_context_compact_guidance,
+)
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -2436,6 +2442,160 @@ class TestModelExtraction:
         assert snapshot.context_window == 512000
         assert snapshot.context_used_tokens == 10_000
         assert snapshot.confidence == "reported"
+
+    @pytest.mark.asyncio
+    async def test_grok_turn_aggregate_usage_does_not_drive_context_occupancy(
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Grok occupancy is the latest call's totalTokens, never the summed turn usage."""
+
+        class FakeTokenEventStore:
+            def __init__(self) -> None:
+                self.records: list[TokenEvent] = []
+
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record(self, event: TokenEvent) -> bool:
+                self.records.append(event)
+                return True
+
+        store = FakeTokenEventStore()
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: store)
+        session_manager = MagicMock()
+        session_manager.get.return_value = SimpleNamespace(
+            project_id="proj-1",
+            source="grok",
+            context_window=None,
+            model=None,
+            context_usage_confidence=None,
+        )
+        websocket_server = MagicMock()
+        websocket_server.broadcast_token_event = AsyncMock()
+        websocket_server.broadcast_session_usage_updated = AsyncMock()
+        processor = SessionMessageProcessor(
+            mock_db, websocket_server=websocket_server, session_manager=session_manager
+        )
+
+        def update_line(update: dict[str, object], meta: dict[str, object]) -> str:
+            params = {"sessionId": "grok-session", "update": update, "_meta": meta}
+            return json.dumps({"method": "session/update", "params": params, "timestamp": 1})
+
+        lines = [
+            update_line(
+                {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "use_tool"},
+                {"totalTokens": 142_842},
+            ),
+            update_line(
+                {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call-1",
+                    "status": "completed",
+                },
+                {"totalTokens": 151_699},
+            ),
+            update_line(
+                {"sessionUpdate": "hook_execution", "hookName": "PostToolUse", "status": "success"},
+                {"eventId": "hook-1"},
+            ),
+            update_line(
+                {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": "prompt-1",
+                    "usage": {
+                        "inputTokens": 2_477_977,
+                        "outputTokens": 6_438,
+                        "cachedReadTokens": 2_344_576,
+                        "cacheCreationTokens": 0,
+                        "modelCalls": 18,
+                    },
+                },
+                {"eventId": "turn-1"},
+            ),
+        ]
+        messages = [
+            record
+            for record in GrokTranscriptParser(session_id="grok-session").parse_lines(lines)
+            if isinstance(record, ParsedMessage)
+        ]
+
+        await processor._persist_usage_events("session-1", messages)
+
+        snapshot = session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.context_used_tokens == 151_699
+        assert snapshot.confidence == "reported"
+        # The turn aggregate still lands in token accounting.
+        assert [event.input_tokens + event.cache_read_tokens for event in store.records] == [
+            2_477_977
+        ]
+        variables: dict[str, Any] = {}
+        observed_session = SimpleNamespace(
+            context_used_tokens=snapshot.context_used_tokens,
+            context_window=snapshot.context_window,
+        )
+        detect_context_compact_guidance(
+            variables,
+            "session-1",
+            MagicMock(get=MagicMock(return_value=observed_session)),
+        )
+        assert variables[PRESSURE_BAND_VARIABLE] == "none"
+
+        # A later batch holding only the turn aggregate broadcasts totals but omits
+        # occupancy, so clients keep 151_699 instead of clearing it.
+        await processor._persist_usage_events("session-1", messages[-1:])
+
+        payload = websocket_server.broadcast_session_usage_updated.await_args.args[0]
+        assert payload["usage_cache_read_tokens"] == 2_344_576
+        assert "context_used_tokens" not in payload
+
+    @pytest.mark.asyncio
+    async def test_grok_record_without_occupancy_keeps_reported_context_usage(
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Grok record without totalTokens must not reset reported occupancy."""
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: MagicMock())
+        session = SimpleNamespace(
+            project_id="proj-1",
+            source="grok",
+            context_window=512_000,
+            model="grok-build",
+            context_usage_confidence=None,
+        )
+        snapshots: list[ContextUsageSnapshot] = []
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.update_context_usage.side_effect = (
+            lambda _session_id, snapshot: snapshots.append(snapshot)
+        )
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+
+        def message(index: int, context_used_tokens: int | None) -> ParsedMessage:
+            return ParsedMessage(
+                index=index,
+                role="assistant",
+                content="",
+                content_type="text",
+                tool_name=None,
+                tool_input=None,
+                tool_result=None,
+                timestamp=datetime.now(),
+                raw_json={"params": {"update": {"totalContextTokens": 512_000}}},
+                model="grok-build",
+                message_id=f"grok-{index}",
+                context_used_tokens=context_used_tokens,
+            )
+
+        await processor._persist_usage_events("session-1", [message(0, 151_699), message(1, None)])
+        session.context_usage_confidence = "reported"
+        await processor._persist_usage_events("session-1", [message(2, None)])
+
+        # Neither a later record in the batch nor a later batch resets occupancy.
+        assert [snapshot.context_used_tokens for snapshot in snapshots] == [151_699]
 
     @pytest.mark.asyncio
     async def test_process_session_skips_model_update_when_none(

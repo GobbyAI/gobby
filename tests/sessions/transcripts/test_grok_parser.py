@@ -171,6 +171,56 @@ def test_grok_turn_completed_maps_turn_aggregate_usage() -> None:
     assert parsed.usage.cache_creation_tokens == 10
 
 
+def _event_with_total_tokens(update: dict[str, object], total_tokens: int) -> str:
+    record = _record(update)
+    params = record["params"]
+    assert isinstance(params, dict)
+    params["_meta"] = {"totalTokens": total_tokens}
+    return json.dumps(record)
+
+
+def test_grok_updates_report_latest_model_call_context_occupancy() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    lines = [
+        _event_with_total_tokens(
+            {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call-1",
+                "title": "use_tool",
+                "rawInput": {},
+            },
+            142_842,
+        ),
+        _event_with_total_tokens(
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "next"},
+            },
+            151_699,
+        ),
+        json.dumps(
+            _turn_completed_record(
+                usage={
+                    "inputTokens": 2_477_977,
+                    "outputTokens": 6_438,
+                    "cachedReadTokens": 2_344_576,
+                    "cacheCreationTokens": 0,
+                    "modelCalls": 18,
+                }
+            )
+        ),
+    ]
+
+    messages = _parsed_messages(parser, lines)
+
+    # Each streamed update reports its own call's context; the 18-call turn aggregate
+    # stays accounting-only usage.
+    assert [message.context_used_tokens for message in messages] == [142_842, 151_699, None]
+    turn_usage = messages[-1].usage
+    assert turn_usage is not None
+    assert turn_usage.input_tokens + turn_usage.cache_read_tokens == 2_477_977
+
+
 def test_grok_turn_completed_without_usage_still_emits_boundary() -> None:
     parser = GrokTranscriptParser(session_id="grok-session")
     record = _turn_completed_record(include_usage=False)

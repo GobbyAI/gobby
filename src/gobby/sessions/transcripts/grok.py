@@ -352,7 +352,17 @@ def _message(
         usage=usage,
         tool_use_id=tool_use_id,
         message_id=message_id,
+        context_used_tokens=_context_used_tokens(raw_json),
     )
+
+
+def _context_used_tokens(data: dict[str, Any]) -> int | None:
+    # Grok stamps streamed updates with the current model call's context size;
+    # turn_completed usage instead sums every call in the turn.
+    params = data.get("params")
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    tokens = _count(meta.get("totalTokens")) if isinstance(meta, dict) else 0
+    return tokens or None
 
 
 def _turn_usage(update: dict[str, Any]) -> TokenUsage | None:

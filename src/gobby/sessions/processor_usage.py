@@ -9,6 +9,7 @@ import psycopg
 
 from gobby.llm.context_windows import reconcile_model_context, reconcile_observed_model
 from gobby.sessions.context_usage import normalize_context_usage_source
+from gobby.sessions.message_stats import TURN_BOUNDARY_CONTENT_TYPE
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -20,6 +21,18 @@ from gobby.storage.token_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+_OCCUPANCY_PAYLOAD_KEYS = (
+    "context_used_tokens",
+    "context_usage_ratio",
+    "context_usage_source",
+    "context_usage_confidence",
+    "last_prompt_input_tokens",
+    "last_prompt_uncached_input_tokens",
+    "last_prompt_cache_read_tokens",
+    "last_prompt_cache_creation_tokens",
+    "last_completion_output_tokens",
+)
 
 
 class ProcessorUsageMixin:
@@ -68,6 +81,9 @@ class ProcessorUsageMixin:
 
         running_totals = await self._run_db(store.get_session_totals, session_id)
         latest_context_snapshot = None
+        # Known occupancy stands until a newer measurement replaces it; a record that
+        # carries none must not reset it to a window-only snapshot.
+        occupancy_known = getattr(session, "context_usage_confidence", None) == "reported"
         latest_event_at: datetime | None = None
         saw_insert = False
         saw_token_usage = False
@@ -85,7 +101,6 @@ class ProcessorUsageMixin:
             event_context_window = reconciled_context.context_window
             if event_context_window is not None:
                 context_window = event_context_window
-            has_reported_occupancy = False
             if msg.context_used_tokens is not None:
                 normalized_source = normalize_context_usage_source(source)
                 if normalized_source is not None:
@@ -97,9 +112,9 @@ class ProcessorUsageMixin:
                     )
                     if occupancy_snapshot.context_used_tokens is not None:
                         latest_context_snapshot = occupancy_snapshot
-                        has_reported_occupancy = True
+                        occupancy_known = True
             if not self._usage_has_tokens(msg) or msg.usage is None:
-                if not has_reported_occupancy and source in WINDOW_ONLY_CONTEXT_SOURCES:
+                if not occupancy_known and source in WINDOW_ONLY_CONTEXT_SOURCES:
                     latest_context_snapshot = self._snapshot_from_window_metadata(
                         source=source,
                         context_window=event_context_window,
@@ -134,12 +149,16 @@ class ProcessorUsageMixin:
                 metadata=metadata,
             )
             latest_event_at = event_at
-            latest_context_snapshot = self._snapshot_from_token_usage(
-                source=source,
-                context_window=event_context_window,
-                usage=usage,
-                model=event.model,
-            )
+            # Turn-boundary usage sums every model call in the turn: it is accounting,
+            # never the current context size.
+            if msg.content_type != TURN_BOUNDARY_CONTENT_TYPE:
+                latest_context_snapshot = self._snapshot_from_token_usage(
+                    source=source,
+                    context_window=event_context_window,
+                    usage=usage,
+                    model=event.model,
+                )
+                occupancy_known = True
             if not await self._run_db(store.record, event):
                 continue
 
@@ -241,58 +260,30 @@ class ProcessorUsageMixin:
                 latest_context_snapshot,
             )
         if self.websocket_server is not None:
-            await self.websocket_server.broadcast_session_usage_updated(
-                build_session_usage_payload(
-                    session_id=session_id,
-                    project_id=project_id,
-                    model=last_model,
-                    context_window=context_window,
-                    totals=session_totals,
-                    updated_at=latest_event_at,
-                    context_used_tokens=(
-                        latest_context_snapshot.context_used_tokens
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    context_usage_ratio=(
-                        latest_context_snapshot.context_usage_ratio
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    context_usage_source=(
-                        latest_context_snapshot.source
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    context_usage_confidence=(
-                        latest_context_snapshot.confidence
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    last_prompt_input_tokens=(
-                        latest_context_snapshot.raw_prompt_footprint
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    last_prompt_uncached_input_tokens=(
-                        latest_context_snapshot.uncached_prompt_tokens
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    last_prompt_cache_read_tokens=(
-                        latest_context_snapshot.cache_read_tokens
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    last_prompt_cache_creation_tokens=(
-                        latest_context_snapshot.cache_creation_tokens
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                    last_completion_output_tokens=(
-                        latest_context_snapshot.output_tokens
-                        if latest_context_snapshot is not None
-                        else None
-                    ),
-                )
+            payload = build_session_usage_payload(
+                session_id=session_id,
+                project_id=project_id,
+                model=last_model,
+                context_window=context_window,
+                totals=session_totals,
+                updated_at=latest_event_at,
             )
+            snapshot = latest_context_snapshot
+            if snapshot is not None:
+                payload.update(
+                    context_used_tokens=snapshot.context_used_tokens,
+                    context_usage_ratio=snapshot.context_usage_ratio,
+                    context_usage_source=snapshot.source,
+                    context_usage_confidence=snapshot.confidence,
+                    last_prompt_input_tokens=snapshot.raw_prompt_footprint,
+                    last_prompt_uncached_input_tokens=snapshot.uncached_prompt_tokens,
+                    last_prompt_cache_read_tokens=snapshot.cache_read_tokens,
+                    last_prompt_cache_creation_tokens=snapshot.cache_creation_tokens,
+                    last_completion_output_tokens=snapshot.output_tokens,
+                )
+            else:
+                # No occupancy measured this batch (e.g. only a turn-boundary aggregate):
+                # omit it so clients keep the last value; null would clear it.
+                for key in _OCCUPANCY_PAYLOAD_KEYS:
+                    del payload[key]
+            await self.websocket_server.broadcast_session_usage_updated(payload)
