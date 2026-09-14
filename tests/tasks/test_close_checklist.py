@@ -11,6 +11,7 @@ from gobby.tasks.close_checklist import (
     evaluate_validation_commands,
     first_failed_gate,
 )
+from gobby.tasks.command_equivalence import scope_difference
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -39,6 +40,13 @@ EvidenceOutcome = Literal["success", "failure", "unknown"]
         ("pytest tests/a.py -k 'a or b'", 'pytest "tests/a.py" -k "a or b" 2>errors'),
         ("pytest tests/a.py -k '|'", 'pytest tests/a.py -k "|"'),
         ("pytest tests/*.py", "pytest tests/*.py"),
+        ("uv run pytest tests/a.py tests/b.py", "uv run pytest tests/a.py tests/b.py -q"),
+        ("uv run pytest tests/a.py -q", "uv run pytest tests/a.py"),
+        ("pytest tests/a.py", "pytest --tb=short --no-header --color yes -rA tests/a.py"),
+        ("pytest tests/a.py", "pytest tests/a.py -x --maxfail 2 --durations=5 -vv"),
+        ("pytest -ra tests/a.py", "pytest -ra tests/"),
+        ("pytest tests/a.py -k foo -p no:randomly", "pytest -p no:randomly tests/a.py -k foo"),
+        ("uv run pytest -k close_gate", "uv run pytest -q -k close_gate"),
     ],
 )
 def test_equivalent_criterion_execution_is_credited(required: str, executed: str) -> None:
@@ -66,6 +74,10 @@ def test_equivalent_criterion_execution_is_credited(required: str, executed: str
         "uv run pytest tests/ -q < input",
         "uv run pytest tests/ -q > $(echo out)",
         "uv run pytest tests/ -q && bash -c 'true'",
+        "uv run pytest tests/ -q --collect-only",
+        "uv run pytest tests/ -q -m slow",
+        "uv run pytest tests/ -q -p no:cacheprovider",
+        "uv run pytest -q",
     ],
 )
 def test_narrowed_or_obscured_criterion_execution_cannot_pass(executed: str) -> None:
@@ -77,6 +89,40 @@ def test_narrowed_or_obscured_criterion_execution_cannot_pass(executed: str) -> 
     )
     assert gate.status == "failed"
     assert "Run `uv run pytest tests/ -q` clean" in gate.message
+
+
+def test_scope_mismatch_names_the_differing_arguments() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(1, command="uv run pytest tests/a.py -k selected"),
+                _run(2, command="uv run pytest tests/b.py --tb=short"),
+            )
+        ),
+        has_attributed_edits=True,
+        validation_criteria="Run `uv run pytest tests/a.py tests/c.py`.",
+    )
+    assert gate.status == "failed"
+    assert "adds `-k selected`; does not cover `tests/c.py`" in gate.message
+    assert "does not cover `tests/a.py tests/c.py`" in gate.message
+
+
+@pytest.mark.parametrize(
+    ("executed", "required", "difference"),
+    [
+        ("uv run pytest tests/a.py -p x -p x", "uv run pytest tests/a.py -p x", "adds `-p x`"),
+        (
+            "npx vitest run src/b.test.ts src/a.test.ts",
+            "npx vitest run src/a.test.ts src/b.test.ts",
+            "orders arguments differently",
+        ),
+    ],
+)
+def test_scope_difference_names_repeats_and_reordering(
+    executed: str, required: str, difference: str
+) -> None:
+    assert scope_difference(executed, required) == difference
 
 
 @pytest.mark.parametrize("outcome", ["failure", "unknown"])

@@ -1,28 +1,26 @@
-tags: [worker-safety, enforcement, gobby]
+tags: [worker-safety, enforcement, gobby, default]
 
 rules:
   no-full-pytest-suite:
-    description: "Block spawned agents from running the full pytest suite."
+    description: "Block agents from running the full pytest suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest\\b"
-        command_not_pattern: "\\bpytest\\s+\\S+\\.py\\b|\\bpytest\\s+\\S*tests/\\w+[/\\s]|\\bpytest\\s.*-k\\s"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?(?:python3?\\s+-m\\s+)?pytest\\b"
+        command_not_pattern: "\\bpytest\\b[^\\n;&|]*\\s(?:-k|[^\\s;&|-]\\S*\\.py\\b|['\"]?(?:[^\\s;&|'\"-][^\\s;&|]*/)?tests/[^\\s/;&|'\"]+)"
         reason: >-
           Run targeted tests: `GOBBY_TEST_PROTECT=1 pytest tests/path/test_file.py`
           or `GOBBY_TEST_PROTECT=1 pytest -k 'pattern'`
           — full-suite runs are reserved for the user.
 
   no-full-vitest-suite:
-    description: "Block spawned agents from running the full vitest suite."
+    description: "Block agents from running the full vitest suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
@@ -33,28 +31,26 @@ rules:
           `--testNamePattern` filters.
 
   no-full-cargo-test:
-    description: "Block spawned agents from running the full Cargo test suite."
+    description: "Block agents from running the full Cargo test suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?cargo\\s+(?:\\+\\S+\\s+)?test\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?cargo\\s+(?:\\+\\S+\\s+)?test\\b"
         command_not_pattern: "\\bcargo\\s+(?:\\+\\S+\\s+)?test\\b[^;&|]*(?:\\s(?:-p|--package|--test|--bin)\\s+\\S+|\\s(?!-)[^\\s;&|]+)"
         reason: >-
           Run targeted tests: `cargo test <name>` or `cargo test -p <package>`.
 
   no-full-go-test:
-    description: "Block spawned agents from running the full go test suite."
+    description: "Block agents from running the full go test suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?go\\s+test\\s+\\./\\.\\.\\.(?=\\s|$|[;&|])"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?go\\s+test\\b[^\\n;&|]*\\s\\./\\.\\.\\.(?=\\s|$|[;&|])"
         reason: >-
           Run targeted tests: `go test ./pkg/...`.

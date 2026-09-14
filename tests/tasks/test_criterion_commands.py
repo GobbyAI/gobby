@@ -89,3 +89,58 @@ def test_prose_and_excluded_spans_are_not_commands() -> None:
     )
     assert authored_criterion_commands(criteria) == []
     assert malformed_criterion_command_findings(criteria) == ()
+
+
+@pytest.mark.parametrize(
+    "span",
+    [
+        "pytest",
+        "uv run pytest",
+        "GOBBY_TEST_PROTECT=1 uv run pytest -q",
+        "python -m pytest tests/",
+        "uv run pytest -m slow",
+        "cargo test",
+        "cargo +nightly test --release",
+        "uv run python -m pytest",
+        "uv run ruff check src && uv run pytest",
+        "npx vitest run",
+        "jest --coverage",
+        "uv run pytest tests/a.py && cargo test",
+        "uv run cargo test",
+        "go test",
+        "go test -v",
+        "go test ./...",
+        "go test -v ./...",
+    ],
+)
+def test_targetless_test_runner_spans_are_rejected(span: str) -> None:
+    criteria = f"Done when `{span}` passes."
+    findings = malformed_criterion_command_findings(criteria)
+    assert findings
+    assert "full suite" in findings[0]
+    assert authored_criterion_commands(criteria) == []
+
+
+@pytest.mark.parametrize(
+    "span",
+    [
+        "uv run pytest tests/tasks/test_close_checklist.py -q",
+        "uv run pytest tests/tasks/ -q",
+        "uv run pytest tests/a.py::test_one",
+        "uv run pytest -k close_gate",
+        "uv run pytest -kclose_gate",
+        "uv run pytest -q tests/tasks/test_close_checklist.py",
+        "uv run pytest tests/tasks",
+        "cargo test -p gobby-core",
+        "cargo test grant_errors",
+        "npx vitest run src/app.test.ts",
+        "npx vitest run src/app.test.ts:12",
+        "cd web && npx vitest run src/app.test.ts",
+        "npx vitest run -t 'renders sidebar'",
+        "go test ./pkg/...",
+    ],
+)
+def test_targeted_test_runner_spans_are_accepted(span: str) -> None:
+    criteria = f"Done when `{span}` passes."
+    assert malformed_criterion_command_findings(criteria) == ()
+    assert authored_criterion_commands(criteria) == [span]

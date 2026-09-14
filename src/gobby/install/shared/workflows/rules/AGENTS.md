@@ -6,10 +6,10 @@ This directory contains bundled rule groups. These are **templates** — they ar
 
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
-| `worker-safety` | `worker-safety/` | 55 | Block git push (global + worker-scoped), force push, destructive git/shell, unmanaged worktree/clone commands, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
+| `worker-safety` | `worker-safety/` | 56 | Block git push (global + worker-scoped), force push, destructive git/shell, unmanaged worktree/clone commands, direct provider launches, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
 | `tool-hygiene` | `tool-hygiene/` | 4 | Require `uv` and route memory operations through Gobby |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
-| `task-enforcement` | `task-enforcement/` | 18 | Require claimed tasks and interactive mutation guidance, inject claimed-task extras, protect shared-worktree edits and commits, and enforce valid task transitions |
+| `task-enforcement` | `task-enforcement/` | 19 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, and enforce valid task transitions |
 | `stop-gates` | `stop-gates/` | 7 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 10 | Shadow relevance judging, initial-load recovery, reminders, claim-time search nudge, post-close review, plan-memory guards, turn sequencing, and tracking reset |
