@@ -21,9 +21,12 @@ from typing import NamedTuple
 
 import pytest
 
+from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.criterion_commands import malformed_criterion_command_findings
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.command_matching import command_patterns_match, mask_quoted_spans
 from gobby.workflows.engine.core import RuleEngine
@@ -681,31 +684,50 @@ async def test_engine_blocks_bare_pytest_and_allows_guarded_run(db: HubDatabase)
     assert quoted_substitution.decision == "block"
 
 
+FULL_SUITE_RULE_NAMES = [
+    "no-full-pytest-suite",
+    "no-full-vitest-suite",
+    "no-full-cargo-test",
+    "no-full-go-test",
+]
+
+
 @pytest.mark.parametrize(
-    ("rule_name", "full_suite", "targeted"),
+    ("command", "full_suite"),
     [
-        ("no-full-pytest-suite", "uv run pytest", "uv run pytest tests/tasks/test_validation.py"),
-        ("no-full-vitest-suite", "npx vitest", "npx vitest run src/app.test.ts"),
-        ("no-full-cargo-test", "cargo test", "cargo test -p gobby-core"),
-        ("no-full-go-test", "go test ./...", "go test ./pkg/..."),
+        ("uv run pytest", True),
+        ("uv run python -m pytest", True),
+        ("GOBBY_TEST_PROTECT=1 uv run pytest -q -m slow", True),
+        ("uv run pytest tests/", True),
+        ("uv run ruff check src && uv run pytest", True),
+        ("uv run pytest tests/tasks/test_validation.py", False),
+        ("uv run pytest -q tests/tasks/test_validation.py::test_one", False),
+        ("uv run pytest -v tests/tasks", False),
+        ("uv run pytest -kguard", False),
+        ("npx vitest", True),
+        ("npx vitest run src/app.test.ts:12", False),
+        ("uv run cargo test", True),
+        ("cargo test -p gobby-core", False),
+        ("go test -v ./...", True),
+        ("go test ./pkg/...", False),
     ],
 )
-async def test_full_suite_rules_block_interactive_sessions(
-    db: HubDatabase,
-    rule_name: str,
-    full_suite: str,
-    targeted: str,
+async def test_full_suite_rules_match_criterion_authoring_for_default_agent(
+    db: HubDatabase, command: str, full_suite: bool
 ) -> None:
-    """A session with no spawned-agent variables is still held to targeted runs."""
+    """An interactive default-agent session is blocked exactly where criterion authoring rejects."""
     _sync_bundled(db)
-    db.execute("DELETE FROM rule_definitions WHERE name != %s", (rule_name,))
-    engine = RuleEngine(db)
+    sync_bundled_agents(db)
+    assert AgentDefinitionManager(db).get_by_name("default") is not None
+    db.execute("DELETE FROM rule_definitions WHERE name <> ALL(%s)", (FULL_SUITE_RULE_NAMES,))
 
-    blocked = await engine.evaluate(_bash_event(full_suite), session_id=SESSION_ID, variables={})
-    assert blocked.decision == "block"
+    result = await RuleEngine(db).evaluate(
+        _bash_event(command), session_id=SESSION_ID, variables={"_agent_type": "default"}
+    )
+    findings = malformed_criterion_command_findings(f"Run `{command}`.")
 
-    allowed = await engine.evaluate(_bash_event(targeted), session_id=SESSION_ID, variables={})
-    assert allowed.decision != "block"
+    assert (result.decision == "block") is full_suite
+    assert any("full suite" in finding for finding in findings) is full_suite
 
 
 def test_mask_quoted_spans_blanks_data_and_keeps_substitution() -> None:

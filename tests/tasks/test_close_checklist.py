@@ -11,6 +11,7 @@ from gobby.tasks.close_checklist import (
     evaluate_validation_commands,
     first_failed_gate,
 )
+from gobby.tasks.command_equivalence import scope_difference
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -105,6 +106,23 @@ def test_scope_mismatch_names_the_differing_arguments() -> None:
     assert gate.status == "failed"
     assert "adds `-k selected`; does not cover `tests/c.py`" in gate.message
     assert "does not cover `tests/a.py tests/c.py`" in gate.message
+
+
+@pytest.mark.parametrize(
+    ("executed", "required", "difference"),
+    [
+        ("uv run pytest tests/a.py -p x -p x", "uv run pytest tests/a.py -p x", "adds `-p x`"),
+        (
+            "npx vitest run src/b.test.ts src/a.test.ts",
+            "npx vitest run src/a.test.ts src/b.test.ts",
+            "orders arguments differently",
+        ),
+    ],
+)
+def test_scope_difference_names_repeats_and_reordering(
+    executed: str, required: str, difference: str
+) -> None:
+    assert scope_difference(executed, required) == difference
 
 
 @pytest.mark.parametrize("outcome", ["failure", "unknown"])

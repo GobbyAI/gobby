@@ -5,6 +5,7 @@ from __future__ import annotations
 import posixpath
 import re
 import shlex
+from collections import Counter
 
 from gobby.config.shell_lexing import ParsedShellCommand
 
@@ -178,14 +179,14 @@ def scope_difference(executed: str, required: str) -> str:
     actual_flags, actual_paths = actual_scope
     expected_flags, expected_paths = expected_scope
     differences: list[str] = []
-    extra = [flag for flag in actual_flags if flag not in expected_flags]
-    missing = [flag for flag in expected_flags if flag not in actual_flags]
+    extra = list((Counter(actual_flags) - Counter(expected_flags)).elements())
+    missing = list((Counter(expected_flags) - Counter(actual_flags)).elements())
     if extra:
         differences.append(f"adds `{' '.join(extra)}`")
     if missing:
         differences.append(f"lacks `{' '.join(missing)}`")
     if not extra and not missing and actual_flags != expected_flags:
-        differences.append("repeats an option in a different order")
+        differences.append("orders arguments differently")
     if expected_paths:
         uncovered = _uncovered_targets(actual_paths, expected_paths)
         if uncovered:

@@ -336,12 +336,23 @@ _RUNNER_LAUNCHERS = (
     ("yarn",),
 )
 _PYTEST_SUBDIRECTORY_RE = re.compile(r"(?:^|/)tests/[^/\s]+")
-_JS_TEST_FILE_RE = re.compile(r"(?:__tests__/\S+|\.(?:test|spec))\.(?:ts|js|tsx|jsx)$")
+_JS_TEST_FILE_RE = re.compile(r"(?:__tests__/\S+|\.(?:test|spec))\.(?:ts|js|tsx|jsx)\b")
 _JS_TEST_NAME_OPTIONS = frozenset({"-t", "--testNamePattern", "--testPathPattern"})
 
 
 def _full_suite_runner(command: str) -> str | None:
-    """Name the runner a span would start with no test target, mirroring the no-full-* rules."""
+    """Name the runner any segment of a span would start with no test target.
+
+    Mirrors the no-full-* rules, which select each executable segment separately.
+    """
+    for segment in parse_shell_command(command).segments:
+        runner = _segment_full_suite_runner(shlex.join(segment))
+        if runner is not None:
+            return runner
+    return None
+
+
+def _segment_full_suite_runner(command: str) -> str | None:
     core = classify_validation_command_equivalence(command).core_command
     tokens = list(safe_split(core or command))
     for launcher in _RUNNER_LAUNCHERS:
