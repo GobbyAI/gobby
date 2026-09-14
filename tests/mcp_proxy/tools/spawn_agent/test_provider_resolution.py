@@ -7,12 +7,22 @@ from types import SimpleNamespace
 import pytest
 
 from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+    INCOMPATIBLE_MODEL_PROVIDER,
+    PROVIDER_REQUIRED_FOR_MODEL,
     concrete_provider,
+    incompatible_spawn_model_provider,
+    missing_provider_for_supplied_model,
     parent_session_provider,
     resolve_spawn_provider,
     spawning_session_provider,
 )
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _normalize_optional_model
+from gobby.providers.capabilities.models import (
+    ModelCapability,
+    ProviderSnapshot,
+    ReasoningSupport,
+)
+from gobby.providers.capabilities.resolve import CapabilityResolver
 
 pytestmark = pytest.mark.unit
 
@@ -93,6 +103,133 @@ def test_concrete_agent_provider_precedes_default() -> None:
 def test_provider_aliases_are_normalized() -> None:
     assert concrete_provider(" OpenAI ") == "codex"
     assert concrete_provider("anthropic") == "claude"
+
+
+def test_supplied_model_requires_explicit_provider() -> None:
+    error = missing_provider_for_supplied_model(
+        explicit_provider=None,
+        model="grok-4.6",
+    )
+    assert error is not None
+    assert error.error_code == PROVIDER_REQUIRED_FOR_MODEL
+    assert error.model == "grok-4.6"
+
+
+def test_supplied_model_accepts_explicit_provider() -> None:
+    assert (
+        missing_provider_for_supplied_model(
+            explicit_provider="grok",
+            model="grok-4.6",
+        )
+        is None
+    )
+
+
+def test_model_omitted_does_not_require_provider_argument() -> None:
+    assert (
+        missing_provider_for_supplied_model(
+            explicit_provider=None,
+            model=None,
+        )
+        is None
+    )
+
+
+class _EmptyStore:
+    def get_provider_snapshot(self, provider: str) -> None:
+        return None
+
+
+class _SnapshotStore:
+    def __init__(self, snapshots: dict[str, ProviderSnapshot]) -> None:
+        self._snapshots = snapshots
+
+    def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
+        return self._snapshots.get(provider)
+
+
+class _NoMetadata:
+    def get_context_window(self, model: str) -> None:
+        return None
+
+    def get_model_metadata(self, model: str) -> None:
+        return None
+
+
+def _model_capability(name: str) -> ModelCapability:
+    return ModelCapability(
+        canonical_model=name,
+        display_name=name,
+        aliases=(),
+        available=True,
+        hidden=False,
+        is_default=False,
+        context_length=None,
+        max_output_tokens=None,
+        reasoning=ReasoningSupport.UNKNOWN,
+        supported_efforts=None,
+        default_effort=None,
+        latency_class=None,
+        input_modalities=None,
+        supports_tools=None,
+        provenance={},
+    )
+
+
+def test_generation_endpoint_model_skips_catalog_check() -> None:
+    resolver = CapabilityResolver(_EmptyStore(), _NoMetadata())
+    assert (
+        incompatible_spawn_model_provider(
+            provider="codex",
+            model="endpoint:lm-studio",
+            resolver=resolver,
+        )
+        is None
+    )
+
+
+def test_unknown_model_passes_when_provider_catalog_is_missing() -> None:
+    resolver = CapabilityResolver(_EmptyStore(), _NoMetadata())
+    assert (
+        incompatible_spawn_model_provider(
+            provider="codex",
+            model="grok-4.6",
+            resolver=resolver,
+        )
+        is None
+    )
+
+
+def test_codex_catalog_rejects_grok_model_and_names_serving_providers() -> None:
+    resolver = CapabilityResolver(
+        _SnapshotStore(
+            {
+                "codex": ProviderSnapshot(
+                    provider="codex",
+                    generation=1,
+                    models=(_model_capability("gpt-5.6-luna"),),
+                    sources=(),
+                ),
+                "grok": ProviderSnapshot(
+                    provider="grok",
+                    generation=1,
+                    models=(_model_capability("grok-4.6"),),
+                    sources=(),
+                ),
+            }
+        ),
+        _NoMetadata(),
+    )
+    error = incompatible_spawn_model_provider(
+        provider="codex",
+        model="grok-4.6",
+        resolver=resolver,
+    )
+    assert error is not None
+    assert error.error_code == INCOMPATIBLE_MODEL_PROVIDER
+    assert error.provider == "codex"
+    assert error.model == "grok-4.6"
+    assert error.compatible_providers == ("grok",)
 
 
 @pytest.mark.parametrize("model", [None, "", " ", "inherit", " INHERIT "])

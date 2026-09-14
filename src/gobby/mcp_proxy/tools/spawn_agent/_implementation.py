@@ -62,6 +62,8 @@ from ._managed_runtime import (
 )
 from ._provider_resolution import (
     concrete_provider,
+    incompatible_spawn_model_provider,
+    missing_provider_for_supplied_model,
     resolve_spawn_provider,
     spawning_session_provider,
 )
@@ -192,6 +194,12 @@ async def spawn_agent_impl(
     )
 
     explicit_provider = concrete_provider(provider)
+    missing_provider = missing_provider_for_supplied_model(
+        explicit_provider=explicit_provider,
+        model=model,
+    )
+    if missing_provider is not None:
+        return missing_provider.to_response()
     default_provider = await asyncio.to_thread(
         spawning_session_provider,
         session_manager,
@@ -248,6 +256,12 @@ async def spawn_agent_impl(
                         "instead of leaving it to the provider's default."
                     ),
                 }
+    pair_error = incompatible_spawn_model_provider(
+        provider=effective_provider,
+        model=effective_model,
+    )
+    if pair_error is not None:
+        return pair_error.to_response()
     is_local_run = False
 
     requested_reasoning_effort = reasoning_effort

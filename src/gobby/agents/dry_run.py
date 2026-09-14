@@ -13,6 +13,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+    SpawnArgumentError,
+    concrete_provider,
+    incompatible_spawn_model_provider,
+    missing_provider_for_supplied_model,
+    resolve_spawn_provider,
+    spawning_session_provider,
+)
 from gobby.workflows.dry_run import EvaluationItem, WorkflowEvaluation
 
 if TYPE_CHECKING:
@@ -66,12 +74,30 @@ class SpawnEvaluation:
         return [i for i in self.items if i.level == "warning"]
 
 
+def _argument_error_item(error: SpawnArgumentError) -> EvaluationItem:
+    detail: dict[str, Any] = {"error_code": error.error_code}
+    if error.model is not None:
+        detail["model"] = error.model
+    if error.provider is not None:
+        detail["provider"] = error.provider
+    if error.compatible_providers:
+        detail["compatible_providers"] = list(error.compatible_providers)
+    return EvaluationItem(
+        layer="provider",
+        level="error",
+        code=error.error_code.upper(),
+        message=error.error,
+        detail=detail,
+    )
+
+
 async def evaluate_spawn(
     agent: str = "default",
     workflow: str | None = None,
     task_id: str | None = None,
     isolation: str | None = None,
     provider: str | None = None,
+    model: str | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
     parent_session_id: str | None = None,
@@ -94,9 +120,26 @@ async def evaluate_spawn(
     Evaluate a spawn_agent call without executing.
 
     Checks agent definition, workflow resolution, isolation config,
-    and runtime environment to identify issues before spawning.
+    provider/model compatibility, and runtime environment to identify
+    issues before spawning.
     """
     result = SpawnEvaluation(can_spawn=True, agent_name=agent)
+    missing_provider = missing_provider_for_supplied_model(
+        explicit_provider=provider,
+        model=model,
+    )
+    if missing_provider is not None:
+        result.can_spawn = False
+        result.items.append(_argument_error_item(missing_provider))
+    explicit_provider = concrete_provider(provider)
+    if explicit_provider is not None:
+        pair_error = incompatible_spawn_model_provider(
+            provider=explicit_provider,
+            model=model,
+        )
+        if pair_error is not None:
+            result.can_spawn = False
+            result.items.append(_argument_error_item(pair_error))
 
     from gobby.utils.project_context import get_project_context
 
@@ -132,8 +175,32 @@ async def evaluate_spawn(
 
     result.agent_found = True
 
-    # Resolve effective values
-    eff_provider = provider or agent_body.provider
+    # Resolve effective values. A supplied model already required an explicit
+    # provider above; otherwise use explicit > agent definition > session default.
+    if model is not None and model.strip() and model.strip().lower() != "inherit":
+        eff_provider = explicit_provider
+    else:
+        try:
+            eff_provider = resolve_spawn_provider(
+                explicit_provider=provider,
+                agent_provider=agent_body.provider,
+                default_provider=spawning_session_provider(
+                    session_manager,
+                    caller_session_id=None,
+                    parent_session_id=parent_session_id,
+                ),
+            )
+        except ValueError as exc:
+            result.can_spawn = False
+            result.items.append(
+                EvaluationItem(
+                    layer="provider",
+                    level="error",
+                    code="PROVIDER_UNRESOLVED",
+                    message=str(exc),
+                )
+            )
+            eff_provider = None
     eff_isolation = isolation or agent_body.isolation or "none"
 
     result.effective_provider = eff_provider
@@ -285,7 +352,7 @@ async def evaluate_spawn(
                     message=f"{eff_isolation.title()} isolation requires dependencies",
                 )
             )
-        elif resolved_project_path:
+        elif resolved_project_path and eff_provider is not None:
             from gobby.agents.isolation import SpawnConfig, generate_branch_name
 
             config = SpawnConfig(

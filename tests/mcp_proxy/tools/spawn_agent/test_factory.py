@@ -772,45 +772,77 @@ class TestSpawnAgentParamOverrides:
     async def test_model_selector_does_not_override_agent_provider(
         self, mock_runner: MagicMock
     ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+        from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+            PROVIDER_REQUIRED_FOR_MODEL,
+        )
+
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
             model="gpt-5.4",
         )
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
-        spawn_request = await self._spawn_request_for(
-            mock_runner,
-            agent_body,
-            {
-                "agent": "merge-worker",
-                "model": "claude/sonnet-4-6",
-            },
-        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "agent": "merge-worker",
+                    "model": "claude/sonnet-4-6",
+                },
+            )
 
-        assert spawn_request.provider == "codex"
-        assert spawn_request.model == "claude/sonnet-4-6"
+        assert result["success"] is False
+        assert result["error_code"] == PROVIDER_REQUIRED_FOR_MODEL
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_model_name_does_not_infer_provider(self, mock_runner: MagicMock) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+        from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+            PROVIDER_REQUIRED_FOR_MODEL,
+        )
+
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="claude",
             model="sonnet-4-6",
         )
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
-        spawn_request = await self._spawn_request_for(
-            mock_runner,
-            agent_body,
-            {
-                "agent": "merge-worker",
-                "model": "gpt-5.6-sol",
-            },
-        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "agent": "merge-worker",
+                    "model": "gpt-5.6-sol",
+                },
+            )
 
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "gpt-5.6-sol"
+        assert result["success"] is False
+        assert result["error_code"] == PROVIDER_REQUIRED_FOR_MODEL
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_explicit_provider_accepts_opaque_model_selector(
@@ -866,9 +898,9 @@ class TestSpawnAgentParamOverrides:
             )
 
         assert result["success"] is False
-        assert "Set the provider argument" in result["error"]
-        assert "agent definition" in result["error"]
-        assert "default provider" in result["error"]
+        assert result["error_code"] == "provider_required_for_model"
+        assert result["model"] == "gpt-5.6-sol"
+        assert "explicit provider" in result["error"]
         mock_execute.assert_not_called()
 
 
