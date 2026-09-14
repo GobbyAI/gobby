@@ -170,7 +170,7 @@ def agent_exit_public_status(
         return "blocked"
     if terminal_reason == "early_exit":
         return "incomplete"
-    if dirty_paths:
+    if dirty_paths and fallback == "success":
         return "incomplete"
     return fallback
 

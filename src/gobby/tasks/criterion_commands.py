@@ -31,25 +31,6 @@ CRITERION_COMMAND_CONTRACT = (
 _PLACEHOLDER_RE = re.compile(r"<[^>\s]+>|\{[^{}\s]+\}")
 _TRAILING_PUNCTUATION = frozenset(".,;!?")
 _CONDITIONAL_TOKENS = frozenset({"if", "for", "while", "case", "until"})
-_INCOMPLETE_PACKAGE_PREFIXES = frozenset(
-    {
-        "bun",
-        "bunx",
-        "cargo",
-        "gobby",
-        "git",
-        "go",
-        "just",
-        "make",
-        "npm",
-        "npx",
-        "pnpm",
-        "python",
-        "python3",
-        "uv",
-        "yarn",
-    }
-)
 _CRITERION_COMMAND_PREFIXES = frozenset(
     {
         "bash",
@@ -251,7 +232,7 @@ def _looks_like_criterion_command(
     if classify_validation_segments(command):
         return True
     tokens = safe_split(core_command or command)
-    if not tokens:
+    if len(tokens) < 2:
         return False
     return posixpath.basename(tokens[0]).casefold() in _CRITERION_COMMAND_PREFIXES
 
@@ -307,12 +288,12 @@ def _command_shaped_spans(criteria: str) -> list[str]:
 
 
 def _is_command_shaped_span(command: str) -> bool:
+    tokens = safe_split(command)
+    if len(tokens) < 2:
+        return False
     equivalence = classify_validation_command_equivalence(command)
     if _looks_like_criterion_command(command, equivalence.core_command, set()):
         return True
-    tokens = safe_split(command)
-    if not tokens:
-        return False
     names = {posixpath.basename(token).casefold() for token in tokens}
     return bool(names & _CRITERION_COMMAND_PREFIXES) or tokens[0].casefold() in _CONDITIONAL_TOKENS
 
@@ -331,9 +312,6 @@ def _malformed_command_reason(command: str) -> str | None:
     tokens = safe_split(command)
     if tokens and tokens[0].casefold() in _CONDITIONAL_TOKENS:
         return "conditional commands are not an exact close command."
-    prefix = posixpath.basename(tokens[0]).casefold() if tokens else ""
-    if prefix in _INCOMPLETE_PACKAGE_PREFIXES and len(tokens) < 2:
-        return "incomplete package command is not an exact close command."
     return None
 
 

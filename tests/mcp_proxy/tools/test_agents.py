@@ -287,6 +287,30 @@ class TestGetAgentResult:
         assert result["last_progress_at"] == datetime(2026, 5, 20, 0, 5, tzinfo=UTC).isoformat()
         assert result["result_at"] != result["last_progress_at"]
 
+    @pytest.mark.asyncio
+    async def test_get_agent_result_keeps_error_status_with_dirty_paths(self) -> None:
+        mock_run = _make_mock_agent_run(status="error", started_at=_RUN_STARTED_AT)
+        mock_run.result = None
+        mock_run.error = "provider failed"
+        mock_run.completed_at = _RUN_COMPLETED_AT
+        mock_run.terminal_reason = "provider_error"
+        mock_run.liveness_payload.return_value = {}
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+        get_result = create_agents_registry(runner)._tools["get_agent_result"].func
+
+        with patch(
+            "gobby.mcp_proxy.tools.agents_query_tools.agent_run_task_dirty_paths",
+            new_callable=AsyncMock,
+            return_value=["a.py"],
+        ):
+            result = await get_result(run_id=mock_run.id)
+
+        assert result["success"] is True
+        assert result["status"] == "error"
+        assert result["dirty_paths"] == ["a.py"]
+        assert result["terminal_reason"] == "provider_error"
+
 
 class TestWaitForAgent:
     """Tests for the subscribe-and-return wait_for_agent contract."""
