@@ -93,10 +93,11 @@ async def test_reference_contract_3_2_2(
     errors = documentation_errors(load_audits())
     assert errors == [], "\n".join(errors)
     if scenario == "tasks":
+        validator_run_id = "a1b2c3d4-1234-4567-89ab-123456789abc"
         task_launched_at = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
         task_store = task_scenarios._Store(task_scenarios._review(status="launching", run_id=None))
         task_registry = SimpleNamespace(
-            call=AsyncMock(return_value={"success": True, "run_id": "run"})
+            call=AsyncMock(return_value={"success": True, "run_id": validator_run_id})
         )
         task_ctx = task_scenarios._ctx(
             registry=task_registry,
@@ -140,7 +141,7 @@ async def test_reference_contract_3_2_2(
         assert task_result["closed"] is False
         assert task_result["can_close"] is False
         assert task_result["error"] == "agentic_review_required"
-        assert task_result["validator_run_id"] == "run"
+        assert task_result["validator_run_id"] == validator_run_id
         assert task_result["review_status"] == "running"
         assert "run_id" not in task_result
         assert "spawn_request" not in task_result
