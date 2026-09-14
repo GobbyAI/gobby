@@ -391,7 +391,8 @@ def _segment_full_suite_runner(command: str) -> str | None:
         if arguments[:1] != ["test"]:
             return None
         runner = "go test"
-        targeted = "./..." not in arguments[1:]
+        packages = [argument for argument in arguments[1:] if not argument.startswith("-")]
+        targeted = bool(packages) and "./..." not in packages
     else:
         return None
     return None if targeted else runner

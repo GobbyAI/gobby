@@ -107,6 +107,8 @@ def test_prose_and_excluded_spans_are_not_commands() -> None:
         "jest --coverage",
         "uv run pytest tests/a.py && cargo test",
         "uv run cargo test",
+        "go test",
+        "go test -v",
         "go test ./...",
         "go test -v ./...",
     ],
