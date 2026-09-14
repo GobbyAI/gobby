@@ -2,7 +2,6 @@ import asyncio
 import concurrent.futures
 import logging
 import threading
-from _thread import LockType
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -15,6 +14,7 @@ from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.fifo_lock import CrossLoopFifoLock
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
@@ -86,12 +86,12 @@ def _is_known_no_repo_project(project_id: str | None) -> bool:
 class _EvalLockState:
     """Per-session evaluation lock plus registry bookkeeping."""
 
-    lock: LockType
+    lock: CrossLoopFifoLock
     references: int
     cleanup_pending: bool
 
     def __init__(self) -> None:
-        self.lock = threading.Lock()
+        self.lock = CrossLoopFifoLock()
         self.references = 0
         self.cleanup_pending = False
 
@@ -182,11 +182,6 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             state.references -= 1
             if state.references <= 0 and state.cleanup_pending:
                 self._eval_locks.pop(session_id, None)
-
-    async def _acquire_eval_lock(self, lock: LockType) -> None:
-        """Acquire a thread lock without blocking the event loop."""
-        while not lock.acquire(blocking=False):
-            await asyncio.sleep(0.01)
 
     def _resolve_project_path(self, event: HookEvent, worktree_root: str | None) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
@@ -426,10 +421,10 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if eval_lock_state:
                     if blocking_deadline is not None:
                         lock_wait_started = monotonic()
-                        await self._acquire_eval_lock(eval_lock_state.lock)
+                        await eval_lock_state.lock.acquire()
                         blocking_deadline.extend(monotonic() - lock_wait_started)
                     else:
-                        await self._acquire_eval_lock(eval_lock_state.lock)
+                        await eval_lock_state.lock.acquire()
                     eval_lock_acquired = True
 
                 self._sync_tool_context(event, session_id)

@@ -66,6 +66,9 @@ def _advance_initial_step(
                     agent_name,
                 )
                 continue
+            if transition.to == current_step:
+                # Spawning already entered this step; re-entering it changes nothing.
+                return current_step
             current_step = transition.to
             break
         else:

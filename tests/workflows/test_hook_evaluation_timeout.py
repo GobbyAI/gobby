@@ -159,8 +159,7 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         with handler._eval_locks_lock:
             lock_state = handler._eval_locks["platform-session"]
             assert lock_state.references == 0
-            assert lock_state.lock.acquire(blocking=False)
-            lock_state.lock.release()
+            assert not lock_state.lock.locked()
 
         async def fast_evaluate(
             *,

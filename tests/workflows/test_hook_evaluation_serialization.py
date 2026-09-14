@@ -347,7 +347,10 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
             },
             "tool_output": {
                 "success": True,
-                "result": {"skill": {"name": "code-index"}},
+                "result": {
+                    "skill": {"name": "code-index", "content": "# Code index"},
+                    "page": {"complete": True, "next_cursor": None},
+                },
             },
         },
     )

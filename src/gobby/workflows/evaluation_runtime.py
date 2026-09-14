@@ -35,6 +35,7 @@ class WorkflowEvaluationTimeout(TimeoutError):
         )
         self.session_id = session_id
         self.timeout_seconds = timeout_seconds
+        self.admission_wait_seconds: float | None = None
         self.queue_duration_seconds: float | None = None
         self.execution_duration_seconds: float | None = None
         super().__init__(

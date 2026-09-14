@@ -122,6 +122,33 @@ def test_initial_transition_condition_unexpected_error_propagates(
         _step_state._transition_condition_met("boom()", {})
 
 
+def test_initial_self_transition_stays_on_step_without_chain_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _step_state
+
+    # Mirrors ask-investigator: its only step re-enters itself until the run ends.
+    snapshot = AgentStepWorkflowBody.model_validate(
+        {
+            "steps": [
+                {
+                    "name": "investigate",
+                    "transitions": [{"to": "investigate", "when": "not vars.run_ended"}],
+                }
+            ],
+            "variables": {"run_ended": False},
+        }
+    )
+
+    with caplog.at_level(logging.WARNING, logger=_step_state.logger.name):
+        step, _variables = _step_state.initial_step_state_for_spawn(
+            snapshot, agent_name="ask-investigator", task_owned_by_child=False
+        )
+
+    assert step == "investigate"
+    assert not any("Stopped initial step transition chain" in m for m in caplog.messages)
+
+
 def test_resolve_spawn_project_context_prefers_parent_session_project() -> None:
     from gobby.mcp_proxy.tools.spawn_agent._factory import _resolve_spawn_project_context
 
