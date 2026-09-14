@@ -170,7 +170,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             "GOBBY_MACHINE_ID": "21000000-0000-4000-8000-000000000001",
         }
         assert phase_timings_ms is request.phase_timings_ms
-        return SimpleNamespace(env={"PATH": "/scoped/bin"})
+        return SimpleNamespace(env={"PATH": "/scoped/bin"}, api_token="minted-probe-capability")
 
     monkeypatch.setattr(
         "gobby.agents.spawn_executor_providers.ensure_isolation_code_index", preflight
@@ -180,6 +180,8 @@ async def test_managed_code_index_preflight_uses_issued_credential(
 
     assert error is None
     assert context.env_vars["PATH"] == "/scoped/bin"
+    # The preflight's minted probe capability never replaces the run's own token.
+    assert "minted-probe-capability" not in context.env_vars.values()
 
 
 @pytest.mark.asyncio

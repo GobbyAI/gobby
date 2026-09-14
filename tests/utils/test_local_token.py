@@ -13,6 +13,7 @@ import pytest
 
 from gobby.utils import local_token
 from gobby.utils.local_token import (
+    classify_agent_api_token,
     issue_agent_api_token,
     issue_tool_api_token,
     verify_agent_api_token,
@@ -50,6 +51,36 @@ def test_verifier_rejects_present_empty_second_owner_claim() -> None:
     )
 
     assert verify_agent_api_token(token, operator_token) is None
+
+
+@pytest.mark.parametrize(
+    ("token_name", "operator_token", "expected"),
+    [
+        ("operator", "operator-token", "invalid_token"),
+        ("live", None, "operator_token_unavailable"),
+        ("live", "rotated-operator-token", "capability_invalid"),
+        ("expired", "operator-token", "capability_expired"),
+    ],
+)
+def test_classifier_names_why_a_capability_was_refused(
+    token_name: str, operator_token: str | None, expected: str
+) -> None:
+    now = int(time.time())
+    claims: dict[str, object] = {
+        "agent_run_id": "run-1",
+        "session_id": "session-1",
+        "project_id": "project-1",
+        "machine_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "iat": now,
+    }
+    tokens = {
+        # An operator token presented as a bearer is not a managed capability.
+        "operator": "operator-token",
+        "live": _signed_token({**claims, "exp": now + 60}, "operator-token"),
+        "expired": _signed_token({**claims, "exp": now - 1}, "operator-token"),
+    }
+
+    assert classify_agent_api_token(tokens[token_name], operator_token) == expected
 
 
 def test_issued_tokens_carry_signed_machine_id() -> None:

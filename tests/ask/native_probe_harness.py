@@ -1029,8 +1029,11 @@ def _provision_private_parent_index(
             session_id=str(session_id),
             principal_kind="tool_chat",
         )
+        if not runtime.api_token:
+            raise RuntimeError("private parent index runtime capability is missing")
         command_env.update(runtime.env)
         command_env.update(identity_env)
+        command_env["GOBBY_AGENT_API_TOKEN"] = runtime.api_token
         status_command = [
             str(gcode_bin),
             "status",

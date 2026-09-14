@@ -234,7 +234,11 @@ fn read_json<T: serde::de::DeserializeOwned>(
 
 fn status_error(status: u16, body: &str, kind: DaemonRequestKind) -> CliError {
     match status {
-        401 | 403 => CliError::grant(GrantError::DaemonRequired),
+        // Surface only the daemon's typed rejection code, never the raw body.
+        401 | 403 => CliError::grant(
+            GrantError::from_presentation_http(status, body)
+                .unwrap_or_else(|| GrantError::Unauthorized("forbidden".to_string())),
+        ),
         _ => CliError {
             code: kind.error_code(),
             message: format!("{} failed ({status}): {}", kind.noun(), sanitize_body(body)),
@@ -340,9 +344,19 @@ mod tests {
     }
 
     #[test]
-    fn status_error_keeps_auth_mapping_and_sanitizes_other_bodies() {
+    fn status_error_names_auth_rejections_and_sanitizes_other_bodies() {
         let auth = status_error(401, "secret-token", DaemonRequestKind::Projects);
-        assert_eq!(auth.code, "daemon_required");
+        assert_eq!(auth.code, "unauthorized");
+        assert!(!auth.message.contains("secret-token"), "{}", auth.message);
+        let typed = status_error(
+            401,
+            r#"{"error":"Request rejected","code":"route_not_permitted"}"#,
+            DaemonRequestKind::Projects,
+        );
+        assert_eq!(
+            typed.message,
+            "daemon rejected the credential: route_not_permitted"
+        );
         let prune = status_error(
             500,
             &format!("{}\n{}", "x".repeat(200), "y".repeat(200)),

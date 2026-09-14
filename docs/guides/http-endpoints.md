@@ -78,9 +78,17 @@ Unauthenticated protected API requests return `401` with:
 
 ```json
 {
-  "error": "Authentication required. CLI clients need ~/.gobby/local_cli_token (run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+  "error": "Authentication required. CLI clients need ~/.gobby/local_cli_token (run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in.",
+  "code": "missing_auth"
 }
 ```
+
+`code` names why the credential was refused. `missing_auth`, `invalid_token` (an
+unrecognised bearer or local token), and `session_invalid` (a stale browser
+cookie) keep the login guidance above. A refused managed capability bearer
+returns `"error": "Request rejected"` with one of `operator_token_unavailable`,
+`capability_invalid`, `capability_expired`, `route_not_permitted`,
+`run_inactive`, or `identity_mismatch`.
 
 ## Mounted Non-API Surfaces
 

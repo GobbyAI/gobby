@@ -691,10 +691,12 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
     def _accept(_request: object) -> bool:
         return True
 
+    def _no_rejection(_request: object) -> None:
+        return None
+
     auth = cast(Any, server.auth_service)
     auth.is_request_authenticated = _accept
-    auth._legacy_authenticated = _accept
-    auth._credential_accepted = _accept
+    auth._legacy_rejection = _no_rejection
     return server
 
 

@@ -726,6 +726,68 @@ def test_terminal_run_token_rejected(
     assert not service.is_request_authenticated(request)
 
 
+def test_rejections_name_why_each_credential_was_refused(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    """Every refusal carries a typed code, so clients never read one as expiry (#22278)."""
+    service, headers = _agent_service_and_headers(temp_db, tmp_path / "live", live_agent_run.id)
+    _, expired_headers = _agent_service_and_headers(
+        temp_db,
+        tmp_path / "expired",
+        live_agent_run.id,
+        timeout_seconds=120,
+        minted_at=time.time() - 300,
+    )
+    rotated_token = issue_agent_api_token(
+        "rotated-operator-token",
+        agent_run_id=live_agent_run.id,
+        session_id="session-123",
+        project_id="project-123",
+    )
+    tool_call = "/api/mcp/tools/call"
+    cases = {
+        "no credentials": _request({}, method="POST", path=tool_call),
+        "unknown bearer": _request(
+            {"Authorization": "Bearer wrong-token"}, method="POST", path=tool_call
+        ),
+        "unknown local token": _request(
+            {"X-Gobby-Local-Token": "wrong-token"}, method="POST", path=tool_call
+        ),
+        "stale cookie": _request(
+            {"Cookie": "gobby_session=wrong-session"}, method="POST", path=tool_call
+        ),
+        "rotated signing key": _request(
+            headers | {"Authorization": f"Bearer {rotated_token}"}, method="POST", path=tool_call
+        ),
+        "expired capability": _request(expired_headers, method="POST", path=tool_call),
+        "route outside matrix": _request(headers, method="POST", path="/api/mcp/servers"),
+        "foreign session": _request(
+            headers | {"X-Gobby-Session-Id": "operator-session"}, method="POST", path=tool_call
+        ),
+    }
+
+    observed = {case: service.authenticate(request) for case, request in cases.items()}
+
+    assert {case: (d.allowed, d.code, d.status_code) for case, d in observed.items()} == {
+        "no credentials": (False, "missing_auth", 401),
+        "unknown bearer": (False, "invalid_token", 401),
+        "unknown local token": (False, "invalid_token", 401),
+        "stale cookie": (False, "session_invalid", 401),
+        "rotated signing key": (False, "capability_invalid", 401),
+        "expired capability": (False, "capability_expired", 401),
+        "route outside matrix": (False, "route_not_permitted", 401),
+        "foreign session": (False, "identity_mismatch", 401),
+    }
+    live = _request(headers, method="POST", path=tool_call)
+    assert service.authenticate(live).allowed
+    unkeyed = AuthService(lambda: temp_db, token_file=tmp_path / "absent_token")
+    assert unkeyed.authenticate(live).code == "operator_token_unavailable"
+    LocalAgentRunManager(temp_db).complete(live_agent_run.id, result="done")
+    assert service.authenticate(live).code == "run_inactive"
+
+
 def test_hooks_route_requires_run_identity(
     temp_db: HubDatabase,
     tmp_path: Path,
