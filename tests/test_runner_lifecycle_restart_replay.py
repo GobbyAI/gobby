@@ -19,7 +19,12 @@ from fastapi import FastAPI
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
 from gobby.config.tmux import TmuxConfig
-from gobby.hooks.inbox import HookInboxBarrierResult, _get_hook_inbox_drain_lock
+from gobby.hooks.inbox import (
+    HookInboxBarrierResult,
+    _get_hook_inbox_drain_lock,
+    drain_hook_inbox_barrier,
+    drain_hook_inbox_once,
+)
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
@@ -1265,6 +1270,116 @@ class TestReclassifyReconciliationPendingRuns:
         assert post.await_count == len(residue)
         assert [path for path in residue if path.exists()] == []
         assert live.exists()
+
+    @pytest.mark.asyncio
+    async def test_reclassify_does_not_warn_while_replay_progresses(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A lifecycle pass queued behind a live replay settles instead of re-fencing.
+
+        Mirrors the 0.5.0 cutover: residue fell 63 -> 7 over three minutes, yet
+        every reclassify pass waited a fixed 5 s on the drain lock the periodic
+        drain held and re-fenced the same runs with a warning. The holder here
+        settles one residue hook per loop second for 8 s on a virtual clock.
+        """
+        horizon_ms = 1_700_000_000_000
+        inbox_dir = tmp_path / "hooks" / "inbox"
+        inbox_dir.mkdir(parents=True)
+        envelope = {
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": False,
+            "response_capability": "hook-response.v1",
+            "hook_type": "post-tool-use",
+            "input_data": {"terminal_context": {"gobby_agent_run_id": self._RUN_ID}},
+            "source": "claude",
+            "headers": {},
+        }
+        residue = [
+            inbox_dir / f"n-{horizon_ms - 20_000 + offset}-residue{offset}.json"
+            for offset in range(8)
+        ]
+        for path in residue:
+            path.write_text(json.dumps(envelope), encoding="utf-8")
+        run_storage = SimpleNamespace(
+            list_reconciliation_pending=MagicMock(return_value=[SimpleNamespace(id=self._RUN_ID)]),
+            get=MagicMock(return_value=SimpleNamespace(id=self._RUN_ID, status="running")),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        app = FastAPI()
+        runner.http_server.app = app
+        runner.http_bound_at_ms = horizon_ms
+
+        async def reconcile(
+            target: Any,
+            *,
+            include_fenced: bool,
+            resolved_run_ids: set[str],
+            run_ids: frozenset[str],
+        ) -> int:
+            resolved_run_ids.update(run_ids)
+            return len(run_ids)
+
+        barrier_entered = asyncio.Event()
+
+        async def observed_barrier(*args: Any, **kwargs: Any) -> HookInboxBarrierResult:
+            barrier_entered.set()
+            return await drain_hook_inbox_barrier(*args, **kwargs)
+
+        loop = asyncio.get_running_loop()
+        real_time = loop.time
+        elapsed = 0.0
+
+        def virtual_time() -> float:
+            return real_time() + elapsed
+
+        started: asyncio.Queue[asyncio.Event] = asyncio.Queue()
+
+        async def replay(*args: object, **kwargs: object) -> httpx.Response:
+            release = asyncio.Event()
+            started.put_nowait(release)
+            await release.wait()
+            return httpx.Response(200)
+
+        post = AsyncMock(side_effect=replay)
+        with (
+            patch.object(loop, "time", virtual_time),
+            patch("gobby.hooks.inbox.get_hook_inbox_dir", return_value=inbox_dir),
+            patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+            patch("gobby.hooks.inbox._post_envelope", new=post),
+            patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=observed_barrier),
+            patch(
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
+                new=AsyncMock(side_effect=reconcile),
+            ),
+            caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
+        ):
+            # The periodic drain's first pass owns the lock, as at startup.
+            holder = asyncio.create_task(drain_hook_inbox_once(app, inbox_dir, include_fresh=True))
+            release = await started.get()
+            reclassify = asyncio.create_task(_reclassify_reconciliation_pending_runs(runner))
+            await barrier_entered.wait()
+            for _ in residue[1:]:
+                elapsed += 1.0
+                release.set()
+                release = await started.get()
+            elapsed += 1.0
+            release.set()
+            assert await holder == len(residue)
+            reclassified = await reclassify
+
+        assert reclassified == 1
+        assert [
+            record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
+        ] == []
+        assert run_storage.merge_resume_metadata.call_args_list == [
+            call(self._RUN_ID, {"reconciliation_pending": False})
+        ]
+        assert post.await_count == len(residue)
+        assert [path for path in residue if path.exists()] == []
 
     @pytest.mark.asyncio
     async def test_barrier_timeout_keeps_lookup_failures_unclassified(

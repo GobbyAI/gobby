@@ -27,6 +27,7 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.inbox import (
     HookInboxBarrierResult,
     _compute_sleep_seconds,
+    _get_hook_inbox_drain_lock,
     _load_envelope,
     _post_envelope,
     _quarantine_file,
@@ -128,6 +129,116 @@ async def test_grok_ack_pending_envelope_retains_then_settles_after_timeout(
     assert "grok_pending_delivery" not in stored
     assert stored["grok_pending_briefing"] == [component]
     post.assert_not_awaited()
+
+
+class _VirtualClock:
+    """Loop clock the test advances, so no wall-clock time decides a deadline."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._real_time = loop.time
+        self.elapsed = 0.0
+
+    def __call__(self) -> float:
+        return self._real_time() + self.elapsed
+
+
+def _gated_replay() -> tuple[AsyncMock, asyncio.Queue[asyncio.Event]]:
+    """Return a replay POST that holds each envelope until the test releases it."""
+    started: asyncio.Queue[asyncio.Event] = asyncio.Queue()
+
+    async def post(*args: Any, **kwargs: Any) -> MagicMock:
+        release = asyncio.Event()
+        started.put_nowait(release)
+        await release.wait()
+        return MagicMock(status_code=200)
+
+    return AsyncMock(side_effect=post), started
+
+
+@pytest.mark.asyncio
+async def test_barrier_waiting_on_lock_observes_other_replay_progress(tmp_path: Path) -> None:
+    """A barrier queued behind a live replay waits while that replay keeps settling hooks.
+
+    Mirrors the 0.5.0 cutover: the pass owning the drain lock settled residue
+    steadily while each reclassify barrier waited a fixed 5 s for the lock and
+    timed out. Here the holder settles one envelope per loop second for 12 s.
+    """
+    app = FastAPI()
+    paths = [
+        _write_inbox_envelope(tmp_path, f"residue-{index:02d}", _valid_envelope())
+        for index in range(12)
+    ]
+    loop = asyncio.get_running_loop()
+    clock = _VirtualClock(loop)
+    post, started = _gated_replay()
+
+    with (
+        patch.object(loop, "time", clock),
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+        patch("gobby.hooks.inbox._post_envelope", new=post),
+    ):
+        holder = asyncio.create_task(drain_hook_inbox_once(app, tmp_path, include_fresh=True))
+        barrier = asyncio.create_task(drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=5.0))
+        for _ in paths:
+            release = await started.get()
+            clock.elapsed += 1.0
+            release.set()
+        assert await holder == len(paths)
+        result = await barrier
+
+    assert result.timed_out is False
+    assert result.replayed == 0
+    assert result.unresolved_run_ids == ()
+    assert post.await_count == len(paths)
+    assert [path for path in paths if path.exists()] == []
+
+
+@pytest.mark.asyncio
+async def test_barrier_waiting_on_stalled_lock_holder_times_out(tmp_path: Path) -> None:
+    """Holder progress moves a queued barrier's deadline; a stalled holder still times it out.
+
+    The timed-out barrier leaves the holder's replay running with the lock: a
+    cancelled replay would strand its envelope's processing lease (#22359).
+    """
+    app = FastAPI()
+    paths = [
+        _write_inbox_envelope(tmp_path, f"residue-{index}", _valid_envelope()) for index in range(2)
+    ]
+    lock = _get_hook_inbox_drain_lock(app)
+    loop = asyncio.get_running_loop()
+    clock = _VirtualClock(loop)
+    post, started = _gated_replay()
+
+    with (
+        patch.object(loop, "time", clock),
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+        patch("gobby.hooks.inbox._post_envelope", new=post),
+    ):
+        holder = asyncio.create_task(drain_hook_inbox_once(app, tmp_path, include_fresh=True))
+        barrier = asyncio.create_task(drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=5.0))
+        settling = await started.get()
+        clock.elapsed = 1.0
+        settling.set()
+        stalled = await started.get()
+        # Past the barrier's original deadline, but 4.25 s after the settle.
+        clock.elapsed = 5.25
+        done, _pending = await asyncio.wait((barrier,), timeout=0.1)
+        assert done == set()
+        # 5.5 s without a settled hook.
+        clock.elapsed = 6.5
+        result = await asyncio.wait_for(barrier, timeout=1.0)
+
+        assert result.timed_out is True
+        assert result.replayed == 0
+        assert holder.done() is False
+        assert lock.locked()
+        assert paths[1].exists()
+        stalled.set()
+        assert await holder == len(paths)
+
+    assert not lock.locked()
+    assert post.await_count == len(paths)
+    assert [path for path in paths if path.exists()] == []
 
 
 @pytest.mark.asyncio
