@@ -56,11 +56,11 @@ from destructive/error hues for deutan accessibility.
 
 | Token | Dark | Light | Usage |
 |-------|------|-------|-------|
-| `--accent` | `oklch(82% 0.20 125)` | `oklch(50% 0.18 125)` | Links, active tabs, primary actions |
+| `--accent` | `oklch(82% 0.20 125)` | `oklch(43% 0.18 125)` | Links, active tabs, primary actions |
 | `--accent-hover` | `oklch(75% 0.22 125)` | `oklch(42% 0.18 125)` | Accent hover state |
 | `--accent-foreground` | `oklch(15% 0 0)` | `oklch(99% 0 0)` | Text on accent backgrounds |
-| `--accent-soft` | `oklch(82% 0.20 125 / 0.18)` | `oklch(50% 0.18 125 / 0.18)` | Soft accent surfaces |
-| `--accent-tint` | `oklch(82% 0.20 125 / 0.10)` | `oklch(50% 0.18 125 / 0.10)` | Active nav and subtle emphasis |
+| `--accent-soft` | `oklch(82% 0.20 125 / 0.18)` | `oklch(43% 0.18 125 / 0.18)` | Soft accent surfaces |
+| `--accent-tint` | `oklch(82% 0.20 125 / 0.10)` | `oklch(43% 0.18 125 / 0.10)` | Active nav and subtle emphasis |
 
 ### Semantic Colors
 
