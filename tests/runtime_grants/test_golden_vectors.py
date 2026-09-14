@@ -39,6 +39,15 @@ from tests.runtime_grants.support import (
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 NEGATIVE_GOLDENS = frozenset({"payload_skew_unknown_field.json"})
 
+
+@pytest.fixture(autouse=True)
+def golden_schema_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Golden unit tests use the checked-in identity, independent of local installs."""
+    monkeypatch.setattr(
+        "gobby.runtime_grants.service.installed_schema_identity", expected_schema_identity
+    )
+
+
 REQUIRED_MODES: dict[str, frozenset[str]] = {
     "postgres": frozenset({"direct", "brokered", "unavailable"}),
     "falkordb": frozenset({"direct", "brokered", "unavailable"}),
