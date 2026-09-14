@@ -682,6 +682,35 @@ class TestGrokCurrentHookContract:
         assert event.data["prompt_id"] == "prompt-7"
         assert event.data["permission_mode"] == "default"
 
+    def test_use_tool_envelope_unwraps_to_resolved_tool_input(self) -> None:
+        envelope = {
+            "tool_name": "gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": "set_handoff",
+                "args": {"clear_session": False},
+            },
+        }
+
+        event = GrokAdapter().translate_to_hook_event(
+            {
+                "hook_type": "pre_tool_use",
+                "input_data": {
+                    "sessionId": "grok-session",
+                    "toolName": "gobby__call_tool",
+                    "toolInput": envelope,
+                },
+            }
+        )
+
+        assert event.data["toolInput"] == envelope
+        assert event.data["tool_name"] == "mcp__gobby__call_tool"
+        assert event.data["tool_input"]["server_name"] == "gobby-sessions"
+        assert event.data["tool_input"]["tool_name"] == "set_handoff"
+        assert event.data["tool_input"]["args"] == {"clear_session": False}
+        assert event.data["mcp_server"] == "gobby-sessions"
+        assert event.data["mcp_tool"] == "set_handoff"
+
     def test_stop_failure_preserves_error_and_stop_state(self) -> None:
         event = GrokAdapter().translate_to_hook_event(
             {
@@ -740,7 +769,7 @@ class TestGrokCurrentHookContract:
             hook_type=hook_type,
         )
 
-        assert result == {"decision": "allow", "continue": True}
+        assert result == {"continue": True}
 
     def test_subagent_stop_block_is_recoverable_with_feedback(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
@@ -878,7 +907,7 @@ class TestGrokCurrentHookContract:
             hook_type=hook_type,
         )
 
-        assert result == {"decision": "allow", "continue": True}
+        assert result == {"continue": True}
 
     def test_pre_tool_use_deny_omits_context_and_updated_input(self) -> None:
         result = GrokAdapter().translate_from_hook_response(

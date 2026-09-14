@@ -57,3 +57,25 @@ def test_call_tool_eval_context_does_not_mutate_target_arguments(db: HubDatabase
         "commit_sha": "abc123",
     }
     assert target_arguments == {"task_id": "#1", "commit_sha": "abc123"}
+
+
+def test_call_tool_eval_context_unwraps_args_alias(db: HubDatabase) -> None:
+    engine = RuleEngine(db)
+    event = _make_event(
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": "set_handoff",
+                "args": {"clear_session": False},
+            },
+        }
+    )
+
+    ctx = engine._build_eval_context(event, variables={})
+
+    assert ctx["tool_input"] == {
+        "clear_session": False,
+        "server_name": "gobby-sessions",
+        "tool_name": "set_handoff",
+    }

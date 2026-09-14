@@ -91,6 +91,40 @@ async def test_recommend_llm(service: RecommendationService) -> None:
 
 
 @pytest.mark.asyncio
+async def test_recommend_llm_lists_servers_for_project(
+    service: RecommendationService, mock_mcp_manager: MagicMock
+) -> None:
+    result = await service.recommend_tools("create a task", project_id="proj-2")
+
+    assert result["success"] is True
+    mock_mcp_manager.get_available_servers.assert_called_once_with(project_id="proj-2")
+
+
+@pytest.mark.asyncio
+async def test_recommend_llm_without_project_returns_error(
+    mock_llm_service: MagicMock,
+    mock_mcp_manager: MagicMock,
+) -> None:
+    from gobby.mcp_proxy.services.recommendation import RecommendationService
+
+    service = RecommendationService(
+        llm_service=mock_llm_service,
+        mcp_manager=mock_mcp_manager,
+        db=MagicMock(),
+    )
+
+    result = await service.recommend_tools("find a tool")
+
+    assert result == {
+        "success": False,
+        "error": "Project ID not set for LLM recommendations",
+        "task": "find a tool",
+    }
+    mock_mcp_manager.get_available_servers.assert_not_called()
+    mock_llm_service.call_feature.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_recommend_llm_error(service: RecommendationService) -> None:
     service._llm_service.call_feature.side_effect = RuntimeError("no provider")
     result = await service.recommend_tools("test")
@@ -110,7 +144,7 @@ async def test_recommend_llm_without_database_returns_storage_error(
         db=None,
     )
 
-    result = await service._recommend_llm("find a tool")
+    result = await service._recommend_llm("find a tool", "proj-1")
 
     assert result == {
         "success": False,

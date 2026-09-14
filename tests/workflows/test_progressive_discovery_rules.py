@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.agy import AgyAdapter
+from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -484,6 +485,62 @@ class TestRuleEngineIntegration:
         allowed = await engine.evaluate(ordinary_call, SESSION_ID, variables)
         assert allowed.decision == "allow"
 
+    @staticmethod
+    def _grok_use_tool_event(
+        hook_type: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> HookEvent:
+        return GrokAdapter().translate_to_hook_event(
+            {
+                "hook_type": hook_type,
+                "input_data": {
+                    "sessionId": EXTERNAL_SESSION_ID,
+                    "toolName": tool_name,
+                    "toolInput": {"tool_name": tool_name, "tool_input": tool_input},
+                },
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_grok_use_tool_envelopes_preserve_schema_gate_semantics(
+        self, engine: RuleEngine
+    ) -> None:
+        variables: dict[str, Any] = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        ordinary_call = self._grok_use_tool_event(
+            "pre_tool_use",
+            "gobby__call_tool",
+            {
+                "server_name": "gobby-tasks",
+                "tool_name": "add_label",
+                "args": {"task_id": "#1", "label": "ready"},
+            },
+        )
+        assert ordinary_call.data["tool_name"] == "mcp__gobby__call_tool"
+        assert ordinary_call.data["mcp_server"] == "gobby-tasks"
+        assert ordinary_call.data["mcp_tool"] == "add_label"
+        blocked = await engine.evaluate(ordinary_call, SESSION_ID, variables)
+        assert blocked.decision == "block"
+        assert blocked.reason is not None
+        assert "server_name='gobby-tasks'" in blocked.reason
+        assert "tool_name='add_label'" in blocked.reason
+
+        schema_lookup = self._grok_use_tool_event(
+            "post_tool_use",
+            "gobby__get_tool_schema",
+            {"server_name": "gobby-tasks", "tool_name": "add_label"},
+        )
+        assert schema_lookup.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        schema_result = await engine.evaluate(schema_lookup, SESSION_ID, variables)
+        assert schema_result.decision == "allow"
+        assert "gobby-tasks:add_label" in variables["unlocked_tools"]
+
+        allowed = await engine.evaluate(ordinary_call, SESSION_ID, variables)
+        assert allowed.decision == "allow"
+
     @pytest.mark.asyncio
     async def test_hardcoded_auto_discover_on_before_agent(self, engine) -> None:
         """BEFORE_AGENT should emit auto-discover mcp_call when servers_listed is false."""
@@ -773,7 +830,9 @@ class TestRuleEngineIntegration:
 
     @pytest.mark.parametrize("mcp_tool", ["create_task", "add_label", "update_task"])
     @pytest.mark.asyncio
-    async def test_tracking_rules_set_variables_via_after_tool(self, engine, mcp_tool: str) -> None:
+    async def test_tracking_rules_set_variables_via_after_tool(
+        self, engine: RuleEngine, mcp_tool: str
+    ) -> None:
         """Tracking rules should set variables when after_tool events fire."""
         variables: dict = {
             "enforce_tool_schema_check": True,

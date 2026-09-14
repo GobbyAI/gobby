@@ -92,7 +92,7 @@ class RecommendationService:
                 task_description, top_k, min_similarity, effective_project_id
             )
         else:
-            return await self._recommend_llm(task_description)
+            return await self._recommend_llm(task_description, effective_project_id)
 
     async def _recommend_semantic(
         self, task_description: str, top_k: int, min_similarity: float, project_id: str | None
@@ -157,7 +157,7 @@ class RecommendationService:
 
         if not semantic_result.get("success") or not semantic_result.get("recommendations"):
             # Fall back to pure LLM if semantic fails
-            return await self._recommend_llm(task_description)
+            return await self._recommend_llm(task_description, project_id)
         if self._loader is None:
             semantic_result["search_mode"] = "hybrid_fallback"
             return semantic_result
@@ -211,7 +211,7 @@ class RecommendationService:
             semantic_result["search_mode"] = "hybrid_fallback"
             return semantic_result
 
-    async def _recommend_llm(self, task_description: str) -> dict[str, Any]:
+    async def _recommend_llm(self, task_description: str, project_id: str | None) -> dict[str, Any]:
         """Recommend tools using LLM (original behavior)."""
         if self._loader is None:
             return {
@@ -219,12 +219,18 @@ class RecommendationService:
                 "error": "Recommendation prompt storage is unavailable",
                 "task": task_description,
             }
+        if not project_id:
+            return {
+                "success": False,
+                "error": "Project ID not set for LLM recommendations",
+                "task": task_description,
+            }
         try:
             config = self._get_config()
             llm_service = self._get_llm_service()
             if llm_service is None:
                 raise RuntimeError("LLM service is unavailable")
-            available_servers = self._mcp_manager.get_available_servers()
+            available_servers = self._mcp_manager.get_available_servers(project_id=project_id)
 
             prompt_path = config.llm_prompt_path or "features/recommend_llm"
             context = {

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
@@ -545,6 +546,50 @@ async def test_context_limit_allows_grok_spelled_handoff_prerequisites(
     data = normalize_tool_fields({"tool_name": tool_name, "tool_input": tool_input})
     response = await handler._evaluate_rules(
         _event(HookEventType.BEFORE_TOOL, source=SessionSource.GROK, data=data)
+    )
+
+    assert response.decision == expected
+
+
+@pytest.mark.parametrize(
+    ("server_name", "tool_name", "expected"),
+    [
+        pytest.param("gobby-sessions", "feedback", "allow", id="feedback"),
+        pytest.param("gobby-sessions", "set_handoff", "allow", id="set-handoff"),
+        pytest.param("gobby-agents", "list_agents", "block", id="unrelated-agent-tool"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_context_limit_allows_grok_use_tool_wrapped_handoff_calls(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+    server_name: str,
+    tool_name: str,
+    expected: str,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event(source=SessionSource.GROK))
+
+    grok_event = GrokAdapter().translate_to_hook_event(
+        {
+            "hook_type": "pre_tool_use",
+            "input_data": {
+                "sessionId": "grok-session",
+                "toolName": "gobby__call_tool",
+                "toolInput": {
+                    "tool_name": "gobby__call_tool",
+                    "tool_input": {
+                        "server_name": server_name,
+                        "tool_name": tool_name,
+                        "args": {},
+                    },
+                },
+            },
+        }
+    )
+    response = await handler._evaluate_rules(
+        _event(HookEventType.BEFORE_TOOL, source=SessionSource.GROK, data=grok_event.data)
     )
 
     assert response.decision == expected

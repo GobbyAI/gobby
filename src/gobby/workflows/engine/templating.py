@@ -128,6 +128,8 @@ class TemplatingMixin:
         if is_gobby_call_tool(tool_name) and isinstance(raw_tool_input, dict):
             original_tool_input = raw_tool_input
             inner_args = raw_tool_input.get("arguments")
+            if inner_args is None:
+                inner_args = raw_tool_input.get("args")
             if isinstance(inner_args, str):
                 try:
                     parsed = json.loads(inner_args)

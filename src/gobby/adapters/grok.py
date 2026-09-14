@@ -87,6 +87,18 @@ class GrokAdapter(ACPHookAdapter):
         for native_name, canonical_name in aliases.items():
             if native_name in data and canonical_name not in data:
                 data[canonical_name] = deepcopy(data[native_name])
+        # Grok dispatches catalog tools through use_tool: the hook names the resolved
+        # tool but carries the wrapper input {tool_name, tool_input}. Unwrap it so
+        # rules see the same input as a direct call (e.g. call_tool's server_name).
+        tool_name = data.get("tool_name")
+        tool_input = data.get("tool_input")
+        if (
+            isinstance(tool_name, str)
+            and isinstance(tool_input, dict)
+            and tool_input.get("tool_name") == tool_name
+            and isinstance(tool_input.get("tool_input"), dict)
+        ):
+            data["tool_input"] = tool_input["tool_input"]
         if "subagent_id" in data:
             data.setdefault("agent_id", data["subagent_id"])
         if "subagent_type" in data:
@@ -187,7 +199,9 @@ class GrokAdapter(ACPHookAdapter):
             "stop",
             "subagent_stop",
         }:
-            return {"decision": "allow", "continue": True}
+            # Grok honors only decision=block; an explicit allow is reported as a
+            # failed hook, so neutral responses omit decision entirely.
+            return {"continue": True}
 
         if canonical_hook in _GROK_STOP_HOOKS:
             if response.decision in {"deny", "block"}:

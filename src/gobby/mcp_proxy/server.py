@@ -484,7 +484,7 @@ class GobbyDaemonTools:
             search_mode=search_mode,
             top_k=top_k,
             min_similarity=min_similarity,
-            project_id=project_id,
+            project_id=project_id or self._caller_project_ref(),
         )
 
     # --- Semantic Search ---

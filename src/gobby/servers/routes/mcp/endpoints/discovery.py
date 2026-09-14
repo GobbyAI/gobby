@@ -403,19 +403,18 @@ async def recommend_mcp_tools(
                 detail={"success": False, "error": "Required field: task_description"},
             )
 
-        # For semantic/hybrid modes, resolve project_id from cwd
-        project_id = None
-        if search_mode in ("semantic", "hybrid"):
-            try:
-                project_id = server.resolve_project_id(None, cwd)
-            except ValueError as e:
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "task": task_description,
-                    "response_time_ms": response_time_ms,
-                }
+        # Every mode is project-scoped (LLM mode lists the project's servers),
+        # so resolve project_id from cwd.
+        try:
+            project_id = server.resolve_project_id(None, cwd)
+        except ValueError as e:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return {
+                "success": False,
+                "error": str(e),
+                "task": task_description,
+                "response_time_ms": response_time_ms,
+            }
 
         # Use tools handler if available
         if server._tools_handler:

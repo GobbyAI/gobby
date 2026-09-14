@@ -811,6 +811,25 @@ class TestMCPDiscoveryRoutes:
         assert call_kwargs["search_mode"] == "hybrid"
         assert call_kwargs["top_k"] == 5
 
+    def test_recommend_llm_mode_passes_resolved_project_id(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        mock_server.resolve_project_id.return_value = "project-1"
+        mock_server._tools_handler = MagicMock()
+        mock_server._tools_handler.recommend_tools = AsyncMock(
+            return_value={"success": True, "recommendations": []}
+        )
+
+        response = client.post(
+            "/api/mcp/tools/recommend",
+            json={"task_description": "query db", "cwd": "/projects/test"},
+        )
+
+        assert response.status_code == 200
+        call_kwargs = mock_server._tools_handler.recommend_tools.call_args[1]
+        assert call_kwargs["search_mode"] == "llm"
+        assert call_kwargs["project_id"] == "project-1"
+
     def test_recommend_malformed_json(self, client: TestClient) -> None:
         response = client.post(
             "/api/mcp/tools/recommend",
