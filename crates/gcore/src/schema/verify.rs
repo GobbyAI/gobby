@@ -8,6 +8,7 @@ use super::assets::{
     PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON, baseline_filename, is_prior_baseline_receipt,
 };
 use super::error::SchemaError;
+use super::runner::auth_schema_for;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -91,15 +92,35 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
     )?;
     // Extension-owned routines follow the installed extension version and remain outside Gobby's
     // schema authority even when the extension places them in the application schema.
-    let mut functions = query_entries(
-        client,
-        r#"
-        SELECT routine.proname || '(' || pg_get_function_identity_arguments(routine.oid) || ')'
+    let auth_schema = auth_schema_for(schema);
+    let extension_functions = client
+        .query(
+            "SELECT namespace.nspname, routine.proname, extension.extname
+         FROM pg_proc AS routine
+         JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+         JOIN pg_depend AS dependency ON dependency.objid = routine.oid
+         JOIN pg_extension AS extension ON extension.oid = dependency.refobjid
+         WHERE dependency.classid = 'pg_proc'::regclass AND dependency.deptype = 'e'",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| {
+            (
+                (row.get::<_, String>(0), row.get::<_, String>(1)),
+                format!("$extension_{}", row.get::<_, String>(2)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut functions = client
+        .query(
+            r#"
+        SELECT format('%I.%I(%s)', namespace.nspname, routine.proname,
+                      pg_get_function_identity_arguments(routine.oid))
                    AS name,
                pg_get_functiondef(routine.oid) AS definition
         FROM pg_proc AS routine
         JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
-        WHERE namespace.nspname = $1
+        WHERE namespace.nspname IN ($1, $2)
           AND NOT EXISTS (
               SELECT 1
               FROM pg_depend AS dependency
@@ -110,12 +131,20 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
           )
         ORDER BY name
         "#,
-        schema,
-        SchemaQualification::Placeholder,
-    )?;
-    for function in &mut functions {
-        function.definition = strip_full_line_sql_comments(&function.definition);
-    }
+            &[&schema, &auth_schema.as_ref()],
+        )?
+        .into_iter()
+        .map(|row| CatalogEntry {
+            name: normalize_function_sql(&row.get::<_, String>(0), schema, &auth_schema, false),
+            definition: normalize_function_definition(
+                &row.get::<_, String>(1),
+                schema,
+                &auth_schema,
+                &extension_functions,
+            ),
+        })
+        .collect::<Vec<_>>();
+    functions.sort();
     let triggers = query_entries(
         client,
         r#"
@@ -203,12 +232,237 @@ fn normalize_schema(mut value: String, schema: &str, qualification: SchemaQualif
     value.replace(&format!("IN SCHEMA {schema}"), "IN SCHEMA $schema")
 }
 
-fn strip_full_line_sql_comments(value: &str) -> String {
-    value
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
-        .collect::<Vec<_>>()
-        .join("\n")
+// pg_get_functiondef wraps the source in a dollar quote. Only that outer wrapper is SQL
+// source: nested dollar quotes and string literals inside it are data and must remain exact.
+fn normalize_function_definition(
+    value: &str,
+    schema: &str,
+    auth_schema: &str,
+    extensions: &BTreeMap<(String, String), String>,
+) -> String {
+    let value = value.trim_end_matches('\n');
+    // PostgreSQL chooses a delimiter absent from the source. Work backwards from its
+    // closing delimiter, so an AS-like sequence in a quoted argument default cannot win.
+    let body = value.strip_suffix('$').and_then(|prefix| {
+        let delimiter = &value[prefix.rfind('$')?..];
+        if dollar_delimiter(delimiter) != Some(delimiter) {
+            return None;
+        }
+        let prefix = value.strip_suffix(delimiter)?;
+        let (header, source) = prefix.rsplit_once(&format!("\nAS {delimiter}"))?;
+        Some((header, delimiter, source))
+    });
+    let header = body.map_or(value, |(header, _, _)| header);
+    let header =
+        normalize_function_sql_with_extensions(header, schema, auth_schema, false, extensions);
+    match body {
+        Some((_, delimiter, source)) => format!(
+            "{header}\nAS {delimiter}{}{delimiter}",
+            normalize_function_sql_with_extensions(source, schema, auth_schema, true, extensions),
+        ),
+        None => header.trim_end_matches('\n').to_owned(),
+    }
+}
+
+// Normalize schema identifier tokens, never substrings of identifiers or quoted data.
+// Preserve formatting except full-line SQL comments and leading body indentation outside
+// quoted text. Historical migrations indent the same source differently from the baseline.
+fn normalize_function_sql(
+    value: &str,
+    schema: &str,
+    auth_schema: &str,
+    strip_comments: bool,
+) -> String {
+    normalize_function_sql_with_extensions(
+        value,
+        schema,
+        auth_schema,
+        strip_comments,
+        &BTreeMap::new(),
+    )
+}
+
+fn normalize_function_sql_with_extensions(
+    value: &str,
+    schema: &str,
+    auth_schema: &str,
+    strip_comments: bool,
+    extensions: &BTreeMap<(String, String), String>,
+) -> String {
+    let bytes = value.as_bytes();
+    let mut output = String::with_capacity(value.len());
+    let mut i = 0;
+    let mut line_start = 0;
+    while i < bytes.len() {
+        let start = i;
+        if strip_comments && i == line_start {
+            while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+                i += 1;
+            }
+            if i != start {
+                continue;
+            }
+        }
+        if bytes[i..].starts_with(b"--") {
+            let end = value[i..]
+                .find('\n')
+                .map_or(bytes.len(), |offset| i + offset);
+            if strip_comments
+                && value[line_start..i]
+                    .bytes()
+                    .all(|byte| matches!(byte, b' ' | b'\t'))
+            {
+                i = (end + 1).min(bytes.len());
+                line_start = i;
+                continue;
+            }
+            i = end;
+        } else if bytes[i..].starts_with(b"/*") {
+            i += 2;
+            let mut depth = 1;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if bytes[i] == b'\'' || bytes[i] == b'"' {
+            let quote = bytes[i];
+            let escaped = quote == b'\''
+                && i > 0
+                && matches!(bytes[i - 1], b'e' | b'E')
+                && (i < 2 || !identifier_byte(bytes[i - 2]));
+            i += 1;
+            while i < bytes.len() {
+                if escaped && bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                } else if bytes[i] == quote {
+                    i += 1;
+                    if bytes.get(i) == Some(&quote) {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            if quote == b'"' && bytes.get(i) == Some(&b'.') {
+                let identifier = &value[start + 1..i - 1];
+                if let Some(replacement) =
+                    extension_qualification(identifier, &value[i + 1..], extensions)
+                {
+                    output.push_str(replacement);
+                    continue;
+                }
+                if let Some(replacement) = schema_placeholder(identifier, schema, auth_schema) {
+                    output.push_str(replacement);
+                    continue;
+                }
+            }
+            if quote == b'\''
+                && value[line_start..start]
+                    .trim_start()
+                    .starts_with("SET search_path TO ")
+                && &value[start + 1..i - 1] == auth_schema
+            {
+                output.push('\'');
+                output.push_str("$auth_schema");
+                output.push('\'');
+                continue;
+            }
+        } else if bytes[i] == b'$' && dollar_delimiter(&value[i..]).is_some() {
+            let delimiter = dollar_delimiter(&value[i..]).expect("checked delimiter");
+            i += delimiter.len();
+            i = value[i..]
+                .find(delimiter)
+                .map_or(bytes.len(), |offset| i + offset + delimiter.len());
+        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' || !bytes[i].is_ascii() {
+            i += 1;
+            while i < bytes.len() && identifier_byte(bytes[i]) {
+                i += 1;
+            }
+            if bytes.get(i) == Some(&b'.') {
+                if let Some(replacement) =
+                    extension_qualification(&value[start..i], &value[i + 1..], extensions)
+                {
+                    output.push_str(replacement);
+                    continue;
+                }
+                if let Some(replacement) = schema_placeholder(&value[start..i], schema, auth_schema)
+                {
+                    output.push_str(replacement);
+                    continue;
+                }
+            }
+        } else {
+            i += value[i..]
+                .chars()
+                .next()
+                .expect("nonempty remainder")
+                .len_utf8();
+        }
+        output.push_str(&value[start..i]);
+        if let Some(offset) = value[start..i].rfind('\n') {
+            line_start = start + offset + 1;
+        }
+    }
+    output
+}
+
+fn extension_qualification<'a>(
+    schema: &str,
+    rest: &str,
+    extensions: &'a BTreeMap<(String, String), String>,
+) -> Option<&'a str> {
+    let function = rest.split('(').next()?.trim_end();
+    let function = function
+        .strip_prefix('"')
+        .and_then(|name| name.strip_suffix('"'))
+        .unwrap_or(function);
+    extensions
+        .get(&(schema.to_owned(), function.to_owned()))
+        .map(String::as_str)
+}
+
+fn identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii()
+}
+
+fn schema_placeholder(identifier: &str, schema: &str, auth_schema: &str) -> Option<&'static str> {
+    if identifier == schema {
+        Some("$schema")
+    } else if identifier == auth_schema {
+        Some("$auth_schema")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+#[path = "verify_tests.rs"]
+mod tests;
+
+fn dollar_delimiter(value: &str) -> Option<&str> {
+    let end = value[1..].find('$')? + 1;
+    let tag = &value[1..end];
+    if tag.is_empty()
+        || (tag.as_bytes()[0].is_ascii_alphabetic()
+            || tag.starts_with('_')
+            || !tag.as_bytes()[0].is_ascii())
+            && tag
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || !byte.is_ascii())
+    {
+        Some(&value[..=end])
+    } else {
+        None
+    }
 }
 
 fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaError> {

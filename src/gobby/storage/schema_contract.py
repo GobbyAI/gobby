@@ -37,14 +37,6 @@ def expected_schema_identity_json() -> str:
     return json.dumps(expected_schema_identity(), separators=(",", ":"), sort_keys=True)
 
 
-def latest_schema_version() -> int:
-    """Return the release-pinned latest schema version."""
-    value = expected_schema_identity()["latest_version"]
-    if not isinstance(value, int):
-        raise SchemaContractError("Packaged latest schema version must be an integer")
-    return value
-
-
 def installed_schema_identity() -> dict[str, int | str]:
     """Read the schema identity embedded in the installed gdaemon."""
     binary = resolve_native_bin("gdaemon")

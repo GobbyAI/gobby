@@ -294,6 +294,149 @@ fn catalog_identity_ignores_column_ordinals() -> anyhow::Result<()> {
 }
 
 #[test]
+fn auth_function_catalog_is_schema_qualified_and_excludes_extensions() -> anyhow::Result<()> {
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    for schema in ["first_hub", "second_hub"] {
+        client.batch_execute(&format!(
+            "CREATE SCHEMA {schema}; CREATE SCHEMA {schema}_agent_auth;
+             CREATE TABLE {schema}.sample (id integer);
+             CREATE FUNCTION {schema}.sample(value integer) RETURNS integer
+                 LANGUAGE sql AS $$ SELECT value $$;
+             CREATE FUNCTION {schema}_agent_auth.sample(value integer) RETURNS integer
+                 LANGUAGE sql SECURITY DEFINER
+                 SET search_path TO '{schema}_agent_auth', 'pg_temp'
+                 AS $$ SELECT id FROM {schema}.sample WHERE id = value $$;"
+        ))?;
+    }
+    client.batch_execute("CREATE EXTENSION pgcrypto WITH SCHEMA first_hub_agent_auth")?;
+    let first = catalog_manifest(&mut client, "first_hub")?;
+    let second = catalog_manifest(&mut client, "second_hub")?;
+    assert_eq!(first, second);
+    assert_eq!(first.functions.len(), 2);
+    assert_eq!(
+        first.functions[0].name,
+        "$auth_schema.sample(value integer)"
+    );
+    assert_eq!(first.functions[1].name, "$schema.sample(value integer)");
+    assert!(first.functions[0].definition.contains("SECURITY DEFINER"));
+    assert!(
+        first.functions[0]
+            .definition
+            .contains("'$auth_schema', 'pg_temp'")
+    );
+    client.batch_execute(
+        "CREATE OR REPLACE FUNCTION first_hub_agent_auth.sample(value integer) RETURNS integer
+             LANGUAGE sql SECURITY DEFINER AS $$ SELECT value + 1 $$;",
+    )?;
+    assert_ne!(catalog_manifest(&mut client, "first_hub")?, first);
+    assert_eq!(catalog_manifest(&mut client, "second_hub")?, second);
+    Ok(())
+}
+
+#[test]
+fn verify_accepts_historical_auth_body_indentation() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    for (schema, auth_schema) in [
+        ("public", "gobby_agent_auth"),
+        ("history_hub", "history_hub_agent_auth"),
+    ] {
+        SchemaRunner::new(&mut client, schema)?.apply()?;
+        let definition: String = client
+            .query_one(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = $1 AND p.proname = 'resolve_tool_session'",
+                &[&auth_schema],
+            )?
+            .get(0);
+        let historical = definition
+            .replace("\n    ", "\n            ")
+            .replace("\n$function$", "\n            $function$");
+        assert_ne!(historical, definition);
+        client.batch_execute(&historical)?;
+        SchemaRunner::new(&mut client, schema)?.verify()?;
+        client.batch_execute("BEGIN")?;
+        client.batch_execute(&historical.replace("'active'", "'inactive'"))?;
+        let error = SchemaRunner::new(&mut client, schema)?
+            .verify()
+            .expect_err("quoted body changes still fail after indentation normalization");
+        assert!(error.to_string().contains("resolve_tool_session"));
+        client.batch_execute("ROLLBACK")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn verify_detects_auth_function_body_signature_and_security_drift() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    for mutation in [
+        "CREATE OR REPLACE FUNCTION gobby_agent_auth.current_machine_id() RETURNS uuid
+             LANGUAGE sql SECURITY DEFINER AS $$ SELECT NULL::uuid $$",
+        "ALTER FUNCTION gobby_agent_auth.current_machine_id() SECURITY INVOKER",
+        "ALTER FUNCTION gobby_agent_auth.current_machine_id() SET search_path TO public",
+        "CREATE FUNCTION gobby_agent_auth.current_machine_id(value text) RETURNS uuid
+             LANGUAGE sql AS $$ SELECT value::uuid $$",
+    ] {
+        client.batch_execute("BEGIN")?;
+        client.batch_execute(mutation)?;
+        let error = SchemaRunner::new(&mut client, "public")?
+            .verify()
+            .expect_err("auth function drift must fail verification");
+        assert!(
+            error
+                .to_string()
+                .contains("function:$auth_schema.current_machine_id"),
+            "{mutation}: {error}"
+        );
+        client.batch_execute("ROLLBACK")?;
+    }
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
+fn catalog_keeps_comment_like_function_literals() -> anyhow::Result<()> {
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    client.batch_execute(
+        "CREATE SCHEMA literal_hub; CREATE SCHEMA literal_hub_agent_auth;
+         CREATE FUNCTION literal_hub_agent_auth.literal() RETURNS text LANGUAGE sql
+             AS $body$ SELECT 'line one
+-- meaningful literal
+line three' $body$;",
+    )?;
+    let first = catalog_manifest(&mut client, "literal_hub")?;
+    assert!(
+        first.functions[0]
+            .definition
+            .contains("-- meaningful literal")
+    );
+    client.batch_execute(
+        "CREATE OR REPLACE FUNCTION literal_hub_agent_auth.literal() RETURNS text LANGUAGE sql
+             AS $body$ SELECT 'line one
+-- changed literal
+line three' $body$;",
+    )?;
+    assert_ne!(catalog_manifest(&mut client, "literal_hub")?, first);
+    Ok(())
+}
+
+#[test]
 fn verify_accepts_runtime_mutation_of_seed_fields() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
