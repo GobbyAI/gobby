@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.tasks.criterion_commands import (
+    SCOPE_MISMATCH_REASON,
     criterion_command_gap_message,
     criterion_command_records,
     edit_details,
@@ -132,7 +133,7 @@ def evaluate_validation_commands(
     gaps = gate.details.get("criterion_command_gaps", [])
     for gap in gaps:
         for observation in gap.get("observed_forms", []):
-            if observation.get("reason") != "scope or semantic arguments differ":
+            if not str(observation.get("reason", "")).startswith(SCOPE_MISMATCH_REASON):
                 continue
             if any(
                 record["session_id"] == observation["session_id"]

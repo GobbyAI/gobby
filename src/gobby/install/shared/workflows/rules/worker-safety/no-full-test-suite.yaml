@@ -1,12 +1,11 @@
-tags: [worker-safety, enforcement, gobby]
+tags: [worker-safety, enforcement, gobby, default]
 
 rules:
   no-full-pytest-suite:
-    description: "Block spawned agents from running the full pytest suite."
+    description: "Block agents from running the full pytest suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
@@ -18,11 +17,10 @@ rules:
           — full-suite runs are reserved for the user.
 
   no-full-vitest-suite:
-    description: "Block spawned agents from running the full vitest suite."
+    description: "Block agents from running the full vitest suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
@@ -33,11 +31,10 @@ rules:
           `--testNamePattern` filters.
 
   no-full-cargo-test:
-    description: "Block spawned agents from running the full Cargo test suite."
+    description: "Block agents from running the full Cargo test suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]
@@ -47,11 +44,10 @@ rules:
           Run targeted tests: `cargo test <name>` or `cargo test -p <package>`.
 
   no-full-go-test:
-    description: "Block spawned agents from running the full go test suite."
+    description: "Block agents from running the full go test suite."
     event: before_tool
     enabled: true
     priority: 50
-    when: "variables.get('is_spawned_agent')"
     effects:
       - type: block
         tools: [Bash]

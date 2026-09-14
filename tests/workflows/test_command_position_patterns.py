@@ -681,6 +681,33 @@ async def test_engine_blocks_bare_pytest_and_allows_guarded_run(db: HubDatabase)
     assert quoted_substitution.decision == "block"
 
 
+@pytest.mark.parametrize(
+    ("rule_name", "full_suite", "targeted"),
+    [
+        ("no-full-pytest-suite", "uv run pytest", "uv run pytest tests/tasks/test_validation.py"),
+        ("no-full-vitest-suite", "npx vitest", "npx vitest run src/app.test.ts"),
+        ("no-full-cargo-test", "cargo test", "cargo test -p gobby-core"),
+        ("no-full-go-test", "go test ./...", "go test ./pkg/..."),
+    ],
+)
+async def test_full_suite_rules_block_interactive_sessions(
+    db: HubDatabase,
+    rule_name: str,
+    full_suite: str,
+    targeted: str,
+) -> None:
+    """A session with no spawned-agent variables is still held to targeted runs."""
+    _sync_bundled(db)
+    db.execute("DELETE FROM rule_definitions WHERE name != %s", (rule_name,))
+    engine = RuleEngine(db)
+
+    blocked = await engine.evaluate(_bash_event(full_suite), session_id=SESSION_ID, variables={})
+    assert blocked.decision == "block"
+
+    allowed = await engine.evaluate(_bash_event(targeted), session_id=SESSION_ID, variables={})
+    assert allowed.decision != "block"
+
+
 def test_mask_quoted_spans_blanks_data_and_keeps_substitution() -> None:
     masked = mask_quoted_spans("echo 'uv run pytest x'")
     assert "pytest" not in masked

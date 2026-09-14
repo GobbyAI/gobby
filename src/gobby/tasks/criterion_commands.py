@@ -14,6 +14,7 @@ from gobby.tasks.command_equivalence import (
     canonical_command,
     command_covers,
     parse_validation_shell,
+    scope_difference,
 )
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
@@ -22,6 +23,7 @@ from gobby.tasks.transcript_evidence import (
 )
 from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence
 
+SCOPE_MISMATCH_REASON = "scope or semantic arguments differ"
 _CRITERIA_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 CRITERION_COMMAND_CONTRACT = (
     "Backticked command spans are mandatory exact close commands. "
@@ -174,7 +176,8 @@ def criterion_command_records(
                 if edit is not None:
                     observation["invalidating_edit"] = edit_details(edit)
             if run not in matching and not run.wrapped:
-                observation["reason"] = "scope or semantic arguments differ"
+                difference = scope_difference(run.core_command or run.command, core or command)
+                observation["reason"] = f"{SCOPE_MISMATCH_REASON}: {difference}"
             observed.append(observation)
         if status != "satisfied":
             record["observed_forms"] = observed
@@ -282,7 +285,7 @@ def _command_shaped_spans(criteria: str) -> list[str]:
         if _command_is_excluded(criteria, match):
             continue
         command = match.group(1).strip()
-        if command and _is_command_shaped_span(command):
+        if command and (_is_command_shaped_span(command) or _full_suite_runner(command)):
             spans.append(command)
     return spans
 
@@ -302,7 +305,8 @@ def _malformed_command_reason(command: str) -> str | None:
     if _PLACEHOLDER_RE.search(command):
         return "placeholders are not an exact close command."
     stripped = command.rstrip()
-    if stripped and stripped[-1] in _TRAILING_PUNCTUATION:
+    # Go package patterns end in "/..."; that is an argument, not sentence punctuation.
+    if stripped and stripped[-1] in _TRAILING_PUNCTUATION and not stripped.endswith("/..."):
         return "trailing punctuation is not part of an exact close command."
     parsed = parse_shell_command(command)
     if any(op in {"|", "||", "|&"} for op in parsed.operators):
@@ -312,7 +316,74 @@ def _malformed_command_reason(command: str) -> str | None:
     tokens = safe_split(command)
     if tokens and tokens[0].casefold() in _CONDITIONAL_TOKENS:
         return "conditional commands are not an exact close command."
+    runner = _full_suite_runner(command)
+    if runner is not None:
+        return (
+            f"{runner} with no target runs the full suite; name test files, a test "
+            "directory, or a test-name selector."
+        )
     return None
+
+
+_RUNNER_LAUNCHERS = (
+    ("uv", "run"),
+    ("python", "-m"),
+    ("python3", "-m"),
+    ("npm", "exec"),
+    ("pnpm", "exec"),
+    ("npx",),
+    ("pnpm",),
+    ("yarn",),
+)
+_PYTEST_SUBDIRECTORY_RE = re.compile(r"(?:^|/)tests/[^/\s]+")
+_JS_TEST_FILE_RE = re.compile(r"(?:__tests__/\S+|\.(?:test|spec))\.(?:ts|js|tsx|jsx)$")
+_JS_TEST_NAME_OPTIONS = frozenset({"-t", "--testNamePattern", "--testPathPattern"})
+
+
+def _full_suite_runner(command: str) -> str | None:
+    """Name the runner a span would start with no test target, mirroring the no-full-* rules."""
+    core = classify_validation_command_equivalence(command).core_command
+    tokens = list(safe_split(core or command))
+    for launcher in _RUNNER_LAUNCHERS:
+        if tuple(tokens[: len(launcher)]) == launcher:
+            tokens = tokens[len(launcher) :]
+    if not tokens:
+        return None
+    runner = posixpath.basename(tokens[0])
+    arguments = tokens[1:]
+    if runner == "pytest":
+        targeted = any(
+            argument.startswith("-k")
+            or (
+                not argument.startswith("-")
+                and (
+                    argument.split("::", 1)[0].endswith(".py")
+                    or _PYTEST_SUBDIRECTORY_RE.search(argument) is not None
+                )
+            )
+            for argument in arguments
+        )
+    elif runner in {"vitest", "jest"}:
+        targeted = any(
+            argument.split("=", 1)[0] in _JS_TEST_NAME_OPTIONS
+            or _JS_TEST_FILE_RE.search(argument) is not None
+            for argument in arguments
+        )
+    elif runner == "cargo":
+        if arguments[:1] and arguments[0].startswith("+"):
+            arguments = arguments[1:]
+        if arguments[:1] != ["test"]:
+            return None
+        runner = "cargo test"
+        targeted = any(not argument.startswith("-") for argument in arguments[1:])
+    elif runner == "go":
+        if arguments[:1] != ["test"]:
+            return None
+        runner = "go test"
+        targeted = "./..." not in arguments[1:]
+    else:
+        return None
+    return None if targeted else runner
 
 
 def _has_redirection(command: str) -> bool:

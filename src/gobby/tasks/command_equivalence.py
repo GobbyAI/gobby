@@ -156,10 +156,75 @@ def command_covers(executed: str, required: str) -> bool:
         return False
     actual_flags, actual_paths = actual_scope
     expected_flags, expected_paths = expected_scope
-    return actual_flags == expected_flags and all(
-        any(target_covers(path, requirement) for path in actual_paths)
+    if actual_flags != expected_flags:
+        return False
+    if not expected_paths:
+        return not actual_paths
+    return not _uncovered_targets(actual_paths, expected_paths)
+
+
+def scope_difference(executed: str, required: str) -> str:
+    """Name the arguments that keep an executed command from covering a required one."""
+    actual = canonical_command(executed)
+    expected = canonical_command(required)
+    if actual is None or expected is None:
+        return "shell expansion or command structure differs"
+    actual_scope = _path_scope(actual)
+    expected_scope = _path_scope(expected)
+    if actual_scope is None or expected_scope is None:
+        no_paths: list[str] = []
+        actual_scope = (shlex.split(actual), no_paths)
+        expected_scope = (shlex.split(expected), no_paths)
+    actual_flags, actual_paths = actual_scope
+    expected_flags, expected_paths = expected_scope
+    differences: list[str] = []
+    extra = [flag for flag in actual_flags if flag not in expected_flags]
+    missing = [flag for flag in expected_flags if flag not in actual_flags]
+    if extra:
+        differences.append(f"adds `{' '.join(extra)}`")
+    if missing:
+        differences.append(f"lacks `{' '.join(missing)}`")
+    if not extra and not missing and actual_flags != expected_flags:
+        differences.append("repeats an option in a different order")
+    if expected_paths:
+        uncovered = _uncovered_targets(actual_paths, expected_paths)
+        if uncovered:
+            differences.append(f"does not cover `{' '.join(uncovered)}`")
+    elif actual_paths:
+        differences.append(f"narrows the run to `{' '.join(actual_paths)}`")
+    return "; ".join(differences) or "arguments differ"
+
+
+def _uncovered_targets(actual_paths: list[str], expected_paths: list[str]) -> list[str]:
+    return [
+        requirement
         for requirement in expected_paths
-    )
+        if not any(target_covers(path, requirement) for path in actual_paths)
+    ]
+
+
+_VALUELESS_OPTIONS = frozenset(
+    {
+        "-q",
+        "-v",
+        "-vv",
+        "-s",
+        "-x",
+        "--check",
+        "--diff",
+        "--strict",
+        "--fail-on-new",
+        "--no-incremental",
+        "--no-header",
+        "--",
+    }
+)
+# Pytest options that only change reporting or stop after early failures. A run that
+# still exits 0 executed and passed every selected test, so they cannot change what
+# passing evidence proves. -r<chars> is matched by prefix.
+_PYTEST_REPORTING_OPTIONS = frozenset(
+    {"-q", "-qq", "-v", "-vv", "-x", "--no-header", "--tb", "--color", "--durations", "--maxfail"}
+)
 
 
 def _path_scope(command: str) -> tuple[list[str], list[str]] | None:
@@ -182,34 +247,34 @@ def _path_scope(command: str) -> tuple[list[str], list[str]] | None:
         if tokens[end : end + 2] not in (["test-types", "audit"], ["test-quality", "audit"]):
             return None
         end += 2
-    flags, paths = tokens[:end], []
+    options: list[list[str]] = []
+    paths: list[str] = []
     # Unknown options are retained with their following word. This intentionally
     # declines broad-scope credit rather than interpreting an option value as a path.
     takes_value = False
     for token in tokens[end:]:
         if takes_value:
-            flags.append(token)
+            options[-1].append(token)
             takes_value = False
         elif token.startswith("-"):
-            flags.append(token)
-            takes_value = "=" not in token and token not in {
-                "-q",
-                "-v",
-                "-vv",
-                "-s",
-                "-x",
-                "--check",
-                "--diff",
-                "--strict",
-                "--fail-on-new",
-                "--no-incremental",
-                "--",
-            }
+            options.append([token])
+            # A short option with attached characters (-ra, -kname) carries its own value.
+            attached = len(token) > 2 and token[1] != "-"
+            takes_value = not attached and "=" not in token and token not in _VALUELESS_OPTIONS
         elif not any(char in token for char in "*?[]$"):
             path = posixpath.normpath(token)
             if path.startswith(("/", "../")) or path == "..":
                 return None
             paths.append(path)
         else:
-            flags.append(token)
-    return (flags, paths) if paths else None
+            options.append([token])
+    if executable == "pytest":
+        options = [option for option in options if not _pytest_reporting_option(option[0])]
+    # Distinct options compare in any order; repeats of one option keep their order.
+    options.sort(key=lambda option: option[0].split("=", 1)[0])
+    return tokens[:end] + [shlex.join(option) for option in options], paths
+
+
+def _pytest_reporting_option(option: str) -> bool:
+    name = option.split("=", 1)[0]
+    return name in _PYTEST_REPORTING_OPTIONS or name.startswith("-r")

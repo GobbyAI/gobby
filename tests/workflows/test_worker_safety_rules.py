@@ -115,7 +115,7 @@ def _yaml_rule_count(group: str) -> int:
 
 @pytest.mark.parametrize(
     ("group", "expected_count"),
-    (("task-enforcement", 18), ("worker-safety", 55)),
+    (("task-enforcement", 19), ("worker-safety", 56)),
 )
 def test_rule_reference_counts_match_yaml(group: str, expected_count: int) -> None:
     prefix = f"| `{group}` |"
@@ -133,7 +133,9 @@ def test_rule_reference_counts_match_yaml(group: str, expected_count: int) -> No
 class TestWorkerSafetySync:
     """Test that the bundled worker-safety.yaml syncs correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All worker-safety rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -143,7 +145,7 @@ class TestWorkerSafetySync:
         expected = EXPECTED_WORKER_SAFETY_RULES
         assert expected.issubset(rule_names), f"Missing: {expected - rule_names}"
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All worker-safety rules should have group='worker-safety'."""
         _sync_bundled(db)
 
@@ -153,7 +155,9 @@ class TestWorkerSafetySync:
             if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
-    def test_agent_scope_persists_through_sync(self, db, manager) -> None:
+    def test_agent_scope_persists_through_sync(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """agent_scope from YAML should be preserved in definition_json."""
         _sync_bundled(db)
 
@@ -163,7 +167,9 @@ class TestWorkerSafetySync:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.agent_scope == ["developer", "qa-reviewer", "doc-reviewer"]
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -172,13 +178,15 @@ class TestWorkerSafetySync:
             if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 body = RuleDefinitionBody.model_validate(row.definition_json)
                 assert body.event.value == "before_tool"
-                assert body.effects[0].type == "block"
+                assert _first_effect(body).type == "block"
 
 
 class TestNoPushRule:
     """Verify no-push rule blocks git push commands."""
 
-    def test_blocks_bash_with_git_push(self, db, manager) -> None:
+    def test_blocks_bash_with_git_push(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """no-push should block Bash tool with git push."""
         _sync_bundled(db)
 
@@ -186,15 +194,16 @@ class TestNoPushRule:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.effects[0].tools == ["Bash"]
-        assert body.effects[0].command_pattern is not None
-        assert "push" in body.effects[0].command_pattern
+        effect = _first_effect(body)
+        assert effect.tools == ["Bash"]
+        assert effect.command_pattern is not None
+        assert "push" in effect.command_pattern
 
 
 class TestNoForcePushRule:
     """Verify no-force-push rule blocks force push commands."""
 
-    def test_blocks_force_push_flags(self, db, manager) -> None:
+    def test_blocks_force_push_flags(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """no-force-push should block force push flags."""
         _sync_bundled(db)
 
@@ -202,15 +211,18 @@ class TestNoForcePushRule:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.effects[0].tools == ["Bash"]
-        assert body.effects[0].command_pattern is not None
-        assert "--force" in body.effects[0].command_pattern
+        effect = _first_effect(body)
+        assert effect.tools == ["Bash"]
+        assert effect.command_pattern is not None
+        assert "--force" in effect.command_pattern
 
 
 class TestNoDestructiveGitRule:
     """Verify no-destructive-git rule blocks dangerous git commands."""
 
-    def test_blocks_destructive_commands(self, db, manager) -> None:
+    def test_blocks_destructive_commands(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """no-destructive-git should block reset --hard, clean -f, etc."""
         _sync_bundled(db)
 
@@ -218,9 +230,10 @@ class TestNoDestructiveGitRule:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.effects[0].tools == ["Bash"]
-        assert body.effects[0].command_pattern is not None
-        assert "reset" in body.effects[0].command_pattern
+        effect = _first_effect(body)
+        assert effect.tools == ["Bash"]
+        assert effect.command_pattern is not None
+        assert "reset" in effect.command_pattern
 
 
 class TestManagedGitIsolationRules:
@@ -745,7 +758,9 @@ class TestNoFullVitestSuiteRule:
             "jest --runInBand",
         ],
     )
-    def test_blocks_unscoped_vitest_and_jest_runs(self, db, manager, command: str) -> None:
+    def test_blocks_unscoped_vitest_and_jest_runs(
+        self, db: HubDatabase, manager: RuleDefinitionManager, command: str
+    ) -> None:
         effect = self._effect(db, manager)
 
         assert self._is_blocked(effect, command)
@@ -767,7 +782,9 @@ class TestNoFullVitestSuiteRule:
             "jest -t 'renders FalkorDB status'",
         ],
     )
-    def test_allows_focused_vitest_and_jest_runs(self, db, manager, command: str) -> None:
+    def test_allows_focused_vitest_and_jest_runs(
+        self, db: HubDatabase, manager: RuleDefinitionManager, command: str
+    ) -> None:
         effect = self._effect(db, manager)
 
         assert not self._is_blocked(effect, command)

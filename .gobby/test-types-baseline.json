@@ -11161,26 +11161,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/workflows/test_worker_safety_rules.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 175,
-      "message": "Value of type \"list[RuleEffect] | None\" is not indexable",
-      "occurrences": 10,
-      "path": "tests/workflows/test_worker_safety_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_worker_safety_rules.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 136,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 9,
-      "path": "tests/workflows/test_worker_safety_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/test_workflows_pipeline_resume.py::::mypy:method-assign",
       "issue_code": "mypy:method-assign",
       "line": 359,
