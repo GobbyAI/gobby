@@ -45,6 +45,8 @@ use handshake::{
 pub enum GrantError {
     DaemonRequired,
     Expired,
+    /// A managed grant needs the daemon but `GOBBY_AGENT_API_TOKEN` is absent.
+    ManagedCapabilityMissing,
     SchemaMismatch {
         grant_version: i64,
         binary_version: i64,
@@ -61,6 +63,8 @@ pub enum GrantError {
     RemoteEndpoint,
     ConfigRevisionMismatch,
     Revoked,
+    /// The daemon refused the credential; carries its typed rejection code.
+    Unauthorized(String),
     Timeout,
     Malformed(String),
     Io(String),
@@ -71,6 +75,9 @@ impl fmt::Display for GrantError {
         match self {
             Self::DaemonRequired => f.write_str("daemon required"),
             Self::Expired => f.write_str("grant expired"),
+            Self::ManagedCapabilityMissing => {
+                f.write_str("managed capability missing: GOBBY_AGENT_API_TOKEN is not set")
+            }
             Self::SchemaMismatch {
                 grant_version,
                 binary_version,
@@ -92,6 +99,7 @@ impl fmt::Display for GrantError {
             Self::RemoteEndpoint => f.write_str("remote daemon endpoint refused"),
             Self::ConfigRevisionMismatch => f.write_str("config revision mismatch"),
             Self::Revoked => f.write_str("grant revoked"),
+            Self::Unauthorized(code) => write!(f, "daemon rejected the credential: {code}"),
             Self::Timeout => f.write_str("grant operation timed out"),
             Self::Malformed(message) => write!(f, "malformed grant: {message}"),
             Self::Io(message) => write!(f, "grant io error: {message}"),
@@ -106,6 +114,7 @@ impl GrantError {
         match self {
             Self::DaemonRequired => "daemon_required",
             Self::Expired => "expired",
+            Self::ManagedCapabilityMissing => "managed_capability_missing",
             Self::SchemaMismatch { .. } => "schema_mismatch",
             Self::DeploymentMismatch => "deployment_mismatch",
             Self::ApiContractMismatch { .. } => "api_contract_mismatch",
@@ -113,6 +122,7 @@ impl GrantError {
             Self::RemoteEndpoint => "remote_endpoint",
             Self::ConfigRevisionMismatch => "config_revision_mismatch",
             Self::Revoked => "revoked",
+            Self::Unauthorized(_) => "unauthorized",
             Self::Timeout => "timeout",
             Self::Malformed(_) => "malformed",
             Self::Io(_) => "io",
@@ -135,21 +145,32 @@ impl GrantError {
             || matches!(self, Self::Malformed(message) if message == "invalid_signature")
     }
 
+    /// Classify a daemon rejection by the typed `code` in its JSON body. A 401
+    /// always names the daemon's reason, so it is never reported as expiry.
     pub fn from_presentation_http(status: u16, body: &str) -> Option<Self> {
         if (200..300).contains(&status) {
             return None;
         }
-        if body.contains("revoked") {
-            return Some(Self::Revoked);
+        let code = daemon_rejection_code(body);
+        match (status, code.as_deref()) {
+            (_, Some("revoked")) => Some(Self::Revoked),
+            (409, _) | (_, Some("stale_epoch")) => Some(Self::Malformed("stale_epoch".to_string())),
+            (_, Some("invalid_signature")) => {
+                Some(Self::Malformed("invalid_signature".to_string()))
+            }
+            (_, Some("expired" | "capability_expired")) => Some(Self::Expired),
+            (401, other) => Some(Self::Unauthorized(
+                other.unwrap_or("unspecified").to_string(),
+            )),
+            _ => None,
         }
-        if status == 409 || body.contains("stale_epoch") {
-            return Some(Self::Malformed("stale_epoch".to_string()));
-        }
-        if body.contains("invalid_signature") {
-            return Some(Self::Malformed("invalid_signature".to_string()));
-        }
-        None
     }
+}
+
+/// The typed `code` a daemon rejection body carries.
+fn daemon_rejection_code(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value.get("code")?.as_str().map(str::to_owned)
 }
 
 fn api_contract_mismatch_display(
@@ -232,9 +253,6 @@ pub fn fetch_runtime_config(
     if !(200..300).contains(&response.status) {
         if let Some(error) = GrantError::from_presentation_http(response.status, &response.body) {
             return Err(error);
-        }
-        if response.status == 401 {
-            return Err(GrantError::Expired);
         }
         return Err(GrantError::Malformed(format!(
             "runtime config failed with HTTP {}",

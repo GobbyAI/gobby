@@ -207,7 +207,16 @@ def test_protected_routes_require_auth_when_enabled(
 
 @pytest.mark.parametrize(
     "code",
-    ("stale_epoch", "revoked", "missing_grant", "forged_identity", "lease_not_held"),
+    (
+        "stale_epoch",
+        "revoked",
+        "missing_grant",
+        "forged_identity",
+        "lease_not_held",
+        "capability_expired",
+        "run_inactive",
+        "identity_mismatch",
+    ),
 )
 def test_grant_rejection_omits_login_guidance(
     auth_client: tuple[TestClient, MagicMock], code: str
@@ -222,17 +231,16 @@ def test_grant_rejection_omits_login_guidance(
     assert body["code"] == code
 
 
-def test_missing_auth_keeps_login_guidance(
-    auth_client: tuple[TestClient, MagicMock],
+@pytest.mark.parametrize("code", ("missing_auth", "invalid_token", "session_invalid"))
+def test_unrecognised_credentials_keep_login_guidance(
+    auth_client: tuple[TestClient, MagicMock], code: str
 ) -> None:
     client, auth_service = auth_client
-    auth_service.authenticate.return_value = AuthDecision(
-        allowed=False, code="missing_auth", status_code=401
-    )
+    auth_service.authenticate.return_value = AuthDecision(allowed=False, code=code, status_code=401)
     response = client.get("/api/tasks")
     body = response.json()
     assert "local_cli_token" in body["error"]
-    assert body["code"] == "missing_auth"
+    assert body["code"] == code
 
 
 @pytest.mark.asyncio

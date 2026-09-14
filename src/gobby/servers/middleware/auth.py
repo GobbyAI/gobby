@@ -53,7 +53,9 @@ _LOGIN_GUIDANCE = (
     "Authentication required. CLI clients need ~/.gobby/local_cli_token "
     "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
 )
-_MISSING_AUTH_CODES = frozenset({None, "missing_auth"})
+# Absent or unrecognised operator/browser credentials get login guidance; typed
+# grant and capability rejections carry their own message.
+_LOGIN_GUIDANCE_CODES = frozenset({None, "missing_auth", "invalid_token", "session_invalid"})
 _GRANT_REJECTION_MESSAGE = "Request rejected"
 
 
@@ -117,7 +119,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             message = decision.message
             if not message:
                 message = (
-                    _LOGIN_GUIDANCE if code in _MISSING_AUTH_CODES else _GRANT_REJECTION_MESSAGE
+                    _LOGIN_GUIDANCE if code in _LOGIN_GUIDANCE_CODES else _GRANT_REJECTION_MESSAGE
                 )
             content: dict[str, object] = {"error": message}
             if code:

@@ -664,10 +664,13 @@ fn managed_envelope(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
 ) -> Result<(String, CapabilityClaims), GrantError> {
-    let owned = ctx.managed_envelope.clone().ok_or(GrantError::Expired)?;
+    let owned = ctx
+        .managed_envelope
+        .clone()
+        .ok_or(GrantError::ManagedCapabilityMissing)?;
     let envelope = owned.trim();
     if envelope.is_empty() {
-        return Err(GrantError::Expired);
+        return Err(GrantError::ManagedCapabilityMissing);
     }
     let claims = parse_envelope(envelope)?;
     if claims.exp <= ctx.now {

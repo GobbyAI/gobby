@@ -16,7 +16,7 @@ import stat
 import subprocess  # nosec B404 # local command execution only.
 import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -257,6 +257,9 @@ class CodeIndexPreflightResult:
     env: dict[str, str]
     wrapper_path: str | None = None
     runtime_home: str | None = None
+    # Managed capability for probe and snapshot processes. It stays out of `env`,
+    # which spawn hands to the agent alongside the run token it installs itself.
+    api_token: str | None = field(default=None, repr=False)
 
 
 async def ensure_isolation_code_index(
@@ -329,8 +332,9 @@ async def ensure_isolation_code_index(
     remaining()
     gcode_command = str(resolved_gcode)
     merged_probe_env = {**result.env, **dict(identity_env or {})}
-    if api_token:
-        merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = api_token
+    probe_token = api_token or result.api_token
+    if probe_token:
+        merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = probe_token
     probe_env = merged_probe_env or None
 
     # `status` proves the path the spawned agent will actually use: grant
@@ -450,7 +454,6 @@ def _prepare_gcode_runtime(
         operator_token=operator_token,
         deadline_seconds=max(1.0, remaining_seconds),
     )
-    # Spawn already installs GOBBY_AGENT_API_TOKEN; do not overwrite it.
     _link_runtime_assets(source_home, runtime_home)
     # Runs last so it is the final word on #19289: no writer above it can leave
     # a credential behind. Sweeping the whole root also reaps pre-#19289 residue.
@@ -468,6 +471,9 @@ def _prepare_gcode_runtime(
     bootstrap_path = launch.env.get(MANAGED_EXECUTION_BOOTSTRAP_ENV)
     if not bootstrap_path:
         raise RuntimeError("gcode_managed_execution_bootstrap_missing")
+    api_token = launch.env.get(GOBBY_AGENT_API_TOKEN_ENV)
+    if not api_token:
+        raise RuntimeError("gcode_managed_capability_missing")
 
     return CodeIndexPreflightResult(
         env={
@@ -477,6 +483,7 @@ def _prepare_gcode_runtime(
         },
         wrapper_path=str(wrapper_path),
         runtime_home=str(runtime_home),
+        api_token=api_token,
     )
 
 

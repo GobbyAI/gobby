@@ -81,7 +81,8 @@ def test_http_server_allows_remote_ui_with_mandatory_auth() -> None:
         "error": (
             "Authentication required. CLI clients need ~/.gobby/local_cli_token "
             "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
-        )
+        ),
+        "code": "missing_auth",
     }
 
     unauthenticated = TestClient(server.app).get("/api/tasks")

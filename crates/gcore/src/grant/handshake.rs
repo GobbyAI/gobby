@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::bundle::{GrantBundle, GrantPrincipal, PrincipalKind, parse_grant_json};
 use super::cache::normalize_endpoint;
 use super::inspection::annotate_source;
-use super::{GrantError, hex_encode, sha256};
+use super::{GrantError, daemon_rejection_code, hex_encode, sha256};
 
 pub const GRANT_HEADER: &str = "X-Gobby-Runtime-Grant";
 pub const MACHINE_HEADER: &str = "X-Gobby-Machine-Id";
@@ -207,18 +207,12 @@ pub fn challenge_and_handshake(
         &[],
         remaining,
     )?;
-    if let Some(error) = GrantError::from_presentation_http(challenge.status, &challenge.body) {
-        return Err(error);
-    }
-    if challenge.status == 401 {
-        if challenge.body.contains("credential_before_proof") {
+    if !(200..300).contains(&challenge.status) {
+        if daemon_rejection_code(&challenge.body).as_deref() == Some("credential_before_proof") {
             return Err(GrantError::Malformed(
                 "challenge rejected attached credentials".to_string(),
             ));
         }
-        return Err(GrantError::Expired);
-    }
-    if !(200..300).contains(&challenge.status) {
         return classify_http(challenge.status, &challenge.body);
     }
     let envelope: ChallengeEnvelope = serde_json::from_str(&challenge.body)
@@ -275,12 +269,6 @@ pub fn managed_identity_headers(claims: &CapabilityClaims) -> Vec<(&'static str,
 }
 
 pub fn grant_from_handshake(response: HttpResponse) -> Result<GrantBundle, GrantError> {
-    if let Some(error) = GrantError::from_presentation_http(response.status, &response.body) {
-        return Err(error);
-    }
-    if response.status == 401 {
-        return Err(GrantError::Expired);
-    }
     if !(200..300).contains(&response.status) {
         return classify_http(response.status, &response.body);
     }
@@ -365,15 +353,8 @@ fn read_response(response: ureq::Response) -> Result<HttpResponse, GrantError> {
 }
 
 fn classify_http(status: u16, body: &str) -> Result<GrantBundle, GrantError> {
-    if let Some(error) = GrantError::from_presentation_http(status, body) {
-        return Err(error);
-    }
-    if status == 401 || body.contains("expired") {
-        return Err(GrantError::Expired);
-    }
-    Err(GrantError::Malformed(format!(
-        "handshake failed with HTTP {status}"
-    )))
+    Err(GrantError::from_presentation_http(status, body)
+        .unwrap_or_else(|| GrantError::Malformed(format!("handshake failed with HTTP {status}"))))
 }
 
 fn remaining_timeout(deadline: Instant) -> Result<Duration, GrantError> {

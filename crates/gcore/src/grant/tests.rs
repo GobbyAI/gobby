@@ -1171,19 +1171,60 @@ fn handshake_retries_once_on_stale_epoch() {
 }
 
 #[test]
-fn presentation_http_classifies_retryable_restart_errors() {
+fn handshake_401_surfaces_the_daemon_rejection_code() {
+    let harness = Harness::new();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Reject {
+            status: 401,
+            body: json!({"error": "Request rejected", "code": "identity_mismatch"}).to_string(),
+        },
+    ]);
+    let error = acquire_with(&harness.request(Some(scripted.url.clone()))).expect_err("typed 401");
+    assert_eq!(error, GrantError::Unauthorized("identity_mismatch".into()));
+    join(scripted);
+}
+
+#[test]
+fn presentation_http_classifies_typed_daemon_codes() {
     assert!(
         GrantError::from_presentation_http(409, "stale_epoch")
             .is_some_and(|error| error.is_retryable_presentation())
     );
     assert!(
-        GrantError::from_presentation_http(401, "invalid_signature")
+        GrantError::from_presentation_http(403, r#"{"code":"invalid_signature"}"#)
             .is_some_and(|error| error.is_retryable_presentation())
     );
-    assert!(GrantError::from_presentation_http(401, "expired").is_none());
-    assert!(
-        GrantError::from_presentation_http(200, "revoked invalid_signature stale_epoch").is_none()
+    assert_eq!(
+        GrantError::from_presentation_http(403, r#"{"code":"revoked","error":"revoked"}"#),
+        Some(GrantError::Revoked)
     );
+    for code in ["expired", "capability_expired"] {
+        let body = json!({"error": "Request rejected", "code": code}).to_string();
+        assert_eq!(
+            GrantError::from_presentation_http(401, &body),
+            Some(GrantError::Expired),
+            "{code}"
+        );
+    }
+    let run_inactive = json!({"error": "Request rejected", "code": "run_inactive"}).to_string();
+    assert_eq!(
+        GrantError::from_presentation_http(401, &run_inactive),
+        Some(GrantError::Unauthorized("run_inactive".into()))
+    );
+    // Only the typed code classifies; a 401 without one is still named, not expiry.
+    for body in ["", "grant expired"] {
+        assert_eq!(
+            GrantError::from_presentation_http(401, body),
+            Some(GrantError::Unauthorized("unspecified".into())),
+            "{body:?}"
+        );
+    }
+    assert!(GrantError::from_presentation_http(403, "revoked").is_none());
+    assert!(GrantError::from_presentation_http(200, r#"{"code":"revoked"}"#).is_none());
 }
 
 #[test]
@@ -1365,7 +1406,11 @@ fn managed_refresh_envelope_auth() {
     let mut request = harness.request(Some("http://127.0.0.1:9".into()));
     request.managed_bootstrap = Some(managed_path.clone());
     let error = acquire_with(&request).expect_err("no envelope");
-    assert_eq!(error, GrantError::Expired);
+    assert_eq!(error, GrantError::ManagedCapabilityMissing);
+
+    request.managed_envelope = Some(" \n".into());
+    let error = acquire_with(&request).expect_err("blank envelope");
+    assert_eq!(error, GrantError::ManagedCapabilityMissing);
 
     let expired = envelope_token(NOW - 10, PROJECT);
     request.managed_envelope = Some(expired.clone());
@@ -1854,7 +1899,10 @@ fn stale_managed_schema_fails_closed_without_usable_capability_or_daemon() {
         assert!(
             matches!(
                 error,
-                GrantError::Expired | GrantError::Malformed(_) | GrantError::SchemaMismatch { .. }
+                GrantError::Expired
+                    | GrantError::ManagedCapabilityMissing
+                    | GrantError::Malformed(_)
+                    | GrantError::SchemaMismatch { .. }
             ),
             "unexpected {case}: {error:?}"
         );
