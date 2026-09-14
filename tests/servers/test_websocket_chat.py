@@ -124,6 +124,18 @@ class TestHandleAskUserResponse:
         session.provide_answer.assert_not_called()
 
 
+class _LifecycleRecorder:
+    """Records lifecycle events fired by the chat mixin."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, HookEventType, dict[str, object]]] = []
+
+    async def __call__(
+        self, conversation_id: str, event_type: HookEventType, data: dict[str, object]
+    ) -> None:
+        self.events.append((conversation_id, event_type, data))
+
+
 class TestHandleToolApprovalResponse:
     @pytest.mark.asyncio
     async def test_exact_managed_response_resumes_lifecycle(
@@ -135,7 +147,7 @@ class TestHandleToolApprovalResponse:
         session = MagicMock()
         session.provide_approval.return_value = True
         host._chat_sessions["conv-approval"] = session
-        fire_lifecycle = AsyncMock(return_value=None)
+        fire_lifecycle = _LifecycleRecorder()
         monkeypatch.setattr(host, "_fire_lifecycle", fire_lifecycle)
 
         await host._handle_tool_approval_response(
@@ -147,15 +159,18 @@ class TestHandleToolApprovalResponse:
             },
         )
 
-        fire_lifecycle.assert_awaited_once_with(
-            "conv-approval",
-            HookEventType.NOTIFICATION,
-            {
-                "tool_use_id": "approval-1",
-                "decision": "reject",
-                "_gobby_wait_resolution": "resumed",
-            },
-        )
+        assert fire_lifecycle.events == [
+            (
+                "conv-approval",
+                HookEventType.NOTIFICATION,
+                {
+                    "tool_use_id": "approval-1",
+                    "decision": "reject",
+                    "_gobby_wait_resolution": "resumed",
+                },
+            )
+        ]
+        session.provide_approval.assert_called_once_with("approval-1", "reject")
 
     @pytest.mark.asyncio
     async def test_mismatched_managed_response_does_not_resolve_lifecycle(
@@ -163,21 +178,25 @@ class TestHandleToolApprovalResponse:
         host: ChatMixinHost,
         websocket: MockWebSocket,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         session = MagicMock()
         session.provide_approval.return_value = False
         session.has_pending_approval = True
         host._chat_sessions["conv-approval"] = session
-        fire_lifecycle = AsyncMock(return_value=None)
+        fire_lifecycle = _LifecycleRecorder()
         monkeypatch.setattr(host, "_fire_lifecycle", fire_lifecycle)
 
-        await host._handle_tool_approval_response(
-            websocket,
-            {
-                "conversation_id": "conv-approval",
-                "tool_call_id": "wrong-id",
-                "decision": "approve",
-            },
-        )
+        with caplog.at_level(logging.WARNING):
+            await host._handle_tool_approval_response(
+                websocket,
+                {
+                    "conversation_id": "conv-approval",
+                    "tool_call_id": "wrong-id",
+                    "decision": "approve",
+                },
+            )
 
-        fire_lifecycle.assert_not_awaited()
+        assert fire_lifecycle.events == []
+        assert "did not match a pending approval: wrong-id" in caplog.text
+        session.provide_approval.assert_called_once_with("wrong-id", "approve")

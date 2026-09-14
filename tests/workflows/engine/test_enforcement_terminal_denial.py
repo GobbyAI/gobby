@@ -193,4 +193,5 @@ async def test_pending_terminal_denials_are_isolated_by_session(
 
     first_storage.fail.assert_called_once_with("run-one", "error-one")
     second_storage.fail.assert_not_called()
+    assert "session-one" not in engine._pending_terminal_denials
     assert "session-two" in engine._pending_terminal_denials

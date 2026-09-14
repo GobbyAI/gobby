@@ -71,6 +71,17 @@ def _make_pipeline(
     return pipeline
 
 
+class _RecordingAskService:
+    """Records native Ask recovery claims."""
+
+    def __init__(self) -> None:
+        self.recoveries: list[tuple[str, str]] = []
+
+    async def recover_daemon_execution(self, run_id: str, *, project_id: str) -> bool:
+        self.recoveries.append((run_id, project_id))
+        return True
+
+
 @pytest.mark.asyncio
 async def test_native_ask_restart_routes_through_ask_service() -> None:
     pipeline_path = (
@@ -89,9 +100,12 @@ async def test_native_ask_restart_routes_through_ask_service() -> None:
     executor.execute = AsyncMock(side_effect=AssertionError("native Ask bypassed AskService"))
     execution_manager = MagicMock()
     execution_manager.list_executions.side_effect = [[execution], []]
-    ask_service = MagicMock()
-    ask_service.recover_daemon_execution = AsyncMock(return_value=True)
-    ask_service_resolver = MagicMock(return_value=ask_service)
+    ask_service = _RecordingAskService()
+    resolved_projects: list[str] = []
+
+    def ask_service_resolver(project_id: str) -> _RecordingAskService:
+        resolved_projects.append(project_id)
+        return ask_service
 
     resumed = await resume_interrupted_pipelines(
         loader=loader,
@@ -101,13 +115,10 @@ async def test_native_ask_restart_routes_through_ask_service() -> None:
     )
 
     assert resumed == [execution.id]
+    assert resolved_projects == [execution.project_id]
+    assert ask_service.recoveries == [(execution.id, execution.project_id)]
     loader.load_pipeline.assert_not_called()
     executor.execute.assert_not_awaited()
-    ask_service_resolver.assert_called_once_with(execution.project_id)
-    ask_service.recover_daemon_execution.assert_awaited_once_with(
-        execution.id,
-        project_id=execution.project_id,
-    )
 
 
 @pytest.mark.asyncio
@@ -122,8 +133,7 @@ async def test_native_ask_restart_discovers_pending_crash_window() -> None:
     executor.execute = AsyncMock(side_effect=AssertionError("native Ask bypassed AskService"))
     execution_manager = MagicMock()
     execution_manager.list_executions.side_effect = [[], [execution]]
-    ask_service = MagicMock()
-    ask_service.recover_daemon_execution = AsyncMock(return_value=True)
+    ask_service = _RecordingAskService()
 
     resumed = await resume_interrupted_pipelines(
         loader=loader,
@@ -133,10 +143,7 @@ async def test_native_ask_restart_discovers_pending_crash_window() -> None:
     )
 
     assert resumed == [execution.id]
-    ask_service.recover_daemon_execution.assert_awaited_once_with(
-        execution.id,
-        project_id=execution.project_id,
-    )
+    assert ask_service.recoveries == [(execution.id, execution.project_id)]
     executor.execute.assert_not_awaited()
 
 
