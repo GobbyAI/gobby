@@ -599,9 +599,25 @@ async def test_dirty_path_exit_is_not_success(
         return run
 
     run_storage.complete.side_effect = persist_run
-    runner.complete_run.side_effect = lambda run_id, result=None, terminal_reason=None: (
-        AgentRunner.complete_run(runner, run_id, result=result, terminal_reason=terminal_reason)
-    )
+
+    def complete_run(
+        run_id: str,
+        result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
+        *,
+        tool_calls_count: int,
+        turns_used: int,
+    ) -> bool:
+        return AgentRunner.complete_run(
+            runner,
+            run_id,
+            result=result,
+            terminal_reason=terminal_reason,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
+        )
+
+    runner.complete_run.side_effect = complete_run
     session_vars: dict[str, Any] = {"task_edited_files": {run.task_id: ["src/dirty.py"]}}
     variable_manager = MagicMock()
     variable_manager.get_variables.return_value = session_vars
