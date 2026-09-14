@@ -44,6 +44,7 @@ from gobby.utils.local_token import read_local_api_token
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
+_SETTLE_LISTENERS_STATE_KEY = "_gobby_hook_inbox_settle_listeners"
 
 # How long an abandoned temp file must sit before the reaper takes it. ghook
 # writes an envelope as create, write, fsync, rename with no waiting between
@@ -410,6 +411,17 @@ def _get_hook_inbox_drain_lock(app: Any) -> asyncio.Lock:
     return lock
 
 
+def _get_hook_settle_listeners(app: Any) -> set[Callable[[], None]]:
+    """Return the app-scoped callbacks every replay pass tells about a settled hook."""
+    listeners: set[Callable[[], None]] | None = getattr(
+        app.state, _SETTLE_LISTENERS_STATE_KEY, None
+    )
+    if listeners is None:
+        listeners = set()
+        setattr(app.state, _SETTLE_LISTENERS_STATE_KEY, listeners)
+    return listeners
+
+
 async def _drain_hook_inbox_once_locked(
     app: Any,
     inbox_dir: Path | None = None,
@@ -420,8 +432,9 @@ async def _drain_hook_inbox_once_locked(
 ) -> int:
     """Replay pending envelopes while the app-scoped drain lock is held.
 
-    ``on_hook_settled`` observes each hook envelope the pass settles. Delivery
-    receipts are bookkeeping, not replay progress, and never reach it.
+    ``on_hook_settled`` observes each hook envelope the pass settles, and so
+    does every app-scoped settle listener. Delivery receipts are bookkeeping,
+    not replay progress, and never reach either.
     """
     pending_dir = inbox_dir or get_hook_inbox_dir()
     if not pending_dir.exists():
@@ -448,6 +461,8 @@ async def _drain_hook_inbox_once_locked(
         replayed += 1
         if on_hook_settled is not None:
             on_hook_settled()
+        for listener in tuple(_get_hook_settle_listeners(app)):
+            listener()
 
     processed_dir = get_processed_envelope_dir(pending_dir)
     for path in pending_files:
@@ -681,8 +696,9 @@ async def drain_hook_inbox_barrier(
 
     ``timeout_seconds`` bounds the wait without replay progress. Downtime
     residue replays serially, so a healthy backlog can outlast any fixed
-    budget: each hook envelope the replay settles restarts the budget, while a
-    stalled replay or a held drain lock still times out.
+    budget: each hook envelope any replay pass settles restarts the budget,
+    including a pass that holds the drain lock while this barrier waits for
+    it. A stalled replay or a stalled lock holder still times out.
     """
     pending_dir = inbox_dir or get_hook_inbox_dir()
     budget = max(0.0, timeout_seconds)
@@ -690,6 +706,7 @@ async def drain_hook_inbox_barrier(
     deadline = loop.time() + budget
     replayed = 0
     lock = _get_hook_inbox_drain_lock(app)
+    settle_listeners = _get_hook_settle_listeners(app)
 
     def hook_settled() -> None:
         nonlocal replayed
@@ -701,44 +718,49 @@ async def drain_hook_inbox_barrier(
     # task that owns the lock until it finishes, so a timed-out barrier
     # leaves it running and a later barrier waits on the lock.
     timeout = asyncio.timeout_at(deadline)
+
+    def replay_progressed() -> None:
+        # Registered only while the timeout is entered. Once it has expired
+        # the barrier is already cancelled, so late progress cannot revive it.
+        nonlocal deadline
+        if not timeout.expired():
+            deadline = loop.time() + budget
+            timeout.reschedule(deadline)
+
     try:
         async with timeout:
-            while True:
-                await lock.acquire()
-                replay = create_background_task(
-                    _replay_inbox_holding_lock(
-                        app,
-                        lock,
-                        pending_dir,
-                        restart_horizon_ms=restart_horizon_ms,
-                        on_hook_settled=hook_settled,
+            settle_listeners.add(replay_progressed)
+            try:
+                while True:
+                    await lock.acquire()
+                    replay = create_background_task(
+                        _replay_inbox_holding_lock(
+                            app,
+                            lock,
+                            pending_dir,
+                            restart_horizon_ms=restart_horizon_ms,
+                            on_hook_settled=hook_settled,
+                        )
                     )
-                )
-                observed = replayed
-                while not replay.done():
                     # wait() leaves the replay running when this barrier is cancelled.
-                    await asyncio.wait((replay,), timeout=poll_interval_seconds)
-                    if replayed != observed:
-                        # Only this task moves the deadline, and only while armed:
-                        # an expired timeout cancels the wait above first.
-                        observed = replayed
-                        deadline = loop.time() + budget
-                        timeout.reschedule(deadline)
-                replay.result()
-                pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
-                residue, _live_hooks, _receipts = _classify_inbox_files(
-                    pending_files, restart_horizon_ms
-                )
-                if not residue:
-                    return _barrier_result(
-                        replayed,
-                        timed_out=False,
-                        pending_files=pending_files,
-                        restart_horizon_ms=restart_horizon_ms,
+                    await asyncio.wait((replay,))
+                    replay.result()
+                    pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
+                    residue, _live_hooks, _receipts = _classify_inbox_files(
+                        pending_files, restart_horizon_ms
                     )
-                if loop.time() >= deadline:
-                    break
-                await asyncio.sleep(poll_interval_seconds)
+                    if not residue:
+                        return _barrier_result(
+                            replayed,
+                            timed_out=False,
+                            pending_files=pending_files,
+                            restart_horizon_ms=restart_horizon_ms,
+                        )
+                    if loop.time() >= deadline:
+                        break
+                    await asyncio.sleep(poll_interval_seconds)
+            finally:
+                settle_listeners.discard(replay_progressed)
     except TimeoutError:
         if not timeout.expired():
             raise
