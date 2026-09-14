@@ -8,6 +8,7 @@ any other CLI adapter.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import (
@@ -44,6 +45,25 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_router_help(prompt: str) -> str:
+    """Recover help from Droid's native managed-skill expansion."""
+    match = re.fullmatch(
+        r"<system-notification>\n"
+        r"Skills provide specialized capabilities and domain knowledge\. "
+        r"The user has selected the following skill for immediate execution\. "
+        r"Begin following the skill's instructions now\.\n"
+        r'<skill filePath="[^"\n]+/skills/gobby/SKILL\.md">\n'
+        r"<name>gobby</name>\n<description>[^\n]*</description>\n"
+        r"# Gobby Router\n.*?\n<!-- gobby-router:end -->\n"
+        r"</skill>\n</system-notification>\s*(help)?\s*",
+        prompt,
+        re.DOTALL,
+    )
+    if match is None:
+        return prompt
+    return "/gobby help" if match.group(1) else "/gobby"
 
 
 class DroidAdapter(BaseAdapter):
@@ -87,6 +107,10 @@ class DroidAdapter(BaseAdapter):
 
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
         normalized_data = self._normalize_event_data(input_data)
+        if event_type is HookEventType.BEFORE_AGENT:
+            prompt = normalized_data.get("prompt")
+            if isinstance(prompt, str):
+                normalized_data["prompt"] = _normalize_router_help(prompt)
         session_id = self._resolve_session_id(native_event, input_data)
         normalized_session_id = normalized_data.get("session_id")
         normalized_session_id = (
