@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use gobby_terminal::host::{FrameMailbox, PushResult};
 use gobby_terminal::pane::{PaneShellConfig, ShellMode};
 use gobby_terminal::protocol::{
-    read_message, write_message, ClientMessage, FrameData, FramingError, RenderEncoding,
-    ServerMessage, MAX_FRAME_SIZE, PROTOCOL_VERSION,
+    read_message, write_message, CellData, ClientMessage, FrameData, FramingError, PaneModes,
+    RenderEncoding, ServerMessage, MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 use gobby_terminal::runtime::TerminalRuntime;
 use gobby_terminal::terminal_theme::TerminalTheme;
@@ -222,6 +221,26 @@ fn encoded_bytes(message: &ServerMessage) -> usize {
         .unwrap_or(0)
 }
 
+fn one_keyframe_cap(rows: u16, cols: u16) -> usize {
+    let cell = CellData {
+        symbol: "0".into(),
+        fg: 0,
+        bg: 0,
+        modifier: 0,
+        skip: false,
+        hyperlink: None,
+    };
+    encoded_bytes(&ServerMessage::Frame(FrameData {
+        cells: vec![cell; rows as usize * cols as usize],
+        width: cols,
+        height: rows,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes: PaneModes::default(),
+    }))
+}
+
 fn drain_frames(stream: &mut UnixStream, idle: Duration) -> Vec<ServerMessage> {
     if stream.set_read_timeout(Some(idle)).is_err() {
         return Vec::new();
@@ -394,62 +413,25 @@ fn start_host(dir: &Path, extra: &[&str]) -> (host_support::HostProc, UnixStream
 
 #[test]
 fn slow_observer_resyncs_with_one_keyframe() {
-    let small = ServerMessage::Error {
-        code: "n".into(),
-        message: None,
-    };
-    let over = ServerMessage::Error {
-        code: "n".repeat(64),
-        message: None,
-    };
-    let mailbox_cap = encoded_bytes(&small);
-    let mailbox = FrameMailbox::new();
-    assert_eq!(mailbox.try_push(&small, mailbox_cap), PushResult::Queued);
-    assert_eq!(mailbox.try_push(&small, mailbox_cap), PushResult::Overflow);
-    assert!(
-        mailbox.queued_bytes() <= mailbox_cap,
-        "byte cap never exceeded; queued={} cap={mailbox_cap}",
-        mailbox.queued_bytes()
-    );
-    mailbox.replace_with_keyframe(&small, mailbox_cap);
-    assert!(
-        mailbox.queued_bytes() <= mailbox_cap,
-        "replacement keyframe must respect the byte cap; queued={} cap={mailbox_cap}",
-        mailbox.queued_bytes()
-    );
-    assert!(
-        mailbox.try_pop().is_some(),
-        "overflow must deliver exactly one replacement keyframe"
-    );
-    assert!(
-        mailbox.try_pop().is_none(),
-        "exactly one replacement keyframe"
-    );
-
-    let mailbox = FrameMailbox::new();
-    assert_eq!(mailbox.try_push(&small, mailbox_cap), PushResult::Queued);
-    mailbox.force_push(over, mailbox_cap);
-    assert!(
-        mailbox.queued_bytes() <= mailbox_cap,
-        "byte cap never exceeded after enqueue; queued={} cap={mailbox_cap}",
-        mailbox.queued_bytes()
-    );
-
     let dir = tempfile::tempdir().expect("tempdir");
     let rows = 8;
     let cols = 24;
-    let cap = 4096usize;
+    // One local 8x24 keyframe plus slack; a second live frame must overflow.
+    let cap = one_keyframe_cap(rows, cols).saturating_add(256);
+    let cap_arg = cap.to_string();
     let (_child, mut control, frames_path) = start_host(
         dir.path(),
-        &["--delta-queue-bytes", "4096", "--lag-timeout-ms", "1500"],
+        &["--delta-queue-bytes", &cap_arg, "--lag-timeout-ms", "5000"],
     );
+    // Finite burst then idle so the replacement keyframe is not mixed with live
+    // frames. 150 lines at 10ms overflows a one-keyframe cap without hitting lag.
     let host_terminal_id = spawn_committed(
         &mut control,
         "term-keyframe",
         &[
             "/bin/sh",
             "-c",
-            "i=0; while :; do i=$((i+1)); printf '%048d\\n' \"$i\"; sleep 0.01; done",
+            "i=0; while [ \"$i\" -lt 150 ]; do i=$((i+1)); printf '%048d\\n' \"$i\"; sleep 0.01; done; exec sleep 30",
         ],
         rows,
         cols,
@@ -475,35 +457,45 @@ fn slow_observer_resyncs_with_one_keyframe() {
         "slow observer should see the initial keyframe before pause: {initial:?}"
     );
     let _ = drain_frames(&mut fast, Duration::from_millis(80));
-    let during = read_frames_for(&mut fast, Duration::from_millis(600));
+    let during = read_frames_for(&mut fast, Duration::from_millis(2000));
     assert!(
-        during >= 1,
+        during >= 4,
         "continuously reading observer must keep receiving frames while the slow one pauses; got {during}"
     );
 
-    let resumed = drain_frames(&mut slow, Duration::from_millis(80));
-    let queued_bytes: usize = resumed.iter().map(encoded_bytes).sum();
+    slow.set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("slow timeout");
+    let replacement = match read_message(&mut slow, MAX_FRAME_SIZE) {
+        Ok(message) => message,
+        other => panic!("resync must deliver a replacement keyframe, got {other:?}"),
+    };
+    let queued_bytes = encoded_bytes(&replacement);
+    assert!(is_keyframe(&replacement), "resync frame must be a keyframe");
     assert!(
-        resumed.iter().all(is_keyframe),
-        "semantic resync frames are keyframes; got {resumed:?}"
+        queued_bytes <= cap,
+        "byte cap never exceeded; queued={queued_bytes} cap={cap}"
     );
-    assert!(
-        queued_bytes > 0,
-        "resync must deliver the replacement keyframe"
-    );
-    assert!(
-        resumed.iter().all(|message| encoded_bytes(message) <= cap),
-        "byte cap never exceeded; queued={queued_bytes} cap={cap} frames={}",
-        resumed.len()
-    );
+    // Collapsed mailbox: nothing else is already queued. Later broadcasts
+    // arrive on the producer interval, not in the same burst.
+    slow.set_read_timeout(Some(Duration::from_millis(2)))
+        .expect("burst timeout");
+    match read_message(&mut slow, MAX_FRAME_SIZE) {
+        Ok(extra) => panic!(
+            "exactly one replacement keyframe; extra frame arrived within 2ms ({} bytes)",
+            encoded_bytes(&extra)
+        ),
+        Err(err) if is_timeout(&err) => {}
+        other => panic!("slow observer should stay connected, got {other:?}"),
+    }
 
     slow.set_read_timeout(Some(Duration::from_millis(200)))
-        .expect("slow timeout");
+        .expect("connected timeout");
     match read_message(&mut slow, MAX_FRAME_SIZE) {
         Ok(ServerMessage::Terminal(_) | ServerMessage::Frame(_)) => {}
         Ok(ServerMessage::Error { code, .. }) => {
             panic!("slow observer was closed after draining: {code}")
         }
+        Err(err) if is_timeout(&err) => {}
         other => panic!("slow observer should stay connected, got {other:?}"),
     }
 
