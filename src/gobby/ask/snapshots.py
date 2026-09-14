@@ -8,7 +8,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,6 +24,7 @@ from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.storage import AskRunStorage
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -59,7 +60,7 @@ async def _owned_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
 @dataclass(frozen=True)
 class SnapshotIndexRuntime:
     executable: Path
-    env: Mapping[str, str]
+    env: Mapping[str, str] = field(repr=False)
     managed_execution_id: str
     credential_generation: int
     argv_prefix: tuple[str, ...] = ()
@@ -294,7 +295,14 @@ class AskSnapshotManager:
             )
             if not result.runtime_home:
                 raise RuntimeError("managed Ask runtime home is missing")
-            env = {**identity, **result.env, "GOBBY_HOME": result.runtime_home}
+            if not result.api_token:
+                raise RuntimeError("managed Ask runtime capability is missing")
+            env = {
+                **identity,
+                **result.env,
+                "GOBBY_HOME": result.runtime_home,
+                GOBBY_AGENT_API_TOKEN_ENV: result.api_token,
+            }
             for phase, args, cap in (
                 ("config", ["status", "--format", "json"], _CONFIG_PROBE_TIMEOUT),
                 (

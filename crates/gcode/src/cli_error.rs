@@ -161,6 +161,10 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
         GrantError::Expired | GrantError::Revoked => Some(
             "re-run the command after the daemon reissues the grant; if it persists, restart the session",
         ),
+        GrantError::ManagedCapabilityMissing => Some(
+            "run gcode from the managed session that launched it; that session provides GOBBY_AGENT_API_TOKEN",
+        ),
+        GrantError::Unauthorized(code) => unauthorized_recovery(code),
         GrantError::SchemaMismatch { .. } => Some(BINARY_SET_RECOVERY),
         GrantError::DeploymentMismatch | GrantError::ConfigRevisionMismatch => {
             Some("restart the Gobby daemon so grants match the installed schema and config")
@@ -169,6 +173,27 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
         | GrantError::Malformed(_)
         | GrantError::Io(_)
         | GrantError::RemoteEndpoint => None,
+    }
+}
+
+fn unauthorized_recovery(code: &str) -> Option<&'static str> {
+    match code {
+        "missing_auth" | "invalid_token" | "session_invalid" => Some(
+            "refresh ~/.gobby/local_cli_token with `gobby install` or `gobby auth token --rotate`",
+        ),
+        "operator_token_unavailable" => Some(
+            "the daemon cannot read ~/.gobby/local_cli_token; run `gobby install`, then restart the Gobby daemon",
+        ),
+        "capability_invalid" => Some(
+            "the capability was signed with a rotated local API token; restart the session to receive a fresh one",
+        ),
+        "run_inactive" => {
+            Some("the agent run that owns this capability is no longer live; start a new run")
+        }
+        "identity_mismatch" => Some(
+            "run gcode with the session, project, and run identity its capability was issued for",
+        ),
+        _ => None,
     }
 }
 
@@ -335,6 +360,38 @@ mod tests {
         assert!(
             value.get("recovery").is_none(),
             "recovery must be omitted when no directive exists: {value}"
+        );
+    }
+
+    #[test]
+    fn unauthorized_grant_error_names_daemon_code_and_recovery() {
+        let rendered = CliError::grant(GrantError::Unauthorized("run_inactive".to_string()));
+        assert_eq!(rendered.code, "unauthorized");
+        assert_eq!(rendered.exit_status, 2);
+        let value = rendered.json_payload();
+        assert_eq!(
+            value["message"],
+            "daemon rejected the credential: run_inactive"
+        );
+        assert_eq!(
+            value["recovery"],
+            "the agent run that owns this capability is no longer live; start a new run"
+        );
+
+        let unmapped = CliError::grant(GrantError::Unauthorized("route_not_permitted".into()));
+        assert_eq!(unmapped.recovery, None);
+    }
+
+    #[test]
+    fn managed_capability_missing_points_at_the_launching_session() {
+        let rendered = CliError::grant(GrantError::ManagedCapabilityMissing);
+        assert_eq!(rendered.code, "managed_capability_missing");
+        assert_eq!(rendered.exit_status, 2);
+        assert_eq!(
+            rendered.recovery.as_deref(),
+            Some(
+                "run gcode from the managed session that launched it; that session provides GOBBY_AGENT_API_TOKEN"
+            )
         );
     }
 }

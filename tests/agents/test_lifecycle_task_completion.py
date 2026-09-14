@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +13,6 @@ from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.run_completion import (
     bound_task_is_closed,
-    budget_ceiling_error,
     closed_task_completion_result,
     cooperative_close_handoff_pending,
 )
@@ -20,10 +20,10 @@ from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.session_coordinator import SessionCoordinator
-from gobby.storage.agents import INCOMPLETE_STEP_WORKFLOW_ERROR, AgentRun, LocalAgentRunManager
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import TaskCloseReviewStore, TerminalTaskCloseReviewStatus
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -402,18 +402,8 @@ async def test_task_lookup_failure_does_not_invent_success(
     assert unavailable_task_manager.get_task.call_args.args == (run.task_id,)
 
 
-def test_budget_ceiling_error_names_turn_and_context() -> None:
-    assert budget_ceiling_error("max_turns") is not None
-    assert "turn ceiling" in (budget_ceiling_error("max_turns") or "")
-    assert "stop_reason=max_turns" in (budget_ceiling_error("max_turns") or "")
-    assert budget_ceiling_error("MaxTokens") is not None
-    assert "context ceiling" in (budget_ceiling_error("MaxTokens") or "")
-    assert budget_ceiling_error("end_turn") is None
-    assert budget_ceiling_error(None) is None
-
-
 @pytest.mark.asyncio
-async def test_incomplete_workflow_error_revives_when_bound_task_closes(
+async def test_failed_session_end_run_stays_failed_when_bound_task_closes(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     parent_session: dict[str, Any],
@@ -426,46 +416,24 @@ async def test_incomplete_workflow_error_revives_when_bound_task_closes(
         parent_session=parent_session,
         sample_project=sample_project,
     )
-    failed = agent_run_manager.fail(
-        run.id,
-        error=(
-            f"{INCOMPLETE_STEP_WORKFLOW_ERROR}; workflow=backend-developer; "
-            "current_step=implement; exit_condition=current_step == 'terminate'"
-        ),
-        tool_calls_count=12,
-        turns_used=8,
+    error = (
+        "Agent session ended before step workflow completed; workflow=backend-developer; "
+        "current_step=implement; exit_condition=current_step == 'terminate'"
     )
+    failed = agent_run_manager.fail(run.id, error=error, tool_calls_count=12, turns_used=8)
     assert failed is not None
-    assert failed.status == "error"
     task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
-    closed_task = task_manager.get_task(task_id)
-    stuck_detector = MagicMock()
-    stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
-    monitor = _monitor(
+
+    handled = await _sweep_completed_task_agents(
         agent_run_manager=agent_run_manager,
         temp_db=temp_db,
         task_manager=task_manager,
-        stuck_detector=stuck_detector,
     )
 
-    with (
-        patch.object(
-            monitor._cleanup_handler,
-            "_run_capture_policy",
-            new=AsyncMock(return_value=(False, None)),
-        ),
-        patch.object(monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
-    ):
-        handled = await monitor.check_completed_task_agents()
-
-    completed = agent_run_manager.get(run.id)
-    assert handled == 1
-    assert completed is not None
-    assert completed.status == "success"
-    assert completed.error is None
-    assert completed.terminal_reason == "task_completed"
-    assert closed_task.closed_at is not None
-    assert "Task completion:" in (completed.result or "")
+    stored = agent_run_manager.get(run.id)
+    assert handled == 0
+    assert stored is not None
+    assert (stored.status, stored.error) == ("error", error)
 
 
 @pytest.mark.asyncio
@@ -477,6 +445,218 @@ async def test_expired_close_review_caller_completes_when_task_closes(
     sample_project: dict[str, Any],
 ) -> None:
     """A dead caller cannot cooperative-end; closed-task reconciliation must win."""
+    caller = _review_caller(
+        agent_run_manager=agent_run_manager,
+        session_manager=session_manager,
+        temp_db=temp_db,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    assert cooperative_close_handoff_pending(temp_db, agent_run_manager.get(caller.run_id)) is True
+
+    finished = caller.store.finish(
+        caller.review_id,
+        status="closed",
+        result_payload={"event": "task_close_review_completed", "closed": True},
+    )
+    assert finished is not None
+    assert caller.store.mark_delivered(caller.review_id) is True
+    session_manager.update_status(caller.session_id, "expired")
+    caller.task_manager.close_task(caller.task_id, reason="Done", closed_commit_sha="abc123")
+    closed_caller = agent_run_manager.get(caller.run_id)
+    assert closed_caller is not None
+    assert bound_task_is_closed(temp_db, closed_caller) is True
+    assert cooperative_close_handoff_pending(temp_db, closed_caller) is False
+
+    handled = await _sweep_completed_task_agents(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=caller.task_manager,
+    )
+
+    completed = agent_run_manager.get(caller.run_id)
+    assert handled == 1
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.terminal_reason == "task_completed"
+
+
+@pytest.mark.asyncio
+async def test_expired_caller_completes_when_task_closes_before_review_delivery(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    """An ended caller cannot consume the verdict, so delivery no longer gates completion."""
+    caller = _review_caller(
+        agent_run_manager=agent_run_manager,
+        session_manager=session_manager,
+        temp_db=temp_db,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    finished = caller.store.finish(
+        caller.review_id,
+        status="closed",
+        result_payload={"closed": True},
+    )
+    assert finished is not None
+    session_manager.update_status(caller.session_id, "expired")
+    caller.task_manager.close_task(caller.task_id, reason="Done", closed_commit_sha="abc123")
+
+    handled = await _sweep_completed_task_agents(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=caller.task_manager,
+    )
+
+    completed = agent_run_manager.get(caller.run_id)
+    assert handled == 1
+    assert completed is not None
+    assert (completed.status, completed.terminal_reason) == ("success", "task_completed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("review_status", "run_status", "field", "expected"),
+    [
+        ("invalid", "error", "error", "review_status=invalid"),
+        (
+            "external_pending",
+            "success",
+            "result",
+            "coordinator-owned live criteria remain pending verification",
+        ),
+    ],
+)
+async def test_expired_caller_open_task_terminalizes_from_review_status(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+    review_status: TerminalTaskCloseReviewStatus,
+    run_status: str,
+    field: str,
+    expected: str,
+) -> None:
+    """Reconciliation settles an ended caller from its review without waiting on a close."""
+    caller = _review_caller(
+        agent_run_manager=agent_run_manager,
+        session_manager=session_manager,
+        temp_db=temp_db,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    finished = caller.store.finish(
+        caller.review_id,
+        status=review_status,
+        result_payload={"status": review_status},
+    )
+    assert finished is not None
+    session_manager.update_status(caller.session_id, "expired")
+
+    handled = await _sweep_completed_task_agents(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=caller.task_manager,
+    )
+
+    stored = agent_run_manager.get(caller.run_id)
+    assert handled == 1
+    assert stored is not None
+    assert stored.status == run_status
+    payload = str(getattr(stored, field))
+    assert expected in payload
+    assert f"review_id={caller.review_id}" in payload
+
+
+@pytest.mark.asyncio
+async def test_live_caller_open_task_keeps_running_after_rejected_review(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    """A live caller still owns its rejected verdict and can retry close_task."""
+    caller = _review_caller(
+        agent_run_manager=agent_run_manager,
+        session_manager=session_manager,
+        temp_db=temp_db,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    finished = caller.store.finish(
+        caller.review_id,
+        status="invalid",
+        result_payload={"status": "invalid"},
+    )
+    assert finished is not None
+
+    handled = await _sweep_completed_task_agents(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=caller.task_manager,
+    )
+
+    stored = agent_run_manager.get(caller.run_id)
+    assert handled == 0
+    assert stored is not None
+    assert (stored.status, stored.error) == ("running", None)
+
+
+@pytest.mark.asyncio
+async def test_expired_caller_keeps_running_while_its_review_is_active(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    """An in-flight review still owns an ended caller; its verdict decides later."""
+    caller = _review_caller(
+        agent_run_manager=agent_run_manager,
+        session_manager=session_manager,
+        temp_db=temp_db,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    session_manager.update_status(caller.session_id, "expired")
+
+    handled = await _sweep_completed_task_agents(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=caller.task_manager,
+    )
+
+    stored = agent_run_manager.get(caller.run_id)
+    assert handled == 0
+    assert stored is not None
+    assert (stored.status, stored.error) == ("running", None)
+
+
+@dataclass(frozen=True)
+class _ReviewCaller:
+    task_manager: LocalTaskManager
+    task_id: str
+    run_id: str
+    session_id: str
+    review_id: str
+    store: TaskCloseReviewStore
+
+
+def _review_caller(
+    *,
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> _ReviewCaller:
+    """A live Grok caller whose running close review is bound to its validator."""
     task_manager = LocalTaskManager(temp_db)
     caller_session = session_manager.register(
         external_id="expired-close-review-caller",
@@ -530,22 +710,22 @@ async def test_expired_close_review_caller_completes_when_task_closes(
         stable_facts={},
     )
     assert store.bind_run(review.id, validator.id) is not None
-    assert cooperative_close_handoff_pending(temp_db, agent_run_manager.get(caller.id)) is True
-
-    finished = store.finish(
-        review.id,
-        status="closed",
-        result_payload={"event": "task_close_review_completed", "closed": True},
+    return _ReviewCaller(
+        task_manager=task_manager,
+        task_id=task.id,
+        run_id=caller.id,
+        session_id=caller_session.id,
+        review_id=review.id,
+        store=store,
     )
-    assert finished is not None
-    assert store.mark_delivered(review.id) is True
-    session_manager.update_status(caller_session.id, "expired")
-    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
-    closed_caller = agent_run_manager.get(caller.id)
-    assert closed_caller is not None
-    assert bound_task_is_closed(temp_db, closed_caller) is True
-    assert cooperative_close_handoff_pending(temp_db, closed_caller) is False
 
+
+async def _sweep_completed_task_agents(
+    *,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    task_manager: LocalTaskManager,
+) -> int:
     stuck_detector = MagicMock()
     stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
     monitor = _monitor(
@@ -562,10 +742,4 @@ async def test_expired_close_review_caller_completes_when_task_closes(
         ),
         patch.object(monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
     ):
-        handled = await monitor.check_completed_task_agents()
-
-    completed = agent_run_manager.get(caller.id)
-    assert handled == 1
-    assert completed is not None
-    assert completed.status == "success"
-    assert completed.terminal_reason == "task_completed"
+        return await monitor.check_completed_task_agents()

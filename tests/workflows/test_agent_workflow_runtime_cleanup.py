@@ -493,9 +493,11 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     runner = SimpleNamespace(
         run_storage=run_manager,
         get_run=run_manager.get,
-        complete_run=lambda run_id, result=None: run_manager.complete(
+        _session_manager=SessionManager(temp_db),
+        complete_run=lambda run_id, result=None, **completion: run_manager.complete(
             run_id,
             result=result,
+            **completion,
         )
         is not None,
     )

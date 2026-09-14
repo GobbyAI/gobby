@@ -11,6 +11,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from gobby.paths import get_gobby_home
 from gobby.utils.machine_id import get_machine_id
@@ -180,29 +181,52 @@ def _issue_managed_api_token(
     return f"{signed}.{_urlsafe_encode(signature)}"
 
 
+AgentApiTokenRejection = Literal[
+    "invalid_token",
+    "operator_token_unavailable",
+    "capability_invalid",
+    "capability_expired",
+]
+
+
 def verify_agent_api_token(
     token: str,
     operator_token: str,
 ) -> AgentApiTokenClaims | None:
-    """Verify and decode a single-owner managed execution capability.
+    """Verify and decode a managed capability; any rejection reads as ``None``."""
+    claims = classify_agent_api_token(token, operator_token)
+    return claims if isinstance(claims, AgentApiTokenClaims) else None
 
-    Tokens without integer ``iat``/``exp`` claims and tokens at or past
-    their expiry are rejected outright.
+
+def classify_agent_api_token(
+    token: str,
+    operator_token: str | None,
+) -> AgentApiTokenClaims | AgentApiTokenRejection:
+    """Verify a single-owner managed execution capability or name why it failed.
+
+    ``invalid_token`` is a bearer that is not a managed capability at all,
+    ``operator_token_unavailable`` a capability with no signing key to check it
+    against, ``capability_invalid`` one whose signature or claims do not verify
+    (including missing integer ``iat``/``exp`` claims), and ``capability_expired``
+    a verified capability at or past its expiry.
     """
+    parts = token.split(".", maxsplit=2)
+    if len(parts) != 3 or parts[0] != _AGENT_TOKEN_VERSION:
+        return "invalid_token"
+    if operator_token is None:
+        return "operator_token_unavailable"
+    version, encoded_payload, encoded_signature = parts
     try:
-        version, encoded_payload, encoded_signature = token.split(".", maxsplit=2)
-        if version != _AGENT_TOKEN_VERSION:
-            return None
         signed = f"{version}.{encoded_payload}"
         expected = hmac.new(operator_token.encode(), signed.encode(), hashlib.sha256).digest()
         supplied = _urlsafe_decode(encoded_signature)
         if not hmac.compare_digest(expected, supplied):
-            return None
+            return "capability_invalid"
         raw: object = json.loads(_urlsafe_decode(encoded_payload))
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
-        return None
+        return "capability_invalid"
     if not isinstance(raw, dict):
-        return None
+        return "capability_invalid"
     agent_run_id = raw.get("agent_run_id")
     managed_execution_id = raw.get("managed_execution_id")
     session_id = raw.get("session_id")
@@ -210,25 +234,25 @@ def verify_agent_api_token(
     machine_id = raw.get("machine_id")
     owner_claims = [raw[name] for name in ("agent_run_id", "managed_execution_id") if name in raw]
     if len(owner_claims) != 1:
-        return None
+        return "capability_invalid"
     if not isinstance(owner_claims[0], str) or not owner_claims[0]:
-        return None
+        return "capability_invalid"
     if not all(isinstance(value, str) and value for value in (session_id, project_id, machine_id)):
-        return None
+        return "capability_invalid"
     iat = raw.get("iat")
     exp = raw.get("exp")
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in (iat, exp)):
-        return None
+        return "capability_invalid"
     assert isinstance(session_id, str)
     assert isinstance(project_id, str)
     assert isinstance(machine_id, str)
     assert isinstance(iat, int)
     assert isinstance(exp, int)
     if time.time() >= exp:
-        return None
+        return "capability_expired"
     kind = raw.get("kind")
     if kind is not None and (not isinstance(kind, str) or not kind):
-        return None
+        return "capability_invalid"
     return AgentApiTokenClaims(
         agent_run_id=agent_run_id if isinstance(agent_run_id, str) else None,
         managed_execution_id=(

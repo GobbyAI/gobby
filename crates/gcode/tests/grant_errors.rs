@@ -134,6 +134,12 @@ fn grant_errors_stable_contract() {
         ),
         (GrantError::Expired, "expired", "grant expired", 2),
         (
+            GrantError::ManagedCapabilityMissing,
+            "managed_capability_missing",
+            "managed capability missing: GOBBY_AGENT_API_TOKEN is not set",
+            2,
+        ),
+        (
             GrantError::SchemaMismatch {
                 grant_version: 436,
                 binary_version: 437,
@@ -171,6 +177,12 @@ fn grant_errors_stable_contract() {
             2,
         ),
         (GrantError::Revoked, "revoked", "grant revoked", 2),
+        (
+            GrantError::Unauthorized("identity_mismatch".into()),
+            "unauthorized",
+            "daemon rejected the credential: identity_mismatch",
+            2,
+        ),
         (
             GrantError::Timeout,
             "timeout",

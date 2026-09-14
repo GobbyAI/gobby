@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -20,6 +21,8 @@ from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.schema_contract import expected_schema_identity, installed_schema_identity
+from gobby.storage.schema_identity_pin import validate_identity
 from gobby.storage.sessions import SessionManager
 from gobby.utils import machine_id as machine_identity
 from tests.ask import native_probe_harness as harness
@@ -68,7 +71,26 @@ def _branch_gcode() -> Path:
         else Path(__file__).parents[2] / "target" / "debug" / "gcode"
     )
     assert executable.is_file(), "build the branch-local gcode binary before integration"
-    return executable.resolve(strict=True)
+    resolved = executable.resolve(strict=True)
+    # Another branch's build in the shared cargo target embeds a different schema
+    # identity, and managed grant validation then fails for reasons unrelated to
+    # the code under test. Fail with the fix; a skip would pass on the wrong binary.
+    reported = subprocess.run(
+        [str(resolved), "schema-identity", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    expected = expected_schema_identity()
+    if validate_identity(json.loads(reported.stdout)) != expected:
+        pytest.fail(f"branch gcode {resolved} is stale; run `cargo build -p gobby-code`")
+    if installed_schema_identity() != expected:
+        pytest.fail(
+            "installed gdaemon schema identity differs from this checkout; "
+            "run `uv run gobby cutover`"
+        )
+    return resolved
 
 
 @pytest.mark.asyncio

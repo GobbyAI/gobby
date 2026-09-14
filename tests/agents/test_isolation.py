@@ -42,6 +42,7 @@ from gobby.clones.git import CloneGitManager
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.storage.schema_contract import expected_schema_identity
+from gobby.utils.local_token import verify_agent_api_token
 from gobby.worktrees.git import WorktreeGitManager
 
 _REAL_POPEN = subprocess.Popen
@@ -170,6 +171,11 @@ class TestEnsureIsolationCodeIndex:
                 fencing_epoch=self._LEASE_EPOCH,
                 signing_secret=self._LEASE_SECRET,
             ),
+        )
+        # The installed-identity probe shells out to ~/.gobby/bin/gdaemon, which the
+        # Popen fakes intercept; pin it so grant signing never touches local binaries.
+        monkeypatch.setattr(
+            "gobby.agents.code_index.installed_schema_identity", expected_schema_identity
         )
 
     @staticmethod
@@ -625,6 +631,8 @@ class TestEnsureIsolationCodeIndex:
         for call in calls:
             env = call.kwargs["env"]
             assert env["GOBBY_AGENT_API_TOKEN"] == "operator-token-value"
+        # The caller's token wins over the capability the launch minted.
+        assert result.api_token not in {None, "operator-token-value"}
         # The credential is ephemeral: never in the runtime home, the wrapper,
         # or the env additions handed to the spawned agent.
         assert result.runtime_home is not None
@@ -632,6 +640,62 @@ class TestEnsureIsolationCodeIndex:
         wrapper = workspace / ".gobby" / "bin" / "gcode"
         assert "operator-token-value" not in wrapper.read_text()
         assert "GOBBY_AGENT_API_TOKEN" not in result.env
+
+    @pytest.mark.asyncio
+    async def test_minted_token_reaches_probe_env_when_caller_passes_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a caller token the probes carry the capability the launch minted.
+
+        gcore refreshes a managed grant through the daemon, for example on a schema
+        mismatch, and needs GOBBY_AGENT_API_TOKEN to do so. Without it the refresh
+        was reported to the operator as an expired grant.
+        """
+        proc = self._proc()
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        workspace.mkdir()
+        source_home.mkdir()
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+        credential = self._credential(tmp_path)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.subprocess.Popen",
+                side_effect=self._popen_side_effect(proc),
+            ) as popen,
+        ):
+            result = await ensure_isolation_code_index(
+                str(workspace),
+                credential=credential,
+                runtime_root=runtime_root,
+                identity_env=self._identity_env(),
+            )
+
+        token = result.api_token
+        assert token is not None
+        claims = verify_agent_api_token(token, "isolated-agent-token")
+        assert claims is not None
+        assert claims.agent_run_id == str(credential.managed_execution_id)
+        assert (claims.project_id, claims.session_id) == (self._PROJECT_ID, self._SESSION_ID)
+        probe_tokens = [
+            call.kwargs["env"]["GOBBY_AGENT_API_TOKEN"] for call in self._gcode_calls(popen)
+        ]
+        assert probe_tokens == [token, token, token]
+        # The capability is handed to probes only: never to the spawned agent's env,
+        # the wrapper, the runtime home, or a logged repr.
+        assert token not in result.env.values()
+        assert token not in repr(result)
+        assert token not in (workspace / ".gobby" / "bin" / "gcode").read_text()
+        assert result.runtime_home is not None
+        runtime_files = [path for path in Path(result.runtime_home).rglob("*") if path.is_file()]
+        assert runtime_files
+        assert not [path for path in runtime_files if token.encode() in path.read_bytes()]
 
     @pytest.mark.asyncio
     async def test_no_api_token_inherits_daemon_env_untouched(self, tmp_path: Path) -> None:

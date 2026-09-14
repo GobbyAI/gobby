@@ -148,8 +148,9 @@ class TestAfterAgentHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_after_agent(event)
+        response = handlers.handle_after_agent(event)
 
+        assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
     def test_after_agent_status_update_error(self, mock_dependencies: dict) -> None:

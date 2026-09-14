@@ -145,6 +145,9 @@ class AgentRunner:
         run_id: str,
         result: str | None = None,
         terminal_reason: AgentRunTerminalReason | None = None,
+        *,
+        tool_calls_count: int,
+        turns_used: int,
     ) -> bool:
         """Complete a running agent (self-termination). Delegates to runner_queries."""
         return _queries.complete_run(
@@ -152,6 +155,8 @@ class AgentRunner:
             run_id,
             result=result,
             terminal_reason=terminal_reason,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
         )
 
     # -------------------------------------------------------------------------

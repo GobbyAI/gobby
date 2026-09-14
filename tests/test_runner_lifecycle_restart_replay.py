@@ -334,6 +334,67 @@ class TestAgentRestartReconciliation:
         assert tmux_manager.list_sessions.await_count == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("claimed_by", "claim"),
+        [
+            ("cooperative_close_handoff_pending", True),
+            ("bound_task_is_closed", True),
+            ("ended_caller_close_review_outcome", ("fail", "review_status=invalid")),
+        ],
+    )
+    async def test_reconcile_missing_tmux_session_leaves_close_review_caller_running(
+        self,
+        claimed_by: str,
+        claim: object,
+    ) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            terminal_id="gobby-run-1",
+            pid=111,
+            resume_metadata_json={},
+            child_session_id="child-1",
+            task_id="task-1",
+        )
+        db = object()
+        run_storage = SimpleNamespace(
+            db=db,
+            list_active_for_machine=MagicMock(return_value=[run]),
+            update_runtime=MagicMock(),
+        )
+        runner = self._runner(run_storage, parked_run=run)
+        tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
+        resolved_run_ids: set[str] = set()
+        predicates = {
+            "cooperative_close_handoff_pending": MagicMock(return_value=False),
+            "bound_task_is_closed": MagicMock(return_value=False),
+            "ended_caller_close_review_outcome": MagicMock(return_value=None),
+        }
+        predicates[claimed_by].return_value = claim
+
+        with (
+            patch(
+                "gobby.agents.tmux.get_tmux_session_manager",
+                return_value=tmux_manager,
+            ),
+            patch.multiple("gobby.agents.run_completion", **predicates),
+            patch(
+                "gobby.agents.resume_executor.resume_agent_run",
+                new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+            ) as resume,
+        ):
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(
+                runner,
+                resolved_run_ids=resolved_run_ids,
+            )
+
+        assert reconciled == 2
+        assert resolved_run_ids == {run.id}
+        predicates[claimed_by].assert_called_once_with(db, run)
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
+        resume.assert_not_awaited()
+        run_storage.update_runtime.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_reconcile_dead_tmux_pane_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",

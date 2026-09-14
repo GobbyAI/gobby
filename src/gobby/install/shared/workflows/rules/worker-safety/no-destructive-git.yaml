@@ -11,7 +11,7 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+stash(?!\\s+(?:list|show|--help|-h)(?=\\s|$|&&|;|\\|))(?=\\s|$|&&|;|\\|)"
-        reason: "Call gobby-agents.send_message to coordinate with the file owner when shared-worktree changes conflict. Preserve changes with scoped staging or an isolated worktree."
+        reason: "Use a stash-free path for your own files: back up the file, run `git show HEAD:<path> > <path>`, then restore the backup; create a pre-change checkout with gobby-worktrees.create_worktree; or stage only your paths with `git add -- <paths>`. Call gobby-agents.send_message to coordinate with the file owner when another session's shared-worktree changes conflict, and preserve that session's changes."
 
   no-destructive-git:
     description: "Block destructive git operations."

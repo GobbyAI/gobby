@@ -1720,7 +1720,9 @@ class TestEndAgentRun:
             "status": "success",
             "handoff_id": "handoff-123",
         }
-        runner.complete_run.assert_called_once_with("run-123", result=None)
+        runner.complete_run.assert_called_once_with(
+            "run-123", result=None, terminal_reason=None, tool_calls_count=0, turns_used=0
+        )
         completion_registry.notify.assert_awaited_once_with(
             "run-123",
             result={"status": "success", "run_id": "run-123", "dirty_paths": []},
@@ -1789,7 +1791,7 @@ class TestEndAgentRun:
 
         _stub_agent_end_handoff.side_effect = stage_handoff
 
-        def complete_run(run_id: str, result: str | None = None) -> bool:
+        def complete_run(run_id: str, **_completion: object) -> bool:
             events.append(("complete", run_id, None))
             return True
 
@@ -1951,7 +1953,9 @@ class TestKillAgentSelfTerminationViaRunId:
 
         assert result["success"] is True
         # Should call complete_run (success), not cancel_run (cancelled)
-        runner.complete_run.assert_called_once_with("run-123", result=None)
+        runner.complete_run.assert_called_once_with(
+            "run-123", result=None, terminal_reason=None, tool_calls_count=0, turns_used=0
+        )
         runner.cancel_run.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1982,7 +1986,9 @@ class TestKillAgentSelfTerminationViaRunId:
             result = await kill_agent(run_id="run-123")
 
         assert result["success"] is True
-        runner.complete_run.assert_called_once_with("run-123", result=None)
+        runner.complete_run.assert_called_once_with(
+            "run-123", result=None, terminal_reason=None, tool_calls_count=0, turns_used=0
+        )
 
     @pytest.mark.asyncio
     async def test_run_id_parent_kill_defaults_to_cancelled(self) -> None:

@@ -921,3 +921,203 @@ async def test_concurrent_terminal_delivery_retries_failed_row_cleanup() -> None
             ("run-1", ["session-a"]),
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Field condition: the session lock is owner-bound and held when asyncio.run delivers."""
+    owner_loop = asyncio.get_running_loop()
+    wake_read_session = threading.Event()
+    session_manager = MagicMock()
+
+    def read_session(_session_id: str) -> SimpleNamespace:
+        wake_read_session.set()
+        return SimpleNamespace(id="session-a", agent_depth=0, status="paused", turn_count=0)
+
+    session_manager.get.side_effect = read_session
+    refresh_loops: list[asyncio.AbstractEventLoop] = []
+    dispatch_loops: list[asyncio.AbstractEventLoop] = []
+    first_dispatch_started = asyncio.Event()
+    release_first_dispatch = asyncio.Event()
+
+    async def refresh(_session_id: str) -> None:
+        refresh_loops.append(asyncio.get_running_loop())
+
+    async def dispatch_stub(
+        session_id: str, *, session: object | None = None, priority: str = "normal"
+    ) -> dict[str, object]:
+        del session, priority
+        dispatch_loops.append(asyncio.get_running_loop())
+        if len(dispatch_loops) == 1:
+            first_dispatch_started.set()
+            await release_first_dispatch.wait()
+        return {"session_id": session_id, "delivered": True}
+
+    async def run_inline(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=MagicMock(),
+        run_db=run_inline,
+        lifecycle_refresh=refresh,
+    )
+    monkeypatch.setattr(dispatcher, "_dispatch_live_wake_unlocked", dispatch_stub)
+    dispatcher.bind_owner_loop(owner_loop)
+    db = DurableDb(["session-a"])
+    handler = _handler(
+        db, completion_registry=CompletionEventRegistry(wake_callback=dispatcher.wake)
+    )
+
+    def deliver_on_throwaway_loop() -> None:
+        asyncio.run(
+            handler.notify_terminal_completion(
+                "run-1", result={"status": "completed"}, message="Agent terminal"
+            )
+        )
+
+    holder = asyncio.create_task(dispatcher.dispatch_live_wake("session-a"))
+    await first_dispatch_started.wait()
+    contender = asyncio.create_task(dispatcher.dispatch_live_wake("session-a"))
+    # The contender's wait binds the cached session lock to the owner loop.
+    await asyncio.sleep(0)
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread, owner_loop=owner_loop
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            foreign = asyncio.create_task(asyncio.to_thread(deliver_on_throwaway_loop))
+            assert await asyncio.to_thread(wake_read_session.wait, 2)
+            await asyncio.sleep(0)
+            release_first_dispatch.set()
+            await asyncio.wait_for(asyncio.gather(holder, contender, foreign), timeout=5)
+    finally:
+        release_first_dispatch.set()
+        terminal_delivery.reset_terminal_delivery_offload()
+
+    assert refresh_loops == [owner_loop, owner_loop, owner_loop]
+    assert dispatch_loops == [owner_loop, owner_loop, owner_loop]
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]
+    assert "bound to a different event loop" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_owner_loop_delivery_joins_foreign_loop_delivery_of_same_run() -> None:
+    owner_loop = asyncio.get_running_loop()
+    db = DurableDb(["session-a"])
+    wake_started = threading.Event()
+    release_wake = threading.Event()
+    wake_loops: list[asyncio.AbstractEventLoop] = []
+
+    async def wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, object],
+    ) -> dict[str, bool]:
+        wake_loops.append(asyncio.get_running_loop())
+        wake_started.set()
+        await asyncio.to_thread(release_wake.wait, 2)
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake)
+    registry.register("run-1", ["session-a"])
+    handler = _handler(db, completion_registry=registry)
+
+    def deliver_on_throwaway_loop() -> None:
+        asyncio.run(
+            handler.notify_terminal_completion(
+                "run-1", result={"status": "completed"}, message="Agent terminal"
+            )
+        )
+
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread, owner_loop=owner_loop
+    )
+    try:
+        foreign = asyncio.create_task(asyncio.to_thread(deliver_on_throwaway_loop))
+        assert await asyncio.to_thread(wake_started.wait, 2)
+        local = asyncio.create_task(
+            handler.notify_terminal_completion(
+                "run-1", result={"status": "completed"}, message="Agent terminal"
+            )
+        )
+        await asyncio.sleep(0)
+        release_wake.set()
+        await asyncio.wait_for(asyncio.gather(foreign, local), timeout=5)
+    finally:
+        release_wake.set()
+        terminal_delivery.reset_terminal_delivery_offload()
+
+    assert wake_loops == [owner_loop]
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delivery_off_a_stopped_owner_loop_raises_and_keeps_rows() -> None:
+    stopped_owner = asyncio.new_event_loop()
+    db = RecordingDb()
+    registry = AcknowledgingCompletionRegistry({"session-a": True})
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread, owner_loop=stopped_owner
+    )
+    try:
+        with pytest.raises(
+            terminal_delivery.TerminalDeliveryAdmissionClosedError, match="not running"
+        ):
+            await _handler(db, completion_registry=registry).notify_terminal_completion(
+                "run-1", result={"status": "completed"}, message="Agent terminal"
+            )
+    finally:
+        terminal_delivery.reset_terminal_delivery_offload()
+        stopped_owner.close()
+
+    assert registry.notifications == []
+    assert registry.cleaned == []
+    assert db.executed == []
+
+
+@pytest.mark.asyncio
+async def test_foreign_loop_shielded_scope_runs_on_owner_loop_and_is_drained() -> None:
+    owner_loop = asyncio.get_running_loop()
+    started = threading.Event()
+    release = threading.Event()
+    operation_loops: list[asyncio.AbstractEventLoop] = []
+
+    async def operation() -> str:
+        operation_loops.append(asyncio.get_running_loop())
+        started.set()
+        await asyncio.to_thread(release.wait, 2)
+        return "delivered"
+
+    def scope_on_throwaway_loop() -> str | None:
+        return asyncio.run(terminal_delivery.shielded_terminal_delivery("run-foreign", operation))
+
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread, owner_loop=owner_loop
+    )
+    try:
+        foreign = asyncio.create_task(asyncio.to_thread(scope_on_throwaway_loop))
+        assert await asyncio.to_thread(started.wait, 2)
+        assert list(terminal_delivery._in_flight_terminal_deliveries.values()) == ["run-foreign"]
+        draining = asyncio.create_task(terminal_delivery.drain_shielded_terminal_deliveries())
+        release.set()
+        await asyncio.wait_for(draining, timeout=5)
+        assert await asyncio.wait_for(foreign, timeout=5) == "delivered"
+    finally:
+        release.set()
+        terminal_delivery.reset_terminal_delivery_offload()
+
+    assert operation_loops == [owner_loop]

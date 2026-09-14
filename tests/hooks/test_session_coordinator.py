@@ -21,6 +21,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -133,7 +134,7 @@ def _install_running_close_review(
     task: Any,
     caller_session_id: str,
     validator_run_id: str,
-) -> None:
+) -> str:
     store = TaskCloseReviewStore(db)
     review, _created = store.create_or_get_active(
         task_id=task.id,
@@ -149,6 +150,73 @@ def _install_running_close_review(
     )
     bound = store.bind_run(review.id, validator_run_id)
     assert bound is not None
+    return review.id
+
+
+@dataclass(frozen=True)
+class _CloseReviewCaller:
+    run_manager: LocalAgentRunManager
+    run_id: str
+    task_id: str
+    review_id: str
+    coordinator: SessionCoordinator
+    session: SimpleNamespace
+
+
+def _close_review_caller(db: HubDatabase) -> _CloseReviewCaller:
+    """A Grok caller on its implement step, parked on a running close review."""
+    _create_session_row(db, PARENT_SESSION_ID)
+    _create_session_row(db, CHILD_SESSION_ID)
+    _create_session_row(db, VALIDATOR_SESSION_ID)
+    _install_step_workflow(db, CHILD_SESSION_ID, "implement")
+    task_manager = LocalTaskManager(db)
+    task = task_manager.create_task(
+        project_id=PROJECT_ID,
+        title="Backend leaf",
+        task_type="bug",
+        category="code",
+        implementation_domain="backend",
+        validation_criteria="Closed after review.",
+    )
+    run_manager = LocalAgentRunManager(db)
+    caller = run_manager.create(
+        parent_session_id=PARENT_SESSION_ID,
+        provider="grok",
+        prompt="implement the leaf",
+        workflow_name="backend-developer",
+        agent_name="backend-developer",
+        child_session_id=CHILD_SESSION_ID,
+        task_id=task.id,
+    )
+    run_manager.start(caller.id)
+    validator = run_manager.create(
+        parent_session_id=CHILD_SESSION_ID,
+        provider="codex",
+        prompt="review close evidence",
+        agent_name="task-close-validator",
+        child_session_id=VALIDATOR_SESSION_ID,
+    )
+    run_manager.start(validator.id)
+    review_id = _install_running_close_review(
+        db,
+        task=task,
+        caller_session_id=CHILD_SESSION_ID,
+        validator_run_id=validator.id,
+    )
+    return _CloseReviewCaller(
+        run_manager=run_manager,
+        run_id=caller.id,
+        task_id=task.id,
+        review_id=review_id,
+        coordinator=SessionCoordinator(agent_run_manager=run_manager, task_manager=task_manager),
+        session=SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=caller.id,
+            summary_markdown="Waiting on close review.",
+            tool_call_count=12,
+            turn_count=8,
+        ),
+    )
 
 
 class TestSessionRegistrationTracking:
@@ -1323,107 +1391,94 @@ class TestAgentRunCompletion:
         temp_db: HubDatabase,
     ) -> None:
         """SESSION_END must not fail a caller parked on its close-review validator."""
-        from gobby.storage.agents import LocalAgentRunManager
+        caller = _close_review_caller(temp_db)
 
-        _create_session_row(temp_db, PARENT_SESSION_ID)
-        _create_session_row(temp_db, CHILD_SESSION_ID)
-        _create_session_row(temp_db, VALIDATOR_SESSION_ID)
-        _install_step_workflow(temp_db, CHILD_SESSION_ID, "implement")
+        caller.coordinator.complete_agent_run(caller.session)
 
-        task_manager = LocalTaskManager(temp_db)
-        task = task_manager.create_task(
-            project_id=PROJECT_ID,
-            title="Backend leaf",
-            task_type="bug",
-            category="code",
-            implementation_domain="backend",
-            validation_criteria="Closed after review.",
-        )
-        run_manager = LocalAgentRunManager(temp_db)
-        caller = run_manager.create(
-            parent_session_id=PARENT_SESSION_ID,
-            provider="grok",
-            prompt="implement the leaf",
-            workflow_name="backend-developer",
-            agent_name="backend-developer",
-            child_session_id=CHILD_SESSION_ID,
-            task_id=task.id,
-        )
-        run_manager.start(caller.id)
-        validator = run_manager.create(
-            parent_session_id=CHILD_SESSION_ID,
-            provider="codex",
-            prompt="review close evidence",
-            agent_name="task-close-validator",
-            child_session_id=VALIDATOR_SESSION_ID,
-        )
-        run_manager.start(validator.id)
-        _install_running_close_review(
-            temp_db,
-            task=task,
-            caller_session_id=CHILD_SESSION_ID,
-            validator_run_id=validator.id,
-        )
-
-        coordinator = SessionCoordinator(
-            agent_run_manager=run_manager,
-            task_manager=task_manager,
-        )
-        session = SimpleNamespace(
-            id=CHILD_SESSION_ID,
-            agent_run_id=caller.id,
-            summary_markdown="Waiting on close review.",
-            tool_call_count=12,
-            turn_count=8,
-        )
-
-        coordinator.complete_agent_run(session)
-
-        updated = run_manager.get(caller.id)
+        updated = caller.run_manager.get(caller.run_id)
         assert updated is not None
         assert updated.status == "running"
         assert updated.error is None
 
-    def test_complete_agent_run_names_turn_ceiling_instead_of_workflow_error(
+    def test_repeat_session_end_fails_ended_caller_on_rejected_review(
         self,
         temp_db: HubDatabase,
     ) -> None:
-        """A budget stop must not surface as a step-workflow error."""
-        from gobby.storage.agents import LocalAgentRunManager
+        """After deferral deletes the step instance, the rejected review decides the run."""
+        from gobby.workflows.step_instances import AgentStepInstanceManager
 
-        _create_session_row(temp_db, PARENT_SESSION_ID)
-        _create_session_row(temp_db, CHILD_SESSION_ID)
-        _install_step_workflow(temp_db, CHILD_SESSION_ID, "implement")
-
-        run_manager = LocalAgentRunManager(temp_db)
-        run = run_manager.create(
-            parent_session_id=PARENT_SESSION_ID,
-            provider="grok",
-            prompt="implement the leaf",
-            workflow_name="backend-developer",
-            agent_name="backend-developer",
-            child_session_id=CHILD_SESSION_ID,
+        caller = _close_review_caller(temp_db)
+        caller.coordinator.complete_agent_run(caller.session)
+        AgentStepInstanceManager(temp_db).delete_for_session(CHILD_SESSION_ID)
+        SessionManager(temp_db).update_status(CHILD_SESSION_ID, "expired")
+        rejected = TaskCloseReviewStore(temp_db).finish(
+            caller.review_id,
+            status="invalid",
+            result_payload={"status": "invalid"},
         )
-        run_manager.start(run.id)
+        assert rejected is not None
 
-        coordinator = SessionCoordinator(agent_run_manager=run_manager)
-        session = SimpleNamespace(
-            id=CHILD_SESSION_ID,
-            agent_run_id=run.id,
-            summary_markdown="Stopped.",
-            tool_call_count=12,
-            turn_count=8,
-        )
+        caller.coordinator.complete_agent_run(caller.session)
 
-        coordinator.complete_agent_run(session, stop_reason="max_turns")
-
-        updated = run_manager.get(run.id)
+        updated = caller.run_manager.get(caller.run_id)
         assert updated is not None
         assert updated.status == "error"
-        assert updated.error is not None
-        assert "turn ceiling" in updated.error
-        assert "stop_reason=max_turns" in updated.error
-        assert "before step workflow completed" not in updated.error
+        error = updated.error or ""
+        assert "review_status=invalid" in error
+        assert f"review_id={caller.review_id}" in error
+        assert "before step workflow completed" not in error
+
+    def test_session_end_completes_ended_caller_on_external_pending_review(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """A verdict parked on coordinator-owned live criteria completes and names the gate.
+
+        SESSION_END completes the run before it moves the session row out of a live status.
+        """
+        caller = _close_review_caller(temp_db)
+        pending = TaskCloseReviewStore(temp_db).finish(
+            caller.review_id,
+            status="external_pending",
+            result_payload={"status": "external_pending"},
+        )
+        assert pending is not None
+
+        caller.coordinator.complete_agent_run(caller.session)
+
+        updated = caller.run_manager.get(caller.run_id)
+        assert updated is not None
+        assert updated.status == "success"
+        result = updated.result or ""
+        assert "coordinator-owned live criteria remain pending verification" in result
+        assert f"review_id={caller.review_id}" in result
+
+    def test_repeat_session_end_completes_caller_once_review_closes_task(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """A closed task wins over an undelivered closed review on the next SESSION_END."""
+        caller = _close_review_caller(temp_db)
+        caller.coordinator.complete_agent_run(caller.session)
+        SessionManager(temp_db).update_status(CHILD_SESSION_ID, "expired")
+        LocalTaskManager(temp_db).close_task(
+            caller.task_id,
+            reason="Done",
+            closed_commit_sha="abc123",
+        )
+        closed = TaskCloseReviewStore(temp_db).finish(
+            caller.review_id,
+            status="closed",
+            result_payload={"closed": True},
+        )
+        assert closed is not None
+
+        caller.coordinator.complete_agent_run(caller.session)
+
+        updated = caller.run_manager.get(caller.run_id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert "Task completion:" in (updated.result or "")
 
 
 class TestStartAgentRunIdempotency:
@@ -1729,6 +1784,7 @@ class TestNotifyAgentCompletionDelivery:
             LocalAgentRunManager,
             SimpleNamespace(db=MagicMock()),
         )
+        coordinator._event_loop = asyncio.get_running_loop()
         return coordinator
 
     def _record_removals(
@@ -1745,9 +1801,11 @@ class TestNotifyAgentCompletionDelivery:
         monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
         return removals
 
-    def _schedule(self, coordinator: SessionCoordinator, run_id: str) -> asyncio.Task[Any]:
+    async def _schedule(self, coordinator: SessionCoordinator, run_id: str) -> asyncio.Task[Any]:
         before = asyncio.all_tasks()
         coordinator._notify_agent_completion(run_id, "completed")
+        # run_coroutine_threadsafe creates the task on the loop's next iteration.
+        await asyncio.sleep(0)
         new_tasks = asyncio.all_tasks() - before
         assert len(new_tasks) == 1
         return new_tasks.pop()
@@ -1761,7 +1819,7 @@ class TestNotifyAgentCompletionDelivery:
         removals = self._record_removals(monkeypatch, registry)
         coordinator = self._coordinator(registry)
 
-        task = self._schedule(coordinator, "run-1")
+        task = await self._schedule(coordinator, "run-1")
         await registry.started.wait()
         assert registry.notify_calls[0][1] == {"status": "completed", "run_id": "run-1"}
         assert removals == []
@@ -1783,7 +1841,7 @@ class TestNotifyAgentCompletionDelivery:
         removals = self._record_removals(monkeypatch, registry)
         coordinator = self._coordinator(registry)
 
-        await self._schedule(coordinator, "run-1")
+        await (await self._schedule(coordinator, "run-1"))
         assert removals == []
         assert registry.cleanup_calls == ["run-1"]
 
@@ -1796,7 +1854,7 @@ class TestNotifyAgentCompletionDelivery:
         removals = self._record_removals(monkeypatch, registry)
         coordinator = self._coordinator(registry)
 
-        task = self._schedule(coordinator, "run-1")
+        task = await self._schedule(coordinator, "run-1")
         await registry.started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -1860,6 +1918,30 @@ class TestNotifyAgentCompletionDelivery:
         assert registry.notify_calls == []
         assert removals == []
         assert registry.cleanup_calls == []
+
+    @pytest.mark.asyncio
+    async def test_throwaway_loop_caller_delivers_on_daemon_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+
+        async def notify_inside_asyncio_run() -> None:
+            coordinator._notify_agent_completion("run-1", "completed")
+
+        before = asyncio.all_tasks()
+        # asyncio.run cancels tasks left on its own loop, so delivery must land on the daemon loop.
+        await asyncio.to_thread(asyncio.run, notify_inside_asyncio_run())
+        await asyncio.wait_for(registry.started.wait(), timeout=2)
+        new_tasks = asyncio.all_tasks() - before
+        assert len(new_tasks) == 1
+
+        release.set()
+        await new_tasks.pop()
+        assert removals == [("run-1", ["sess-1"])]
+        assert registry.cleanup_calls == ["run-1"]
 
 
 class _AlreadyTerminalRunStorage:

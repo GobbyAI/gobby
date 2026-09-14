@@ -53,7 +53,7 @@ _UV_RUN_OPTIONS_WITH_VALUES = [
     "-p",
     "-w",
 ]
-_NPX_VALUELESS_OPTIONS = ["--no-install", "--no", "--yes", "-y"]
+_NPX_OPTIONS_WITH_VALUES = ["--package", "-p", "--call", "-c", "--workspace", "-w"]
 WrapperKind = Literal["prefix", "delimiter", "command_string"]
 
 
@@ -103,7 +103,6 @@ class ValidationCommandWrapper(BaseModel):
     kind: WrapperKind = "prefix"
     delimiter: str = "--"
     strip_options_with_values: list[str] = Field(default_factory=list)
-    strip_options: list[str] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -201,7 +200,9 @@ def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
         _wrapper_rule("pipenv-run", "pipenv run", "prefix", ["pipenv run"]),
         _wrapper_rule("bundle-exec", "bundle exec", "prefix", ["bundle exec"]),
         _wrapper_rule("pnpm-exec", "pnpm exec", "prefix", ["pnpm exec"]),
-        _wrapper_rule("npx", "npx", "prefix", ["npx"], strip_options=_NPX_VALUELESS_OPTIONS),
+        _wrapper_rule(
+            "npx", "npx", "prefix", ["npx"], strip_options_with_values=_NPX_OPTIONS_WITH_VALUES
+        ),
         _wrapper_rule("bunx", "bunx", "prefix", ["bunx"]),
         _wrapper_rule("timeout", "timeout", "delimiter", ["timeout"]),
         _wrapper_rule("env", "env", "delimiter", ["env"]),
@@ -753,7 +754,6 @@ def _wrapper_rule(
     *,
     delimiter: str = "--",
     strip_options_with_values: list[str] | None = None,
-    strip_options: list[str] | None = None,
 ) -> ValidationCommandWrapper:
     return ValidationCommandWrapper(
         id=wrapper_id,
@@ -762,7 +762,6 @@ def _wrapper_rule(
         prefixes=prefixes,
         delimiter=delimiter,
         strip_options_with_values=strip_options_with_values or [],
-        strip_options=strip_options or [],
     )
 
 
@@ -862,7 +861,7 @@ def _unwrap_matched_rule(
 ) -> tuple[list[list[str]], tuple[str, ...]] | None:
     if wrapper.kind == "prefix":
         remaining = tokens[len(prefix_tokens) :]
-        if wrapper.strip_options_with_values or wrapper.strip_options:
+        if wrapper.strip_options_with_values:
             remaining = _strip_wrapper_options(remaining, set(wrapper.strip_options_with_values))
         return [remaining], ()
 

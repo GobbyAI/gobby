@@ -86,10 +86,12 @@ def _client(
     def _header_authenticated(request: HTTPConnection) -> bool:
         return bool(request.headers.get("Authorization"))
 
+    def _header_rejection(request: HTTPConnection) -> str | None:
+        return None if _header_authenticated(request) else "missing_auth"
+
     auth = cast(Any, server.auth_service)
     auth.is_request_authenticated = _header_authenticated
-    auth._legacy_authenticated = _header_authenticated
-    auth._credential_accepted = _header_authenticated
+    auth._legacy_rejection = _header_rejection
     server.grant_service = grants
     server.handshake_service = handshake
     runtime = MagicMock(spec=ConfigRuntime)

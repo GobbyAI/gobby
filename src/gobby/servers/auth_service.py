@@ -35,8 +35,9 @@ from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.users import LocalUserManager, User
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
+    AgentApiTokenRejection,
+    classify_agent_api_token,
     local_token_path,
-    verify_agent_api_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ _SESSION_HEADER = "X-Gobby-Session-Id"
 _AGENT_RUN_HEADER = "X-Gobby-Agent-Run-Id"
 _MANAGED_EXECUTION_HEADER = "X-Gobby-Managed-Execution-Id"
 _HOOKS_EXECUTE_PATH = "/api/hooks/execute"
+
+# Why a managed capability bearer was refused; rendered as the 401 body code.
+_CapabilityRejection = (
+    AgentApiTokenRejection | Literal["route_not_permitted", "run_inactive", "identity_mismatch"]
+)
 
 
 class _AgentRoute(NamedTuple):
@@ -268,8 +274,9 @@ class AuthService:
             request_path(request),
         )
         if grant_route is None:
-            if not self._legacy_authenticated(request):
-                return AuthDecision(allowed=False)
+            rejection = self._legacy_rejection(request)
+            if rejection is not None:
+                return AuthDecision(allowed=False, code=rejection, status_code=401)
             if (
                 admission_required(
                     str(request.scope.get("method", "GET")),
@@ -326,27 +333,28 @@ class AuthService:
             status_code=200,
         )
 
-    def _legacy_authenticated(self, request: HTTPConnection) -> bool:
+    def _legacy_rejection(self, request: HTTPConnection) -> str | None:
+        """Return why operator, browser, or managed credentials were refused, or None."""
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
             if parts and parts[0].casefold() == "bearer":
                 if len(parts) != 2:
-                    return False
-                return self.verify_bearer(parts[1]) or self._verify_agent_request(request, parts[1])
+                    return "missing_auth"
+                if self.verify_bearer(parts[1]):
+                    return None
+                claims = self._classify_agent_token(request, parts[1])
+                return None if isinstance(claims, AgentApiTokenClaims) else claims
 
         local_token = request.headers.get(_LOCAL_TOKEN_HEADER)
         if local_token is not None:
-            return self.verify_bearer(local_token)
+            return None if self.verify_bearer(local_token) else "invalid_token"
 
         session_token = request.cookies.get(_SESSION_COOKIE)
         if session_token is not None:
-            return self.validate_session(session_token)
+            return None if self.validate_session(session_token) else "session_invalid"
 
-        return False
-
-    def _credential_accepted(self, request: HTTPConnection) -> bool:
-        return self._accepted_bearer(request) is not False
+        return "missing_auth"
 
     def request_principal(
         self, request: HTTPConnection
@@ -374,9 +382,6 @@ class AuthService:
             return None if self.validate_session(session_token) else False
         return False
 
-    def _agent_credential_accepted(self, request: HTTPConnection, token: str) -> bool:
-        return self._verified_agent_claims_for_token(request, token) is not None
-
     @property
     def effect_fence(self) -> EffectFence | None:
         return self._effect_fence
@@ -398,35 +403,37 @@ class AuthService:
             return None
         return self._verified_agent_claims_for_token(request, parts[1])
 
-    def _verify_agent_request(self, request: HTTPConnection, token: str) -> bool:
-        return self._verified_agent_claims_for_token(request, token) is not None
-
     def _verified_agent_claims_for_token(
         self,
         request: HTTPConnection,
         token: str,
     ) -> AgentApiTokenClaims | None:
-        operator_token = self.local_token()
-        if operator_token is None:
-            return None
-        claims = verify_agent_api_token(token, operator_token)
-        if claims is None:
-            return None
+        claims = self._classify_agent_token(request, token)
+        return claims if isinstance(claims, AgentApiTokenClaims) else None
+
+    def _classify_agent_token(
+        self,
+        request: HTTPConnection,
+        token: str,
+    ) -> AgentApiTokenClaims | _CapabilityRejection:
+        claims = classify_agent_api_token(token, self.local_token())
+        if not isinstance(claims, AgentApiTokenClaims):
+            return claims
         entry = _agent_capability_allows(request)
         if entry is None:
-            return None
+            return "route_not_permitted"
         if not self._managed_capability_is_live(
             claims,
             allow_ask_principal=entry.allow_ask_principal,
         ):
-            return None
+            return "run_inactive"
         if not _agent_identity_matches(
             request,
             claims,
             bind_identity=entry.bind_identity,
             resolve_session=lambda ref: self._resolve_agent_session_ref(ref, claims.project_id),
         ):
-            return None
+            return "identity_mismatch"
         return claims
 
     def _managed_capability_is_live(

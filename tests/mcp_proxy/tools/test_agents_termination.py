@@ -247,12 +247,17 @@ async def test_cooperative_completion_persists_final_closed_task_details(
         run_id: str,
         result: str | None = None,
         terminal_reason: AgentRunTerminalReason | None = None,
+        *,
+        tool_calls_count: int,
+        turns_used: int,
     ) -> bool:
         return AgentRunner.complete_run(
             runner,
             run_id,
             result=result,
             terminal_reason=terminal_reason,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
         )
 
     runner.complete_run.side_effect = complete_run
@@ -382,12 +387,17 @@ async def _assert_classified_exit(
         run_id: str,
         result: str | None = None,
         terminal_reason: AgentRunTerminalReason | None = None,
+        *,
+        tool_calls_count: int,
+        turns_used: int,
     ) -> bool:
         return AgentRunner.complete_run(
             runner,
             run_id,
             result=result,
             terminal_reason=terminal_reason,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
         )
 
     run_storage.complete.side_effect = persist_run
@@ -465,6 +475,8 @@ async def _assert_classified_exit(
         run.id,
         result=None,
         terminal_reason=expected_reason,
+        tool_calls_count=0,
+        turns_used=0,
     )
     run_storage.complete.assert_called_once_with(
         run_id=run.id,

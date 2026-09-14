@@ -188,6 +188,7 @@ async def run_daemon(
             sync_submit=runner.db_executor.submit,
             owner_loop=main_loop,
         )
+        runner.wake_dispatcher.bind_owner_loop(main_loop)
 
         from gobby.runner_service_readiness import require_managed_services_ready
 

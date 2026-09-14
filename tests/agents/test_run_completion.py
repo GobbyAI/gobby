@@ -16,6 +16,29 @@ import gobby.agents.run_completion as run_completion
 pytestmark = pytest.mark.unit
 
 
+def test_ended_caller_outcome_waits_when_caller_liveness_is_unreadable() -> None:
+    """A failed liveness read must not terminalize a caller that may still be reworking."""
+    review = SimpleNamespace(
+        active=False,
+        status="invalid",
+        caller_session_id="child-session",
+        task_ref="#22325",
+        id="review-1",
+    )
+    db = MagicMock()
+    db.transaction.side_effect = RuntimeError("connection pool exhausted")
+    run = SimpleNamespace(id="run-1", task_id="task-1", child_session_id="child-session")
+
+    with (
+        patch("gobby.storage.task_close_reviews.TaskCloseReviewStore") as store,
+        patch.object(run_completion, "bound_task_is_closed", return_value=False),
+    ):
+        store.return_value.get_latest_agentic_for_task_caller.return_value = review
+        outcome = run_completion.ended_caller_close_review_outcome(db, run)
+
+    assert outcome is None
+
+
 def test_workflow_completion_notification_includes_terminal_task_state() -> None:
     task_manager = MagicMock()
     task_manager.get_task.return_value = SimpleNamespace(
@@ -82,14 +105,16 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
         run_completion.reset_terminal_delivery_offload()
 
     assert completed is True
-    assert to_thread_calls[0] == (
+    read_before, complete_call, read_after = to_thread_calls[:3]
+    assert read_before[0].__name__ == "read_terminal_run"
+    assert complete_call == (
         runner.complete_run,
         ("run-123",),
-        {"result": None},
+        {"result": None, "terminal_reason": None, "tool_calls_count": 0, "turns_used": 0},
     )
-    assert to_thread_calls[1][0].__name__ == "read_terminal_run"
-    assert to_thread_calls[1][1:] == ((), {})
-    runner.run_storage.db.bounded_transaction.assert_called_once_with()
+    assert read_after == read_before
+    assert read_after[1:] == ((), {})
+    assert runner.run_storage.db.bounded_transaction.call_count == 2
     completion_registry.notify.assert_awaited_once_with(
         "run-123",
         result={"status": "success", "run_id": "run-123"},
@@ -120,6 +145,55 @@ async def test_complete_and_notify_normalizes_a_copy_of_notify_result() -> None:
     completion_registry.notify.assert_awaited_once_with(
         "run-current",
         result={"status": "success", "run_id": "run-current"},
+        message="",
+        durable_subscriber_count=0,
+    )
+
+
+async def test_complete_and_notify_persists_transcript_turns_over_zero_session_counts() -> None:
+    runner = MagicMock()
+    runner.complete_run.return_value = True
+    runner.get_run.side_effect = [
+        SimpleNamespace(
+            id="run-grok",
+            status="running",
+            child_session_id="child-grok",
+            tool_calls_count=0,
+            turns_used=0,
+        ),
+        SimpleNamespace(status="success"),
+    ]
+    runner._session_manager.get.return_value = SimpleNamespace(tool_call_count=0, turn_count=0)
+    transcript_reader = SimpleNamespace(
+        get_activity_counts=AsyncMock(return_value={"tool_call_count": 52, "turn_count": 310})
+    )
+    completion_registry = MagicMock()
+    completion_registry.notify = AsyncMock(return_value={})
+
+    with patch.object(
+        run_completion, "TranscriptReader", return_value=transcript_reader
+    ) as reader_type:
+        completed = await run_completion.complete_and_notify_agent_run(
+            runner,
+            "run-grok",
+            completion_registry=completion_registry,
+            notify_result={"status": "success"},
+        )
+
+    assert completed is True
+    assert reader_type.call_args.args == (runner._session_manager,)
+    assert runner._session_manager.get.call_args.args == ("child-grok",)
+    transcript_reader.get_activity_counts.assert_awaited_once_with("child-grok")
+    assert runner.complete_run.call_args.args == ("run-grok",)
+    assert runner.complete_run.call_args.kwargs == {
+        "result": None,
+        "terminal_reason": None,
+        "tool_calls_count": 52,
+        "turns_used": 310,
+    }
+    completion_registry.notify.assert_awaited_once_with(
+        "run-grok",
+        result={"status": "success", "run_id": "run-grok"},
         message="",
         durable_subscriber_count=0,
     )

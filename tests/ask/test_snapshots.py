@@ -179,7 +179,11 @@ async def test_bind_grant_and_bounded_probes_use_real_repository(
 
     def runtime(*, workspace: Path, **kwargs: object) -> CodeIndexPreflightResult:
         runtime_workspaces.append(workspace)
-        return CodeIndexPreflightResult(env={}, runtime_home=str(artifacts.run_root / "home"))
+        return CodeIndexPreflightResult(
+            env={},
+            runtime_home=str(artifacts.run_root / "home"),
+            api_token="managed-ask-capability",
+        )
 
     async def run(argv: list[str], *, cwd: Path, timeout: float, **kwargs: object) -> None:
         assert not {"index", "--snapshot-commit", "--snapshot-json"}.intersection(argv)
@@ -201,10 +205,60 @@ async def test_bind_grant_and_bounded_probes_use_real_repository(
     assert 0 < probes[1][2] <= 10
     assert runtime_workspaces == [artifacts.run_root / "runtime"]
     assert prepared.runtime.env["GOBBY_PROJECT_ID"] == project_id
+    assert prepared.runtime.env["GOBBY_AGENT_API_TOKEN"] == "managed-ask-capability"
+    assert "managed-ask-capability" not in repr(prepared)
     assert (
         prepared.runtime.env["GOBBY_SESSION_ID"]
         == storage.execution_inputs(run_id)["caller_session_id"]
     )
+
+
+async def test_bind_without_runtime_capability_fails_and_revokes(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repository(tmp_path)
+    project_id = str(sample_project["id"])
+    storage, run_id = _run_storage(temp_db, project_id, repo)
+    artifacts = AskArtifactStore(tmp_path / "state", project_id, run_id, db=temp_db)
+    execution_id = uuid4()
+    revoked: list[tuple[UUID, int, str]] = []
+
+    class Credentials:
+        def issue_tool_request(
+            self, *, session_id: UUID, requested_project_path: str, expires_at: datetime
+        ) -> ManagedToolCredential:
+            return ManagedToolCredential(
+                ManagedCredential(
+                    execution_id, "test_role", 3, datetime.now(UTC), expires_at, tmp_path / "grant"
+                ),
+                UUID(project_id),
+                requested_project_path,
+            )
+
+        def revoke(self, identifier: UUID, *, generation: int, reason: str) -> None:
+            revoked.append((identifier, generation, reason))
+
+    def runtime(**kwargs: object) -> CodeIndexPreflightResult:
+        return CodeIndexPreflightResult(env={}, runtime_home=str(artifacts.run_root / "home"))
+
+    async def run(argv: list[str], **kwargs: object) -> None:
+        raise AssertionError(f"probe ran without a runtime capability: {argv}")
+
+    monkeypatch.setattr(snapshot_module, "_prepare_gcode_runtime", runtime)
+    monkeypatch.setattr(snapshot_module, "_run_gcode", run)
+    manager = AskSnapshotManager(
+        run_storage=storage,
+        credential_manager=cast(ManagedCredentialManager, Credentials()),
+        snapshot_executable=Path("/usr/bin/true"),
+    )
+    with pytest.raises(RuntimeError, match="runtime capability is missing"):
+        await manager.prepare_async(run_id=run_id, repository_root=repo, artifacts=artifacts)
+    assert revoked == [(execution_id, 3, "ask_binding_preparation_failed")]
+    record = storage.get(run_id)
+    assert record is not None and record.generation is None
 
 
 async def test_bind_timeout_never_publishes_generation(
