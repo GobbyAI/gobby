@@ -317,3 +317,33 @@ async def test_context_reset_rearms_authoring_gate(db: HubDatabase, boundary: st
     )
     assert response.decision == "block"
     assert skill_fetch_directive(SKILL) in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("schema", [False, True])
+@pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
+async def test_feedback_gate_blocks_end_agent_run_until_submitted(
+    db: HubDatabase,
+    schema: bool,
+    shape: str,
+) -> None:
+    engine = RuleEngine(db)
+    event = _tool_event("gobby-agents", "end_agent_run", {}, shape)
+    if schema:
+        event.data = {
+            "tool_name": "get_tool_schema" if shape == "direct" else "mcp__gobby__get_tool_schema",
+            "tool_input": {"server_name": "gobby-agents", "tool_name": "end_agent_run"},
+        }
+        normalize_tool_fields(event.data)
+    variables: dict[str, Any] = {
+        "loaded_skill_references": [SKILL],
+        "project": {"name": "gobby"},
+        "is_spawned_agent": True,
+        "_gobby_feedback_survey_active": True,
+    }
+    blocked = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert blocked.decision == "block"
+    assert "gobby-sessions:feedback" in (blocked.reason or "")
+    variables["_gobby_feedback_epoch_submitted"] = True
+    allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert allowed.decision != "block"

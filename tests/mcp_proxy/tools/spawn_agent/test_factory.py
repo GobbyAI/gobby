@@ -22,6 +22,7 @@ from gobby.workflows.definitions import (
     WorkflowStep,
 )
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -93,7 +94,7 @@ class TestSpawnAgentDefaults:
     async def test_spawn_agent_defaults_to_default_agent(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -157,7 +158,7 @@ class TestSpawnAgentDefaults:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
-                return_value=AgentDefinitionBody(
+                return_value=make_agent_definition(
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                     name="default",
                     provider="claude",
@@ -197,7 +198,7 @@ class TestSpawnAgentDefaults:
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -249,7 +250,7 @@ class TestSpawnAgentDefaults:
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -331,7 +332,7 @@ class TestSpawnAgentDefaults:
         session_manager.get.return_value = SimpleNamespace(
             project_id=project.id, machine_id=isolated.machine_id
         )
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="spawn-reviewer-agent",
             provider="claude",
@@ -513,7 +514,7 @@ class TestSpawnAgentDefaults:
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -621,7 +622,7 @@ class TestSpawnAgentParamOverrides:
     async def test_tool_params_override_agent_definition(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -679,7 +680,7 @@ class TestSpawnAgentParamOverrides:
         self, mock_runner: MagicMock
     ) -> None:
         """The agent's model cannot cross providers, but the target CLI must not choose one."""
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
@@ -700,7 +701,7 @@ class TestSpawnAgentParamOverrides:
 
     @pytest.mark.asyncio
     async def test_provider_override_preserves_explicit_model(self, mock_runner: MagicMock) -> None:
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
@@ -725,7 +726,7 @@ class TestSpawnAgentParamOverrides:
         self, mock_runner: MagicMock
     ) -> None:
         """A blank model is not a choice, so the tier substitution still applies."""
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
@@ -749,7 +750,7 @@ class TestSpawnAgentParamOverrides:
     async def test_no_provider_override_keeps_agent_definition_model(
         self, mock_runner: MagicMock
     ) -> None:
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
@@ -771,7 +772,7 @@ class TestSpawnAgentParamOverrides:
     async def test_model_selector_does_not_override_agent_provider(
         self, mock_runner: MagicMock
     ) -> None:
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
@@ -792,7 +793,7 @@ class TestSpawnAgentParamOverrides:
 
     @pytest.mark.asyncio
     async def test_model_name_does_not_infer_provider(self, mock_runner: MagicMock) -> None:
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="claude",
@@ -815,7 +816,7 @@ class TestSpawnAgentParamOverrides:
     async def test_explicit_provider_accepts_opaque_model_selector(
         self, mock_runner: MagicMock
     ) -> None:
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="codex",
@@ -1080,7 +1081,7 @@ class TestSpawnAgentPromptPreamble:
         """Preamble is injected via session_start hooks, not prepended to prompt."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"agent": "## Role\nBackend developer\n\nWrite clean code."},
             name="dev",
             provider="claude",
@@ -1148,7 +1149,7 @@ class TestPreparedSnapshotCreation:
             "gobby.mcp_proxy.tools.spawn_agent._step_state.AgentStepInstanceManager",
             return_value=_Manager(),
         ):
-            body = AgentDefinitionBody(
+            body = make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="rogue-agent",
                 step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
@@ -1170,7 +1171,7 @@ class TestPreparedSnapshotCreation:
         )
 
         db = MagicMock()
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="missing-agent",
             step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
@@ -1200,7 +1201,7 @@ class TestPreparedSnapshotCreation:
         )
 
         db = MagicMock()
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="coder",
             step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),

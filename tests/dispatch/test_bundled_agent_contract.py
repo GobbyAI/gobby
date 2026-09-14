@@ -261,3 +261,17 @@ def _collect_self_termination_phrase_offenders(
     for phrase in SELF_TERMINATION_KILL_AGENT_PHRASES:
         if phrase in normalized:
             offenders.append(f"{path.name}:{field_name}:{phrase}")
+
+
+def test_every_bundled_agent_declares_rule_selectors() -> None:
+    from gobby.workflows.definitions import AgentWorkflows
+
+    for path in _agent_yaml_files():
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        workflows = AgentWorkflows.model_validate(data.get("workflows"))
+        assert workflows.rule_selectors is not None, path.name
+        if path.stem in {"ask-investigator", "ask-reviewer", "expansion-qa", "triage-agent"}:
+            assert workflows.rule_selectors.include == ["tag:default", "tag:worker-safety"]
+            assert workflows.rule_selectors.exclude == ["tag:task-skill-gates"]
+        elif path.stem == "comms-agent":
+            assert workflows.rule_selectors.include == ["tag:default"]

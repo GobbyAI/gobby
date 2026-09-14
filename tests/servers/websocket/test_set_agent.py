@@ -10,6 +10,7 @@ import pytest
 
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -53,7 +54,7 @@ def _mock_persona_resolution() -> Any:
     with pytest.MonkeyPatch.context() as mp:
 
         def _resolve_agent(*_args: Any, **_kwargs: Any) -> AgentDefinitionBody:
-            return AgentDefinitionBody(
+            return make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="persona-agent",
                 surfaces=["persona"],
@@ -224,7 +225,7 @@ class TestSetAgentPersonaValidation:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 "gobby.workflows.agent_resolver.resolve_agent",
-                lambda *_a, **_k: AgentDefinitionBody(
+                lambda *_a, **_k: make_agent_definition(
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                     name="spawn-only",
                 ),
@@ -274,7 +275,7 @@ class TestSetAgentPersonaValidation:
                     "project_id": project_id,
                 }
             )
-            return AgentDefinitionBody(
+            return make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="persona-agent",
                 surfaces=["persona"],

@@ -15,10 +15,10 @@ import yaml
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentStepWorkflowBody,
-    AgentWorkflows,
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.step_instances import AgentStepInstance
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 if TYPE_CHECKING:
     from gobby.agents.spawn_models import SpawnRequest
@@ -190,10 +190,10 @@ class TestSpawnAgentPipelineInjection:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.workflows.definitions import PipelineDefinition
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="pipeline-agent",
-            workflows=AgentWorkflows(pipeline="my-pipeline"),
+            workflows=make_agent_workflows(pipeline="my-pipeline"),
         )
 
         pipeline_def = PipelineDefinition.model_validate(
@@ -253,10 +253,10 @@ class TestSpawnAgentPipelineInjection:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.workflows.definitions import WorkflowDefinition
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="step-agent",
-            workflows=AgentWorkflows(pipeline="my-workflow"),
+            workflows=make_agent_workflows(pipeline="my-workflow"),
         )
 
         workflow_def = WorkflowDefinition.model_validate(
@@ -317,11 +317,11 @@ class TestSpawnAgentStepVariables:
     async def test_agent_type_set_in_initial_variables(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="qa-agent",
             provider="claude",
-            workflows=AgentWorkflows(rules=["no-code-writing"]),
+            workflows=make_agent_workflows(rules=["no-code-writing"]),
         )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -404,7 +404,7 @@ class TestSpawnAgentStepVariables:
             add_claimed_task({}, task.id, f"#{task.seq_num}"),
         )
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="plan-adversary",
             provider="codex",
@@ -558,7 +558,7 @@ class TestSpawnAgentStepVariables:
             owner_id = third_party.id
         if owner_id is not None:
             task_manager.claim_task(task.id, owner_id)
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="plan-adversary",
             provider="codex",
@@ -948,7 +948,7 @@ class TestSpawnAgentStepVariables:
 
         parent_session = SessionManager(db).get(spawn_request.parent_session_id)
         assert parent_session is not None
-        assert initial_variables["parent_session_ref"] == parent_session.ref
+        assert "parent_session_ref" not in initial_variables
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
@@ -980,9 +980,9 @@ class TestSpawnAgentStepVariables:
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [
-            "development-discipline",
+            "gobby:references/development/obligations.md",
             "restraint",
-            "tasks",
+            "gobby:references/tasks/overview.md",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
@@ -1023,9 +1023,9 @@ class TestSpawnAgentStepVariables:
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [
-            "development-discipline",
+            "gobby:references/development/obligations.md",
             "restraint",
-            "tasks",
+            "gobby:references/tasks/overview.md",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]

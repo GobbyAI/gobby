@@ -13,7 +13,8 @@ rules:
         reason: >-
           Spawned workers cannot create Gobby tasks. Keep assigned-task claim, update,
           validation, review, and close operations on the current deliverable. Route
-          findings to the parent coordinator via send_message with the failing command,
+          findings to the parent coordinator via send_message(target='parent') with the
+          failing command,
           diagnostics, paths, and impact.
 
   block-native-task-tools-unclaimed:

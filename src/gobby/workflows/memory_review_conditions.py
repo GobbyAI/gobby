@@ -17,16 +17,6 @@ class TaskLookup(Protocol):
     def list_tasks(self, *, parent_task_id: str, limit: int = 50) -> list[Any]: ...
 
 
-def _close_payload(event_data: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    output = event_data.get("tool_output")
-    if not isinstance(output, Mapping):
-        return None
-    nested = output.get("result")
-    if isinstance(nested, Mapping) and nested.get("closed") is True:
-        return nested
-    return output
-
-
 def _closure_id(task: Any) -> str | None:
     task_id = getattr(task, "id", None)
     closed_at = getattr(task, "closed_at", None)
@@ -37,23 +27,17 @@ def _closure_id(task: Any) -> str | None:
 
 def classify_memory_review_close(
     task_manager: TaskLookup | None,
-    event_data: Mapping[str, Any],
-    tool_input: Mapping[str, Any],
+    *,
+    task_id: str,
+    changes_summary: str,
+    reason: str,
+    commit_shas: list[str],
 ) -> dict[str, str] | None:
     """Return queue data for one completed worked leaf, else ``None``."""
     if task_manager is None:
         return None
-    payload = _close_payload(event_data)
-    if payload is None or payload.get("closed") is not True:
-        return None
-    if payload.get("success") is False:
-        return None
-
-    summary = str(tool_input.get("changes_summary") or "").strip()
-    if not summary:
-        return None
-    task_id = payload.get("task_id")
-    if not isinstance(task_id, str) or not task_id:
+    summary = changes_summary.strip()
+    if not summary or not task_id:
         return None
     try:
         task = task_manager.get_task(task_id)
@@ -62,7 +46,7 @@ def classify_memory_review_close(
     if task is None:
         return None
 
-    reason = str(getattr(task, "closed_reason", None) or tool_input.get("reason") or "completed")
+    reason = str(getattr(task, "closed_reason", None) or reason or "completed")
     if reason.casefold() != "completed":
         return None
     if str(getattr(task, "task_type", "")).casefold() == "epic":
@@ -75,10 +59,7 @@ def classify_memory_review_close(
 
     category = str(getattr(task, "category", None) or "").casefold()
     if category in _WORK_CATEGORIES:
-        payload_commits = payload.get("commit_shas")
-        has_commits = bool(getattr(task, "commits", None)) or (
-            isinstance(payload_commits, list) and bool(payload_commits)
-        )
+        has_commits = bool(getattr(task, "commits", None)) or bool(commit_shas)
         if not has_commits:
             return None
 
@@ -92,34 +73,6 @@ def classify_memory_review_close(
         "task_ref": task_ref,
         "changes_summary": summary,
     }
-
-
-def queue_memory_review_close(
-    task_manager: TaskLookup | None,
-    event_data: Mapping[str, Any],
-    tool_input: Mapping[str, Any],
-    variables: Mapping[str, Any],
-) -> list[dict[str, str]]:
-    """Append one classified closure, dropping closures whose review was delivered."""
-    stored = (
-        []
-        if variables.get("_memory_review_stop_delivered")
-        else variables.get("_memory_pending_task_reviews") or []
-    )
-    pending = [dict(item) for item in stored if isinstance(item, Mapping)]
-    candidate = classify_memory_review_close(task_manager, event_data, tool_input)
-    if candidate is None:
-        return pending
-
-    closure_id = candidate["closure_id"]
-    if any(item.get("closure_id") == closure_id for item in pending):
-        return pending
-    reviewed = variables.get("_memory_task_review_records", [])
-    if isinstance(reviewed, list) and any(
-        isinstance(item, Mapping) and item.get("closure_id") == closure_id for item in reviewed
-    ):
-        return pending
-    return [*pending, candidate]
 
 
 def pending_memory_reviews(variables: Mapping[str, Any]) -> list[dict[str, str]]:

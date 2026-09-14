@@ -233,20 +233,22 @@ def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
 
 
 def test_epic_review_skill_defines_methodology_and_verdict_block() -> None:
-    skill_text = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
+    skill_text = (SKILLS_DIR / "gobby/references/review/evidence.md").read_text() + (
+        SKILLS_DIR / "gobby/references/review/outcomes.md"
+    ).read_text()
 
     for heading in (
-        "### spec_compliance",
-        "### code_quality",
-        "### testing",
-        "### proportionality",
+        "**Spec compliance:**",
+        "**Code quality:**",
+        "**Testing:**",
+        "**Proportionality:**",
     ):
         assert heading in skill_text
     # The epic dimension is reframed onto the shared proportionality criterion;
     # the legacy `yagni` heading must be gone.
     assert "### yagni" not in skill_text
-    assert "proportionality` criterion" in skill_text
-    assert "simpler form" in skill_text
+    assert "standalone skill" in skill_text
+    assert "complete simpler replacement" in skill_text
     assert "## Epic Findings" in skill_text
     assert "verdict: approve | request_changes | needs_discussion" in skill_text
     assert "spec_compliance: OK | Drift | Gap" in skill_text
@@ -258,13 +260,16 @@ def test_epic_review_skill_defines_methodology_and_verdict_block() -> None:
 
 
 def test_epic_review_skill_allows_docs_epic_plan_substitute() -> None:
-    skill_text = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
+    skill_text = (SKILLS_DIR / "gobby/references/review/evidence.md").read_text() + (
+        SKILLS_DIR / "gobby/references/review/outcomes.md"
+    ).read_text()
 
     assert "Discovery Brief" in skill_text
     assert "descendant task set" in skill_text
-    assert "do not escalate solely" in skill_text
-    assert 'complete_stage(stage_name="epic_qa")' in skill_text
-    assert 'fail_stage(stage_name="epic_qa")' in skill_text
+    assert "Escalate only when neither reliable scope nor implementation evidence" in skill_text
+    assert "gobby-tasks-ops:complete_stage" in skill_text
+    assert 'stage_name="epic_qa"' in skill_text
+    assert "gobby-tasks-ops:fail_stage" in skill_text
     assert 'approve_review(stage_name="epic_qa")' not in skill_text
     assert 'reject_review(stage_name="epic_qa")' not in skill_text
 
@@ -392,7 +397,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "additional_skills" in load_skills["status_message"]
     assert "additional_skills_loaded" in agent["step_workflow"]["variables"]
     assert "skill_loaded(skill)" in str(load_skills["transitions"])
-    assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
+    assert "gobby-agents:end_agent_run" not in _blocked_mcp_tools(implement)
     assert "_skipped_stages" not in implement["status_message"]
     assert "manifest" in implement["status_message"]
     assert "close_task" in implement["status_message"]
@@ -424,17 +429,16 @@ def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
 
 
 def test_development_discipline_avoids_full_test_suites() -> None:
-    discipline = (SKILLS_DIR / "development-discipline/SKILL.md").read_text()
+    discipline = (SKILLS_DIR / "gobby/references/development/obligations.md").read_text()
 
-    assert "Do not run full test suites as a spawned agent" in discipline
-    assert "bare `cargo test`" in discipline
-    assert "workspace-wide" in discipline
-    assert "`cargo test -p <package>`" in discipline
-    assert "`cargo test <name> -p <package>`" in discipline
+    assert "Never run full pytest without an explicit user request" in discipline
+    assert "avoid bare/workspace" in discipline
+    assert "Run focused Rust packages or test filters" in discipline
+    assert "`cargo test`" in discipline
 
 
 def test_tdd_discipline_skills_are_bundled() -> None:
-    discipline = (SKILLS_DIR / "development-discipline/SKILL.md").read_text()
+    discipline = (SKILLS_DIR / "gobby/references/development/obligations.md").read_text()
     tdd = (SKILLS_DIR / "test-driven-development/SKILL.md").read_text()
 
     assert "test judgment" in discipline.lower()
@@ -446,14 +450,17 @@ def test_tdd_discipline_skills_are_bundled() -> None:
     assert "missing baseline is not a skip reason" in tdd.lower()
     assert "unsupported-language warning" in tdd
     assert "repo-native validation" in tdd
-    assert ".gobby/test-quality-baseline.json` is missing" in discipline.lower()
-    assert "unsupported-language warning" in discipline
+    assert "a missing baseline counts current findings as new" in discipline.lower()
+    assert "unsupported" in discipline.lower()
+    assert "language warnings with focused native validation" in discipline
 
 
 def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
     qa = _agent("qa-reviewer")
     epic = _agent("epic-reviewer")
-    epic_skill = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
+    epic_skill = (SKILLS_DIR / "gobby/references/review/evidence.md").read_text() + (
+        SKILLS_DIR / "gobby/references/review/outcomes.md"
+    ).read_text()
 
     qa_review = _step(qa, "review")["status_message"]
     epic_review = _step(epic, "review")["status_message"]
@@ -462,7 +469,6 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
         qa_review,
         epic["prompts"]["agent"],
         epic_review,
-        epic_skill,
     ):
         assert "tdd:required" in text
         assert "test-driven-development" in text
@@ -475,7 +481,16 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
     assert "contains red, green" in qa_review.lower()
     assert "checked red, green" in epic["prompts"]["agent"].lower()
     assert "red/green" in epic_review
-    assert "red failure" in epic_skill.lower()
+    for marker in (
+        "tdd:required",
+        "test-driven-development",
+        "red failure",
+        "minimal green",
+        "test-quality",
+        "repo-native validation",
+        "missing audit baseline",
+    ):
+        assert marker in epic_skill.lower()
 
 
 def test_agent_definition_model_preserves_skills_blocks() -> None:
@@ -485,6 +500,7 @@ def test_agent_definition_model_preserves_skills_blocks() -> None:
         {
             "name": "backend-developer",
             "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
             "skills": {
                 "baseline": ["Python backend"],
                 "tool_allowlist": ["pytest", "ruff"],

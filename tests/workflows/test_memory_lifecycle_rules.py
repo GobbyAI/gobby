@@ -10,7 +10,6 @@ Active memory-lifecycle rules:
 - increment-parent-turn-seq: set_variable on turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
 - remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
-- queue-task-memory-review-after-close: set_variable on after_tool close_task
 - review-closed-task-memories-before-handoff: acknowledged block on before_tool set_handoff
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
@@ -22,9 +21,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,7 +42,6 @@ MEMORY_RULES = {
     "increment-parent-turn-seq",
     "check-memory-guidance-on-initial-stop",
     "remind-memory-guidance-on-later-turns",
-    "queue-task-memory-review-after-close",
     "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
@@ -332,49 +328,6 @@ def _sessions_tool_event(tool_name: str = "set_handoff") -> HookEvent:
     )
 
 
-def _close_task_event(task_ref: str, summary: str) -> HookEvent:
-    """A successful `gobby-tasks:close_task` after_tool event for TASK_ID."""
-    return HookEvent(
-        event_type=HookEventType.AFTER_TOOL,
-        session_id=SESSION_ID,
-        source=SessionSource.CODEX,
-        timestamp=datetime.now(UTC),
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-tasks",
-                "tool_name": "close_task",
-                "arguments": {
-                    "task_id": task_ref,
-                    "changes_summary": summary,
-                    "commit_sha": "abc1234",
-                },
-            },
-            "tool_output": {
-                "success": True,
-                "closed": True,
-                "task_id": TASK_ID,
-                "commit_shas": ["abc1234"],
-            },
-        },
-    )
-
-
-def _closed_leaf_task_manager() -> MagicMock:
-    task_manager = MagicMock()
-    task_manager.get_task.return_value = SimpleNamespace(
-        id=TASK_ID,
-        seq_num=43,
-        task_type="task",
-        category="code",
-        closed_reason="completed",
-        closed_at=datetime(2026, 8, 25, tzinfo=UTC),
-        commits=["abc1234"],
-    )
-    task_manager.list_tasks.return_value = []
-    return task_manager
-
-
 class TestLayeredMemoryGuidance:
     def test_initial_turn_end_gate_sets_flag_only_when_passed_or_acknowledged(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -564,25 +517,6 @@ class TestLayeredMemoryGuidance:
 
 
 class TestPostCloseMemoryReviewRules:
-    def test_queue_rule_uses_normalized_success_and_resets_delivery_flag(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("queue-task-memory-review-after-close")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        effects = body.resolved_effects
-
-        assert body.event.value == "after_tool"
-        assert "mcp_server" in (body.when or "")
-        assert "mcp_tool" in (body.when or "")
-        assert "tool_call_succeeded" in (body.when or "")
-        assert effects[0].variable == "_memory_pending_task_reviews"
-        assert effects[0].value == "queue_memory_review_close(event.data, tool_input)"
-        assert effects[1].type == "set_variable"
-        assert effects[1].variable == "_memory_review_stop_delivered"
-        assert effects[1].value is False
-
     def test_turn_end_review_is_single_acknowledged_block(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
@@ -778,21 +712,38 @@ class TestPostCloseMemoryReviewRules:
         variables = _review_variables(
             _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_submitted=True
         )
-        engine = RuleEngine(db, task_manager=_closed_leaf_task_manager())
+        engine = RuleEngine(db)
         compact = _sessions_tool_event()
         rearmed_event = (
             compact if rearmed_channel is HookEventType.BEFORE_TOOL else _turn_end_event()
         )
 
         delivered = await engine.evaluate(compact, SESSION_ID, variables)
-        await engine.evaluate(_close_task_event("#43", "Second closure."), SESSION_ID, variables)
+        from gobby.storage.projects import PERSONAL_PROJECT_ID
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        db.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (
+                SESSION_ID,
+                "memory-review",
+                "21000000-0000-4000-8000-000000000001",
+                "codex",
+                PERSONAL_PROJECT_ID,
+            ),
+        )
+        manager = SessionVariableManager(db)
+        manager.merge_variables(SESSION_ID, variables)
+        manager.queue_memory_review(SESSION_ID, _pending_review("#43", "Second closure."))
+        variables = manager.get_variables(SESSION_ID)
         requeued_flag = variables["_memory_review_stop_delivered"]
         rearmed = await engine.evaluate(rearmed_event, SESSION_ID, variables)
 
         assert delivered.decision == "block"
         assert requeued_flag is False
         assert rearmed.decision == "block"
-        assert f"#43 (task_id `{TASK_ID}`): Second closure." in (rearmed.reason or "")
+        assert "#43 (task_id `task-43`): Second closure." in (rearmed.reason or "")
         assert "Earlier closure." not in (rearmed.reason or "")
         assert variables["_memory_review_stop_delivered"] is True
 
@@ -824,68 +775,6 @@ class TestPostCloseMemoryReviewRules:
         assert variables["_memory_review_stop_delivered"] is True
         assert "check-memory-guidance-on-initial-stop" not in (second.reason or "")
         assert "review-closed-task-memories-on-stop" not in (second.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_later_close_requeues_only_new_closure_and_resets_flag(
-        self, db: HubDatabase
-    ) -> None:
-        _sync_bundled(db)
-        task_manager = MagicMock()
-        task_manager.get_task.return_value = SimpleNamespace(
-            id=TASK_ID,
-            seq_num=43,
-            task_type="task",
-            category="code",
-            closed_reason="completed",
-            closed_at=datetime(2026, 8, 25, tzinfo=UTC),
-            commits=["abc1234"],
-        )
-        task_manager.list_tasks.return_value = []
-        delivered = _pending_review("#42", "Earlier closure.")
-        variables = _review_variables(delivered, _memory_review_stop_delivered=True)
-        engine = RuleEngine(db, task_manager=task_manager)
-        close_event = HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            session_id=SESSION_ID,
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "close_task",
-                    "arguments": {
-                        "task_id": "#43",
-                        "changes_summary": "Second closure.",
-                        "commit_sha": "abc1234",
-                    },
-                },
-                "tool_output": {
-                    "success": True,
-                    "closed": True,
-                    "task_id": TASK_ID,
-                    "commit_shas": ["abc1234"],
-                },
-            },
-        )
-
-        await engine.evaluate(close_event, SESSION_ID, variables)
-        queued = list(variables["_memory_pending_task_reviews"])
-        queued_flag = variables["_memory_review_stop_delivered"]
-        response = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
-
-        assert queued == [
-            {
-                "closure_id": f"{TASK_ID}:2026-08-25T00:00:00+00:00",
-                "task_id": TASK_ID,
-                "task_ref": "#43",
-                "changes_summary": "Second closure.",
-            }
-        ]
-        assert queued_flag is False
-        assert f"#43 (task_id `{TASK_ID}`): Second closure." in (response.reason or "")
-        assert "Earlier closure." not in (response.reason or "")
-        assert variables["_memory_review_stop_delivered"] is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

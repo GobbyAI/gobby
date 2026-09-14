@@ -131,7 +131,9 @@ def _agent_result_payload(
     payload: dict[str, Any] = {
         **run.liveness_payload(),
         "run_id": run.id,
-        "status": "blocked" if run.terminal_reason == "task_blocker" else run.status,
+        "status": {"task_blocker": "blocked", "early_exit": "incomplete"}.get(
+            run.terminal_reason or "", run.status
+        ),
         "result": preferred_result if preferred_result is not None else run.result,
         "error": run.error,
         "provider": run.provider,

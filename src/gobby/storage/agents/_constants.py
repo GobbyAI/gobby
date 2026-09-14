@@ -12,6 +12,7 @@ AgentRunTerminalReason = Literal[
     "task_completed",
     "spawn_rollback",
     "task_blocker",
+    "early_exit",
     "provider_quota_exhausted",
     "provider_error",
 ]

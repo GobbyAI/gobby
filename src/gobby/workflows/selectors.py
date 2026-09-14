@@ -50,9 +50,6 @@ def resolve_rules_for_agent(
     4. Subtract exclude matches from the entire set
     """
     explicit = set(agent.workflows.rules)
-    if not agent.workflows.rule_selectors:
-        return explicit
-
     active = set(explicit)
     for rule in all_rules:
         definition_json = _rule_definition_json(rule)
@@ -79,9 +76,6 @@ def rule_matches_agent(
     """Return whether a single rule row is active for an agent definition."""
     explicit = set(agent.workflows.rules)
     selectors = agent.workflows.rule_selectors
-
-    if selectors is None:
-        return rule.name in explicit
 
     rule_definition_json = (
         _rule_definition_json(rule) if definition_json is None else definition_json
@@ -114,9 +108,6 @@ def _rule_excluded_by_agent(
     definition_json: dict[str, Any] | None = None,
 ) -> bool:
     selectors = agent.workflows.rule_selectors
-    if selectors is None:
-        return False
-
     rule_definition_json = (
         _rule_definition_json(rule) if definition_json is None else definition_json
     )

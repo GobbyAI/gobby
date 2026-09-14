@@ -9,7 +9,7 @@ import pytest
 
 from gobby.agents.isolation import IsolationContext
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +45,7 @@ class TestSpawnAgentDedup:
         runner.run_storage.list_active_global.return_value = [active_run]
         runner.run_storage.get_active_run_for_task.return_value = active_run
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -111,7 +111,7 @@ class TestSpawnAgentDedup:
         runner._child_session_manager = MagicMock()
         runner.run_storage.has_active_run_for_task.return_value = False
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
@@ -196,7 +196,7 @@ class TestSpawnAgentDedup:
         runner._child_session_manager = MagicMock()
         runner.run_storage.has_active_run_for_task.return_value = False
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="epic-reviewer",
             provider="claude",
@@ -292,7 +292,7 @@ class TestSpawnAgentDedup:
         runner.run_storage.list_active_global.return_value = [parent_run]
         runner.run_storage.get_active_run_for_task.return_value = parent_run
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="claude",
@@ -397,7 +397,7 @@ class TestSpawnAgentDedup:
         runner.run_storage.list_active_global.return_value = [active_worker]
         runner.run_storage.get_active_run_for_task.return_value = active_worker
 
-        agent_body = AgentDefinitionBody(
+        agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="claude",

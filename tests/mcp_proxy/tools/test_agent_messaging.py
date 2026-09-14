@@ -49,6 +49,22 @@ class MockSession:
     status: str = "active"
     agent_depth: int = 0
     terminal_context: dict[str, Any] | None = None
+    agent_run_id: str | None = None
+
+
+def _spawned_child_session_lookup(session_id: str) -> MockSession | None:
+    project = "11111111-1111-4111-8111-111111110001"
+    return {
+        "s-child": MockSession(
+            id="s-child",
+            parent_session_id="s-parent",
+            project_id=project,
+            agent_depth=1,
+            agent_run_id="run-child",
+        ),
+        "s-parent": MockSession(id="s-parent", project_id=project),
+        "s-other": MockSession(id="s-other", project_id=project),
+    }.get(session_id)
 
 
 @dataclass
@@ -384,6 +400,7 @@ class TestSendMessage:
         assert target_values == [
             "global",
             "project",
+            "parent",
             "session",
             "agent",
             "build",
@@ -1217,6 +1234,120 @@ class TestSendMessage:
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("target", "target_id"),
+        [
+            ("session", "s-other"),
+            ("agent", "run-other"),
+            ("build", "build-other"),
+            ("project", None),
+            ("global", None),
+        ],
+    )
+    async def test_spawned_agent_send_message_limited_to_parent(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        target: str,
+        target_id: str | None,
+    ) -> None:
+        """A spawned agent is refused every non-parent target but reaches its parent."""
+        mock_session_manager.get.side_effect = _spawned_child_session_lookup
+        blocked_arguments: dict[str, Any] = {"target": target, "content": "status"}
+        if target_id is not None:
+            blocked_arguments["target_id"] = target_id
+
+        with session_context_for_test("s-child"):
+            blocked = await messaging_registry.call("send_message", blocked_arguments)
+            mock_message_manager.create_message.assert_not_called()
+            delivered = await messaging_registry.call(
+                "send_message", {"target": "parent", "content": "status"}
+            )
+
+        assert blocked["success"] is False
+        assert blocked["error_code"] == "send_message_parent_only"
+        assert delivered["success"] is True
+        recipients = [
+            call.kwargs["to_session"] for call in mock_message_manager.create_message.call_args_list
+        ]
+        assert recipients == ["s-parent"]
+
+    @pytest.mark.asyncio
+    async def test_parent_clear_successor_receives_message_and_persists_run_result(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        parent = _spawned_child_session_lookup("s-parent")
+        assert parent is not None
+        parent.status = "expired"
+        successor = MockSession(id="s-successor", project_id=parent.project_id)
+        mock_session_manager.get.side_effect = lambda sid: (
+            {"s-parent": parent, "s-successor": successor}.get(sid)
+            or _spawned_child_session_lookup(sid)
+        )
+        monkeypatch.setattr(
+            "gobby.sessions.mailbox.resolve_clear_successor", lambda db, sid: "s-successor"
+        )
+        mock_db.fetchone.return_value = {"id": "run-child"}
+        with session_context_for_test("s-child"):
+            result = await messaging_registry.call(
+                "send_message", {"target": "parent", "content": "completed work"}
+            )
+        assert result["success"] is True
+        assert mock_message_manager.create_message.call_args.kwargs["to_session"] == "s-successor"
+        args = mock_db.execute.call_args.args
+        assert args[0] == "UPDATE agent_runs SET result = %s, updated_at = %s WHERE id = %s"
+        assert args[1][0] == "completed work"
+        assert args[1][2] == "run-child"
+
+    @pytest.mark.asyncio
+    async def test_interactive_send_message_to_parent_is_rejected(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+    ) -> None:
+        child = _spawned_child_session_lookup("s-child")
+        assert child is not None
+        child.agent_run_id = None
+        child.agent_depth = 0
+        mock_session_manager.get.side_effect = lambda sid: (
+            child if sid == "s-child" else _spawned_child_session_lookup(sid)
+        )
+        with session_context_for_test("s-child"):
+            result = await messaging_registry.call(
+                "send_message", {"target": "parent", "content": "status"}
+            )
+        assert result["success"] is False
+        assert "only available to spawned agent sessions" in result["error"]
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_spawned_agent_send_message_rejects_spoofed_sender(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+    ) -> None:
+        """A spawned agent cannot send as another session, even its parent."""
+        mock_session_manager.get.side_effect = _spawned_child_session_lookup
+
+        with session_context_for_test("s-child"):
+            result = await messaging_registry.call(
+                "send_message",
+                {"from_session": "s-parent", "target": "project", "content": "spoof"},
+            )
+
+        assert result["success"] is False
+        assert result["error_code"] == "send_message_sender_mismatch"
+        mock_message_manager.create_message.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════

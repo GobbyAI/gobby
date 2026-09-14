@@ -381,9 +381,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
-            workflows = AgentWorkflows()
-            if request.workflows:
-                workflows = AgentWorkflows(**request.workflows)
+            workflows = AgentWorkflows.model_validate(
+                request.workflows
+                if request.workflows is not None
+                else {"rule_selectors": {"include": ["tag:default"]}}
+            )
 
             body = AgentDefinitionBody(
                 name=request.name,
@@ -626,8 +628,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 row = manager.get(definition_id)
                 body_dict = _row_body(row)
 
-                workflows = body_dict.get("workflows", {})
-                selectors = workflows.get("rule_selectors") or {"include": [], "exclude": []}
+                from gobby.workflows.definitions import AgentWorkflows
+
+                workflows = AgentWorkflows.model_validate(body_dict.get("workflows")).model_dump()
+                selectors = workflows["rule_selectors"]
                 include: list[str] = list(selectors.get("include", []))
                 exclude: list[str] = list(selectors.get("exclude", []))
 
@@ -879,6 +883,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except DefinitionNameConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error importing agent definition '%s': %s", name, e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

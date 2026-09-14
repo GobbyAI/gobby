@@ -13,7 +13,7 @@ function requireNonNegativeNumber(value: number, label: string): number {
   return value;
 }
 
-function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
+function workflowPayload(draft: AgentDraft): Record<string, unknown> {
   const workflows: Record<string, unknown> = { ...draft.workflows };
 
   if (draft.form.pipeline) workflows.pipeline = draft.form.pipeline;
@@ -22,8 +22,7 @@ function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
   if (draft.rules.length > 0) workflows.rules = draft.rules;
   else delete workflows.rules;
 
-  if (draft.ruleSelectors) workflows.rule_selectors = draft.ruleSelectors;
-  else delete workflows.rule_selectors;
+  workflows.rule_selectors = draft.ruleSelectors;
 
   if (Object.keys(draft.variables).length > 0)
     workflows.variables = draft.variables;
@@ -53,7 +52,7 @@ function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
   } else {
     delete workflows.skill_selectors;
   }
-  return Object.keys(workflows).length > 0 ? workflows : null;
+  return workflows;
 }
 
 export function buildAgentDefinitionBody(

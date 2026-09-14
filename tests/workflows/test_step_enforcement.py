@@ -17,6 +17,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name, is_gobby_call_tool
+from gobby.workflows.engine.blocked_tool_recovery import extract_rule_name
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
@@ -187,6 +188,7 @@ def _setup_step_workflow(
         if key not in {"steps", "variables", "exit_condition", "step_workflow"}
     }
     parent.setdefault("prompts", {"agent": "Run the assigned task."})
+    parent.setdefault("workflows", {"rule_selectors": {"include": []}})
     row = manager.upsert_with_steps(str(data["name"]), parent, step_workflow)
     body = AgentDefinitionBody.model_validate(
         {**parent, "name": data["name"], "step_workflow": step_workflow}
@@ -2562,77 +2564,6 @@ def _end_agent_run_event() -> HookEvent:
     )
 
 
-@pytest.mark.asyncio
-async def test_end_agent_run_allowed_when_bound_task_terminal(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    instance_mgr: AgentStepInstanceManager,
-) -> None:
-    """A run bound to a closed task may end itself despite a step block (#19554)."""
-    _setup_step_workflow(
-        db,
-        manager,
-        instance_mgr,
-        current_step="implement",
-        workflow_data=_end_agent_run_workflow(),
-    )
-    rule_engine, _run_manager, _run_id = _running_rule_engine_with_bound_task(db, task_closed=True)
-
-    response = await rule_engine.evaluate(
-        _end_agent_run_event(), session_id=SESSION_ID, variables={}
-    )
-
-    assert response.decision != "block"
-
-
-@pytest.mark.asyncio
-async def test_end_agent_run_still_blocked_when_bound_task_open(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    instance_mgr: AgentStepInstanceManager,
-) -> None:
-    """The terminal-task valve must not weaken enforcement for open tasks."""
-    _setup_step_workflow(
-        db,
-        manager,
-        instance_mgr,
-        current_step="implement",
-        workflow_data=_end_agent_run_workflow(),
-    )
-    rule_engine, _run_manager, _run_id = _running_rule_engine_with_bound_task(db, task_closed=False)
-
-    response = await rule_engine.evaluate(
-        _end_agent_run_event(), session_id=SESSION_ID, variables={}
-    )
-
-    assert response.decision == "block"
-    assert response.reason is not None
-    assert "end_agent_run" in response.reason
-
-
-@pytest.mark.asyncio
-async def test_end_agent_run_blocked_when_run_has_no_bound_task(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    instance_mgr: AgentStepInstanceManager,
-) -> None:
-    """A run without a bound task gets no valve; the step block stands."""
-    _setup_step_workflow(
-        db,
-        manager,
-        instance_mgr,
-        current_step="implement",
-        workflow_data=_end_agent_run_workflow(),
-    )
-    rule_engine, _run_manager, _run_id = _running_rule_engine(db)
-
-    response = await rule_engine.evaluate(
-        _end_agent_run_event(), session_id=SESSION_ID, variables={}
-    )
-
-    assert response.decision == "block"
-
-
 @pytest.mark.parametrize(
     ("spelling", "canonical"),
     [
@@ -2809,3 +2740,124 @@ class TestProviderToolNameNormalization:
         assert instance.variables.get("review_submitted") is True
         assert response.context is not None
         assert "terminate" in response.context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mcp_key",
+    ["gobby-sessions:feedback", "gobby-skills:get_skill_file", "gobby-skills:get_skill_files"],
+)
+async def test_capability_neutral_tools_pass_step_allowlist(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    mcp_key: str,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    server, tool = mcp_key.split(":")
+    event = _make_event(
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": server,
+                "tool_name": tool,
+            },
+        }
+    )
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [["gobby-agents:end_agent_run"], ["gobby-agents:*"], "all"])
+async def test_end_agent_run_in_exit_step_clears_early_exit_flag(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+    allowed: list[str] | str,
+) -> None:
+    workflow = {"name": "exit", "steps": [{"name": "exit", "allowed_mcp_tools": allowed}]}
+    _setup_step_workflow(db, manager, instance_mgr, current_step="exit", workflow_data=workflow)
+    engine, _, _ = _running_rule_engine_with_bound_task(db, task_closed=False)
+    variables: dict[str, Any] = {"_agent_early_exit_step": "implement"}
+    response = await engine.evaluate(
+        _end_agent_run_event(), session_id=SESSION_ID, variables=variables
+    )
+    assert response.decision == "allow"
+    assert variables["_agent_early_exit_step"] is None
+
+
+@pytest.mark.asyncio
+async def test_end_agent_run_outside_exit_step_requires_blockers(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    engine, _, _ = _running_rule_engine_with_bound_task(db, task_closed=False)
+    response = await engine.evaluate(_end_agent_run_event(), session_id=SESSION_ID, variables={})
+    assert response.decision == "block"
+    assert "must list blockers" in (response.reason or "")
+    assert extract_rule_name(response.reason) == "step-enforcement:developer-workflow/claim"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_arguments", [False, True])
+async def test_end_agent_run_outside_exit_step_with_blockers_flags_early_exit(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+    json_arguments: bool,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    engine, _, _ = _running_rule_engine_with_bound_task(db, task_closed=False)
+    event = _end_agent_run_event()
+    arguments = {"blockers": ["Need credentials"]}
+    event.data["tool_input"]["arguments"] = json.dumps(arguments) if json_arguments else arguments
+    variables: dict[str, Any] = {}
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert response.decision == "allow"
+    assert variables["_agent_early_exit_step"] == "claim"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native_restriction", ["none", "allowlist", "blocklist"])
+async def test_end_agent_run_ignores_explicit_step_block(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+    native_restriction: str,
+) -> None:
+    workflow = _end_agent_run_workflow()
+    if native_restriction == "allowlist":
+        workflow["steps"][1]["allowed_tools"] = ["Read"]
+    elif native_restriction == "blocklist":
+        workflow["steps"][1]["blocked_tools"] = ["mcp__gobby__call_tool"]
+    workflow["steps"][1]["allowed_mcp_tools"] = ["gobby-tasks:close_task"]
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step="implement", workflow_data=workflow
+    )
+    engine, _, _ = _running_rule_engine_with_bound_task(db, task_closed=False)
+    event = _end_agent_run_event()
+    event.data["tool_input"]["arguments"] = {"blockers": ["Need parent decision"]}
+    variables: dict[str, Any] = {}
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert response.decision == "allow"
+    assert variables["_agent_early_exit_step"] == "implement"
+
+
+@pytest.mark.asyncio
+async def test_end_agent_run_bound_task_terminal_is_not_early_exit(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    engine, _, _ = _running_rule_engine_with_bound_task(db, task_closed=True)
+    variables: dict[str, Any] = {"_agent_early_exit_step": "claim"}
+    response = await engine.evaluate(
+        _end_agent_run_event(), session_id=SESSION_ID, variables=variables
+    )
+    assert response.decision == "allow"
+    assert variables["_agent_early_exit_step"] is None

@@ -1,24 +1,6 @@
 tags: [memory-lifecycle, memory, lifecycle, tasks, gobby, default]
 
 rules:
-  queue-task-memory-review-after-close:
-    description: "Queue completed worked leaves for one post-close memory review"
-    event: after_tool
-    enabled: true
-    priority: 13
-    when: >
-      event.data.get('mcp_server') == 'gobby-tasks'
-      and event.data.get('mcp_tool') == 'close_task'
-      and tool_call_succeeded()
-      and isinstance(event.data.get('tool_output'), dict)
-    effects:
-      - type: set_variable
-        variable: _memory_pending_task_reviews
-        value: "queue_memory_review_close(event.data, tool_input)"
-      - type: set_variable
-        variable: _memory_review_stop_delivered
-        value: false
-
   review-closed-task-memories-before-handoff:
     description: "Request the pending memory review before a handoff defers it past the closing context"
     event: before_tool

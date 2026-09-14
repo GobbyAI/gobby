@@ -36,6 +36,7 @@ from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._updates import update_task
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
@@ -4694,7 +4695,6 @@ def test_build_context_project_disabled_agent_override_wins(
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.definitions.agents import AgentDefinitionManager
-    from gobby.workflows.definitions import AgentDefinitionBody
 
     sync_bundled_agents(temp_db)
     AgentDefinitionManager(temp_db).create(
@@ -4702,7 +4702,7 @@ def test_build_context_project_disabled_agent_override_wins(
         project_id=sample_project["id"],
         source="project",
         enabled=False,
-        definition_json=AgentDefinitionBody(
+        definition_json=make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-orchestrator",
             description="Project override",

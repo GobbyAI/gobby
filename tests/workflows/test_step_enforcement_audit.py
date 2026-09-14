@@ -11,13 +11,13 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
     build_step_instance,
 )
+from tests.fixtures.agent_definitions import make_agent_definition
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -109,7 +109,7 @@ def _setup_workflow(
         ],
         "exit_condition": "current_step == 'implement'",
     }
-    definition = AgentDefinitionBody(
+    definition = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="audit-workflow",
         step_workflow=AgentStepWorkflowBody.model_validate(workflow_data),

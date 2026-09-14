@@ -17,6 +17,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "open_tool_errors",
         "servers_listed",
         "step_workflow_complete",
+        "_agent_early_exit_step",
         "tool_block_pending",
         "turn_interrupt_initiated",
         "unlocked_tools",

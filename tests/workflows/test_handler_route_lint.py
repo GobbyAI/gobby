@@ -11,6 +11,7 @@ from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import AgentDefinitionBody, WorkflowDefinition, WorkflowStep
 from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.handler_route_lint import check_handler_routes
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +45,7 @@ def _definition(
 async def test_evaluator_warns_when_success_handler_has_no_failure_route() -> None:
     definition = _definition(success=[_handler("gobby-tasks", "close_task")], error=[])
     result = await evaluate_agent_definition(
-        AgentDefinitionBody(
+        make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name=definition.name,
             provider="claude",

@@ -335,7 +335,8 @@ send_message(
 ## Blocked Child Communication
 
 A `task_blocker` message must identify the assigned task in `metadata.task_id`
-and target the parent session. In configured worker step workflows, successful
+and use `target="parent"`. Spawned agents may send only to this target and
+cannot override `from_session`. In configured worker step workflows, successful
 delivery sets `blocker_handed_off` and advances to the termination step. The worker
 still calls `end_agent_run` with a structured blocker handoff; sending a message
 alone is not a universal process-exit operation. Inspect the installed definition

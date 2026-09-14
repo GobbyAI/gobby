@@ -120,6 +120,7 @@ def _register_session(
     external_id: str,
     *,
     agent_depth: int = 0,
+    parent_session_id: str | None = None,
 ) -> Session:
     return session_manager.register(
         external_id=external_id,
@@ -128,6 +129,7 @@ def _register_session(
         project_id=project_id,
         title=external_id,
         agent_depth=agent_depth,
+        parent_session_id=parent_session_id,
     )
 
 
@@ -1566,3 +1568,66 @@ class TestMailboxBroadcast:
                 target="project",
                 content="  ",
             )
+
+
+@pytest.mark.asyncio
+async def test_parent_target_delivers_to_sender_parent(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions = SessionManager(temp_db)
+    parent = _register_session(sessions, sample_project["id"], "parent")
+    child = _register_session(
+        sessions, sample_project["id"], "child", agent_depth=1, parent_session_id=parent.id
+    )
+    result = await _mailbox(temp_db, sessions).send(
+        from_session_id=child.id, target="parent", content="status"
+    )
+    assert result.recipient_session_ids == [parent.id]
+    assert result.selector_metadata == {"target": "parent", "session_id": parent.id}
+    assert result.target_id is None
+
+
+@pytest.mark.parametrize("target_id", ["other", "", " "])
+def test_parent_target_rejects_target_id(
+    temp_db: HubDatabase, sample_project: dict[str, Any], target_id: str
+) -> None:
+    sessions = SessionManager(temp_db)
+    sender = _register_session(sessions, sample_project["id"], "sender")
+    with pytest.raises(ValueError, match="target_id is not allowed"):
+        _mailbox(temp_db, sessions).resolve_target(
+            from_session_id=sender.id, target="parent", target_id=target_id
+        )
+
+
+def test_parent_target_rejects_sender_without_parent(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions = SessionManager(temp_db)
+    sender = _register_session(sessions, sample_project["id"], "sender", agent_depth=1)
+    with pytest.raises(ValueError, match="Sender session has no parent"):
+        _mailbox(temp_db, sessions).resolve_target(
+            from_session_id=sender.id, target="parent", target_id=None
+        )
+
+
+@pytest.mark.asyncio
+async def test_parent_target_rejects_interactive_sender(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    sessions = SessionManager(temp_db)
+    predecessor = _register_session(sessions, sample_project["id"], "predecessor")
+    successor = _register_session(
+        sessions, sample_project["id"], "successor", parent_session_id=predecessor.id
+    )
+    # The expired predecessor's clear marker resolves back to the sender itself.
+    _consume_clear(temp_db, sessions, predecessor, successor, attempt_id="interactive-parent")
+
+    with pytest.raises(ValueError, match="only available to spawned agent sessions"):
+        await _mailbox(temp_db, sessions).send(
+            from_session_id=successor.id, target="parent", content="status"
+        )
+
+    row = temp_db.fetchone(
+        "SELECT id FROM inter_session_messages WHERE from_session = %s", (successor.id,)
+    )
+    assert row is None

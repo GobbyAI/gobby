@@ -36,7 +36,7 @@ class AgentWorkflows(BaseModel):
 
     pipeline: str | None = None
     rules: list[str] = Field(default_factory=list)
-    rule_selectors: AgentSelector | None = None
+    rule_selectors: AgentSelector
     variable_selectors: AgentSelector | None = None
     skill_selectors: AgentSelector | None = None
     skill_format: str | None = None
@@ -124,7 +124,7 @@ class AgentDefinitionBody(BaseModel):
     base_branch: str = "inherit"
     timeout: float = 0
     # Orchestration
-    workflows: AgentWorkflows = Field(default_factory=AgentWorkflows)
+    workflows: AgentWorkflows
     enabled: bool = True
     skills: dict[str, list[str]] = Field(default_factory=dict)
     # Agent-level tool restrictions (applied regardless of step workflow)

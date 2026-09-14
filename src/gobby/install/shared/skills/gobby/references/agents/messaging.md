@@ -4,6 +4,9 @@ Load when sending or reading cross-session work, blockers, or repository notices
 Use `gobby-agents:send_message`; terminal keystrokes are not a messaging transport.
 Discover the intended session/run/build identity before selecting the target.
 
+Target `parent` resolves the session that spawned the sender, forbids `target_id`,
+and is available only to spawned agents. Spawned agents may use only
+`target="parent"` and cannot override `from_session`.
 Targets `session`, `agent`, and `build` require `target_id`. A targetless `project`
 send coordinates the current repository; targetless `global` reaches other live
 non-system sessions on the sender's machine across projects. Ordinary project
@@ -29,7 +32,7 @@ returns the original wait and expiry, even after completion; use a fresh key
 for a new hold. Preserve `wait_id` and inspect the terminal outcome. Only the
 waiting session can use `cancel_coordination_wait` to cancel its own wait.
 
-For a task blocker, send the parent the failing command, diagnostics, paths,
+For a task blocker, use `target="parent"` and send the failing command, diagnostics, paths,
 impact, and exact task identity in `metadata.task_id`. In configured worker steps,
 a successful matching `message_type="task_blocker"` sets the blocker transition;
 then call `end_agent_run` with the structured blocker handoff when the termination

@@ -154,13 +154,20 @@ def build_agent_exit_notification(
     terminal_reason: AgentRunTerminalReason | None = (
         "task_blocker" if variables.get("blocker_handed_off") is True else None
     )
+    early_exit_step = variables.get("_agent_early_exit_step")
+    if terminal_reason is None and isinstance(early_exit_step, str) and early_exit_step:
+        terminal_reason = "early_exit"
     notify_result: dict[str, Any] = {
-        "status": "blocked" if terminal_reason == "task_blocker" else "success",
+        "status": {"task_blocker": "blocked", "early_exit": "incomplete"}.get(
+            terminal_reason or "", "success"
+        ),
         "run_id": run_id,
         "dirty_paths": dirty_paths,
     }
     if terminal_reason is not None:
         notify_result["terminal_reason"] = terminal_reason
+    if terminal_reason == "early_exit":
+        notify_result["incomplete_step"] = early_exit_step
     verdict = variables.get("adversary_verdict")
     if isinstance(verdict, str) and verdict:
         notify_result["signoff_message"] = verdict

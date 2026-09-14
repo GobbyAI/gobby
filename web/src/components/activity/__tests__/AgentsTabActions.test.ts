@@ -30,6 +30,7 @@ function agentDefinition(): AgentDefInfo {
       sandbox: { filesystem: "workspace-write" },
       workflows: {
         rules: ["review-rules"],
+        rule_selectors: { include: ["tag:review"], exclude: [] },
         skill_selectors: {
           include: ["*", "development-discipline"],
           exclude: ["browser-testing"],
@@ -67,6 +68,7 @@ describe("AgentsTabActions", () => {
     });
     expect(body.workflows).toEqual({
       rules: ["review-rules"],
+      rule_selectors: { include: ["tag:review"], exclude: [] },
       skill_selectors: {
         include: ["*", "development-discipline"],
         exclude: ["browser-testing"],
@@ -76,7 +78,13 @@ describe("AgentsTabActions", () => {
     });
   });
 
-  it("sends null when the final editable workflow values are cleared", () => {
+  it("defaults new drafts to the tag:default rule selector", () => {
+    expect(buildAgentDefinitionBody(createAgentDraft()).workflows).toEqual({
+      rule_selectors: { include: ["tag:default"], exclude: [] },
+    });
+  });
+
+  it("keeps rule selectors when the other editable workflow values are cleared", () => {
     const draft = createAgentDraft();
     draft.form.pipeline = "review";
     draft.rules = ["review-rules"];
@@ -93,11 +101,13 @@ describe("AgentsTabActions", () => {
 
     draft.form.pipeline = "";
     draft.rules = [];
-    draft.ruleSelectors = null;
+    draft.ruleSelectors = { include: [], exclude: [] };
     draft.variables = {};
     draft.skills = [];
 
-    expect(buildAgentDefinitionBody(draft).workflows).toBeNull();
+    expect(buildAgentDefinitionBody(draft).workflows).toEqual({
+      rule_selectors: { include: [], exclude: [] },
+    });
   });
 
   it("builds duplicate payloads without dropping definition fields", () => {

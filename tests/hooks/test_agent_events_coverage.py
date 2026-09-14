@@ -21,6 +21,7 @@ from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged
 from gobby.sessions.turn_lifecycle import TurnDisposition
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -281,7 +282,7 @@ class TestHandleBeforeAgent:
             data={"prompt": "hello"},
             metadata={"_platform_session_id": "sess-1"},
         )
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={
                 "persona": (
                     "## Role\nAct as the daemon.\n\n"
@@ -348,7 +349,7 @@ class TestHandleBeforeAgent:
             data={"prompt": "continue"},
             metadata={"_platform_session_id": "sess-1"},
         )
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             name="backend-developer",
             surfaces=["spawn", "persona"],
             prompts={
@@ -432,7 +433,7 @@ class TestHandleBeforeAgent:
             data={"prompt": "hello"},
             metadata={"_platform_session_id": "sess-1"},
         )
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={
                 "persona": (
                     "## Role\nAct as the operator.\n\n"
@@ -513,7 +514,7 @@ class TestHandleBeforeAgent:
             data={"prompt": "hello"},
             metadata={"_platform_session_id": "sess-1"},
         )
-        agent = AgentDefinitionBody(
+        agent = make_agent_definition(
             prompts={
                 "persona": (
                     "## Role\nAct as the daemon.\n\n"

@@ -382,25 +382,8 @@ def _resolve_active_rule_names(
         if isinstance(data, dict):
             data.setdefault("name", row.name)
         agent = AgentDefinitionBody.model_validate(data)
-    except TypeError as exc:
-        # json.loads plus Pydantic validation should report data issues through
-        # JSONDecodeError/ValidationError. TypeError here signals an unexpected
-        # programming or schema regression, so keep it visible while failing open.
-        logger.exception(
-            "Unexpected TypeError refreshing active rules for agent %s via "
-            "json.loads/AgentDefinitionBody.model_validate: %s",
-            agent_name,
-            exc,
-        )
-        return None
-    except (json.JSONDecodeError, KeyError, ValidationError) as exc:
-        logger.debug(
-            "Failed to refresh active rules for agent %s: %s",
-            agent_name,
-            exc,
-            exc_info=True,
-        )
-        return None
+    except (json.JSONDecodeError, TypeError, KeyError, ValidationError) as exc:
+        raise ValueError(f"Invalid active agent definition {agent_name!r}: {exc}") from exc
 
     rules = RuleDefinitionManager(db).list_all(project_id=project_id, enabled=True)
     active_rules = resolve_rules_for_agent(agent, rules)

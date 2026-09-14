@@ -6,7 +6,7 @@ import pytest
 
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = pytest.mark.unit
 
@@ -17,7 +17,7 @@ class TestLoadAgentBody:
     def test_loads_existing_agent(self, db: HubDatabase, manager: AgentDefinitionManager) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 
-        body = AgentDefinitionBody(
+        body = make_agent_definition(
             prompts={"agent": "Write clean code."},
             name="test-dev-load",
             description="Developer agent",
@@ -26,7 +26,7 @@ class TestLoadAgentBody:
             isolation="worktree",
             base_branch="main",
             timeout=120.0,
-            workflows=AgentWorkflows(rules=["require-task-before-edit", "require-commit"]),
+            workflows=make_agent_workflows(rules=["require-task-before-edit", "require-commit"]),
         )
         manager.create(
             name=body.name,

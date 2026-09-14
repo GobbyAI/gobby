@@ -12,6 +12,11 @@ export interface RuleSelectors {
   exclude: string[];
 }
 
+// Matches the server default for definitions created without workflows.
+function defaultRuleSelectors(): RuleSelectors {
+  return { include: ["tag:default"], exclude: [] };
+}
+
 export interface AgentDefInfo {
   definition: {
     name: string;
@@ -67,7 +72,7 @@ export interface AgentDraft {
   tags: string[];
   workflows: Record<string, unknown>;
   rules: string[];
-  ruleSelectors: RuleSelectors | null;
+  ruleSelectors: RuleSelectors;
   variables: Record<string, unknown>;
   skills: string[];
   steps: WorkflowStep[];
@@ -127,7 +132,7 @@ export function createAgentDraft(): AgentDraft {
     tags: [],
     workflows: {},
     rules: [],
-    ruleSelectors: null,
+    ruleSelectors: defaultRuleSelectors(),
     variables: {},
     skills: [],
     steps: [],
@@ -258,7 +263,7 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
     tags: agent.tags ?? [],
     workflows: { ...workflows },
     rules: Array.isArray(workflows.rules) ? workflows.rules : [],
-    ruleSelectors: workflows.rule_selectors ?? null,
+    ruleSelectors: workflows.rule_selectors ?? defaultRuleSelectors(),
     variables:
       workflows.variables && typeof workflows.variables === "object"
         ? workflows.variables

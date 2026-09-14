@@ -27,7 +27,7 @@ def test_loads_required_skills_before_implementation() -> None:
 
     assert agent["step_workflow"]["variables"]["required_skills"] == [
         "tech-writer",
-        "tasks",
+        "gobby:references/tasks/overview.md",
     ]
     assert steps["claim"]["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert load_step["allowed_mcp_tools"] == [
@@ -35,11 +35,14 @@ def test_loads_required_skills_before_implementation() -> None:
         "gobby-skills:get_skill_file",
     ]
     assert 'get_skill(name="tech-writer")' in load_step["status_message"]
-    assert 'get_skill(name="tasks")' in load_step["status_message"]
+    assert (
+        'get_skill_file(name="gobby", path="references/tasks/overview.md")'
+        in load_step["status_message"]
+    )
     assert load_step["transitions"] == [
         {
             "to": "implement",
-            "when": "all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)",
+            "when": "all(skill_loaded(skill) for skill in vars.required_skills)",
         }
     ]
 
@@ -82,7 +85,7 @@ def test_handoff_transitions_to_end_agent_run_termination() -> None:
             "when": "vars.implementation_complete or vars.blocker_handed_off",
         }
     ]
-    assert "gobby-agents:end_agent_run" in implement["blocked_mcp_tools"]
+    assert "gobby-agents:end_agent_run" not in implement["blocked_mcp_tools"]
     assert terminate["allowed_mcp_tools"] == ["gobby-agents:end_agent_run"]
 
 

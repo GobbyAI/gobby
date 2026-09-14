@@ -392,7 +392,6 @@ step_workflow:
         - "gobby-plans:finalize_plan_review_evidence"
         - "gobby-plans:checkpoint_plan_review_lesson_mint"
         - "gobby-plans:apply_plan_review_repairs"
-        - "gobby-agents:end_agent_run"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
       allowed_mcp_tools:

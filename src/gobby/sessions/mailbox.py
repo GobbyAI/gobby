@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
 DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
-MESSAGE_TARGETS = ("global", "project", "session", "agent", "build")
+MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent", "build")
 AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
 AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
 
@@ -261,6 +261,31 @@ class MailboxService:
                 recipient_session_ids=selection.recipient_session_ids,
                 selector_metadata=selection.selector_metadata,
                 fanout=True,
+            )
+
+        if normalized_target == "parent":
+            if target_id is not None:
+                raise ValueError("target_id is not allowed when target='parent'")
+            sender = self._session_manager.get(from_session_id)
+            if sender is None:
+                raise ValueError("Sender session not found")
+            # parent_session_id is lineage: an interactive session's parent is the
+            # clear predecessor it continues, which can resolve back to the sender.
+            if not (sender.agent_run_id or sender.agent_depth):
+                raise ValueError("target='parent' is only available to spawned agent sessions")
+            if not sender.parent_session_id:
+                raise ValueError("Sender session has no parent")
+            recipient_id = self._validate_direct_recipient(
+                from_session_id=from_session_id,
+                to_session_id=sender.parent_session_id,
+                project_id=project_id,
+                allow_cross_project=True,
+            )
+            return MailboxTargetResolution(
+                target="parent",
+                target_id=None,
+                recipient_session_ids=[recipient_id],
+                selector_metadata={"target": "parent", "session_id": recipient_id},
             )
 
         if clean_target_id is None:

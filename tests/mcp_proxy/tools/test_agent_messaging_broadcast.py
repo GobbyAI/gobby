@@ -29,6 +29,7 @@ class MockSession:
     project_id: str = "project-1"
     status: str = "active"
     agent_depth: int = 0
+    agent_run_id: str | None = None
 
 
 @dataclass

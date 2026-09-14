@@ -16,6 +16,7 @@ from psycopg import sql
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.integration
 
@@ -72,7 +73,7 @@ def _workflow(
 def _agent(
     name: str, steps: list[str], variables: dict[str, Any] | None = None
 ) -> AgentDefinitionBody:
-    return AgentDefinitionBody(
+    return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         step_workflow=_workflow(name, steps, variables),

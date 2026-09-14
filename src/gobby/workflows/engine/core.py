@@ -860,13 +860,10 @@ class RuleEngine(
                 if isinstance(data, str):
                     data = json.loads(data)
                 if isinstance(data, dict):
-                    payload = dict(data)
-                    payload.setdefault("name", row.name)
-                    agent = AgentDefinitionBody.model_validate(payload)
-            except (json.JSONDecodeError, TypeError) as exc:
-                logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
-            except ValidationError as exc:
-                logger.debug("Failed to validate active agent definition %s: %s", agent_type, exc)
+                    data = {"name": row.name, **data}
+                agent = AgentDefinitionBody.model_validate(data)
+            except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+                raise ValueError(f"Invalid active agent definition {agent_type!r}: {exc}") from exc
 
         self._agent_def_cache[cache_key] = agent
         return agent

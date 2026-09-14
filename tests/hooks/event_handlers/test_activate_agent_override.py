@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, call, patch
 
@@ -38,7 +39,7 @@ def _make_agent_body(name: str = "test-agent") -> MagicMock:
     body.workflows.variables = None
     body.workflows.rules = []
     body.workflows.skills = []
-    body.workflows.rule_selectors = None
+    body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
     body.rules = []
     body.skills = []
     body.variables = None

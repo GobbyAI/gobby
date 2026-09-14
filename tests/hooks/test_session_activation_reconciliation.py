@@ -1494,3 +1494,19 @@ def test_hook_manager_reconciles_before_rules(
 
     assert len(call_order) == 3
     assert call_order == ["reconcile", "rules", "handler"]
+
+
+@pytest.mark.parametrize("workflows", [None, {}, {"rule_selectors": None}])
+def test_active_rule_resolution_rejects_invalid_selectors(
+    db: HubDatabase, project_id: str, workflows: dict[str, object] | None
+) -> None:
+    from gobby.hooks.session_activation import _resolve_active_rule_names
+
+    AgentDefinitionManager(db).create(
+        name="invalid-selectors",
+        source="custom",
+        project_id=project_id,
+        definition_json=json.dumps({"name": "invalid-selectors", "workflows": workflows}),
+    )
+    with pytest.raises(ValueError, match="Invalid active agent definition"):
+        _resolve_active_rule_names(db, "invalid-selectors", project_id)

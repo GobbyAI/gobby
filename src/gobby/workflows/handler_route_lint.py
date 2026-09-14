@@ -18,7 +18,6 @@ _RUNTIME_HANDLER_VARIABLES = {
     "assigned_task_id",
     "assigned_task_uuid",
     "parent_session_id",
-    "parent_session_ref",
 }
 
 
