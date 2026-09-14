@@ -1041,17 +1041,22 @@ class TestCreateTaskTool:
                 },
             )
 
+            recovery = (
+                "Session already owns open claimed task #40. "
+                "Finish and close it, or for a genuine blocker or explicitly directed recovery use "
+                'escalate_task(task_id="#40", reason="<concrete reason>") '
+                "to release ownership. Alternatively, arrange an authorized transfer to another "
+                "session with claim capacity. force=true does not bypass your existing claim. "
+                "Do not escalate to bypass validation, committing, or closing."
+            )
             assert result == {
                 "success": False,
                 "status": "error",
-                "error": "Session already owns open claimed task #40",
+                "error": recovery,
                 "error_code": "TASK_CLAIM_CONFLICT",
                 "claimed_task_id": "550e8400-e29b-41d4-a716-446655440040",
                 "claimed_task_ref": "#40",
-                "message": (
-                    "Task was not created. Finish and close task #40 before creating and "
-                    "claiming another task."
-                ),
+                "message": f"Task was not created. {recovery}",
             }
             mock_task_manager.create_task_with_decomposition.assert_not_called()
             mock_task_manager.get_task.assert_not_called()

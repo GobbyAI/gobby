@@ -329,10 +329,13 @@ class TestClaimTaskTool:
             )
 
     @pytest.mark.asyncio
-    async def test_delegated_child_with_an_open_claim_is_refused(
-        self, mock_task_manager: MagicMock, parent_owned_task: Task
+    @pytest.mark.parametrize("claim_mode", ["ordinary", "forced", "delegated"])
+    async def test_session_with_an_open_claim_is_refused(
+        self, mock_task_manager: MagicMock, parent_owned_task: Task, claim_mode: str
     ) -> None:
-        """Delegation does not bypass the child session's own claim capacity."""
+        """Every claim route reports actionable recovery for exhausted capacity."""
+        if claim_mode == "ordinary":
+            parent_owned_task.claimed_by_session_id = None
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -354,16 +357,32 @@ class TestClaimTaskTool:
             )
             registry = create_task_registry(mock_task_manager)
 
-            result = await registry.call("claim_task", {"task_id": parent_owned_task.id})
+            result = await registry.call(
+                "claim_task",
+                {"task_id": parent_owned_task.id, "force": claim_mode == "forced"},
+            )
 
             assert result["error_code"] == "TASK_CLAIM_CONFLICT"
             assert result["claimed_task_ref"] == "#41"
-            assert result["message"] == ("Finish and close task #41 before claiming another task.")
-            mock_task_manager.claim_task_for_agent.assert_called_once_with(
-                parent_owned_task.id,
-                session_id="my-session-id",
-                expected_owner="parent-session-id",
+            assert result["message"] == result["error"]
+            assert 'escalate_task(task_id="#41", reason="<concrete reason>")' in result["message"]
+            assert "genuine blocker or explicitly directed recovery" in result["message"]
+            assert "force=true does not bypass your existing claim" in result["message"]
+            assert (
+                "Do not escalate to bypass validation, committing, or closing." in result["message"]
             )
+            if claim_mode == "delegated":
+                mock_task_manager.claim_task_for_agent.assert_called_once_with(
+                    parent_owned_task.id,
+                    session_id="my-session-id",
+                    expected_owner="parent-session-id",
+                )
+            else:
+                mock_task_manager.claim_task_for_agent.assert_called_once_with(
+                    parent_owned_task.id,
+                    session_id="my-session-id",
+                    force=claim_mode == "forced",
+                )
 
     @pytest.mark.asyncio
     async def test_delegated_child_cannot_claim_third_party_owned_task_without_force(

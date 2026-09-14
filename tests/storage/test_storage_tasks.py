@@ -1426,6 +1426,56 @@ class TestLocalTaskManager:
             session.id
         )
 
+    @pytest.mark.parametrize("recovery", ["escalation", "transfer"])
+    def test_agent_claim_recovery_releases_capacity(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+        recovery: str,
+    ) -> None:
+        owner = session_manager.register(
+            external_id=f"claim-recovery-{recovery}",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        receiver = session_manager.register(
+            external_id=f"claim-receiver-{recovery}",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        first = task_manager.create_task(
+            project_id, "Existing claim", validation_criteria=VALIDATION_CRITERIA
+        )
+        second = task_manager.create_task(
+            project_id, "Next claim", validation_criteria=VALIDATION_CRITERIA
+        )
+        task_manager.claim_task_for_agent(first.id, owner.id)
+
+        # Force cannot bypass the receiving session's capacity guard.
+        for force in (False, True):
+            with pytest.raises(AgentTaskClaimConflictError):
+                task_manager.claim_task_for_agent(second.id, owner.id, force=force)
+        assert task_manager.get_task(first.id).claimed_by_session_id == owner.id
+        assert task_manager.get_task(second.id).claimed_by_session_id is None
+
+        if recovery == "escalation":
+            escalated = task_manager.escalate_task(first.id, reason="Blocked by external decision")
+            assert escalated.claimed_by_session_id is None
+            restored = task_manager.de_escalate_task(first.id, reason="Decision resolved")
+            assert restored.claimed_by_session_id is None
+            assert not restored.is_escalated
+        else:
+            transferred = task_manager.claim_task_for_agent(first.id, receiver.id, force=True)
+            assert transferred.claimed_by_session_id == receiver.id
+
+        assert (
+            task_manager.claim_task_for_agent(second.id, owner.id).claimed_by_session_id == owner.id
+        )
+        assert not is_task_closed(task_manager.get_task(first.id))
+
     def test_agent_create_and_claim_refusal_does_not_create_task(
         self,
         task_manager: LocalTaskManager,

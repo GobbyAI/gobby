@@ -155,9 +155,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 TaskToolErrorCode.TASK_CLAIM_CONFLICT,
                 claimed_task_id=e.claimed_task_id,
                 claimed_task_ref=e.claimed_task_ref,
-                message=(
-                    f"Finish and close task {e.claimed_task_ref} before claiming another task."
-                ),
+                message=str(e),
             )
         except TaskClosedError as e:
             return task_error(str(e), TaskToolErrorCode.TASK_CLOSED)

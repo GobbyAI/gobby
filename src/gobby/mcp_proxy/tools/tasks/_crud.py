@@ -246,10 +246,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 TaskToolErrorCode.TASK_CLAIM_CONFLICT,
                 claimed_task_id=e.claimed_task_id,
                 claimed_task_ref=e.claimed_task_ref,
-                message=(
-                    f"Task was not created. Finish and close task {e.claimed_task_ref} "
-                    "before creating and claiming another task."
-                ),
+                message=f"Task was not created. {e}",
             )
 
         if affected_files:
