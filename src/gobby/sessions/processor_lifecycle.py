@@ -32,6 +32,7 @@ class SessionFlushResult:
 
 class ProcessorLifecycleMixin:
     _task: asyncio.Task[None] | None
+    _owner_loop: asyncio.AbstractEventLoop | None
 
     async def start(self: ProcessorHost) -> None:
         """Start the processing loop."""
@@ -39,6 +40,7 @@ class ProcessorLifecycleMixin:
             return
 
         self._running = True
+        self._owner_loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._loop())
         logger.info("SessionMessageProcessor started")
 
@@ -117,6 +119,15 @@ class ProcessorLifecycleMixin:
         Useful when stats need to be up-to-date before reading them
         (e.g., at SESSION_END before completing an agent run).
         """
+        owner_loop = self._owner_loop
+        if owner_loop is not None and owner_loop is not asyncio.get_running_loop():
+            # Processor state and its per-session asyncio locks belong to the loop that
+            # started it; wake delivery and hook handlers call in from other loops.
+            if not owner_loop.is_running():
+                return SessionFlushResult(flushed=False, error="processor loop is not running")
+            return await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(self.flush_session(session_id), owner_loop)
+            )
         transcript_path = self._active_sessions.get(session_id)
         if transcript_path is None:
             return SessionFlushResult(flushed=False, error="session is not registered")

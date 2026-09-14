@@ -62,6 +62,7 @@ class ProcessorHost(Protocol):
     _stats_hydration_skipped: set[str]
     _running: bool
     _task: asyncio.Task[None] | None
+    _owner_loop: asyncio.AbstractEventLoop | None
 
     def _inc_counter(self, name: str) -> None: ...
 

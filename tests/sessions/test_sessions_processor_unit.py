@@ -886,6 +886,54 @@ class TestProcessSession:
         assert "Failed to flush session transcript" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_flush_session_from_foreign_loop_runs_on_processor_loop(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
+        # Wake delivery flushes from other event loops, but the per-session asyncio.Lock
+        # binds to the processor's loop ("is bound to a different event loop").
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(_codex_response_message("user", "test"))
+        processor.register_session("session-1", str(transcript), source="codex")
+        batch_loops: list[asyncio.AbstractEventLoop] = []
+        original_process_batch = processor._process_parsed_batch
+
+        async def recording_process_batch(
+            session_id: str, messages: list[ParsedMessage]
+        ) -> MessageStats:
+            batch_loops.append(asyncio.get_running_loop())
+            return await original_process_batch(session_id, messages)
+
+        with (
+            patch.object(processor, "_loop", new=AsyncMock()),
+            patch.object(processor, "_process_parsed_batch", side_effect=recording_process_batch),
+        ):
+            await processor.start()
+            result = await asyncio.to_thread(asyncio.run, processor.flush_session("session-1"))
+            await processor.stop()
+
+        assert result.flushed is True
+        assert batch_loops == [asyncio.get_running_loop()]
+        assert processor._stats["session-1"]["message_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_flush_session_reports_stopped_processor_loop(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.touch()
+        processor.register_session("session-1", str(transcript))
+        with (
+            patch.object(processor, "_loop", new=AsyncMock()),
+            patch.object(processor, "_process_session", new_callable=AsyncMock) as process_session,
+        ):
+            await asyncio.to_thread(asyncio.run, processor.start())
+            result = await processor.flush_session("session-1")
+
+        assert result.flushed is False
+        assert result.error == "processor loop is not running"
+        process_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_concurrent_poll_and_flush_do_not_double_process_jsonl(
         self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:

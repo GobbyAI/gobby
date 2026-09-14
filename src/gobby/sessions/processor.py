@@ -92,6 +92,7 @@ class SessionMessageProcessor(
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
 
     def set_hook_manager(self, hook_manager: "HookManager | None") -> None:
         """Wire the hook manager after application services finish starting."""
