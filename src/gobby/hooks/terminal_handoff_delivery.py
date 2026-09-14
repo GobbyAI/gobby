@@ -22,7 +22,9 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
 )
 from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.handoff import (
+    HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_UNAVAILABLE_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     ClaimedHandoffDelivery,
     claim_staged_handoff_delivery,
@@ -50,6 +52,15 @@ _TERMINAL_SOURCES = frozenset(
 _RETRY_GUIDANCE = (
     "Terminal handoff delivery failed after set_handoff returned. "
     "Retry gobby-sessions:set_handoff before calling any other tool."
+)
+# Consecutive failures per session before terminal delivery is abandoned: a CLI
+# that cannot take the command twice will not take it a ninth time (#22364).
+_MAX_CONSECUTIVE_DELIVERY_FAILURES = 2
+_ABANDONED_ERROR_CODE = "handoff_delivery_abandoned"
+_ABANDON_GUIDANCE = (
+    "Terminal handoff delivery failed twice in a row; delivery is abandoned for this "
+    "session. Do not call set_handoff again. Continue the task with the remaining "
+    "context and keep tool results small."
 )
 
 
@@ -345,20 +356,32 @@ def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bo
     return result.get("compacted") is True
 
 
+def _consecutive_delivery_failures(db: HubDatabase, session_id: str) -> int:
+    count = (
+        SessionVariableManager(db).get_variables(session_id).get(HANDOFF_DELIVERY_FAILURES_VARIABLE)
+    )
+    return count if isinstance(count, int) and not isinstance(count, bool) else 0
+
+
 def _compensate_delivery_failure(
     db: HubDatabase,
     claimed: ClaimedHandoffDelivery | StagedTerminalHandoff,
     reason: str,
 ) -> None:
-    failure = {
+    failures = _consecutive_delivery_failures(db, claimed.session_id) + 1
+    abandoned = failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
+    failure: dict[str, Any] = {
         "compacted": False,
-        "delivery_failed": True,
+        "delivery_failed": not abandoned,
         "delivery_pending": False,
+        "delivery_abandoned": abandoned,
         "attempt_id": claimed.attempt_id,
         "clear_session": claimed.clear_session,
         "reason": reason,
-        "retry_guidance": _RETRY_GUIDANCE,
+        "retry_guidance": _ABANDON_GUIDANCE if abandoned else _RETRY_GUIDANCE,
     }
+    if abandoned:
+        failure["error_code"] = _ABANDONED_ERROR_CODE
     if claimed.clear_session:
         restored = clear_failed_attempt(
             db,
@@ -378,6 +401,21 @@ def _compensate_delivery_failure(
             claimed.session_id,
             {HANDOFF_DISPATCH_GATE_VARIABLE: failure},
         )
+    updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
+    if abandoned:
+        # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
+        updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
+    SessionVariableManager(db).merge_variables(claimed.session_id, updates)
+    if abandoned:
+        logger.warning(
+            "Terminal handoff delivery abandoned for session %s after %d consecutive "
+            "failures; attempt %s: %s",
+            claimed.session_id,
+            failures,
+            claimed.attempt_id,
+            reason,
+        )
+        return
     logger.warning(
         "Terminal handoff delivery failed for session %s attempt %s: %s",
         claimed.session_id,

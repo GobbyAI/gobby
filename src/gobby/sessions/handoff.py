@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 PENDING_HANDOFF_VARIABLE = "set_handoff_pending"
 HANDOFF_PULL_PENDING_VARIABLE = "handoff_pull_pending"
 HANDOFF_DISPATCH_GATE_VARIABLE = "context_compact_handoff_result"
+HANDOFF_UNAVAILABLE_VARIABLE = "context_compact_handoff_unavailable"
+HANDOFF_DELIVERY_FAILURES_VARIABLE = "context_compact_handoff_delivery_failures"
 
 _OPTIONAL_FEEDBACK_FIELDS = ("suggestion", "disposition")
 

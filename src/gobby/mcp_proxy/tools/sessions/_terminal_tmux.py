@@ -219,6 +219,22 @@ async def _interrupt_turn(
     return True, None, None
 
 
+def _turn_already_settled(
+    turn_settled: Callable[[], bool | None] | None,
+    session_id: str,
+    command: str,
+) -> bool:
+    """Return whether the CLI's transcript shows no running turn, so no interrupt is sent."""
+    if turn_settled is None or turn_settled() is not True:
+        return False
+    logger.info(
+        "Session %s has no running turn; submitting %s without an interrupt",
+        session_id,
+        command,
+    )
+    return True
+
+
 async def _wait_for_compaction_rejection(
     pane: PaneIO,
     before_command: str | None,
@@ -252,17 +268,22 @@ async def _send_terminal_compaction_command(
     schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
     continuation_readiness_capture_lines: int | None = None,
     observe_interrupt: Callable[[], bool | None] | None = None,
+    turn_settled: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Interrupt the turn, drain the composer, submit the command, watch for a rejection.
+    """Interrupt a live turn, drain the composer, submit the command, watch for a rejection.
 
     ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
     transcript observer for CLIs that record interrupts, and its absence keeps the
-    blind interrupt path for CLIs that do not. A CLI that rejects the command
-    because its turn is still running (Grok) is interrupted again and the command
-    resubmitted once before the delivery fails.
+    blind interrupt path for CLIs that do not. ``turn_settled`` reports whether the
+    CLI's own transcript shows its last turn ended: a settled turn is never
+    interrupted (Ctrl+C on an idle Codex or Grok composer quits or escalates toward
+    quit), so the command is submitted directly and the success detail carries
+    ``interrupted: False``. A CLI that rejects the command because its turn is
+    still running (Grok) is interrupted again and the command resubmitted once
+    before the delivery fails.
     """
     continuation_pending = False
     interrupt_key = _compact_interrupt_key(cli_source)
@@ -280,6 +301,7 @@ async def _send_terminal_compaction_command(
 
     readiness_before_command: str | None = None
     rejection: dict[str, str] | None = None
+    interrupt_sent = False
     for resubmission in range(1 + _COMPACTION_REJECTION_RETRIES):
         if resubmission:
             logger.warning(
@@ -290,17 +312,20 @@ async def _send_terminal_compaction_command(
                 resubmission,
                 _COMPACTION_REJECTION_RETRIES,
             )
-        interrupted, reason, detail = await _interrupt_turn(
-            pane,
-            interrupt_key,
-            session_id,
-            observe_interrupt,
-            settle_seconds=interrupt_seconds,
-        )
-        if not interrupted:
-            if continuation_pending:
-                clear_continuation_pending()
-            return False, reason, False, detail
+        # A rejection proves the turn is live, so only the first submission may skip.
+        if resubmission or not _turn_already_settled(turn_settled, session_id, command):
+            interrupted, reason, detail = await _interrupt_turn(
+                pane,
+                interrupt_key,
+                session_id,
+                observe_interrupt,
+                settle_seconds=interrupt_seconds,
+            )
+            if not interrupted:
+                if continuation_pending:
+                    clear_continuation_pending()
+                return False, reason, False, detail
+            interrupt_sent = True
 
         before_command = await _capture_pane_snapshot(pane)
         readiness_before_command = before_command
@@ -358,7 +383,7 @@ async def _send_terminal_compaction_command(
             "SessionStart fallback remains pending",
             session_id,
         )
-    return True, None, continuation_pending, None
+    return True, None, continuation_pending, None if interrupt_sent else {"interrupted": False}
 
 
 def _resolve_tmux_target(

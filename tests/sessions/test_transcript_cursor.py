@@ -9,9 +9,11 @@ import pytest
 
 from gobby.sessions.transcript_cursor import (
     ClaudeTranscriptCursor,
+    CodexRolloutCursor,
     GrokEventsCursor,
     TranscriptObservationError,
     build_interrupt_observer,
+    build_turn_settled_observer,
 )
 
 REJECTED_TOOL_RECORD = (
@@ -78,6 +80,25 @@ GROK_TOOL_CANCELLED_RECORD = (
     ).encode()
     + b"\n"
 )
+
+
+# Grok 1.0.30 events.jsonl turn start (observed 2026-09-14, fields beyond ``type`` elided).
+GROK_STARTED_RECORD = (
+    json.dumps(
+        {"ts": "2026-09-14T16:13:00.000Z", "type": "turn_started", "turn_number": 3}
+    ).encode()
+    + b"\n"
+)
+
+
+def _codex_event(payload_type: str) -> bytes:
+    return json.dumps({"type": "event_msg", "payload": {"type": payload_type}}).encode() + b"\n"
+
+
+CODEX_STARTED_RECORD = _codex_event("task_started")
+CODEX_COMPLETED_RECORD = _codex_event("task_complete")
+CODEX_ABORTED_RECORD = _codex_event("turn_aborted")
+CODEX_TOKEN_RECORD = _codex_event("token_count")
 
 
 def _append_bytes(path: Path, content: bytes) -> None:
@@ -176,3 +197,61 @@ def test_observer_factory_fails_closed_then_reports_lost_observation(tmp_path: P
     transcript.write_bytes(b"")
 
     assert observer() is None
+
+
+# Turn state decides whether the handoff delivery may interrupt at all: a settled
+# turn is compacted without an interrupt key, a live one is interrupted first.
+def test_grok_cursor_reports_whether_the_last_turn_ended(tmp_path: Path) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_bytes(b"")
+    cursor = GrokEventsCursor.at_eof(events)
+
+    assert cursor.turn_settled() is None
+    _append_bytes(events, GROK_STARTED_RECORD)
+    assert cursor.turn_settled() is False
+    _append_bytes(events, GROK_TOOL_CANCELLED_RECORD + GROK_COMPLETED_RECORD)
+    assert cursor.turn_settled() is True
+    _append_bytes(events, GROK_STARTED_RECORD)
+    assert cursor.turn_settled() is False
+    _append_bytes(events, GROK_CANCELLED_RECORD)
+    assert cursor.turn_settled() is True
+
+
+def test_codex_cursor_reports_whether_the_last_turn_ended(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_bytes(CODEX_TOKEN_RECORD)
+    cursor = CodexRolloutCursor.at_eof(rollout)
+
+    assert cursor.turn_settled() is None
+    _append_bytes(rollout, CODEX_STARTED_RECORD + CODEX_TOKEN_RECORD)
+    assert cursor.turn_settled() is False
+    _append_bytes(rollout, CODEX_COMPLETED_RECORD)
+    assert cursor.turn_settled() is True
+    _append_bytes(rollout, CODEX_STARTED_RECORD)
+    assert cursor.turn_settled() is False
+    _append_bytes(rollout, CODEX_ABORTED_RECORD)
+    assert cursor.turn_settled() is True
+
+
+def test_turn_settled_observer_covers_codex_and_grok_only(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_bytes(b"")
+    assert build_turn_settled_observer("claude", transcript, session_id="#1") is None
+    assert build_turn_settled_observer("droid", transcript, session_id="#1") is None
+    assert build_turn_settled_observer(None, transcript, session_id="#1") is None
+
+    codex = build_turn_settled_observer("codex", transcript, session_id="#1")
+    assert codex is not None
+    assert codex() is None
+    _append_bytes(transcript, CODEX_STARTED_RECORD)
+    assert codex() is False
+
+    updates = tmp_path / "updates.jsonl"
+    updates.write_bytes(b"")
+    events = tmp_path / "events.jsonl"
+    events.write_bytes(GROK_STARTED_RECORD + GROK_COMPLETED_RECORD)
+    grok = build_turn_settled_observer("grok", updates, session_id="#1")
+    assert grok is not None
+    assert grok() is True
+    events.unlink()
+    assert grok() is None

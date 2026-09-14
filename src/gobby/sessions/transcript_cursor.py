@@ -7,6 +7,12 @@ Codex appends ``turn_aborted`` to its rollout, Claude Code appends a user record
 carrying ``[Request interrupted by user...]`` or a user-rejected tool result, and
 Grok appends a cancelled ``turn_ended`` to the ``events.jsonl`` beside its
 registered ``updates.jsonl`` transcript.
+
+The same files say whether there is a turn to interrupt at all: Codex brackets a
+turn with ``task_started`` and ``task_complete``/``turn_aborted``, Grok with
+``turn_started`` and ``turn_ended``. A settled turn is compacted without an
+interrupt key, because Ctrl+C on an idle Codex composer quits and on an idle Grok
+composer escalates toward quit (#22364).
 """
 
 from __future__ import annotations
@@ -29,17 +35,27 @@ __all__ = [
     "GROK_EVENTS_FILENAME",
     "GrokEventsCursor",
     "InterruptObserver",
+    "TURN_SETTLED_SOURCES",
     "TranscriptObservationError",
     "TranscriptTailCursor",
+    "TurnSettledObserver",
     "build_interrupt_observer",
+    "build_turn_settled_observer",
 ]
 
 logger = logging.getLogger(__name__)
 
 InterruptObserver = Callable[[], bool | None]
+TurnSettledObserver = Callable[[], bool | None]
 
 # CLIs whose transcripts record interrupts; every other CLI keeps the blind path.
 INTERRUPT_OBSERVED_SOURCES = frozenset({"claude", "codex", "grok"})
+# CLIs whose transcripts record turn boundaries; every other CLI is interrupted first.
+TURN_SETTLED_SOURCES = frozenset({"codex", "grok"})
+# Turn state is decided from the newest records only.
+_TURN_STATE_TAIL_BYTES = 64 * 1024
+_CODEX_TURN_STARTED_TYPE = "task_started"
+_CODEX_TURN_ENDED_TYPES = frozenset({"task_complete", "turn_aborted"})
 
 CLAUDE_INTERRUPT_PREFIX = "[Request interrupted by user"
 CLAUDE_USER_REJECTED = "user-rejected"
@@ -115,6 +131,32 @@ class TranscriptTailCursor:
             if isinstance(record, dict):
                 yield record
 
+    def tail_records(self, *, max_bytes: int = _TURN_STATE_TAIL_BYTES) -> list[dict[str, Any]]:
+        """Return the complete JSON object records within the last ``max_bytes`` of the file."""
+        try:
+            with self.path.open("rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                start = max(0, stream.tell() - max_bytes)
+                stream.seek(start)
+                tail = stream.read()
+        except OSError as exc:
+            raise TranscriptObservationError(
+                f"transcript became unavailable: {self.path}: {exc}"
+            ) from exc
+        if start:
+            _, separator, tail = tail.partition(b"\n")
+            if not separator:
+                return []
+        records: list[dict[str, Any]] = []
+        for line in tail.splitlines():
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+        return records
+
     def _read_appended_bytes(self) -> bytes:
         try:
             path_stat = self.path.stat()
@@ -149,6 +191,19 @@ class TranscriptTailCursor:
 @dataclass
 class CodexRolloutCursor(TranscriptTailCursor):
     """Codex rollout cursor: a fresh ``turn_aborted`` event confirms the interrupt."""
+
+    def turn_settled(self) -> bool | None:
+        """Return whether the rollout's last turn ended; ``None`` without a turn record."""
+        for record in reversed(self.tail_records()):
+            if record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload")
+            payload_type = payload.get("type") if isinstance(payload, dict) else None
+            if payload_type in _CODEX_TURN_ENDED_TYPES:
+                return True
+            if payload_type == _CODEX_TURN_STARTED_TYPE:
+                return False
+        return None
 
     def saw_fresh_turn_aborted(self) -> bool:
         """Return whether newly appended complete records contain turn_aborted."""
@@ -207,6 +262,16 @@ class GrokEventsCursor(TranscriptTailCursor):
             ) from exc
         return cls.at_eof(events_path)
 
+    def turn_settled(self) -> bool | None:
+        """Return whether the last recorded turn ended; ``None`` without a turn record."""
+        for record in reversed(self.tail_records()):
+            kind = record.get("type")
+            if kind == "turn_ended":
+                return True
+            if kind == "turn_started":
+                return False
+        return None
+
     def saw_fresh_turn_cancelled(self) -> bool:
         """Return whether newly appended records contain a cancelled turn_ended."""
         for record in self.fresh_records():
@@ -250,3 +315,39 @@ def build_interrupt_observer(
             return None
 
     return observe_interrupt
+
+
+def build_turn_settled_observer(
+    source: str | None,
+    transcript_path: str | Path | None,
+    *,
+    session_id: str | None,
+) -> TurnSettledObserver | None:
+    """Return an observer reporting whether the CLI's last turn already ended.
+
+    Returns ``None`` for CLIs that do not record turn boundaries, which keeps the
+    interrupt-first path. Raises ``TranscriptObservationError`` when the transcript
+    cannot be opened; an observer that later loses its file reports ``None``
+    (unknown), so the caller interrupts as before.
+    """
+    if source not in TURN_SETTLED_SOURCES:
+        return None
+    cursor: CodexRolloutCursor | GrokEventsCursor
+    if source == "codex":
+        cursor = CodexRolloutCursor.at_eof(transcript_path)
+    else:
+        cursor = GrokEventsCursor.beside_transcript(transcript_path)
+
+    def turn_settled() -> bool | None:
+        try:
+            return cursor.turn_settled()
+        except TranscriptObservationError as exc:
+            logger.warning(
+                "Lost %s turn-state observation for session %s: %s",
+                source,
+                session_id,
+                exc,
+            )
+            return None
+
+    return turn_settled

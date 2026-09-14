@@ -10,10 +10,13 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.sessions.handoff import (
+    HANDOFF_DELIVERY_FAILURES_VARIABLE,
+    HANDOFF_UNAVAILABLE_VARIABLE,
+)
 from gobby.workflows.observer_context_usage import (
     BLOCK_MESSAGE_VARIABLE,
     HANDOFF_RESULT_VARIABLE,
-    HANDOFF_UNAVAILABLE_VARIABLE,
     PRESSURE_BAND_VARIABLE,
     TOOL_CALLS_SINCE_NUDGE_VARIABLE,
     UNKNOWN_ANNOUNCED_VARIABLE,
@@ -269,7 +272,10 @@ def test_missing_usage_writes_none_band() -> None:
     assert variables[BLOCK_MESSAGE_VARIABLE] == ""
 
 
-def test_non_retryable_handoff_failure_caps_epoch_at_warn() -> None:
+# A headless spawned run can never receive a compaction command, so its refusal
+# must lift the handoff requirement instead of driving a re-stage loop (#22364).
+@pytest.mark.parametrize("error_code", ["terminal_target_unavailable", "headless_agent_run"])
+def test_non_retryable_handoff_failure_caps_epoch_at_warn(error_code: str) -> None:
     variables = _variables()
     manager = _SessionManager(300_000, 1_000_000)
     failed = _set_handoff_event(
@@ -278,7 +284,7 @@ def test_non_retryable_handoff_failure_caps_epoch_at_warn() -> None:
             "result": {
                 "compacted": False,
                 "reason": "no terminal target",
-                "error_code": "terminal_target_unavailable",
+                "error_code": error_code,
             },
         }
     )
@@ -353,6 +359,7 @@ def test_get_handoff_resets_band_counter_and_epoch_flags() -> None:
             TOOL_CALLS_SINCE_NUDGE_VARIABLE: 3,
             HANDOFF_UNAVAILABLE_VARIABLE: True,
             UNKNOWN_ANNOUNCED_VARIABLE: True,
+            HANDOFF_DELIVERY_FAILURES_VARIABLE: 2,
         }
     )
 
@@ -363,6 +370,7 @@ def test_get_handoff_resets_band_counter_and_epoch_flags() -> None:
     assert variables[BLOCK_MESSAGE_VARIABLE] == ""
     assert variables[HANDOFF_UNAVAILABLE_VARIABLE] is False
     assert variables[UNKNOWN_ANNOUNCED_VARIABLE] is False
+    assert variables[HANDOFF_DELIVERY_FAILURES_VARIABLE] == 0
 
 
 def test_plan_mode_returns_before_turn_accounting() -> None:

@@ -59,6 +59,8 @@ class _GrokPane:
 async def _send(
     pane: _GrokPane,
     observe: Callable[[], bool | None] | None,
+    *,
+    turn_settled: Callable[[], bool | None] | None = None,
 ) -> tuple[tuple[bool, str | None, bool, dict[str, object] | None], MagicMock, MagicMock]:
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)
@@ -70,6 +72,7 @@ async def _send(
         mark_continuation_pending=mark,
         clear_continuation_pending=clear,
         observe_interrupt=observe,
+        turn_settled=turn_settled,
         settle_seconds=_SETTLE,
     )
     return result, mark, clear
@@ -166,3 +169,50 @@ async def test_grok_compaction_rejected_twice_fails_the_delivery() -> None:
     assert pane.typed == [_COMMAND, _COMMAND]
     mark.assert_called_once()
     clear.assert_called_once()
+
+
+# A settled turn (the CLI's own transcript shows its last turn ended) must never be
+# interrupted: Grok's Ctrl+C on an idle composer escalates toward quit and Codex's
+# quits outright. The command is submitted directly and the result says so.
+@pytest.mark.asyncio
+async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
+    pane = _GrokPane()
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
+
+    assert result == (True, None, True, {"interrupted": False})
+    assert pane.keys == [*_DRAIN, "enter"]
+    assert "ctrl_c" not in pane.keys
+    assert pane.typed == [_COMMAND]
+    mark.assert_called_once()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settled", [False, None], ids=["live", "unknown"])
+async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
+    settled: bool | None,
+) -> None:
+    pane = _GrokPane()
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: settled)
+
+    assert result == (True, None, True, None)
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
+    assert pane.typed == [_COMMAND]
+    mark.assert_called_once()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_grok_rejection_after_a_settled_submission_interrupts_before_resubmitting() -> None:
+    # The rejection proves a turn is running after all: interrupt it, then resubmit once.
+    pane = _GrokPane([_REJECTED_SCREEN])
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
+
+    assert result == (True, None, True, None)
+    assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
+    assert pane.typed == [_COMMAND, _COMMAND]
+    mark.assert_called_once()
+    clear.assert_not_called()

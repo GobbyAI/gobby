@@ -9,7 +9,11 @@ from psycopg.errors import QueryCanceled
 
 from gobby.hooks.events import HookEvent
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
-from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE
+from gobby.sessions.handoff import (
+    HANDOFF_DELIVERY_FAILURES_VARIABLE,
+    HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_UNAVAILABLE_VARIABLE,
+)
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 
 logger = logging.getLogger(__name__)
@@ -29,7 +33,6 @@ HANDOFF_RESULT_VARIABLE = HANDOFF_DISPATCH_GATE_VARIABLE
 PRESSURE_BAND_VARIABLE = "context_compact_mid_turn_pressure_band"
 TOOL_CALLS_SINCE_NUDGE_VARIABLE = "context_compact_tool_calls_since_nudge"
 BLOCK_MESSAGE_VARIABLE = "context_compact_block_message"
-HANDOFF_UNAVAILABLE_VARIABLE = "context_compact_handoff_unavailable"
 UNKNOWN_ANNOUNCED_VARIABLE = "context_compact_unknown_announced"
 
 _NON_RETRYABLE_HANDOFF_ERROR_CODES = frozenset(
@@ -40,6 +43,7 @@ _NON_RETRYABLE_HANDOFF_ERROR_CODES = frozenset(
         "web_chat_registry_unavailable",
         "no_compaction_command",
         "interrupt_observation_unavailable",
+        "headless_agent_run",
     }
 )
 
@@ -322,6 +326,7 @@ def _reset_epoch_state(variables: dict[str, Any]) -> None:
     variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
     variables[BLOCK_MESSAGE_VARIABLE] = ""
     variables[HANDOFF_UNAVAILABLE_VARIABLE] = False
+    variables[HANDOFF_DELIVERY_FAILURES_VARIABLE] = 0
     variables[UNKNOWN_ANNOUNCED_VARIABLE] = False
     variables[HANDOFF_RESULT_VARIABLE] = None
 

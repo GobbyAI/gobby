@@ -22,6 +22,11 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_records import record_handoff_delivery
+from gobby.sessions.transcript_cursor import (
+    TranscriptObservationError,
+    TurnSettledObserver,
+    build_turn_settled_observer,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -29,6 +34,20 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+
+
+def _turn_settled_observer(source: str | None, session: Any) -> TurnSettledObserver | None:
+    """Turn-state observer for CLIs that record turn boundaries; ``None`` interrupts first."""
+    session_id = getattr(session, "id", None)
+    try:
+        return build_turn_settled_observer(
+            source, getattr(session, "transcript_path", None), session_id=session_id
+        )
+    except TranscriptObservationError as exc:
+        logger.warning(
+            "Cannot observe %s turn state for handoff on session %s: %s", source, session_id, exc
+        )
+        return None
 
 
 async def deliver_staged_compact_handoff(
@@ -67,6 +86,7 @@ async def deliver_staged_compact_handoff(
             "reason": observer_error,
             "error_code": _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
         }
+    turn_settled = _turn_settled_observer(source, session)
 
     schedule_readiness: Callable[[str | None], bool] | None = None
     if source == "codex":
@@ -81,7 +101,7 @@ async def deliver_staged_compact_handoff(
             )
 
     try:
-        ok, reason, continuation_pending, failure_detail = await _send_terminal_compaction_command(
+        ok, reason, continuation_pending, detail = await _send_terminal_compaction_command(
             pane,
             command,
             session_id,
@@ -102,6 +122,7 @@ async def deliver_staged_compact_handoff(
                 CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
             ),
             observe_interrupt=observe_interrupt,
+            turn_settled=turn_settled,
         )
     except Exception as exc:
         logger.warning(
@@ -110,8 +131,8 @@ async def deliver_staged_compact_handoff(
         return {"compacted": False, "reason": str(exc), "error_code": "dispatch_failed"}
     if not ok:
         result: dict[str, Any] = {"compacted": False, "reason": reason}
-        if failure_detail is not None:
-            result.update(failure_detail)
+        if detail is not None:
+            result.update(detail)
         return result
 
     clear_queued_context(session_manager, session_id)
@@ -136,7 +157,7 @@ async def deliver_staged_compact_handoff(
         "command": command,
         "cli": source,
         "via": pane.backend,
-        "interrupted": True,
+        "interrupted": detail is None or detail.get("interrupted") is not False,
         "continuation_pending": continuation_pending,
         "attempt_id": attempt_id,
         "handoff_staged": True,

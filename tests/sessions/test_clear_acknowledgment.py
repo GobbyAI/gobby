@@ -95,6 +95,9 @@ def _patches(predecessor: Any, pane: _Pane, send_command: Any) -> list[Any]:
             return_value=(predecessor.id, None),
         ),
         patch.object(_terminal_clear, "_resolve_pane_io", return_value=(pane, None)),
+        # Grok fails closed without a transcript to observe (#22358); the sender is
+        # faked here, so the observer is irrelevant to acknowledgment semantics.
+        patch.object(_terminal_clear, "_interrupt_observer", return_value=(None, None)),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
     ]
 
