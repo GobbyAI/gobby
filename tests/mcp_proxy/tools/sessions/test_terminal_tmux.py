@@ -189,6 +189,45 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compaction_waits_for_a_live_turn_to_settle_before_submitting() -> None:
+    pane = _GrokPane()
+    polls = {"n": 0}
+
+    def turn_settled() -> bool:
+        polls["n"] += 1
+        return polls["n"] >= 2
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=turn_settled)
+
+    assert polls["n"] >= 2
+    assert result == (True, None, True, {"interrupted": False})
+    assert pane.keys == [*_DRAIN, "enter"]
+    assert "ctrl_c" not in pane.keys
+    assert pane.typed == [_COMMAND]
+    mark.assert_called_once()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compaction_interrupts_after_the_turn_settle_wait_times_out() -> None:
+    pane = _GrokPane()
+    polls = {"n": 0}
+
+    def turn_settled() -> bool:
+        polls["n"] += 1
+        return False
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=turn_settled)
+
+    assert polls["n"] >= 2
+    assert result == (True, None, True, None)
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
+    assert pane.typed == [_COMMAND]
+    mark.assert_called_once()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("settled", [False, None], ids=["live", "unknown"])
 async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
     settled: bool | None,
