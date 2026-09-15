@@ -141,7 +141,40 @@ class TestCommandPatternsMatch:
         assert command_patterns_match(f"bash <<'EOF'\n{PROSE_BODY}\nEOF", pattern=COMMIT_PATTERN)
 
     def test_mask_quoted_blanks_string_data_inside_each_subject(self) -> None:
-        command = "bash <<'EOF'\necho 'x; git commit'\nEOF"
+        command = "bash <<'EOF'\necho 'x\ngit commit'\nEOF"
 
         assert command_patterns_match(command, pattern=COMMIT_PATTERN)
         assert not command_patterns_match(command, pattern=COMMIT_PATTERN, mask_quoted=True)
+
+    def test_quoted_separator_is_not_command_boundary(self) -> None:
+        assert not command_patterns_match("gcode grep -E 'pytest|vitest'", pattern=PYTEST_PATTERN)
+        assert not command_patterns_match('gcode grep -E "pytest|vitest"', pattern=PYTEST_PATTERN)
+        assert not command_patterns_match("echo 'x; pytest'", pattern=PYTEST_PATTERN)
+        assert not command_patterns_match("echo 'x & pytest'", pattern=PYTEST_PATTERN)
+        assert not command_patterns_match("echo '(pytest)'", pattern=PYTEST_PATTERN)
+        assert not command_patterns_match("echo '`pytest`'", pattern=PYTEST_PATTERN)
+
+    def test_unquoted_separators_still_start_commands(self) -> None:
+        assert command_patterns_match("echo x | pytest", pattern=PYTEST_PATTERN)
+        assert command_patterns_match("x; pytest", pattern=PYTEST_PATTERN)
+        assert command_patterns_match("x & pytest", pattern=PYTEST_PATTERN)
+        assert command_patterns_match("echo $(pytest)", pattern=PYTEST_PATTERN)
+        assert command_patterns_match("echo `pytest`", pattern=PYTEST_PATTERN)
+        assert command_patterns_match('echo "$(pytest)"', pattern=PYTEST_PATTERN)
+
+    def test_exemption_still_sees_quoted_test_path(self) -> None:
+        not_pattern = (
+            r"\bpytest\b[^\n;&|]*\s(?:-k|[^\s;&|-]\S*\.py\b|"
+            r"['\"]?(?:[^\s;&|'\"-][^\s;&|]*/)?tests/[^\s/;&|'\"]+)"
+        )
+
+        assert not command_patterns_match(
+            "pytest 'tests/x/test_y.py'",
+            pattern=PYTEST_PATTERN,
+            not_pattern=not_pattern,
+        )
+        assert command_patterns_match(
+            "pytest",
+            pattern=PYTEST_PATTERN,
+            not_pattern=not_pattern,
+        )
