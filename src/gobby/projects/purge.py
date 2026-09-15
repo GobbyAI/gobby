@@ -295,13 +295,6 @@ class ProjectPurgeService:
                 "DELETE FROM memories WHERE id = ANY(%s)",
             ),
             (
-                "github_issue",
-                "SELECT id AS row_id, project_id::text || ':' || repo || ':' || "
-                "issue_number::text AS source_id FROM gh_issues_triaged "
-                "WHERE project_id = %s LIMIT %s",
-                "DELETE FROM gh_issues_triaged WHERE id = ANY(%s)",
-            ),
-            (
                 "tool",
                 "SELECT tools.id AS row_id, tools.id::text AS source_id FROM tools "
                 "JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id "
@@ -331,7 +324,7 @@ class ProjectPurgeService:
         with self.db.transaction() as transaction:
             for statement, arity in _FOREIGN_REFERENCE_DETACH_STATEMENTS:
                 transaction.execute(statement, (project_id,) * arity)
-            for table in ("tasks", "plans", "sessions"):
+            for table in ("gh_issues_triaged", "tasks", "plans", "sessions"):
                 transaction.execute(
                     f"DELETE FROM {table} WHERE project_id = %s",  # nosec B608
                     (project_id,),

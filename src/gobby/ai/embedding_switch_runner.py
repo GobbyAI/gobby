@@ -41,6 +41,7 @@ from gobby.cli.installers.embedding import (
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
+from gobby.memory.collection_names import delete_retired_embedding_collections
 from gobby.memory.vectorstore import VectorStore
 from gobby.projects.write_fence import ProjectWriteRejected
 from gobby.storage.embedding_generation_state import (
@@ -287,7 +288,6 @@ class EmbeddingSwitchRunner:
         count = 0
         count += await self._build_memory_collection(journal, service, vector_store)
         count += await self._build_tool_collection(journal, vector_store)
-        count += await self._build_github_issue_collection(journal, service, vector_store)
         count += await self._replay_projection_changes(journal, service, vector_store)
 
         self._check_abort()
@@ -375,6 +375,7 @@ class EmbeddingSwitchRunner:
             await _delete_collection_if_present(vector_store, collection_name)
             deleted += 1
 
+        deleted += await delete_retired_embedding_collections(vector_store)
         return PhaseResult(PHASE_GC, "old physical collections garbage-collected", deleted)
 
     async def _replay_projection_changes(
@@ -426,7 +427,7 @@ class EmbeddingSwitchRunner:
             )
         if change.source_kind == "tool":
             return await self._project_tool_change(journal, vector_store, change.source_id)
-        return await self._project_github_issue_change(journal, service, vector_store, change)
+        return 0
 
     async def _project_memory_change(
         self,
@@ -519,16 +520,6 @@ class EmbeddingSwitchRunner:
             return 0
         return 1 if embedded else 0
 
-    async def _project_github_issue_change(
-        self,
-        journal: SwitchJournal,
-        service: EmbeddingService,
-        vector_store: VectorStore,
-        change: ProjectionChange,
-    ) -> int:
-        del journal, service, vector_store, change
-        return 0
-
     async def _delete_projection_tombstone(
         self,
         journal: SwitchJournal,
@@ -538,14 +529,14 @@ class EmbeddingSwitchRunner:
         collection_kinds = {
             "memory": "memories",
             "tool": "tool_embeddings",
-            "github_issue": "gobby_github_issues",
         }
-        if change.source_kind == "github_issue":
+        collection_kind = collection_kinds.get(change.source_kind)
+        if collection_kind is None:
             return
         point_id = change.source_id
         await vector_store.delete(
             point_id,
-            collection_name=build_physical_names(journal)[collection_kinds[change.source_kind]],
+            collection_name=build_physical_names(journal)[collection_kind],
         )
 
     async def _build_memory_collection(
@@ -638,15 +629,6 @@ class EmbeddingSwitchRunner:
             if isinstance(embedded, int):
                 count += embedded
         return count
-
-    async def _build_github_issue_collection(
-        self,
-        journal: SwitchJournal,
-        service: EmbeddingService,
-        vector_store: VectorStore,
-    ) -> int:
-        del journal, service, vector_store
-        return 0
 
     def _vector_store(self, journal: SwitchJournal) -> VectorStore:
         config = self._runtime_config()

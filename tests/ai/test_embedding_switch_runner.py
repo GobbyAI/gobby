@@ -123,8 +123,13 @@ class FakeDatabase:
 
 
 class FakeVectorStore:
-    def __init__(self, aliases: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        aliases: dict[str, str] | None = None,
+        collections: list[str] | None = None,
+    ) -> None:
         self.aliases = aliases or {}
+        self.collections = list(collections or [])
         self.operations: list[tuple[str, str, str | None]] = []
         self.ensured: list[str] = []
 
@@ -138,16 +143,27 @@ class FakeVectorStore:
         assert embedding_dim is not None
         assert recreate_on_mismatch is True
         self.ensured.append(collection_name)
+        if collection_name not in self.collections:
+            self.collections.append(collection_name)
 
     async def get_aliases(self) -> dict[str, str]:
         return dict(self.aliases)
+
+    async def list_collection_names(self) -> list[str]:
+        return list(self.collections)
 
     async def create_alias(self, collection_name: str, alias_name: str) -> None:
         self.operations.append(("alias", collection_name, alias_name))
         self.aliases[alias_name] = collection_name
 
+    async def delete_alias(self, alias_name: str) -> None:
+        self.operations.append(("delete_alias", alias_name, None))
+        self.aliases.pop(alias_name, None)
+
     async def delete_collection(self, collection_name: str) -> None:
         self.operations.append(("delete", collection_name, None))
+        if collection_name in self.collections:
+            self.collections.remove(collection_name)
 
     async def delete(self, point_id: str, *, collection_name: str) -> None:
         self.operations.append(("delete", point_id, collection_name))
@@ -211,7 +227,6 @@ async def test_flip_records_old_targets_before_config_write(
         {
             "memories": "memories@old",
             "tool_embeddings": "tool_embeddings@old",
-            "gobby_github_issues": "gobby_github_issues@old",
         }
     )
     runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
@@ -280,7 +295,6 @@ async def test_build_uses_target_physical_collections(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(runner, "_build_memory_collection", no_items)
     monkeypatch.setattr(runner, "_build_tool_collection", no_items)
-    monkeypatch.setattr(runner, "_build_github_issue_collection", no_items)
 
     _result, journal = await runner.build(_journal(PHASE_BUILDING))
 
@@ -288,7 +302,6 @@ async def test_build_uses_target_physical_collections(monkeypatch: pytest.Monkey
     assert vector_store.ensured == [
         "memories@4096-run",
         "tool_embeddings@4096-run",
-        "gobby_github_issues@4096-run",
     ]
 
 
@@ -309,10 +322,6 @@ async def test_build_replays_changes_after_enumeration_watermark(
 
     async def build_tool(*args: Any, **kwargs: Any) -> int:
         builds.append("tool")
-        return 0
-
-    async def build_issue(*args: Any, **kwargs: Any) -> int:
-        builds.append("github_issue")
         return 0
 
     class GenerationState:
@@ -342,7 +351,6 @@ async def test_build_replays_changes_after_enumeration_watermark(
     cast(Any, runner).generation_state = GenerationState()
     monkeypatch.setattr(runner, "_build_memory_collection", build_memory)
     monkeypatch.setattr(runner, "_build_tool_collection", build_tool)
-    monkeypatch.setattr(runner, "_build_github_issue_collection", build_issue)
 
     projected: list[tuple[str, str]] = []
 
@@ -359,7 +367,7 @@ async def test_build_replays_changes_after_enumeration_watermark(
     assert journal.physical_names["memories"] == "memories@4096-run"
     assert journal.caught_up_watermark == 9
     # Full corpus builders run only for the initial fill; replay is per-change.
-    assert builds == ["memory", "tool", "github_issue"]
+    assert builds == ["memory", "tool"]
     assert projected == [("tool", "tool-1")]
     assert ("delete", "memory-1", "memories@4096-run") in vector_store.operations
     assert all(
@@ -473,7 +481,6 @@ async def test_abort_cleanup_failure_keeps_durable_aborted_journal_for_retry(
     assert deleted_names == {
         "memories@4096-run",
         "tool_embeddings@4096-run",
-        "gobby_github_issues@4096-run",
     }
 
 
@@ -515,7 +522,6 @@ async def test_build_persists_physical_names_before_watermark(
 
     monkeypatch.setattr(runner, "_build_memory_collection", no_items)
     monkeypatch.setattr(runner, "_build_tool_collection", no_items)
-    monkeypatch.setattr(runner, "_build_github_issue_collection", no_items)
 
     journal_writes: list[dict[str, Any]] = []
     original_set = store.set_internal_lifecycle
@@ -583,7 +589,6 @@ async def test_replay_is_bounded_and_raises_after_max_passes(
     journal.physical_names = {
         "memories": "memories@4096-run",
         "tool_embeddings": "tool_embeddings@4096-run",
-        "gobby_github_issues": "gobby_github_issues@4096-run",
     }
 
     with pytest.raises(EmbeddingSwitchRunError, match="retry once projection writes quiesce"):
@@ -682,6 +687,59 @@ async def test_gc_abort_request_raises_resumable_error(
 
     with pytest.raises(EmbeddingSwitchRunError, match="aborted"):
         await runner.gc(_journal(PHASE_GC))
+
+
+@pytest.mark.asyncio
+async def test_gc_deletes_retired_github_issue_collections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai.embedding_switch import CompletedSwitchRecord
+
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore(
+        aliases={
+            "memories": "memories@4096-run",
+            "gobby_github_issues": "gobby_github_issues@old",
+        },
+        collections=[
+            "memories@4096-run",
+            "gobby_github_issues",
+            "gobby_github_issues@old",
+        ],
+    )
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+
+    class ReadyGenerationState:
+        def can_collect(self, generation: str, revision: int) -> bool:
+            return True
+
+    cast(Any, runner).generation_state = ReadyGenerationState()
+    runner._completed_record = CompletedSwitchRecord(
+        run_id="4096-run",
+        committed_revision=5,
+        physical_names={"memories": "memories@4096-run"},
+        old_physical_names={"memories": "memories@stale"},
+        caught_up_watermark=3,
+        catalog_key="qwen3-8b-q8",
+        target_dim=4096,
+        target_model="qwen3-embedding:8b-q8_0",
+        target_query_prefix="query:",
+        target_api_base=None,
+    )
+
+    result = await runner.gc(_journal(PHASE_GC))
+
+    assert result.count == 3
+    assert ("delete_alias", "gobby_github_issues", None) in vector_store.operations
+    deleted = {name for operation, name, _alias in vector_store.operations if operation == "delete"}
+    assert deleted == {
+        "memories@stale",
+        "gobby_github_issues",
+        "gobby_github_issues@old",
+    }
+    assert "gobby_github_issues" not in vector_store.aliases
+    assert "gobby_github_issues@old" not in vector_store.collections
 
 
 @pytest.mark.asyncio
