@@ -10,7 +10,7 @@ use tokio::net::{unix::OwnedReadHalf, UnixStream};
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
-use super::backpressure::enqueue_control;
+use super::backpressure::{enqueue_control, send_control};
 use super::events::EventReceiver;
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
@@ -112,7 +112,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         }) = ordered_rx.recv().await
         {
             let result = dispatch_ordered(&ordered_state, conn_id, &request, &mut ledger).await;
-            let _ = enqueue_control(&ordered_outbound, with_id(result.response, &request.id));
+            let _ = send_control(&ordered_outbound, with_id(result.response, &request.id)).await;
             ordered_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")
@@ -272,7 +272,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     .expect("event task lock poisoned")
                     .push(event_task);
             }
-            let _ = enqueue_control(&task_outbound, with_id(response, &request.id));
+            let _ = send_control(&task_outbound, with_id(response, &request.id)).await;
             task_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")

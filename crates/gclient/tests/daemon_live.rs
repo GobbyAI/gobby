@@ -2165,9 +2165,13 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    while daemon.pending_counts().2 != 1 {
-        tokio::task::yield_now().await;
-    }
+    timeout(Duration::from_secs(1), async {
+        while daemon.pending_counts().2 != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("mid-send control registered as pending before the 8 MiB write stalls");
     for _ in 0..100 {
         tokio::task::yield_now().await;
     }
@@ -2185,9 +2189,13 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    while daemon.pending_counts().2 != 2 {
-        tokio::task::yield_now().await;
-    }
+    timeout(Duration::from_secs(1), async {
+        while daemon.pending_counts().2 != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pre-write cancelled control registered as pending");
     pre_write.abort();
     assert!(pre_write
         .await
@@ -2207,9 +2215,13 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    while daemon.pending_counts().2 != 2 {
-        tokio::task::yield_now().await;
-    }
+    timeout(Duration::from_secs(1), async {
+        while daemon.pending_counts().2 != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pre-write replacement registered as pending");
     mid_send.abort();
     assert!(mid_send
         .await

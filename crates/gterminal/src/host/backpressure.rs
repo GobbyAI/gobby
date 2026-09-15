@@ -103,6 +103,10 @@ pub fn enqueue_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), Con
     })
 }
 
+pub async fn send_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ControlClose> {
+    tx.send(value).await.map_err(|_| ControlClose::Disconnected)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushResult {
     Queued,

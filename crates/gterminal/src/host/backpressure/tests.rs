@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use super::{
-    encoded_message_bytes, enqueue_control, write_outbound, ControlClose, ControlQueue,
-    FrameMailbox, PushResult,
+    encoded_message_bytes, enqueue_control, send_control, write_outbound, ControlClose,
+    ControlQueue, FrameMailbox, PushResult,
 };
 use crate::host::config::HostConfig;
 use crate::host::events::HostEvents;
@@ -90,6 +90,22 @@ async fn control_deadline_and_event_overflow() {
         saw_overflow,
         "an overflowing event subscriber must receive event_overflow"
     );
+}
+
+#[tokio::test]
+async fn completed_rpc_reply_waits_for_outbound_capacity() {
+    let (tx, mut rx) = mpsc::channel(1);
+    enqueue_control(&tx, json!({"id": "held"})).expect("fill");
+    let sender = tx.clone();
+    let wait = tokio::spawn(async move { send_control(&sender, json!({"id": "rpc"})).await });
+    tokio::task::yield_now().await;
+    assert!(
+        !wait.is_finished(),
+        "a completed RPC reply must wait for outbound capacity instead of dropping"
+    );
+    assert_eq!(rx.recv().await.expect("held")["id"], "held");
+    wait.await.expect("join").expect("rpc enqueued");
+    assert_eq!(rx.recv().await.expect("rpc")["id"], "rpc");
 }
 
 fn error_msg(code: &str) -> ServerMessage {
