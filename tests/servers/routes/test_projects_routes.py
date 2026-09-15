@@ -21,7 +21,6 @@ from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.github_issue_sync import GitHubRepositoryReadinessError
 from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutProject,
     insert_isolated_machine,
@@ -526,19 +525,13 @@ class TestProjectRoutes:
             database=session_manager.db,
             mcp_manager=MagicMock(),
         )
-        repositories_for = AsyncMock(return_value=("owner/from-origin",))
-        check_access = AsyncMock(
-            side_effect=GitHubRepositoryReadinessError("connector unavailable")
-        )
-
-        with patch.object(projects_routes, "GitHubIssueSyncService") as service_type:
-            service_type.return_value.repositories_for = repositories_for
-            service_type.return_value.check_access = check_access
-            response = TestClient(server.app).get(f"/api/projects/{project.id}/integrations/status")
+        response = TestClient(server.app).get(f"/api/projects/{project.id}/integrations/status")
 
         assert response.status_code == 200
-        assert response.json()["github"]["repositories"] == ["owner/from-origin"]
-        repositories_for.assert_awaited_once()
+        payload = response.json()["github"]
+        assert payload["ready"] is True
+        assert payload["readiness_error"] is None
+        assert payload["repositories"] == []
 
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""

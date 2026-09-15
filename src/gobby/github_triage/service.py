@@ -39,7 +39,6 @@ from gobby.storage.github_triage import (
 from gobby.storage.hub.protocol import GitHubIssueTriageMutation
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.sync.github_issue_sync import GitHubIssueDeliveryHandler
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -281,7 +280,7 @@ class GitHubIssueTriageService:
         return await self._delivery_processor().recover(project_id)
 
     def _delivery_processor(self) -> DeliveryProcessor:
-        return DeliveryProcessor(self.store, GitHubIssueDeliveryHandler(self), TriageWebhookError)
+        return DeliveryProcessor(self.store, self.triage_issue, TriageWebhookError)
 
     async def reconcile_project_repos(self, project_id: str) -> dict[str, int]:
         """Reconcile all configured repositories as a webhook recovery path."""

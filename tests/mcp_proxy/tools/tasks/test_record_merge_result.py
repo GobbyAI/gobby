@@ -110,17 +110,6 @@ def _real_context(temp_db: HubDatabase) -> RegistryContext:
     )
 
 
-def _real_context_with_github(temp_db: HubDatabase, github: Any) -> RegistryContext:
-    return cast(
-        RegistryContext,
-        SimpleNamespace(
-            task_manager=LocalTaskManager(temp_db),
-            resolve_session_id=lambda session_ref: session_ref,
-            mcp_manager=github,
-        ),
-    )
-
-
 def _register_session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -645,63 +634,6 @@ async def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyP
     assert kwargs["by_session_id"] is None
     assert kwargs.get("needs_human", False) is False
     cleanup.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_close_linked_github_issue_tool_comments_labels_and_closes(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    class FakeGitHub:
-        def __init__(self) -> None:
-            from gobby.mcp_proxy.models import MCPServerConfig
-            from gobby.storage.projects import GLOBAL_PROJECT_ID
-
-            self.calls: list[tuple[str, dict[str, object]]] = []
-            self.server_configs = [
-                MCPServerConfig(
-                    name="github",
-                    project_id=GLOBAL_PROJECT_ID,
-                    url="https://github-mcp.example.test",
-                    id="github-global",
-                    enabled=True,
-                )
-            ]
-
-        async def call_tool(
-            self,
-            server_id: str,
-            *,
-            tool_name: str,
-            arguments: dict[str, Any],
-        ) -> dict[str, Any]:
-            assert server_id == "github-global"
-            self.calls.append((tool_name, arguments))
-            return {}
-
-    task = create_task(
-        temp_db,
-        sample_project,
-        task_type="feature",
-        github_repo="owner/repo",
-        github_issue_number=11,
-    )
-    github = FakeGitHub()
-    tool = stage_ops.create_stage_ops_registry(_real_context_with_github(temp_db, github)).get_tool(
-        "close_linked_github_issue"
-    )
-    assert tool is not None
-
-    result = await tool(task_id=task.id, merge_sha="abc123")
-
-    assert result == {"ok": True, "task_id": task.id, "closed": True}
-    assert [name for name, _args in github.calls] == [
-        "add_labels_to_issue",
-        "update_issue",
-        "add_issue_comment",
-    ]
-    assert github.calls[0][1]["labels"] == ["gobby:resolved"]
-    assert github.calls[1][1]["state"] == "closed"
 
 
 async def test_failure_path(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:

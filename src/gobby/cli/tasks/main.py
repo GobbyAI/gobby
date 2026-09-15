@@ -4,14 +4,12 @@ Task management commands - entry point and misc utilities.
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import click
 
 from gobby.cli.tasks._utils import (
     check_tasks_enabled,
     get_backup_manager,
-    get_github_importer,
     get_task_manager,
 )
 from gobby.cli.tasks.ai import (
@@ -201,39 +199,6 @@ tasks.add_command(label_cmd)
 tasks.add_command(commit_cmd)
 tasks.add_command(diff_cmd)
 tasks.add_command(expand_cmd)
-
-
-@tasks.group("import")
-def import_cmd() -> None:
-    """Import tasks from external sources."""
-    pass
-
-
-@import_cmd.command("github")
-@click.argument("url")
-@click.option("--limit", default=50, help="Max issues to import")
-def import_github(url: str, limit: int) -> None:
-    """Import open issues from GitHub."""
-    import asyncio
-
-    manager = get_github_importer()
-
-    # We need to run async method
-    async def run() -> dict[str, Any]:
-        result: dict[str, Any] = await manager.import_from_github_issues(url, limit=limit)
-        return result
-
-    try:
-        result = asyncio.run(run())
-
-        if result["success"]:
-            click.echo(result["message"])
-            for issue_id in result["imported"]:
-                click.echo(f"  Imported {issue_id}")
-        else:
-            click.echo(f"Error: {result['error']}", err=True)
-    except Exception as e:
-        click.echo(f"Failed to run import: {e}", err=True)
 
 
 @tasks.command("doctor")

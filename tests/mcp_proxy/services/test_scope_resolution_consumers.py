@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -14,9 +14,6 @@ from gobby.integrations.github_helper import GitHubMCPHelper
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._delivery import _find_existing_pr
 from gobby.servers.websocket.handlers.core import HandlerMixin
-from gobby.sync.github import GitHubSyncService
-from gobby.sync.github_issue_sync import GitHubIssueSyncService
-from gobby.sync.task_github_import import GitHubIssueImporter
 from tests.mcp_proxy.services.test_scope_resolution_matrix import (
     GLOBAL_SERVER_ID,
     OTHER_PROJECT_ID,
@@ -54,16 +51,6 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
     await helper._call_github_mcp("list_issues", {"owner": "owner", "repo": "repo"})
     _assert_only_id(github_manager, PROJECT_SERVER_ID, "get_client_session", "call_tool")
 
-    sync = GitHubSyncService(
-        mcp_manager=as_mcp(github_manager),
-        task_manager=MagicMock(),
-        project_id=PROJECT_ID,
-        github_repo="owner/repo",
-    )
-    github_manager.calls.clear()
-    await sync._call_github_mcp("list_issues", {"owner": "owner", "repo": "repo"})
-    _assert_only_id(github_manager, PROJECT_SERVER_ID, "call_tool")
-
     # A manager owned by a different project: only the explicit issue scope may win.
     # A fallback to manager.project_id would resolve FOREIGN_SERVER_ID here.
     foreign_manager = RecordingManager(scoped_github_configs(), project_id=OTHER_PROJECT_ID)
@@ -74,19 +61,6 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
         project_id=PROJECT_ID,
     )
     _assert_only_id(foreign_manager, PROJECT_SERVER_ID, "call_tool", "get_client_session")
-
-    issue_sync = GitHubIssueSyncService(db=MagicMock(), mcp_manager=as_mcp(foreign_manager))
-    foreign_manager.calls.clear()
-    with patch(
-        "gobby.sync.github_issue_sync.parse_github_mcp_result",
-        return_value={"ok": True},
-    ):
-        await issue_sync._call(
-            "get_issue",
-            {"owner": "o", "repo": "r", "issue_number": 1},
-            project_id=PROJECT_ID,
-        )
-    _assert_only_id(foreign_manager, PROJECT_SERVER_ID, "call_tool")
 
     class _Handler(HandlerMixin):
         def __init__(self, manager: RecordingManager) -> None:
@@ -132,15 +106,6 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
     )
     _assert_only_id(github_manager, PROJECT_SERVER_ID, "call_tool")
 
-    importer = GitHubIssueImporter(db=MagicMock())
-    app_ctx = SimpleNamespace(mcp_manager=github_manager)
-    github_manager.calls.clear()
-    with patch("gobby.app_context.get_app_context", return_value=app_ctx):
-        await importer._fetch_github_issues_mcp("owner", "repo", 10, project_id=PROJECT_ID)
-    _assert_only_id(
-        github_manager, PROJECT_SERVER_ID, "get_client_session", "call_tool", "has_server"
-    )
-
 
 @pytest.mark.asyncio
 async def test_resolved_server_id_rejects_missing_scope() -> None:
@@ -164,14 +129,3 @@ def test_delivery_github_server_id_requires_project_scope() -> None:
         _github_server_id(manager, "")
 
     assert _github_server_id(manager, PROJECT_ID) == PROJECT_SERVER_ID
-
-
-@pytest.mark.asyncio
-async def test_github_import_rejects_missing_project_scope() -> None:
-    importer = GitHubIssueImporter(db=MagicMock())
-    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
-    app_ctx = SimpleNamespace(mcp_manager=manager)
-    with patch("gobby.app_context.get_app_context", return_value=app_ctx):
-        with pytest.raises(ValueError, match="explicit project_id"):
-            await importer._fetch_github_issues_mcp("owner", "repo", 10, project_id="")
-    assert manager.method_ids("call_tool") == []

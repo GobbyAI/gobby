@@ -160,10 +160,6 @@ prompts:
       gobby-tasks:close_task(reason="already_implemented", preview=true) and repair
       any blocker until that call closes the task instead of recording a failed
       merge result.
-    - After a successful merge result is recorded, call
-      gobby-tasks-ops:close_linked_github_issue with the assigned task id and
-      merge_sha. The tool comments on the linked issue, applies `gobby:resolved`,
-      and closes it when the task has github_repo and github_issue_number.
     - Record a clean merge, record a failed merge with failure_reason, close an
       empty/no-op campaign with reason="already_implemented", or escalate_task
       when human intervention is required. Terminate only by calling
@@ -400,7 +396,6 @@ step_workflow:
         - "gobby-tasks-ops:submit_for_review"
         - "gobby-tasks-ops:record_pr_verdict"
         - "gobby-tasks-ops:record_merge_result"
-        - "gobby-tasks-ops:close_linked_github_issue"
         - "gobby-tasks-ops:append_description_section"
         - "gobby-tasks:close_task"
         - "gobby-tasks:escalate_task"
@@ -656,18 +651,12 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-tasks-ops:record_merge_result"
-        - "gobby-tasks-ops:close_linked_github_issue"
         - "gobby-tasks:close_task"
         - "gobby-tasks:escalate_task"
         - "gobby-tasks-ops:append_description_section"
       on_mcp_success:
         - server: gobby-tasks-ops
           tool: record_merge_result
-          action: set_variable
-          variable: report_complete
-          value: true
-        - server: gobby-tasks-ops
-          tool: close_linked_github_issue
           action: set_variable
           variable: report_complete
           value: true

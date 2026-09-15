@@ -1,24 +1,14 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.storage.github_triage import GitHubTriageStore
-from gobby.sync.github_issue_sync import GitHubIssueSyncService
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture(autouse=True)
-def github_accessible(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        GitHubIssueSyncService,
-        "check_access",
-        AsyncMock(return_value=("owner/repo",)),
-    )
 
 
 def test_project_github_triage_config_round_trip(

@@ -48,10 +48,6 @@ from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
-from gobby.sync.github_issue_sync import (
-    GitHubIssueSyncService,
-    GitHubRepositoryReadinessError,
-)
 from gobby.utils.checkout_root import (
     InvalidCheckoutRootError,
     MarkerMismatchError,
@@ -572,16 +568,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         if candidate.sync_enabled or candidate.triage_enabled:
             if server.services.mcp_manager is None:
                 raise HTTPException(400, "GitHub connector is unavailable")
-            readiness = GitHubIssueSyncService(
-                db=server.services.database,
-                mcp_manager=server.services.mcp_manager,
-                task_manager=server.services.task_manager,
-                project_manager=pm,
-            )
-            try:
-                await readiness.check_access(project, candidate)
-            except GitHubRepositoryReadinessError as exc:
-                raise HTTPException(400, str(exc)) from exc
 
         updated = await server.run_db(store.upsert_config, candidate)
         return cast(dict[str, Any], updated.to_dict())
@@ -604,27 +590,9 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             fallback_repo=project.github_repo,
         )
 
-        github_ready = False
-        github_error = None
-        repositories: tuple[str, ...] = ()
-        if server.services.mcp_manager is None:
-            github_error = "GitHub connector is unavailable"
-        else:
-            github_service = GitHubIssueSyncService(
-                db=server.services.database,
-                mcp_manager=server.services.mcp_manager,
-                task_manager=server.services.task_manager,
-                project_manager=pm,
-            )
-            try:
-                repositories = await github_service.repositories_for(project, github_config)
-            except ValueError:
-                repositories = ()
-            try:
-                repositories = await github_service.check_access(project, github_config)
-                github_ready = True
-            except GitHubRepositoryReadinessError as exc:
-                github_error = str(exc)
+        github_ready = server.services.mcp_manager is not None
+        github_error = None if github_ready else "GitHub connector is unavailable"
+        repositories = github_config.repositories
 
         def status_payload(status: Any, counts: tuple[int, int]) -> dict[str, Any]:
             if status:

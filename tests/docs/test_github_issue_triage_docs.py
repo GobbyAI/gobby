@@ -33,7 +33,6 @@ def test_github_issue_triage_doc_has_mermaid_architecture_source() -> None:
         "Create or update linked Gobby task",
         "GitHub comments",
         "GitHub labels",
-        "close_linked_github_issue",
     ):
         assert term in doc
 

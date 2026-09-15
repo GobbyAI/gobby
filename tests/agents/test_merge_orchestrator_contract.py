@@ -33,7 +33,6 @@ REQUIRED_EXECUTE_TOOLS = {
     "gobby-tasks-ops:submit_for_review",
     "gobby-tasks-ops:record_pr_verdict",
     "gobby-tasks-ops:record_merge_result",
-    "gobby-tasks-ops:close_linked_github_issue",
     "gobby-tasks-ops:append_description_section",
     "gobby-tasks:close_task",
     "gobby-tasks:escalate_task",
