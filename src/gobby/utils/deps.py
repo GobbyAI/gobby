@@ -21,6 +21,7 @@ import psycopg
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.storage.hub.managed import managed_grant_path
 from gobby.utils.dependency_requirements import collect_dependency_report
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
@@ -633,7 +634,10 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
 
     dependency_payload = collect_dependency_report(
         managed_services=managed_services,
-        include_srt=True,
+        # A managed execution cannot read tools/srt (sandbox_policy credential roots), and
+        # the daemon verified SRT fail-closed before launching it; only unsandboxed status
+        # can observe the installation.
+        include_srt=managed_grant_path() is None,
     ).to_payload()
     return {
         "gobby": {
