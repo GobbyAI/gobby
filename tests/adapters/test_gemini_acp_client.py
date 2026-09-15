@@ -9,12 +9,14 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.adapters.acp_client import ACP_SUBPROCESS_STREAM_LIMIT_BYTES
 from gobby.adapters.gemini_acp_client import (
     DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
     GeminiACPClient,
@@ -136,6 +138,15 @@ class TestConstruction:
         client = GeminiACPClient(cli_path="/usr/local/bin/gemini")
         assert client._cli_path == "/usr/local/bin/gemini"
 
+    @pytest.mark.asyncio
+    async def test_stream_limit_accepts_large_acp_ndjson_line(self) -> None:
+        reader = asyncio.StreamReader(limit=ACP_SUBPROCESS_STREAM_LIMIT_BYTES)
+        payload = b'{"data":"' + (b"x" * (128 * 1024)) + b'"}\n'
+        reader.feed_data(payload)
+        reader.feed_eof()
+
+        assert await reader.readline() == payload
+
     def test_prompt_timeout_can_be_overridden_by_env(self) -> None:
         with patch.dict(
             "os.environ",
@@ -182,6 +193,7 @@ class TestStart:
                 call_args = mock_exec.call_args
                 assert call_args[0][0] == "/usr/bin/gemini"
                 assert "--acp" in call_args[0]
+                assert call_args.kwargs["limit"] == ACP_SUBPROCESS_STREAM_LIMIT_BYTES
 
     @pytest.mark.asyncio
     async def test_start_stores_session_info(self) -> None:

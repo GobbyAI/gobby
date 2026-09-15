@@ -35,6 +35,7 @@ _next_id = itertools.count(1)
 
 DEFAULT_ACP_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS = 120.0
+ACP_SUBPROCESS_STREAM_LIMIT_BYTES = 1024 * 1024
 ACP_PROMPT_TIMEOUT_ENV_GEMINI = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_QWEN = "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_GROK = "GOBBY_GROK_ACP_PROMPT_TIMEOUT_SECONDS"
@@ -252,6 +253,7 @@ class ACPClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=ACP_SUBPROCESS_STREAM_LIMIT_BYTES,
             cwd=self._cwd,
             env=env,
         )
