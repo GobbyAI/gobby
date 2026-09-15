@@ -279,6 +279,113 @@ def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         assert result["agy"] is True
 
 
+def test_coding_cli_hook_drift_reports_template_events_without_gobby_owned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_AGY_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
+    grok_hooks = tmp_path / ".grok" / "hooks" / "gobby.json"
+    grok_hooks.parent.mkdir(parents=True)
+    grok_hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "ghook --gobby-owned --cli=grok --type=session_start",
+                                }
+                            ]
+                        }
+                    ],
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "echo not-owned",
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+    )
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        drift = deps.get_coding_cli_hook_drift()
+
+    assert "claude" not in drift
+    assert "codex" not in drift
+    assert "qwen" not in drift
+    assert "droid" not in drift
+    assert "agy" not in drift
+    missing = drift["grok"]
+    assert "SessionStart" not in missing
+    assert "Stop" in missing
+    assert "StopCancelled" in missing
+    assert "PendingInteraction" in missing
+    assert "InteractionResolved" in missing
+
+
+def test_init_services_logs_one_warning_per_stale_cli(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.runner_init import services as services_mod
+
+    for name in (
+        "_init_llm_service",
+        "_init_memory_stack",
+        "_init_code_indexer",
+        "_init_mcp_stack",
+        "_init_memory_backup",
+        "_init_message_processor",
+        "_init_task_validator",
+        "_init_project_context",
+    ):
+        monkeypatch.setattr(services_mod, name, lambda runner: None)
+    monkeypatch.setattr(
+        "gobby.utils.deps.get_coding_cli_hook_drift",
+        lambda: {"grok": ["StopCancelled"], "claude": ["Setup"]},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.runner_init.services"):
+        services_mod.init_services(MagicMock())
+
+    messages = [record.getMessage() for record in caplog.records]
+    grok_warnings = [
+        message for message in messages if "Coding CLI grok hooks are stale" in message
+    ]
+    claude_warnings = [
+        message for message in messages if "Coding CLI claude hooks are stale" in message
+    ]
+    assert len(grok_warnings) == 1
+    assert "StopCancelled" in grok_warnings[0]
+    assert len(claude_warnings) == 1
+    assert "Setup" in claude_warnings[0]
+
+
+def test_coding_cli_status_shows_stale_hook_events() -> None:
+    result = format_status_message(
+        running=True,
+        deps_info={
+            "coding_clis": {
+                "grok": "1.0.30",
+                "hooks": {"grok": True},
+                "hook_drift": {
+                    "grok": ["StopCancelled", "PendingInteraction", "InteractionResolved"]
+                },
+            }
+        },
+    )
+    grok_line = next(line for line in result.splitlines() if "Grok CLI:" in line)
+    assert "stale hook events: StopCancelled, PendingInteraction, InteractionResolved" in grok_line
+
+
 def test_check_hooks_in_file(tmp_path: Path) -> None:
     f = tmp_path / "settings.json"
     assert deps._check_hooks_in_file(f) is False

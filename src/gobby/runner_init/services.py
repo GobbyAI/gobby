@@ -87,6 +87,14 @@ def init_services(runner: GobbyRunner) -> None:
     _init_message_processor(runner)
     _init_task_validator(runner)
     _init_project_context(runner)
+    from gobby.utils.deps import get_coding_cli_hook_drift
+
+    for cli, events in get_coding_cli_hook_drift().items():
+        logger.warning(
+            "Coding CLI %s hooks are stale versus the bundled template: missing %s",
+            cli,
+            ", ".join(events),
+        )
 
 
 @dataclass(frozen=True)
