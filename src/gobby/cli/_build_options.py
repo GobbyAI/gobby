@@ -67,8 +67,6 @@ def _restart_options_were_supplied(opts: BuildOptions) -> bool:
         opts.skip_stages
         or opts.profile != "default"
         or opts.isolation_explicit
-        or opts.delivery_mode_explicit
-        or opts.delivery_target_repo_explicit
         or opts.no_merge
         or opts.pr is not None
         or opts.stage_caps

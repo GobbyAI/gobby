@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -118,7 +117,7 @@ def test_approved_calls_approve_review_no_advance(
         ctx.task_id,
         "pr",
         by_session_id=None,
-        notes="looks good",
+        notes="looks good\npr-review.md",
     )
     ctx.task_manager.stage_states.complete_stage.assert_not_called()
 
@@ -144,13 +143,6 @@ def test_approved_with_independent_reviewer_records_delivery_without_self_approv
     assert result["stage"] == {"stage_name": "pr", "state": "needs_review"}
     ctx.task_manager.stage_states.approve_review.assert_not_called()
     ctx.task_manager.stage_states.complete_stage.assert_not_called()
-    row = temp_db.fetchone(
-        "SELECT state, pr_report_ref FROM task_delivery_campaigns WHERE task_id = %s",
-        (ctx.task_id,),
-    )
-    assert row is not None
-    assert row["state"] == "ready_to_merge"
-    assert row["pr_report_ref"] == "delivery-report.md"
     release.assert_called_once_with(
         ctx,
         task_id=ctx.task_id,
@@ -171,8 +163,6 @@ def test_approved_transition_failure_does_not_write_ready_to_merge(
         "approve_review",
         "required",
     )
-    delivery = Mock()
-    monkeypatch.setattr(stage_ops, "TaskDeliveryStateManager", Mock(return_value=delivery))
     release = Mock()
     monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
 
@@ -183,7 +173,6 @@ def test_approved_transition_failure_does_not_write_ready_to_merge(
             findings="approved",
         )
 
-    assert delivery.record_campaign.call_count == 0
     assert release.call_count == 0
     assert ctx.task_manager.stage_states.approve_review.call_count == 1
     assert ctx.task_manager.stage_states.approve_review.call_args.args == ("task-1", "pr")
@@ -191,39 +180,6 @@ def test_approved_transition_failure_does_not_write_ready_to_merge(
         "by_session_id": None,
         "notes": "approved",
     }
-
-
-def test_approved_writes_artifacts(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
-) -> None:
-    _patch_stage_view(monkeypatch)
-    ctx = _context(temp_db, sample_project)
-
-    _record_pr_verdict(ctx)(
-        task_id=ctx.task_id,
-        verdict="approve",
-        findings="looks good",
-        report_ref="pr-review.md",
-    )
-
-    row = temp_db.fetchone(
-        """
-        SELECT structured_pr_verdict, pr_report_ref
-        FROM task_delivery_campaigns
-        WHERE task_id = %s
-        """,
-        (ctx.task_id,),
-    )
-    assert row is not None
-    payload = json.loads(row["structured_pr_verdict"])
-    assert payload == {
-        "verdict": "approve",
-        "findings": "looks good",
-        "report_ref": "pr-review.md",
-    }
-    assert row["pr_report_ref"] == "pr-review.md"
 
 
 def _assert_reject_review_for_verdict(

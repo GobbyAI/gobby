@@ -26,10 +26,6 @@ SKILL_PATH = (
 )
 
 REQUIRED_EXECUTE_TOOLS = {
-    "gobby-tasks-ops:get_delivery_state",
-    "gobby-tasks-ops:record_pr_state",
-    "gobby-tasks-ops:record_pr_opened",
-    "gobby-tasks-ops:open_delivery_pr",
     "gobby-tasks-ops:submit_for_review",
     "gobby-tasks-ops:record_pr_verdict",
     "gobby-tasks-ops:record_merge_result",
@@ -61,12 +57,6 @@ REQUIRED_EXECUTE_TOOLS = {
     "gobby-agents:list_running_agents",
     "gobby-agents:get_running_agent",
     "gobby-agents:running_agent_stats",
-    "github:create_pull_request_review",
-    "github:get_pull_request",
-    "github:get_pull_request_status",
-    "github:get_pull_request_reviews",
-    "github:update_pull_request_branch",
-    "github:merge_pull_request",
 }
 
 FORBIDDEN_EXECUTE_TOOLS = {

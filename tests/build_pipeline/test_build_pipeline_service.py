@@ -25,7 +25,7 @@ from tests.fixtures.isolated_checkout import (
 
 if TYPE_CHECKING:
     from gobby.build.service import BuildOptions, BuildResult
-    from gobby.config.build import DeliveryMode, Isolation, StageCapOverride
+    from gobby.config.build import Isolation, StageCapOverride
 
 pytestmark = pytest.mark.unit
 
@@ -60,10 +60,6 @@ class _OptionOverrides(TypedDict, total=False):
     isolation_explicit: bool
     unattended: bool
     unattended_explicit: bool
-    delivery_mode: DeliveryMode
-    delivery_mode_explicit: bool
-    delivery_target_repo: str | None
-    delivery_target_repo_explicit: bool
     no_merge: bool
     pr: str | None
     stage_caps: list[StageCapOverride]

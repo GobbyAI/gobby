@@ -1098,8 +1098,6 @@ function baseApi(
             skip_stages: [],
             isolation: "worktree",
             unattended: false,
-            delivery_mode: "auto",
-            delivery_target_repo: null,
             enabled: true,
             source: "installed",
             project_id: null,

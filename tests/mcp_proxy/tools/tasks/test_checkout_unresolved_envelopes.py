@@ -145,19 +145,6 @@ async def test_validate_plan_file_returns_checkout_unresolved(
 
 
 @pytest.mark.asyncio
-async def test_open_delivery_pr_returns_checkout_unresolved(no_checkout: _NoCheckout) -> None:
-    registry = create_task_ops_registry(no_checkout.task_manager)
-
-    result = await registry.call(
-        "open_delivery_pr", {"task_id": no_checkout.task.id, "target_branch": "main"}
-    )
-
-    assert result["ok"] is False
-    assert result["task_id"] == no_checkout.task.id
-    _assert_checkout_unresolved(result)
-
-
-@pytest.mark.asyncio
 async def test_submit_for_review_returns_checkout_unresolved(no_checkout: _NoCheckout) -> None:
     registry = create_task_ops_registry(no_checkout.task_manager)
 

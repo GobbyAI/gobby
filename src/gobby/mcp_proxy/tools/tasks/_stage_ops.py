@@ -22,7 +22,6 @@ from gobby.mcp_proxy.tools.tasks._plan_review_backfill import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
-from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
     IllegalStageTransitionError,
@@ -117,18 +116,6 @@ def _release_prior_claim(
     clear_prior_claim_session_variables(ctx, task_id, prior_owner_session_id, action=action)
 
 
-def _delivery_campaign(delivery: TaskDeliveryStateManager, task_id: str) -> dict[str, Any]:
-    campaign = delivery.get_state(task_id).get("campaign")
-    if not isinstance(campaign, dict):
-        return {}
-    return campaign
-
-
-def _campaign_merge_sha(campaign: dict[str, Any]) -> str | None:
-    value = campaign.get("merge_sha")
-    return value if isinstance(value, str) and value else None
-
-
 def _is_completed_merge_transition(error: IllegalStageTransitionError) -> bool:
     return (
         error.stage_name == "merge"
@@ -143,19 +130,6 @@ def _is_ready_merge_transition(error: IllegalStageTransitionError) -> bool:
         and error.current_state == "ready"
         and error.attempted_transition == "complete_stage"
     )
-
-
-def _can_reconcile_ready_merge(
-    previous_campaign: dict[str, Any],
-    merge_sha: str,
-) -> bool:
-    state = previous_campaign.get("state")
-    previous_sha = _campaign_merge_sha(previous_campaign)
-    if state == "failed":
-        return previous_sha in (None, merge_sha)
-    if state == "merged":
-        return previous_sha == merge_sha
-    return False
 
 
 def _complete_ready_merge_stage(
@@ -459,11 +433,11 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         findings: str | dict[str, Any] | list[Any],
         report_ref: str | None = None,
     ) -> dict[str, Any]:
-        """Persist PR verdict delivery state and advance the pr review state."""
+        """Advance the pr review state from a verdict."""
         resolved_id = _resolve_task(ctx, task_id)
         findings_body = _findings_text(findings)
-        payload = {"verdict": verdict, "findings": findings, "report_ref": report_ref}
-        delivery = TaskDeliveryStateManager(ctx.task_manager.db)
+        if report_ref:
+            findings_body = f"{findings_body}\n{report_ref}" if findings_body else report_ref
         if verdict == "approve":
             resolved_session_id = _session_id(ctx)
             dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
@@ -493,13 +467,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 reason=f"needs_human:pr_delivery:{findings_body}",
             )
             current_stage = ctx.task_manager.stage_states.get(resolved_id, "pr")
-            delivery.record_campaign(
-                resolved_id,
-                state="needs_discussion",
-                structured_pr_verdict=payload,
-                pr_report_ref=report_ref or findings_body,
-                last_error=findings_body,
-            )
             return {
                 "ok": True,
                 "task_id": resolved_id,
@@ -509,13 +476,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     stage_state_operation_view(current_stage) if current_stage is not None else None
                 ),
             }
-        delivery.record_campaign(
-            resolved_id,
-            state="ready_to_merge" if verdict == "approve" else "blocked",
-            structured_pr_verdict=payload,
-            pr_report_ref=report_ref or findings_body,
-            last_error="" if verdict == "approve" else findings_body,
-        )
         if resolved_session_id:
             _release_current_agent_dispatch_mutex(
                 ctx,
@@ -528,7 +488,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     _register_stage_tool(
         registry,
         name="record_pr_verdict",
-        description="Persist PR verdict delivery state and advance the pr review state.",
+        description="Advance the pr review state from a verdict.",
         properties={
             "task_id": {"type": "string"},
             "verdict": {
@@ -542,67 +502,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         func=record_pr_verdict,
     )
 
-    def record_pr_opened(
-        task_id: str,
-        pr_url: str,
-        github_pr_number: int | None = None,
-        unit_key: str | None = None,
-        worktree_id: str | None = None,
-        repo: str | None = None,
-        source_branch: str | None = None,
-        target_branch: str | None = None,
-    ) -> dict[str, Any]:
-        """Persist PR metadata in delivery state without changing pr stage state."""
-        resolved_id = _resolve_task(ctx, task_id)
-        existing = ctx.task_manager.db.fetchone(
-            """
-            SELECT pr_url
-              FROM task_delivery_units
-             WHERE task_id = %s
-               AND (pr_url = %s OR unit_key = %s)
-            """,
-            (resolved_id, pr_url, unit_key or f"pr:{pr_url}"),
-        )
-        unit = TaskDeliveryStateManager(ctx.task_manager.db).record_unit(
-            resolved_id,
-            unit_key=unit_key,
-            worktree_id=worktree_id,
-            repo=repo,
-            source_branch=source_branch,
-            target_branch=target_branch,
-            pr_url=pr_url,
-            github_pr_number=github_pr_number,
-            pr_state="open",
-        )
-        stage = ctx.task_manager.stage_states.get(resolved_id, "pr")
-        return {
-            "ok": True,
-            "task_id": resolved_id,
-            "pr_url": pr_url,
-            "github_pr_number": github_pr_number,
-            "delivery_unit": unit,
-            "stage": stage_state_operation_view(stage) if stage is not None else None,
-            "idempotent": bool(existing and existing["pr_url"] == pr_url),
-        }
-
-    _register_stage_tool(
-        registry,
-        name="record_pr_opened",
-        description="Persist PR metadata in delivery state without changing pr stage state.",
-        properties={
-            "task_id": {"type": "string"},
-            "pr_url": {"type": "string"},
-            "github_pr_number": {"type": ["integer", "null"]},
-            "unit_key": {"type": ["string", "null"]},
-            "worktree_id": {"type": ["string", "null"]},
-            "repo": {"type": ["string", "null"]},
-            "source_branch": {"type": ["string", "null"]},
-            "target_branch": {"type": ["string", "null"]},
-        },
-        required=["task_id", "pr_url"],
-        func=record_pr_opened,
-    )
-
     async def record_merge_result(
         task_id: str,
         merge_sha: str | None = None,
@@ -611,7 +510,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Persist merge outcome and advance or fail the merge stage."""
         resolved_id = _resolve_task(ctx, task_id)
-        delivery = TaskDeliveryStateManager(ctx.task_manager.db)
         if failure_reason is not None:
             if merge_sha is not None:
                 raise ValueError("merge_sha cannot be provided with failure_reason")
@@ -625,12 +523,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 by_session_id=resolved_session_id,
                 **dispatch_kwargs,
             )
-            delivery.record_campaign(
-                resolved_id,
-                state="failed",
-                merge_report_ref=report_ref or failure_reason,
-                last_error=failure_reason,
-            )
             if resolved_session_id:
                 _release_current_agent_dispatch_mutex(
                     ctx,
@@ -642,23 +534,14 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if not merge_sha:
             raise ValueError("merge_sha is required when recording a successful merge")
-        previous_campaign = _delivery_campaign(delivery, resolved_id)
-        previous_state = previous_campaign.get("state")
-        previous_sha = _campaign_merge_sha(previous_campaign)
-        if previous_state == "merged" and previous_sha and previous_sha != merge_sha:
-            raise ValueError(
-                "merge stage is already recorded with a different merge_sha "
-                f"({previous_sha}); refusing to overwrite it with {merge_sha}"
-            )
         existing_stage = _get_stage_state(ctx, resolved_id, "merge")
         if existing_stage is not None and existing_stage.state == "done":
-            delivery.record_campaign(
-                resolved_id,
-                state="merged",
-                merge_sha=merge_sha,
-                merge_report_ref=report_ref or "",
-                last_error="",
-            )
+            existing_sha = existing_stage.completed_commit_sha
+            if existing_sha and existing_sha != merge_sha:
+                raise ValueError(
+                    "merge stage is already recorded with a different merge_sha "
+                    f"({existing_sha}); refusing to overwrite it with {merge_sha}"
+                )
             return _idempotent_operation_response(resolved_id, existing_stage)
         resolved_session_id = _session_id(ctx)
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
@@ -675,10 +558,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 **dispatch_kwargs,
             )
         except IllegalStageTransitionError as exc:
-            if _is_ready_merge_transition(exc) and _can_reconcile_ready_merge(
-                previous_campaign,
-                merge_sha,
-            ):
+            if _is_ready_merge_transition(exc):
                 stage = _complete_ready_merge_stage(
                     ctx,
                     task_id=resolved_id,
@@ -696,14 +576,6 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     raise
                 stage = completed_stage
                 idempotent_completed_merge = True
-        if idempotent_completed_merge:
-            delivery.record_campaign(
-                resolved_id,
-                state="merged",
-                merge_sha=merge_sha,
-                merge_report_ref=report_ref or "",
-                last_error="",
-            )
         if resolved_session_id:
             _release_current_agent_dispatch_mutex(
                 ctx,

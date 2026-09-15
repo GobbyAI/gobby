@@ -13,7 +13,6 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -154,17 +153,9 @@ def _running_agent_run(
     return run.id
 
 
-def _artifact_row(temp_db: HubDatabase, task_id: str) -> dict[str, object]:
-    row = temp_db.fetchone(
-        """
-        SELECT merge_sha, merge_report_ref
-        FROM task_delivery_campaigns
-        WHERE task_id = %s
-        """,
-        (task_id,),
-    )
-    assert row is not None
-    return dict(row)
+def _merge_sha(temp_db: HubDatabase, task_id: str) -> str | None:
+    value = stage_row(temp_db, task_id, "merge")["completed_commit_sha"]
+    return value if isinstance(value, str) else None
 
 
 def _merge_task_in_progress(
@@ -236,9 +227,6 @@ async def test_success_transition_failure_does_not_write_merged_campaign(
         "complete_stage",
         "required",
     )
-    delivery = Mock()
-    delivery.get_state.return_value = {"campaign": {}}
-    monkeypatch.setattr(stage_ops, "TaskDeliveryStateManager", Mock(return_value=delivery))
     release = Mock()
     monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
 
@@ -248,7 +236,6 @@ async def test_success_transition_failure_does_not_write_merged_campaign(
             merge_sha="merge-sha",
         )
 
-    assert delivery.record_campaign.call_count == 0
     assert release.call_count == 0
     assert ctx.task_manager.stage_states.complete_stage.call_count == 1
     assert ctx.task_manager.stage_states.complete_stage.call_args.args == ("task-1", "merge")
@@ -290,16 +277,7 @@ async def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
     row = task_row(temp_db, task.id)
     assert row["closed_reason"] == "manifest_exhausted"
     assert row["closed_commit_sha"] == "mergeabc123"
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "mergeabc123",
-        "merge_report_ref": "merge-report.md",
-    }
-    count_row = temp_db.fetchone(
-        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
-        (task.id,),
-    )
-    assert count_row is not None
-    assert count_row["campaign_count"] == 1
+    assert _merge_sha(temp_db, task.id) == "mergeabc123"
 
 
 async def test_complete_stage_then_record_merge_result_enriches_one_campaign(
@@ -320,17 +298,8 @@ async def test_complete_stage_then_record_merge_result_enriches_one_campaign(
         report_ref="enriched-report.md",
     )
 
-    count_row = temp_db.fetchone(
-        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
-        (task.id,),
-    )
     assert result["idempotent"] is True
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "shared-merge-sha",
-        "merge_report_ref": "enriched-report.md",
-    }
-    assert count_row is not None
-    assert count_row["campaign_count"] == 1
+    assert _merge_sha(temp_db, task.id) == "shared-merge-sha"
 
 
 async def test_success_is_idempotent_after_worker_recorded_merge(
@@ -355,10 +324,7 @@ async def test_success_is_idempotent_after_worker_recorded_merge(
     assert second["stage"]["state"] == "done"
     assert stage_row(temp_db, task.id, "merge")["state"] == "done"
     assert task_row(temp_db, task.id)["closed_commit_sha"] == "merge-worker-sha"
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "merge-worker-sha",
-        "merge_report_ref": "merge-orchestrator-report.md",
-    }
+    assert _merge_sha(temp_db, task.id) == "merge-worker-sha"
 
 
 async def test_success_idempotent_merge_rejects_different_completed_sha(
@@ -380,10 +346,7 @@ async def test_success_idempotent_merge_rejects_different_completed_sha(
             report_ref="merge-orchestrator-report.md",
         )
 
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "merge-worker-sha",
-        "merge_report_ref": "merge-worker-report.md",
-    }
+    assert _merge_sha(temp_db, task.id) == "merge-worker-sha"
 
 
 async def test_success_reconciles_ready_merge_after_prior_failure(
@@ -413,82 +376,7 @@ async def test_success_reconciles_ready_merge_after_prior_failure(
     task_state = task_row(temp_db, task.id)
     assert task_state["closed_commit_sha"] == "merge-retry-sha"
     assert task_state["is_escalated"] == 0
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "merge-retry-sha",
-        "merge_report_ref": "merge-retry-report.md",
-    }
-
-
-async def test_success_reconciles_ready_merge_when_campaign_already_merged(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    task = _merge_task_in_progress(temp_db, sample_project)
-    manager = LocalTaskManager(temp_db)
-    manager.stage_states.fail_stage(
-        task.id,
-        "merge",
-        reason="stale failure already rolled stage back",
-        by_session_id="merge-agent",
-    )
-    TaskDeliveryStateManager(temp_db).record_campaign(
-        task.id,
-        state="merged",
-        merge_sha="already-merged-sha",
-        merge_report_ref="previous-report.md",
-        last_error="",
-    )
-
-    result = await _record_merge_result(_real_context(temp_db))(
-        task_id=task.id,
-        merge_sha="already-merged-sha",
-        report_ref="reconcile-report.md",
-    )
-
-    assert result["ok"] is True
-    assert result["reconciled"] is True
-    assert result["stage"]["state"] == "done"
-    assert stage_row(temp_db, task.id, "merge")["completed_commit_sha"] == "already-merged-sha"
-    assert task_row(temp_db, task.id)["closed_commit_sha"] == "already-merged-sha"
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "already-merged-sha",
-        "merge_report_ref": "reconcile-report.md",
-    }
-
-
-async def test_success_rejects_different_ready_campaign_sha(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    task = _merge_task_in_progress(temp_db, sample_project)
-    manager = LocalTaskManager(temp_db)
-    manager.stage_states.fail_stage(
-        task.id,
-        "merge",
-        reason="stale failure already rolled stage back",
-        by_session_id="merge-agent",
-    )
-    TaskDeliveryStateManager(temp_db).record_campaign(
-        task.id,
-        state="merged",
-        merge_sha="already-merged-sha",
-        merge_report_ref="previous-report.md",
-        last_error="",
-    )
-
-    with pytest.raises(ValueError, match="different merge_sha"):
-        await _record_merge_result(_real_context(temp_db))(
-            task_id=task.id,
-            merge_sha="different-sha",
-            report_ref="different-report.md",
-        )
-
-    assert stage_row(temp_db, task.id, "merge")["state"] == "ready"
-    assert task_row(temp_db, task.id)["closed_at"] is None
-    assert _artifact_row(temp_db, task.id) == {
-        "merge_sha": "already-merged-sha",
-        "merge_report_ref": "previous-report.md",
-    }
+    assert _merge_sha(temp_db, task.id) == "merge-retry-sha"
 
 
 async def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
@@ -621,11 +509,6 @@ async def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyP
         report_ref="merge-failure.md",
     )
 
-    sql, params = ctx.task_manager.db.executed[0]
-    assert "task_delivery_campaigns" in sql
-    assert "merge_report_ref" in sql
-    assert "merge_sha" not in sql
-    assert params[3] == "merge-failure.md"
     assert result["stage"] == {"stage_name": "merge", "state": "ready"}
     ctx.task_manager.stage_states.fail_stage.assert_called_once()
     args, kwargs = ctx.task_manager.stage_states.fail_stage.call_args
@@ -652,7 +535,6 @@ async def test_failure_path(temp_db: HubDatabase, sample_project: dict[str, Any]
     under_cap_state = task_row(temp_db, under_cap.id)
     assert under_cap_state["closed_at"] is None
     assert under_cap_state["is_escalated"] == 0
-    assert _artifact_row(temp_db, under_cap.id)["merge_report_ref"] == "merge-failure.md"
 
     over_cap = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=1)
 

@@ -32,41 +32,6 @@ def _context(temp_db, sample_project) -> SimpleNamespace:
     )
 
 
-def test_record_pr_opened_persists_pr_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
-) -> None:
-    monkeypatch.setattr(
-        stage_ops,
-        "stage_state_operation_view",
-        lambda stage: {"stage_name": stage.stage_name, "state": stage.state},
-    )
-    ctx = _context(temp_db, sample_project)
-    tool = stage_ops.create_stage_ops_registry(ctx).get_tool("record_pr_opened")
-    assert tool is not None
-
-    result = tool(
-        task_id=ctx.task_id,
-        pr_url="https://example.test/pr/1",
-        github_pr_number=12,
-    )
-
-    assert result["ok"] is True
-    row = temp_db.fetchone(
-        """
-        SELECT pr_url, github_pr_number
-        FROM task_delivery_units
-        WHERE task_id = %s
-        """,
-        (ctx.task_id,),
-    )
-    assert row is not None
-    assert row["pr_url"] == "https://example.test/pr/1"
-    assert row["github_pr_number"] == 12
-    ctx.task_manager.update_task.assert_not_called()
-
-
 @pytest.mark.asyncio
 async def test_record_merge_result_records_success_and_failure(
     monkeypatch: pytest.MonkeyPatch,

@@ -123,23 +123,6 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     expect(getByText("abcdef1")).toBeTruthy();
   });
 
-  it("links the PR inside Trace when repo metadata is present", () => {
-    const { getByText } = render(
-      <TasksTabDetailPanel
-        task={makeTask({
-          github_pr_number: 42,
-          github_repo: "example/repo--name",
-        })}
-      />,
-    );
-    const link = getByText("example/repo--name#42");
-    expect(link.tagName).toBe("A");
-    expect(link).toHaveAttribute(
-      "href",
-      "https://github.com/example/repo--name/pull/42",
-    );
-  });
-
   it("renders the editable core fields when an edit API is injected", () => {
     const { getByLabelText } = render(
       <TasksTabDetailPanel task={makeTask()} edit={makeEdit()} />,
