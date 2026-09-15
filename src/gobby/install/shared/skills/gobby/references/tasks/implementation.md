@@ -34,10 +34,9 @@ Restarts and rebuilds are coordination within the fix, not deferral reasons.
 Enhancement ideas without broken behavior may be recorded as ideas normally.
 
 Run final validation after every final edit and formatting change. Follow an
-ongoing command to definitive exit. Direct commands with environment prefixes
-are credited; pipelines, fallbacks, backgrounding, subshells, and trailing output
-can hide the validation outcome and require a direct rerun. A later edit makes
-prior evidence stale; committing does not.
+ongoing command to definitive exit. Which commands earn close credit is in
+[closing](closing.md). A later edit makes prior evidence stale; committing
+does not.
 
 If a close reports stale foreign attribution, the owning session can call
 `release_task_paths` for committed or abandoned paths. It refuses uncommitted
