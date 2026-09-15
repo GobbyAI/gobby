@@ -12,7 +12,6 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from gobby.config.ui import is_loopback_bind_host
 from gobby.servers.auth_service import request_path
 from gobby.servers.grant_auth import admission_required
 from gobby.servers.lease_fence import LeaseNotHeld
@@ -58,22 +57,6 @@ _LOGIN_GUIDANCE_CODES = frozenset({None, "missing_auth", "invalid_token", "sessi
 _GRANT_REJECTION_MESSAGE = "Request rejected"
 
 
-def _remote_hook_requires_auth(server: "HTTPServer", path: str) -> bool:
-    if path != "/api/hooks" and not path.startswith("/api/hooks/"):
-        return False
-
-    services = getattr(server, "services", None)
-    config = getattr(services, "config", None)
-    if config is None:
-        runtime = getattr(services, "config_runtime", None)
-        capture = getattr(runtime, "capture", None)
-        if callable(capture):
-            snapshot = capture()
-            config = getattr(getattr(snapshot, "snapshot", None), "active", None)
-    bind_host = getattr(config, "bind_host", None)
-    return isinstance(bind_host, str) and not is_loopback_bind_host(bind_host)
-
-
 def _matches_path_prefix(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(f"{prefix}/")
 
@@ -87,11 +70,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request_path(request)
-        remote_hook_requires_auth = _remote_hook_requires_auth(self.server, path)
 
-        if not remote_hook_requires_auth and (
-            path in _PUBLIC_PATHS
-            or any(_matches_path_prefix(path, prefix) for prefix in _PUBLIC_PREFIXES)
+        if path in _PUBLIC_PATHS or any(
+            _matches_path_prefix(path, prefix) for prefix in _PUBLIC_PREFIXES
         ):
             return await call_next(request)
 

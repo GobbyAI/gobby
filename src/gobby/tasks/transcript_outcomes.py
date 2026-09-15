@@ -34,6 +34,17 @@ _RUNNER_FAILURE_PATTERNS = (
     re.compile(r"(?m)^\s*Failing new (?:errors|issues) >= \w+: [1-9]\d*\b"),
 )
 
+_HOOK_BLOCKING_ATTACHMENT = "hook_blocking_error"
+_TOOL_DENIAL_KIND_KEYS = ("toolDenialKind", "tool_denial_kind")
+_UNEXECUTED_TOOL_PATTERNS = (
+    re.compile(r"the user doesn't want to proceed with this tool use", re.IGNORECASE),
+    re.compile(r"the tool use was rejected", re.IGNORECASE),
+    re.compile(r"rule enforced by gobby\b", re.IGNORECASE),
+    re.compile(r"hook denied:", re.IGNORECASE),
+    re.compile(r"hook blocked this tool call", re.IGNORECASE),
+    re.compile(r"permission to use \S+ (?:has been )?denied", re.IGNORECASE),
+)
+
 _TYPE_CHECK_FAILURE_PATTERNS = (
     re.compile(r"(?m)^Found [1-9]\d* errors? in [1-9]\d* files?\b"),
     re.compile(r"(?m)^Failing new errors >= \w+: [1-9]\d*\b"),
@@ -201,6 +212,33 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
         executable = os.path.basename(arguments[1])
         arguments = arguments[2:]
     return executable, arguments
+
+
+def is_unexecuted_tool_result(result: Any) -> bool:
+    """Return whether a tool result shows the call never executed.
+
+    User rejections, permission denials, and hook blocks are tool-layer errors
+    with no process exit. They must not become validation runs. A command that
+    actually ran still has an exit code, or output that is not this class.
+    """
+    if _find_exit_code(result) is not None:
+        return False
+    for value in _walk_values(result):
+        if not isinstance(value, dict):
+            continue
+        for key in _TOOL_DENIAL_KIND_KEYS:
+            kind = value.get(key)
+            if isinstance(kind, str) and kind.strip():
+                return True
+        attachment = value.get("attachment")
+        if isinstance(attachment, dict) and attachment.get("type") == _HOOK_BLOCKING_ATTACHMENT:
+            return True
+        if value.get("type") == _HOOK_BLOCKING_ATTACHMENT:
+            return True
+    output, _truncated = extract_output(result)
+    if not output:
+        return False
+    return any(pattern.search(output) for pattern in _UNEXECUTED_TOOL_PATTERNS)
 
 
 def extract_output(result: Any) -> tuple[str | None, bool]:

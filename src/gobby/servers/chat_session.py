@@ -25,6 +25,7 @@ from claude_agent_sdk.types import (
     PermissionMode,
 )
 
+from gobby.agents.constants import MCP_TIMEOUT, MCP_TIMEOUT_VALUE
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_resolvers import (
     materialize_claude_settings_async,
@@ -332,7 +333,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         # Pass session context to the CLI subprocess so it attaches to the
         # web chat's pre-created session instead of creating a new one.
-        env: dict[str, str] = {}
+        env: dict[str, str] = {MCP_TIMEOUT: MCP_TIMEOUT_VALUE}
         if self.db_session_id:
             env["GOBBY_SESSION_ID"] = self.db_session_id
             env["GOBBY_SOURCE"] = "claude"

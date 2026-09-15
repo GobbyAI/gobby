@@ -78,6 +78,14 @@ CARGO_TARGET_DIR = "CARGO_TARGET_DIR"
 MCP_CONNECT_TIMEOUT_MS = "MCP_CONNECT_TIMEOUT_MS"
 MCP_CONNECT_TIMEOUT_MS_VALUE = "60000"
 
+# Claude Code's connection deadline for every MCP server it launches, whichever
+# config scope names it (its own default is 30s). Beside concurrent agent spawns
+# a cold `gobby mcp-server` took 25s to connect and two siblings passed 30s,
+# leaving those agents without Gobby tools for their whole run. 120s matches
+# Codex's `mcp_servers.gobby.startup_timeout_sec`.
+MCP_TIMEOUT = "MCP_TIMEOUT"
+MCP_TIMEOUT_VALUE = "120000"
+
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""
