@@ -1,3 +1,4 @@
+import fcntl
 import threading
 from pathlib import Path
 
@@ -51,3 +52,16 @@ def test_export_file_lock_serializes_concurrent_writers(
     assert not first.is_alive()
     assert not second.is_alive()
     assert second_entered.is_set()
+
+
+def test_export_file_lock_holds_unwritable_lock_read_only(tmp_path: Path) -> None:
+    target = tmp_path / "data.jsonl"
+    lock_path = tmp_path / ".data.jsonl.lock"
+    lock_path.touch(mode=0o400)
+
+    with (
+        export_file_lock(target),
+        lock_path.open("rb") as contender,
+        pytest.raises(BlockingIOError),
+    ):
+        fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

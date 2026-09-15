@@ -28,7 +28,12 @@ def export_file_lock(path: Path) -> Iterator[None]:
     """Hold a blocking inter-process lock for an export target."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(f".{path.name}.lock")
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    except PermissionError:
+        # Sandboxed readers (managed SRT verification in `gobby status`) cannot write
+        # Gobby home; flock still serializes through a read-only descriptor.
+        fd = os.open(lock_path, os.O_RDONLY)
     try:
         if sys.platform == "win32":  # pragma: no cover - Windows only
             os.ftruncate(fd, 1)
