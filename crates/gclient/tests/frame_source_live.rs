@@ -19,7 +19,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
@@ -212,7 +211,7 @@ fn build_test_gterm() -> PathBuf {
     // Every worktree shares this target directory, so an existing binary may come from another
     // checkout. Always let Cargo validate it against this tree; incremental no-op builds keep the
     // common path cheap, and Cargo's shared build lock safely serializes required rebuilds.
-    let mut child = Command::new(env!("CARGO"))
+    let status = Command::new(env!("CARGO"))
         .current_dir(&workspace)
         .args([
             "build",
@@ -223,21 +222,8 @@ fn build_test_gterm() -> PathBuf {
             "--bin",
             "gterm",
         ])
-        .spawn()
-        .expect("spawn test gterm build");
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > HOST_TIMEOUT * 4 => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("gterm cargo build exceeded {:?}", HOST_TIMEOUT * 4);
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(error) => panic!("wait test gterm build: {error}"),
-        }
-    };
+        .status()
+        .expect("build test gterm");
     assert!(status.success(), "test gterm build failed");
     binary
 }

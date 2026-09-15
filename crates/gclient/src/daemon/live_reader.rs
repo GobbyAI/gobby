@@ -307,7 +307,10 @@ fn handle_inbound(inner: &LiveInner, value: Value) {
                 reply = match key {
                     super::RouteKey::Request(id) => state.requests.remove(&id),
                     super::RouteKey::Write(id, sequence) => state.writes.remove(&(id, sequence)),
-                    super::RouteKey::Control(id) => state.controls.remove(&id),
+                    super::RouteKey::Control(id) => {
+                        state.control_write_states.remove(&id);
+                        state.controls.remove(&id)
+                    }
                 };
             }
         }
@@ -432,6 +435,7 @@ fn fail_waiters(state: &mut LiveState, error: DaemonError) {
     for (_, waiter) in state.controls.drain() {
         let _ = waiter.send(Err(error.clone()));
     }
+    state.control_write_states.clear();
 }
 
 fn protocol_error(error: impl std::fmt::Display) -> DaemonError {

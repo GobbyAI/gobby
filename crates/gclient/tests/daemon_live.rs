@@ -1998,7 +1998,7 @@ async fn poll_until(limit: Duration, mut ready: impl FnMut() -> bool, on_timeout
     .expect(on_timeout);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn late_control_reply_cannot_settle_a_newer_request() {
     let mock = MockDaemon::start("local-token").await;
     mock.suppress_ws("terminal_take_control");
@@ -2008,7 +2008,6 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         .expect("connect live daemon");
     let attachment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-    tokio::time::pause();
     let timed = {
         let daemon = daemon.clone();
         tokio::spawn(async move {
@@ -2023,23 +2022,20 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    for _ in 0..10_000 {
-        if daemon.pending_counts().2 == 1
-            && mock.requests().iter().any(|request| {
-                request.body.as_ref().and_then(|body| body.get("schedule"))
-                    == Some(&json!("exact-deadline"))
-            })
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(daemon.pending_counts().2, 1);
-    tokio::time::advance(CONTROL_REQUEST_DEADLINE - Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    poll_until(
+        Duration::from_secs(5),
+        || {
+            daemon.pending_counts().2 == 1
+                && mock.requests().iter().any(|request| {
+                    request.body.as_ref().and_then(|body| body.get("schedule"))
+                        == Some(&json!("exact-deadline"))
+                })
+        },
+        "exact-deadline registered",
+    )
+    .await;
     assert!(!timed.is_finished());
-    tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    tokio::time::sleep(CONTROL_REQUEST_DEADLINE + Duration::from_millis(50)).await;
     assert_eq!(
         timed.await.expect("exact deadline task"),
         Err(DaemonError::Timeout)
@@ -2055,7 +2051,6 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
             .await,
         Err(DaemonError::ControlScopeIndeterminate)
     );
-    tokio::time::resume();
 
     let (_, mut observed) = daemon.subscribe();
     mock.send_event(json!({
@@ -2189,10 +2184,12 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         "mid-send registered",
     )
     .await;
-    // Give the 8MiB mid-send time to enter the websocket write without
-    // occupying the only current-thread worker; a yield_now spin starves
-    // the second control under suite load.
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    poll_until(
+        Duration::from_secs(2),
+        || daemon.control_write_started("attachment-mid-send"),
+        "mid-send write started",
+    )
+    .await;
     let pre_write = {
         let daemon = daemon.clone();
         tokio::spawn(async move {

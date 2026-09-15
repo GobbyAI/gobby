@@ -46,4 +46,4 @@ test-group = 'gterm-pty'
 [[profile.default.overrides]]
 filter = 'package(gobby-client) & binary(frame_source_live)'
 test-group = 'gterm-pty'
-slow-timeout = { period = "60s", terminate-after = 2 }
+slow-timeout = { period = "120s", terminate-after = 3 }

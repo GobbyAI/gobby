@@ -53,6 +53,7 @@ pub(super) struct LiveState {
     pub(super) requests: HashMap<String, ReplySender>,
     pub(super) writes: HashMap<(String, u64), ReplySender>,
     pub(super) controls: HashMap<String, ReplySender>,
+    pub(super) control_write_states: HashMap<String, Arc<AtomicU8>>,
     pub(super) active_attachments: HashSet<String>,
     pub(super) attachment_tombstones: HashSet<String>,
     pub(super) control_tombstones: HashSet<String>,
@@ -70,6 +71,7 @@ impl Default for LiveState {
             requests: HashMap::new(),
             writes: HashMap::new(),
             controls: HashMap::new(),
+            control_write_states: HashMap::new(),
             active_attachments: HashSet::new(),
             attachment_tombstones: HashSet::new(),
             control_tombstones: HashSet::new(),
@@ -119,6 +121,7 @@ impl LiveInner {
         for (_, waiter) in state.controls.drain() {
             let _ = waiter.send(Err(error.clone()));
         }
+        state.control_write_states.clear();
     }
 
     pub(super) async fn stall_close_stage(&self, stage: CloseStage) {
@@ -197,6 +200,14 @@ impl LiveDaemon {
             state.writes.len(),
             state.controls.len(),
         )
+    }
+
+    pub fn control_write_started(&self, attachment_id: &str) -> bool {
+        self.inner
+            .state()
+            .control_write_states
+            .get(attachment_id)
+            .is_some_and(|state| state.load(Ordering::Acquire) == WRITE_STARTED)
     }
 
     #[doc(hidden)]
@@ -307,6 +318,7 @@ impl LiveDaemon {
         &self,
         key: &RouteKey,
         sender: ReplySender,
+        write_state: &Arc<AtomicU8>,
     ) -> Result<mpsc::Sender<Outbound>, DaemonError> {
         let mut state = self.inner.state();
         if state.closed {
@@ -351,6 +363,9 @@ impl LiveDaemon {
                     return Err(DaemonError::ControlRequestInFlight);
                 }
                 state.controls.insert(attachment_id.clone(), sender);
+                state
+                    .control_write_states
+                    .insert(attachment_id.clone(), Arc::clone(write_state));
             }
         }
         Ok(outbound)
@@ -367,6 +382,7 @@ impl LiveDaemon {
             }
             RouteKey::Control(attachment_id) => {
                 state.controls.remove(attachment_id);
+                state.control_write_states.remove(attachment_id);
                 if post_write {
                     state.control_tombstones.insert(attachment_id.clone());
                 }
@@ -388,11 +404,12 @@ impl LiveDaemon {
         };
         let deadline = Instant::now() + duration;
         let (reply_tx, reply_rx) = oneshot::channel();
-        let outbound = self.register_waiter(&key, reply_tx)?;
+        let write_state = Arc::new(AtomicU8::new(WRITE_QUEUED));
+        let outbound = self.register_waiter(&key, reply_tx, &write_state)?;
         let mut guard = PendingGuard {
             daemon: self,
             key: &key,
-            write_state: Arc::new(AtomicU8::new(WRITE_QUEUED)),
+            write_state,
             armed: true,
         };
         let (written_tx, written_rx) = oneshot::channel();
