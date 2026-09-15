@@ -52,7 +52,6 @@ from gobby.sync.github_issue_sync import (
     GitHubIssueSyncService,
     GitHubRepositoryReadinessError,
 )
-from gobby.sync.linear import LinearSyncService
 from gobby.utils.checkout_root import (
     InvalidCheckoutRootError,
     MarkerMismatchError,
@@ -76,9 +75,6 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     github_url: str | None = None
     github_repo: str | None = None
-    linear_team_id: str | None = None
-    linear_project_id: str | None = None
-    linear_sync_enabled: bool | None = None
     approval_rules: list[str] | None = None
     validation_detection: dict[str, Any] | None = None
 
@@ -455,18 +451,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         approval_rules = fields.pop("approval_rules", None)
         validation_detection = fields.pop("validation_detection", None)
 
-        effective_linear_sync_enabled = fields.get(
-            "linear_sync_enabled", project.linear_sync_enabled
-        )
-        if effective_linear_sync_enabled:
-            team_id = fields.get("linear_team_id", project.linear_team_id)
-            linear_project_id = fields.get("linear_project_id", project.linear_project_id)
-            if not team_id or not linear_project_id:
-                raise HTTPException(
-                    400,
-                    "Linear sync requires both linear_team_id and linear_project_id",
-                )
-
         if validation_detection is not None:
             try:
                 validation_detection = ValidationDetectionConfig.model_validate(
@@ -611,9 +595,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(404, "Project not found")
 
         status_store = ExternalIssueSyncStatusStore(server.services.database)
-        linear_status = await server.run_db(status_store.get, project_id, "linear")
         github_status = await server.run_db(status_store.get, project_id, "github")
-        linear_counts = await server.run_db(status_store.counts, project_id, "linear")
         github_counts = await server.run_db(status_store.counts, project_id, "github")
         github_store = GitHubTriageStore(server.services.database)
         github_config = await server.run_db(
@@ -621,34 +603,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             project_id,
             fallback_repo=project.github_repo,
         )
-
-        linear_service = None
-        if server.services.mcp_manager is not None:
-            linear_service = LinearSyncService(
-                mcp_manager=server.services.mcp_manager,
-                task_manager=server.services.task_manager,
-                project_id=project_id,
-                linear_team_id=project.linear_team_id,
-                linear_project_id=project.linear_project_id,
-                project_manager=pm,
-            )
-        linear_ready = bool(
-            project.linear_team_id
-            and project.linear_project_id
-            and linear_service
-            and linear_service.is_available()
-        )
-        linear_error = None
-        if not linear_ready:
-            linear_error = (
-                "Linear team and project binding are required"
-                if not project.linear_team_id or not project.linear_project_id
-                else (
-                    linear_service.get_unavailable_reason()
-                    if linear_service
-                    else "Linear connector is unavailable"
-                )
-            )
 
         github_ready = False
         github_error = None
@@ -701,16 +655,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             jsonable_encoder(
                 {
                     "project_id": project_id,
-                    "linear": {
-                        "enabled": project.linear_sync_enabled,
-                        "ready": linear_ready,
-                        "binding": {
-                            "team_id": project.linear_team_id,
-                            "project_id": project.linear_project_id,
-                        },
-                        "readiness_error": linear_error,
-                        **status_payload(linear_status, linear_counts),
-                    },
                     "github": {
                         **github_config_payload,
                         "ready": github_ready,

@@ -490,36 +490,18 @@ class TestUpdateProject:
                 "test-project",
                 "--github-repo",
                 "user/repo",
-                "--linear-team-id",
-                "TEAM-123",
+                "--github-url",
+                "https://github.com/user/repo",
             ],
         )
 
         assert result.exit_code == 0
         assert "Updated project" in result.output
         mock_manager.update.assert_called_once_with(
-            mock_project.id, github_repo="user/repo", linear_team_id="TEAM-123"
+            mock_project.id,
+            github_repo="user/repo",
+            github_url="https://github.com/user/repo",
         )
-
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_update_linear_project_id(
-        self,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_project: MagicMock,
-    ) -> None:
-        mock_manager = MagicMock()
-        mock_manager.resolve_ref.return_value = mock_project
-        mock_manager.update.return_value = mock_project
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            ["projects", "update", "test-project", "--linear-project-id", "LIN-PROJ"],
-        )
-
-        assert result.exit_code == 0
-        mock_manager.update.assert_called_once_with(mock_project.id, linear_project_id="LIN-PROJ")
 
 
 class TestRepairProject:

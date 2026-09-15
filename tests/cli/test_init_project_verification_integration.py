@@ -38,7 +38,6 @@ def test_init_succeeds_with_array_package_json(
         ),
         patch("gobby.cli.init.resolve_native_bin", return_value=None),
         patch("gobby.cli.init._maybe_install_git_hooks_for_init"),
-        patch("gobby.cli.init._maybe_run_linear_setup"),
     ):
         result = CliRunner().invoke(cli, ["init", "-C", str(project_dir)])
 

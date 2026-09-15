@@ -428,74 +428,27 @@ class TestProjectRoutes:
         data = response.json()
         assert data["github_repo"] == "owner/repo"
 
-    def test_update_project_linear_team_id(self, client: TestClient, real_project: dict) -> None:
-        """Update project linear_team_id field."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"linear_team_id": "TEAM-123"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["linear_team_id"] == "TEAM-123"
-
-    def test_update_project_linear_project_id(self, client: TestClient, real_project: dict) -> None:
-        """Update project linear_project_id field."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"linear_project_id": "LIN-PROJ"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["linear_project_id"] == "LIN-PROJ"
-
-    def test_enable_linear_sync_requires_complete_binding(
+    def test_update_project_omits_linear_fields(
         self, client: TestClient, real_project: dict
     ) -> None:
-        response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={"linear_sync_enabled": True},
-        )
+        """Linear identity fields are no longer accepted on project update."""
+        prior = client.get(f"/api/projects/{real_project['id']}")
+        assert prior.status_code == 200
+        prior_data = prior.json()
 
-        assert response.status_code == 400
-        assert "linear_team_id and linear_project_id" in response.json()["detail"]
-
-    def test_enable_linear_sync_with_binding(self, client: TestClient, real_project: dict) -> None:
         response = client.patch(
             f"/api/projects/{real_project['id']}",
             json={
-                "linear_team_id": "team-1",
-                "linear_project_id": "linear-project-1",
+                "linear_team_id": "TEAM-123",
+                "linear_project_id": "LIN-PROJ",
                 "linear_sync_enabled": True,
             },
         )
-
         assert response.status_code == 200
-        assert response.json()["linear_sync_enabled"] is True
-
-    @pytest.mark.parametrize("binding_field", ["linear_team_id", "linear_project_id"])
-    def test_update_project_rejects_clearing_effective_linear_binding(
-        self,
-        client: TestClient,
-        real_project: dict[str, Any],
-        binding_field: str,
-    ) -> None:
-        enable_response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={
-                "linear_team_id": "team-1",
-                "linear_project_id": "linear-project-1",
-                "linear_sync_enabled": True,
-            },
-        )
-        assert enable_response.status_code == 200
-
-        response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={binding_field: None},
-        )
-
-        assert response.status_code == 400
-        assert "linear_team_id and linear_project_id" in response.json()["detail"]
+        data = response.json()
+        assert data["linear_team_id"] == prior_data.get("linear_team_id")
+        assert data["linear_project_id"] == prior_data.get("linear_project_id")
+        assert data["linear_sync_enabled"] == prior_data.get("linear_sync_enabled")
 
     def test_integrations_status_reports_live_counts_before_first_run(
         self,
@@ -522,10 +475,7 @@ class TestProjectRoutes:
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["linear"]["state"] == "pending"
-        assert payload["linear"]["linked_count"] == 1
-        assert payload["linear"]["pending_count"] == 1
-        assert payload["linear"]["last_outbound_success_at"] is None
+        assert "linear" not in payload
         assert payload["github"]["linked_count"] == 1
         assert payload["github"]["pending_count"] == 0
         assert payload["github"]["last_outbound_success_at"] is None
@@ -544,24 +494,23 @@ class TestProjectRoutes:
         assert update_response.status_code == 200
 
         status_store = ExternalIssueSyncStatusStore(session_manager.db)
-        for provider in ("linear", "github"):
-            status_store.upsert(
-                project_id=real_project["id"],
-                provider=provider,
-                state="healthy",
-                linked_count=0,
-                pending_count=0,
-            )
+        status_store.upsert(
+            project_id=real_project["id"],
+            provider="github",
+            state="healthy",
+            linked_count=0,
+            pending_count=0,
+        )
 
         response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
 
         assert response.status_code == 200
         payload = response.json()
+        assert "linear" not in payload
         assert payload["github"]["repositories"] == ["test/my-project"]
-        for provider in ("linear", "github"):
-            assert "project_id" not in payload[provider]
-            assert "provider" not in payload[provider]
-            assert "last_outbound_success_at" in payload[provider]
+        assert "project_id" not in payload["github"]
+        assert "provider" not in payload["github"]
+        assert "last_outbound_success_at" in payload["github"]
 
     def test_integrations_status_awaits_origin_repository_fallback(
         self,
