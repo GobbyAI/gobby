@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import tempfile
@@ -42,6 +43,8 @@ from gobby.storage.managed_credential_types import (
     auth_schema_for,
     resolve_auth_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "AUTH_SCHEMA",
@@ -437,16 +440,22 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         )
         rotated_credentials: list[ManagedCredential] = []
         for candidate in due:
-            execution_id = cast(UUID, _row_value(candidate, "managed_execution_id"))
+            execution_id = UUID(str(_row_value(candidate, "managed_execution_id")))
             predecessor_generation = int(_row_value(candidate, "credential_generation"))
             issued_at = datetime.now(UTC)
             expires_at = issued_at + timedelta(minutes=59)
-            credential = self._rotate_if_generation(
-                managed_execution_id=execution_id,
-                predecessor_generation=predecessor_generation,
-                issued_at=issued_at,
-                expires_at=expires_at,
-            )
+            try:
+                credential = self._rotate_if_generation(
+                    managed_execution_id=execution_id,
+                    predecessor_generation=predecessor_generation,
+                    issued_at=issued_at,
+                    expires_at=expires_at,
+                )
+            except CredentialIssuanceError:
+                # The sweep runs every lifecycle pass; one principal that keeps failing
+                # must not leave the ones after it to expire unrotated.
+                logger.exception("Managed credential rotation failed for %s", execution_id)
+                continue
             if credential is not None:
                 rotated_credentials.append(credential)
         return rotated_credentials
