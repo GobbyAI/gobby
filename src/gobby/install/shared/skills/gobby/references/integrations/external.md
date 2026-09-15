@@ -9,9 +9,7 @@ sync, or store GitHub/Linear issue identity on projects or tasks.
    wants those servers. Templates are not live config; inspect the installed
    row.
 3. Call the server's own tools for issues, pull requests, and comments.
-   Do not look for `gobby github`, `gobby linear`, `import_github_issues`,
-   `link_task_to_github_issue`, `close_linked_github_issue`, or
-   `open_delivery_pr`.
+   Gobby has no first-party GitHub or Linear issue/PR tools.
 4. Repair credentials and MCP connection state before retrying. An unavailable
    connector is not evidence that Gobby still owns the workflow.
 
