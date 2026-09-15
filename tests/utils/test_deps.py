@@ -18,6 +18,7 @@ from gobby.config.embedding_keys import (
 )
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.secrets import SecretStore
 from gobby.utils import deps
 from gobby.utils.dependency_requirements import DependencyReport, DependencyStatus
@@ -819,7 +820,14 @@ def test_check_config_mismatches_ignores_non_string_chat_candidates() -> None:
     assert issues == []
 
 
-def test_collect_all_deps() -> None:
+@pytest.mark.parametrize(("grant", "include_srt"), [(None, True), ("/run/grant.json", False)])
+def test_collect_all_deps(
+    monkeypatch: pytest.MonkeyPatch, grant: str | None, include_srt: bool
+) -> None:
+    if grant is None:
+        monkeypatch.delenv(MANAGED_EXECUTION_BOOTSTRAP_ENV, raising=False)
+    else:
+        monkeypatch.setenv(MANAGED_EXECUTION_BOOTSTRAP_ENV, grant)
     healthy = DependencyStatus(
         state="healthy",
         installed_version="9",
@@ -848,7 +856,7 @@ def test_collect_all_deps() -> None:
                 optional={},
                 services={"docker_running": True},
             ),
-        ),
+        ) as collect_report,
         patch("gobby.utils.deps.get_tailscale_info", return_value={}),
         patch("gobby.utils.deps.get_configured_embedding_provider", return_value="lmstudio"),
         patch("gobby.utils.deps.get_ollama_info", return_value={}),
@@ -865,6 +873,8 @@ def test_collect_all_deps() -> None:
         assert res["services"]["docker_running"] is True
         assert res["dependencies"]["required"]["git"]["state"] == "healthy"
         assert res["integrations"]["embeddings_provider"] == "lmstudio"
+    # Sandboxed status cannot read tools/srt; the daemon verified SRT before launch.
+    assert collect_report.call_args.kwargs["include_srt"] is include_srt
 
 
 @pytest.mark.parametrize(
