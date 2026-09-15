@@ -37,6 +37,7 @@ from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.model_metadata import ModelMetadataStore
+from gobby.workflows.observer_context_usage import _thresholds
 
 pytestmark = pytest.mark.unit
 
@@ -441,6 +442,32 @@ class TestResolveContextWindow:
         assert result is not None
         assert result.value == 300_000
         assert result.source == "registry"
+
+    def test_grok_4_6_resolves_to_500k_when_catalog_carries_it(
+        self, postgres_db: HubDatabase
+    ) -> None:
+        ModelMetadataStore(postgres_db).populate(
+            [
+                ModelInfo(
+                    id="grok-4.6",
+                    name="Grok 4.6",
+                    context_length=500_000,
+                    max_completion_tokens=None,
+                )
+            ]
+        )
+        with patch("gobby.app_context.get_app_context", return_value=None):
+            result = resolve_context_window_with_source(
+                "grok-4.6",
+                provider="grok",
+                db=postgres_db,
+            )
+
+        assert result is not None
+        assert result.value == 500_000
+        assert result.source == "registry"
+        warn_tokens, block_tokens, _every = _thresholds(None, result.value)
+        assert (warn_tokens, block_tokens) == (250_000, 300_000)
 
     def test_family_fallback_scoped_to_claude_providers(self) -> None:
         """Claude family keys stay scoped to Claude-compatible providers."""

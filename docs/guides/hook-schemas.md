@@ -285,6 +285,18 @@ Grok uses lowercase snake-case native hook names and camelCase payload fields.
 | `interaction_resolved` | `notification` | wait-resolution evidence |
 | `stop_cancelled` | `stop` or `interrupt` | disposition-dependent |
 
+Grok registers `SubagentStart` and `SubagentStop` in `hooks-template.json`.
+Grok 1.0.30 does dispatch `subagent_start` (confirmed with
+`grok --debug --debug-file`); ACP `blockingEvents` lists only
+`pre_tool_use`, `stop`, and `subagent_stop`. Gobby often still drops the start:
+the child `sessionId` is not a Gobby row, and TTY bind can miss a parent.
+Child hooks inherit the parent tmux pane. Gobby binds them to the live pane
+owner instead of auto-registering a session, and derives `is_subagent` /
+`subagent_count` from that bind. A parent `user_prompt_submit` still resets the
+counter; a TTY-bound child `user_prompt_submit` does not. Evidence:
+`tests/fixtures/provider_contracts/grok/subagent-start-debug-trace.json` and
+`tests/fixtures/provider_contracts/grok/subagent-start-drop-summary.json`.
+
 For `stop_cancelled`, `stop_reason: user_interrupt` together with
 `cancelled_by: user` becomes `interrupt`; other cancellations carry the
 `ended_non_user` disposition. These lifecycle fields distinguish interruption

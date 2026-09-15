@@ -8,7 +8,7 @@ from typing import Any, Literal
 import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.title_lifecycle import promote_heuristic_title
@@ -102,6 +102,33 @@ class AgentEventHandlerMixin(EventHandlersBase):
             ttl_ms=report["ttl_ms"],
         )
 
+    def _ensure_bound_grok_native_subagent(self, event: HookEvent, session_id: str) -> None:
+        """Derive is_subagent when a Grok child hook inherited the parent TTY."""
+        if event.source != SessionSource.GROK:
+            return
+        if not event.metadata.get("_native_subagent_binding"):
+            return
+        if self._session_manager is None:
+            return
+        from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
+
+        if session_has_active_native_subagent(self._session_manager.db, session_id):
+            return
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            SessionVariableManager(self._session_manager.db).adjust_counter_and_derive_boolean(
+                session_id,
+                "subagent_count",
+                1,
+                boolean_name="is_subagent",
+            )
+        except (psycopg.Error, KeyError, TypeError, ValueError) as exc:
+            self.logger.warning(
+                "Failed to derive Grok is_subagent from inherited TTY: %s",
+                exc,
+            )
+
     def handle_before_agent(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_AGENT event (user prompt submit)."""
         self._apply_attention_metadata_report(event)
@@ -127,7 +154,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
             # A new parent turn cannot inherit live subagents from the previous
             # turn. Reset both values together to recover from missed stop hooks.
-            if self._session_manager:
+            # Child Grok conversations inherit the parent TTY and bind here;
+            # that is not a parent turn and must not clear is_subagent.
+            if self._session_manager and not event.metadata.get("_native_subagent_binding"):
                 try:
                     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -138,6 +167,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     )
                 except (psycopg.Error, KeyError, TypeError, ValueError) as e:
                     self.logger.warning("Failed to reset subagent count on BEFORE_AGENT: %s", e)
+            elif self._session_manager:
+                self._ensure_bound_grok_native_subagent(event, session_id)
 
             try:
                 from gobby.hooks.event_handlers._session_start.transcripts import (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -15,6 +16,8 @@ import pytest
 from gobby.adapters.grok import GrokAdapter
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import get_processed_envelope_dir, mark_envelope_processed
+from gobby.hooks.event_enrichment import EventEnricher
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
     apply_in_place_compact_context_loss,
 )
@@ -30,10 +33,14 @@ from gobby.hooks.receipt_effects import (
 )
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage import workspace_machine_scope
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -572,8 +579,6 @@ def test_in_place_compact_clears_queued_context(
         {
             "grok_pending_briefing": [_component("turn:stale", "Context is 356k tokens.")],
             "grok_pending_turn_context": [_component("ctx:turn:1", "turn context")],
-            "loaded_skills": ["brevity"],
-            "loaded_skill_references": ["gobby:references/tasks/closing.md"],
             "brevity_level": "max",
         },
     )
@@ -584,23 +589,103 @@ def test_in_place_compact_clears_queued_context(
     stored = variables.get_variables(grok_session_id)
     assert stored.get("grok_pending_briefing") in ([], None)
     assert stored.get("grok_pending_turn_context") in ([], None)
-    assert stored["loaded_skills"] == []
-    assert stored["loaded_skill_references"] == []
     assert stored["brevity_level"] == "max"
 
 
-def test_in_place_compact_rearms_the_feedback_survey(
+def test_grok_post_compact_runs_session_start_compact_rules(
+    manager_with_mocks: HookManager,
     session_manager: SessionManager,
     grok_session_id: str,
+    sample_project: dict[str, Any],
+    mock_dependencies: dict[str, Any],
 ) -> None:
-    """Grok emits no SessionStart(source=compact), so the bundled rearm rule misses it."""
-    variables = SessionVariableManager(session_manager.db)
-    variables.merge_variables(grok_session_id, {"_gobby_feedback_epoch_submitted": True})
-    handler = SimpleNamespace(_session_manager=session_manager, _task_manager=None)
+    """Grok PostCompact evaluates session_start(compact) YAML through HookManager."""
+    sync_result = sync_bundled_rules(session_manager.db, get_bundled_rules_path())
+    assert sync_result["errors"] == []
 
-    apply_in_place_compact_context_loss(handler, grok_session_id)
+    task_context = "Task #22379 is claimed: restore Grok PostCompact rules."
+    variables = _configure_manager(manager_with_mocks, session_manager)
+    variables.merge_variables(
+        grok_session_id,
+        {
+            "pending_context_reset": True,
+            "plan_mode": True,
+            "unlocked_tools": ["call_tool"],
+            "suggested_skill_names": ["tdd"],
+            "loaded_skills": ["brevity"],
+            "loaded_skill_references": ["gobby:references/tasks/closing.md"],
+            "injected_memory_ids": ["mem-1"],
+            "_gobby_feedback_epoch_submitted": True,
+            "task_context": task_context,
+        },
+    )
 
-    assert variables.get_variables(grok_session_id)["_gobby_feedback_epoch_submitted"] is False
+    mock_dependencies["session_manager"] = session_manager
+    mock_dependencies["session_storage"] = session_manager
+    mock_dependencies["task_manager"] = None
+    handlers = EventHandlers(**mock_dependencies)
+    order: list[str] = []
+
+    def tracking_handler(event: HookEvent) -> HookResponse:
+        order.append("handler")
+        return EventHandlers.handle_post_compact(handlers, event)
+
+    handlers._handler_map[HookEventType.POST_COMPACT] = tracking_handler
+    manager_with_mocks._event_handlers = handlers
+    manager_with_mocks._enricher = EventEnricher(session_manager, set())
+
+    def evaluate_rules(
+        event: HookEvent,
+        _blocking_deadline: object | None = None,
+    ) -> tuple[str | None, HookResponse | None]:
+        order.append("rules")
+        stored = variables.get_variables(grok_session_id)
+        response = asyncio.run(
+            RuleEngine(session_manager.db).evaluate(event, grok_session_id, stored)
+        )
+        variables.merge_variables(grok_session_id, stored)
+        if response.decision != "allow":
+            return response.context, response
+        return response.context, None
+
+    setattr(manager_with_mocks, "_evaluate_workflow_rules", evaluate_rules)
+    setattr(manager_with_mocks, "_evaluate_blocking_webhooks", lambda *args, **kwargs: None)
+
+    event = _event(HookEventType.POST_COMPACT, grok_session_id)
+    event.project_id = sample_project["id"]
+    response = manager_with_mocks.handle(event)
+    assert response.decision == "allow"
+    assert order == ["handler", "rules"]
+
+    stored = variables.get_variables(grok_session_id)
+    assert stored.get("pending_context_reset") is False
+    assert stored.get("plan_mode") is False
+    assert stored.get("unlocked_tools") in ([], None)
+    assert stored.get("suggested_skill_names") in ([], None)
+    assert stored.get("loaded_skills") in ([], None)
+    assert stored.get("loaded_skill_references") in ([], None)
+    assert stored.get("injected_memory_ids") in ([], None)
+    assert stored.get("_gobby_feedback_epoch_submitted") is False
+
+    delivered = manager_with_mocks._complete_response(
+        _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="after-compact"),
+        HookResponse(decision="allow"),
+        workflow_context=None,
+    )
+    assert delivered.decision == "allow"
+    assert task_context in (delivered.context or "")
+
+    assert session_manager.update_context_usage(
+        grok_session_id,
+        ContextUsageSnapshot.from_reported_occupancy(
+            source="grok",
+            context_window=None,
+            context_used_tokens=210_000,
+        ),
+    )
+    guidance_vars = variables.get_variables(grok_session_id)
+    detect_context_compact_guidance(guidance_vars, grok_session_id, session_manager)
+    assert guidance_vars["context_compact_guidance_kind"] == "warn"
 
 
 def test_grok_pending_context_imports_before_the_event_handler_package() -> None:

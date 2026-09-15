@@ -352,8 +352,20 @@ def _message(
         usage=usage,
         tool_use_id=tool_use_id,
         message_id=message_id,
+        model=_message_model(raw_json),
         context_used_tokens=_context_used_tokens(raw_json),
     )
+
+
+def _message_model(data: dict[str, Any]) -> str | None:
+    params = data.get("params")
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    if not isinstance(meta, dict):
+        return None
+    model_id = meta.get("modelId")
+    if isinstance(model_id, str) and model_id.strip():
+        return model_id.strip()
+    return None
 
 
 def _context_used_tokens(data: dict[str, Any]) -> int | None:

@@ -21,6 +21,7 @@ from gobby.config.sessions import SessionSummaryConfig
 from gobby.llm.context_windows import reconcile_model_context
 from gobby.sessions.context_usage import (
     context_window_from_raw_message,
+    grok_epoch_max_occupancy,
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
@@ -383,6 +384,15 @@ class TranscriptProcessingMixin:
             message_context_window = reconciled_context.context_window
             if message_context_window is not None:
                 session_context_window = message_context_window
+            if session_source == "grok" and msg.context_used_tokens is not None:
+                snapshot_plan.append(
+                    ContextUsageSnapshot.from_reported_occupancy(
+                        source="grok",
+                        context_window=message_context_window,
+                        context_used_tokens=msg.context_used_tokens,
+                        model=message_model or last_model,
+                    )
+                )
             usage = msg.usage
             if usage is None:
                 if session_source in _WINDOW_ONLY_CONTEXT_SOURCES:
@@ -448,15 +458,20 @@ class TranscriptProcessingMixin:
                 event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
             )
+            occupancy_snapshot = (
+                None
+                if session_source == "grok"
+                else snapshot_from_token_usage(
+                    source=session_source,
+                    context_window=message_context_window,
+                    usage=usage,
+                    model=event_model,
+                )
+            )
             snapshot_plan.append(
                 _PendingTokenEvent(
                     event=event,
-                    snapshot=snapshot_from_token_usage(
-                        source=session_source,
-                        context_window=message_context_window,
-                        usage=usage,
-                        model=event_model,
-                    ),
+                    snapshot=occupancy_snapshot,
                     payload={
                         "session_id": session_id,
                         "project_id": session_project_id,
@@ -494,7 +509,20 @@ class TranscriptProcessingMixin:
         event_position = 0
         for entry in snapshot_plan:
             if not isinstance(entry, _PendingTokenEvent):
-                latest_context_snapshot = entry
+                if entry is None:
+                    continue
+                if (
+                    latest_context_snapshot is not None
+                    and latest_context_snapshot.context_used_tokens is not None
+                    and entry.context_used_tokens is None
+                ):
+                    continue
+                if session_source == "grok":
+                    latest_context_snapshot = grok_epoch_max_occupancy(
+                        entry, current=latest_context_snapshot
+                    )
+                else:
+                    latest_context_snapshot = entry
                 continue
             inserted = inserted_flags[event_position]
             event_position += 1
@@ -505,7 +533,8 @@ class TranscriptProcessingMixin:
             running_totals["output_tokens"] += inserted_event.output_tokens
             running_totals["cache_creation_tokens"] += inserted_event.cache_creation_tokens
             running_totals["cache_read_tokens"] += inserted_event.cache_read_tokens
-            latest_context_snapshot = entry.snapshot
+            if entry.snapshot is not None:
+                latest_context_snapshot = entry.snapshot
 
             if ws_server is not None:
                 try:

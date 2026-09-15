@@ -322,9 +322,16 @@ class SessionLookupService:
             HookEventType.SUBAGENT_START,
             HookEventType.SUBAGENT_STOP,
         }
-        if not is_subagent_event and not session_has_active_native_subagent(
-            self._session_manager.db,
-            owner.id,
+        # Grok 1.0.x often omits SubagentStart. Child hooks still inherit the
+        # parent TTY, so bind them even when is_subagent is not yet set.
+        grok_inherited_child = event.source.value == "grok"
+        if (
+            not is_subagent_event
+            and not grok_inherited_child
+            and not session_has_active_native_subagent(
+                self._session_manager.db,
+                owner.id,
+            )
         ):
             return None
         self._logger.info(

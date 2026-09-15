@@ -491,6 +491,8 @@ class HookManager(HookManagerDispatchMixin):
         # _platform_session_id, then evaluate rules with the correct session ID.
         # This ensures set_variable effects are stored under the platform session_id
         # rather than the CLI's external_id.
+        # For Grok POST_COMPACT: handler first so usage reset and queued-context
+        # clear happen before session_start(compact) YAML injects.
         # For all other events: evaluate rules first so block effects can prevent
         # handler execution.
         if event.event_type == HookEventType.SESSION_START:
@@ -531,6 +533,29 @@ class HookManager(HookManagerDispatchMixin):
                     )
 
             with create_span("hook.session_start.webhooks"):
+                webhook_block = self._evaluate_blocking_webhooks(event, blocking_deadline)
+                if webhook_block:
+                    return self._complete_response(
+                        event, webhook_block, workflow_context, preserve_original=True
+                    )
+        elif event.event_type == HookEventType.POST_COMPACT and event.source == SessionSource.GROK:
+            with create_span("hook.post_compact.handler"):
+                try:
+                    response = handler(event)
+                except Exception as e:
+                    self.logger.exception("Event handler %s failed: %s", event.event_type, e)
+                    return HookResponse(decision="allow", reason=f"Handler error: {e}")
+
+            with create_span("hook.post_compact.rules"):
+                workflow_context, blocking_response = self._evaluate_workflow_rules(
+                    event, blocking_deadline
+                )
+                if blocking_response:
+                    return self._complete_response(
+                        event, blocking_response, workflow_context, preserve_original=True
+                    )
+
+            with create_span("hook.post_compact.webhooks"):
                 webhook_block = self._evaluate_blocking_webhooks(event, blocking_deadline)
                 if webhook_block:
                     return self._complete_response(
