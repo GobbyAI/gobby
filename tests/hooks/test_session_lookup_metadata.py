@@ -1,7 +1,9 @@
 """Tests for hook session lookup metadata preservation."""
 
+import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -375,13 +377,38 @@ def test_tool_hook_without_parent_subagent_still_auto_registers() -> None:
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = None
     session_manager.register_session.return_value = "created-session"
-    event = _pane_event(HookEventType.BEFORE_TOOL)
+    event = _pane_event(HookEventType.BEFORE_TOOL, source=SessionSource.CLAUDE)
 
     result = service.resolve(event)
 
     assert result == "created-session"
     assert event.metadata["_session_just_materialized"] is True
     session_manager.register_session.assert_called_once()
+
+
+def test_grok_tool_hook_with_parent_tty_binds_without_prior_subagent_start() -> None:
+    payload = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "provider_contracts"
+            / "grok"
+            / "subagent-start-drop-summary.json"
+        ).read_text()
+    )["sanitized_child_payload"]
+    session_manager, _, service = _uncached_service()
+    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    session_manager.db.fetchone.return_value = None
+    event = _pane_event(HookEventType.BEFORE_TOOL, session_id=payload["sessionId"])
+    event.data["terminal_context"] = payload["terminal_context"]
+
+    result = service.resolve(event)
+
+    assert result == "parent-live"
+    assert event.metadata["_native_subagent_binding"] is True
+    assert "_session_just_materialized" not in event.metadata
+    session_manager.register_session.assert_not_called()
 
 
 def test_materialized_row_uses_normalized_deferred_identity() -> None:

@@ -1,0 +1,30 @@
+{
+  "capture_type": "gobby-hooks-log-and-grok-discovery",
+  "grok_version": "1.0.30",
+  "note": "Grok ~/.grok/logs/hooks.log is discovery-only. Per-hook dispatch is in Gobby ~/.gobby/logs/hooks.log.",
+  "discovery": {
+    "source": "~/.grok/logs/hooks.log",
+    "sample": "hooks: discovery complete total_hooks=23 subagent_start=1 subagent_stop=1"
+  },
+  "drop": {
+    "source": "~/.gobby/logs/hooks.log.1",
+    "event": "SUBAGENT_START",
+    "source_cli": "grok",
+    "behavior": "Skipping auto-registration for orphaned SUBAGENT_START: child external_id not found in DB; TTY bind did not attach a parent session."
+  },
+  "observed_child_hooks": {
+    "source": "~/.gobby/logs/hooks.log",
+    "event": "BEFORE_AGENT",
+    "behavior": "Bound native subagent hook BEFORE_AGENT to live pane owner (inherited tmux pane, source=grok)."
+  },
+  "sanitized_child_payload": {
+    "hookEventName": "user_prompt_submit",
+    "sessionId": "01a04561-child",
+    "cwd": "<WORKSPACE>",
+    "terminal_context": {
+      "tmux_pane": "%90",
+      "tmux_socket_path": "/tmp/tmux-501/default",
+      "parent_pid": 64881
+    }
+  }
+}
