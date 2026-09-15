@@ -6,10 +6,12 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -30,6 +32,8 @@ HOST_WRAP_GROUPS = frozenset({2, 3})
 _RUN_ROOT_ENV = "GOBBY_GUARD_SET_G_RUN_ROOT"
 _ISOLATED_ENV_KEYS = (_RUN_ROOT_ENV, "CLAUDE_CODE_TMPDIR")
 _UNIX_SOCKET_MAX = 104
+_SOCKET_NEST = Path(".tmpxxxxxx") / "gterm-control.sock"
+_RUN_ROOT_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 CommandRunner = Callable[[Sequence[str], Mapping[str, str]], int]
 HostSnapshot = Callable[[], dict[int, Path]]
@@ -568,50 +572,143 @@ def _pytest_argv(paths: Sequence[str]) -> list[str]:
     return ["uv", "run", "pytest", *paths]
 
 
-def isolated_temp_parent() -> Path:
-    """Pick a short writable parent so gterm Unix sockets fit sockaddr_un."""
-    candidates = (
-        Path("/tmp"),
-        Path("/private/tmp"),
-        Path.home() / ".gobby" / "tmp",
-    )
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            continue
-        if not os.access(candidate, os.W_OK):
-            continue
-        sample = candidate / "gsg-xxxxxx" / ".tmpxxxxxx" / "gterm-control.sock"
-        if len(os.fsencode(str(sample.resolve()))) < _UNIX_SOCKET_MAX:
-            return candidate
-    return Path(tempfile.gettempdir())
-
-
 def gterm_socket_path_budget(run_root: Path) -> int:
-    sample = run_root / ".tmpxxxxxx" / "gterm-control.sock"
+    sample = run_root.resolve() / _SOCKET_NEST
     return len(os.fsencode(str(sample)))
 
 
-def _seed_sandbox_zig_packages(env: Mapping[str, str]) -> None:
-    """Expose the machine Zig package cache inside a sandbox XDG cache."""
-    source = Path.home() / ".cache" / "zig" / "p"
-    xdg = env.get("XDG_CACHE_HOME", "").strip()
-    if not xdg or not source.is_dir():
-        return
-    dest = Path(xdg) / "zig" / "p"
+def isolated_run_root_name_budget(parent: Path) -> int:
+    """Max unique directory name length under parent that still fits sockaddr_un."""
+    return _UNIX_SOCKET_MAX - gterm_socket_path_budget(parent / "x")
+
+
+def _parent_is_writable(candidate: Path) -> bool:
     try:
-        dest.mkdir(parents=True, exist_ok=True)
-        for entry in source.iterdir():
-            target = dest / entry.name
-            if target.exists() or target.is_symlink():
-                continue
-            target.symlink_to(entry)
-    except OSError as exc:
-        _emit(f"zig package seed skipped: {exc}")
+        candidate.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    for suffix in ("", "x"):
+        probe = candidate / f".gw{os.getpid()}{suffix}"
+        try:
+            probe.mkdir()
+        except FileExistsError:
+            continue
+        except OSError:
+            return False
+        try:
+            probe.rmdir()
+        except OSError:
+            return True
+        return True
+    return False
 
 
-def _isolated_child_env(run_root: Path, base: Mapping[str, str] | None = None) -> dict[str, str]:
+def isolated_temp_parent() -> Path:
+    """Pick a writable parent so nested gterm Unix sockets fit sockaddr_un."""
+    raw_candidates = (
+        os.environ.get("CLAUDE_CODE_TMPDIR", ""),
+        os.environ.get("TMPDIR", ""),
+        tempfile.gettempdir(),
+        "/tmp",
+        "/private/tmp",
+        str(Path.home() / ".gobby" / "tmp"),
+    )
+    seen: set[Path] = set()
+    for raw in raw_candidates:
+        if not str(raw).strip():
+            continue
+        candidate = Path(raw)
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if not _parent_is_writable(candidate):
+            continue
+        if gterm_socket_path_budget(resolved) < _UNIX_SOCKET_MAX:
+            return candidate
+        if isolated_run_root_name_budget(resolved) >= 1:
+            return candidate
+    raise GuardSetGError("no writable temp parent keeps gterm sockets under the sockaddr_un limit")
+
+
+def _mkdir_unique(parent: Path, name_len: int) -> Path:
+    for _ in range(128):
+        raw = os.urandom(name_len)
+        name = "".join(_RUN_ROOT_CHARS[byte % 36] for byte in raw)
+        path = parent / name
+        try:
+            path.mkdir()
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise GuardSetGError(f"could not create isolated run root under {parent}") from exc
+        return path.resolve()
+    raise GuardSetGError(f"could not allocate a unique isolated run root under {parent}")
+
+
+@contextmanager
+def isolated_run_root(parent: Path | None = None) -> Iterator[Path]:
+    root_parent = parent if parent is not None else isolated_temp_parent()
+    name_budget = isolated_run_root_name_budget(root_parent)
+    owned: Path | None = None
+    # Prefer the writable parent itself. A nested unique dir becomes TMPDIR and
+    # breaks vendored zig helpers that spawn from relative cache paths.
+    if gterm_socket_path_budget(root_parent) < _UNIX_SOCKET_MAX:
+        run_root = root_parent.resolve()
+    elif name_budget >= 1:
+        owned = _mkdir_unique(root_parent, min(name_budget, 12))
+        run_root = owned
+    else:
+        raise GuardSetGError(
+            f"isolated temp parent {root_parent} socket path budget "
+            f"{gterm_socket_path_budget(root_parent)} exceeds {_UNIX_SOCKET_MAX}"
+        )
+    try:
+        budget = gterm_socket_path_budget(run_root)
+        if budget >= _UNIX_SOCKET_MAX:
+            raise GuardSetGError(
+                f"isolated run root {run_root} socket path budget {budget} "
+                f"exceeds {_UNIX_SOCKET_MAX}"
+            )
+        yield run_root
+    finally:
+        if owned is not None:
+            shutil.rmtree(owned, ignore_errors=True)
+
+
+def _seed_sandbox_zig_packages(env: Mapping[str, str]) -> None:
+    """Expose the machine Zig package cache inside sandbox/global Zig caches."""
+    source = Path.home() / ".cache" / "zig" / "p"
+    if not source.is_dir():
+        return
+    destinations: list[Path] = []
+    xdg = env.get("XDG_CACHE_HOME", "").strip()
+    if xdg:
+        destinations.append(Path(xdg) / "zig" / "p")
+    zig_global = env.get("ZIG_GLOBAL_CACHE_DIR", "").strip()
+    if zig_global:
+        destinations.append(Path(zig_global) / "p")
+    for dest in destinations:
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for entry in source.iterdir():
+                target = dest / entry.name
+                if target.exists() or target.is_symlink():
+                    continue
+                target.symlink_to(entry)
+        except OSError as exc:
+            _emit(f"zig package seed skipped: {exc}")
+
+
+def _isolated_child_env(
+    run_root: Path,
+    base: Mapping[str, str] | None = None,
+    *,
+    repo: Path | None = None,
+) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
     root = str(run_root)
     env[_RUN_ROOT_ENV] = root
@@ -619,6 +716,17 @@ def _isolated_child_env(run_root: Path, base: Mapping[str, str] | None = None) -
     env["TMP"] = root
     env["TEMP"] = root
     env["CLAUDE_CODE_TMPDIR"] = root
+    repo_root = repo if repo is not None else Path.cwd()
+    vendor_cache = repo_root / "crates" / "gterminal" / "vendor" / "libghostty-vt" / ".zig-cache"
+    if not env.get("ZIG_GLOBAL_CACHE_DIR", "").strip():
+        try:
+            vendor_cache.mkdir(parents=True, exist_ok=True)
+            env["ZIG_GLOBAL_CACHE_DIR"] = str(vendor_cache)
+        except OSError as exc:
+            _emit(f"zig global cache mkdir skipped: {exc}")
+    machine_pkgs = Path.home() / ".cache" / "zig" / "p"
+    if not env.get("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR", "").strip() and machine_pkgs.is_dir():
+        env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(machine_pkgs)
     _seed_sandbox_zig_packages(env)
     return env
 
@@ -703,23 +811,18 @@ def run_group(group: int, *, repo: Path | None = None) -> int:
         outcome = check_hosts(run_roots=isolated_run_roots())
         return outcome.exit_code
     if group in HOST_WRAP_GROUPS:
-        with tempfile.TemporaryDirectory(
-            prefix="gsg-", dir=str(isolated_temp_parent())
-        ) as raw:
-            run_root = Path(raw).resolve()
-            budget = gterm_socket_path_budget(run_root)
-            if budget >= _UNIX_SOCKET_MAX:
-                _emit(
-                    f"isolated run root {run_root} socket path budget {budget} "
-                    f"exceeds {_UNIX_SOCKET_MAX}"
+        try:
+            with isolated_run_root() as run_root:
+                env = _isolated_child_env(run_root, repo=root)
+                _emit(f"isolated run root {run_root}")
+                outcome = run_wrapped(
+                    lambda: _run_group_body(group, env, root),
+                    run_roots=(run_root,),
                 )
-            env = _isolated_child_env(run_root)
-            _emit(f"isolated run root {run_root}")
-            outcome = run_wrapped(
-                lambda: _run_group_body(group, env, root),
-                run_roots=(run_root,),
-            )
-            return outcome.exit_code
+                return outcome.exit_code
+        except GuardSetGError as exc:
+            _emit(str(exc))
+            return 1
     return _run_group_body(group, os.environ, root)
 
 

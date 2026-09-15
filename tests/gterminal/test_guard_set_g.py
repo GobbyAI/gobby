@@ -18,10 +18,13 @@ from gobby.guard_set_g import (
     client_nextest_argv,
     evaluate_gated_targets,
     gterm_socket_path_budget,
+    isolated_run_root,
+    isolated_run_root_name_budget,
     isolated_run_roots,
     isolated_temp_parent,
     leaked_hosts,
     path_under,
+    run_group,
     snapshot_gterm_hosts,
     socket_dir_from_cmdline,
     terminal_clippy_argv,
@@ -266,8 +269,43 @@ def test_check_hosts_fails_on_surviving_owned_host_and_preserves_durable(
 
 def test_isolated_temp_parent_keeps_gterm_socket_under_sockaddr_limit() -> None:
     parent = isolated_temp_parent()
-    run_root = parent / "gsg-xxxxxx"
-    assert gterm_socket_path_budget(run_root.resolve()) < 104
+    name_budget = isolated_run_root_name_budget(parent)
+    if name_budget >= 1:
+        run_root = parent / ("x" * min(name_budget, 12))
+    else:
+        run_root = parent
+    assert gterm_socket_path_budget(run_root) < 104
+
+
+def test_gterm_socket_path_budget_detects_oversize_run_root() -> None:
+    run_root = Path("/var/folders") / ("x" * 80) / "run"
+    assert gterm_socket_path_budget(run_root) >= 104
+
+
+def test_isolated_run_root_stays_under_sockaddr_limit() -> None:
+    with isolated_run_root() as run_root:
+        assert gterm_socket_path_budget(run_root) < 104
+        assert run_root.is_dir()
+
+
+def test_isolated_run_root_reuses_parent_when_it_already_fits() -> None:
+    parent = isolated_temp_parent()
+    if gterm_socket_path_budget(parent) >= 104:
+        pytest.skip("writable temp parent itself exceeds the sockaddr_un budget")
+    with isolated_run_root(parent) as run_root:
+        assert run_root == parent.resolve()
+        assert gterm_socket_path_budget(run_root) < 104
+
+
+def test_host_wrap_group_fails_closed_when_temp_parent_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom() -> Path:
+        raise GuardSetGError("no writable temp parent")
+
+    monkeypatch.setattr("gobby.guard_set_g.isolated_temp_parent", boom)
+    monkeypatch.setattr("gobby.guard_set_g.print_installed_provenance", lambda: None)
+    assert run_group(2) == 1
 
 
 def test_isolated_child_env_keeps_explicit_zig_cache(tmp_path: Path) -> None:
@@ -286,6 +324,16 @@ def test_isolated_child_env_keeps_explicit_zig_cache(tmp_path: Path) -> None:
     assert env["CLAUDE_CODE_TMPDIR"] == str(run_root)
     assert env["ZIG_GLOBAL_CACHE_DIR"] == "/custom/zig"
     assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == "/custom/zig/p"
+
+
+def test_isolated_child_env_uses_vendored_zig_cache_when_unset(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    repo = tmp_path / "repo"
+    vendor_cache = repo / "crates" / "gterminal" / "vendor" / "libghostty-vt" / ".zig-cache"
+    env = _isolated_child_env(run_root, {"PATH": "/bin"}, repo=repo)
+    assert env["ZIG_GLOBAL_CACHE_DIR"] == str(vendor_cache)
+    assert vendor_cache.is_dir()
 
 
 def test_isolated_run_roots_read_env_paths(tmp_path: Path) -> None:
