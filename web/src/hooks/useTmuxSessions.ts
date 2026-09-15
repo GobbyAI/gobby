@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createAttachmentReadiness } from "./terminalAttachmentReadiness";
+import {
+  createPendingRequestSlot,
+  type PendingRequest,
+} from "./terminalPendingRequest";
 import { createTerminalWsReducer } from "./terminalWsFragments";
 import {
   applyRosterPage,
@@ -43,25 +47,6 @@ export const TMUX_STABLE_OPEN_MS = 1_000;
  * sweep-interval later.
  */
 export const TERMINAL_FRAGMENT_TICK_MS = 1_000;
-
-type PendingRequest =
-  | {
-      kind: "attach";
-      requestId: string;
-      generation: number;
-      target: TmuxTarget;
-    }
-  | {
-      kind: "detach";
-      requestId: string;
-      generation: number;
-      nextTarget: TmuxTarget | null;
-    }
-  | {
-      kind: "create";
-      requestId: string;
-      generation: number;
-    };
 
 interface TmuxSessionsResult {
   sessions: TmuxSession[];
@@ -136,8 +121,6 @@ export function useTmuxSessions(
   const streamingIdRef = useRef<string | null>(null);
   const connectionGenerationRef = useRef(0);
   const requestCounterRef = useRef(0);
-  const pendingRequestRef = useRef<PendingRequest | null>(null);
-  const pendingRequestTimeoutRef = useRef<number | null>(null);
   const connectRef = useRef<() => void>(() => {});
   const fragmentReducerRef = useRef(createTerminalWsReducer());
   const readinessRef = useRef(createAttachmentReadiness());
@@ -159,6 +142,19 @@ export function useTmuxSessions(
       onChange: setLease,
     }),
   );
+  // One request at a time. The slot mirrors itself into requestPending and
+  // isLoading so the view can render the wait and the timeout.
+  const [pendingRequest] = useState(() =>
+    createPendingRequestSlot({
+      generation: () => connectionGenerationRef.current,
+      timeoutMs: TMUX_REQUEST_TIMEOUT_MS,
+      onChange: (pending) => {
+        setRequestPending(pending);
+        setIsLoading(pending);
+      },
+      onTimeout: setAttachError,
+    }),
+  );
   /* eslint-enable react-hooks/refs */
 
   const [sink] = useState(createTerminalOutputSink);
@@ -173,60 +169,6 @@ export function useTmuxSessions(
       // rendezvous left armed would fire its viewport at whatever attaches
       // next. Guarding the one choke point covers all three.
       if (streamId === null) readinessRef.current.reset();
-    },
-    [],
-  );
-
-  const clearPendingRequest = useCallback(() => {
-    if (pendingRequestTimeoutRef.current !== null) {
-      clearTimeout(pendingRequestTimeoutRef.current);
-      pendingRequestTimeoutRef.current = null;
-    }
-    pendingRequestRef.current = null;
-    setRequestPending(false);
-    setIsLoading(false);
-  }, []);
-
-  /** The outstanding request a result answers, or null when it answers none. */
-  const matchPending = useCallback(
-    (requestId: unknown): PendingRequest | null => {
-      const pending = pendingRequestRef.current;
-      if (
-        !pending ||
-        pending.requestId !== requestId ||
-        pending.generation !== connectionGenerationRef.current
-      ) {
-        return null;
-      }
-      return pending;
-    },
-    [],
-  );
-
-  const schedulePendingRequestTimeout = useCallback(
-    (request: PendingRequest) => {
-      if (pendingRequestTimeoutRef.current !== null) {
-        clearTimeout(pendingRequestTimeoutRef.current);
-      }
-      pendingRequestTimeoutRef.current = window.setTimeout(() => {
-        pendingRequestTimeoutRef.current = null;
-        const pending = pendingRequestRef.current;
-        if (
-          pending?.requestId !== request.requestId ||
-          pending.generation !== request.generation ||
-          pending.kind !== request.kind
-        ) {
-          return;
-        }
-        pendingRequestRef.current = null;
-        setRequestPending(false);
-        setIsLoading(false);
-        // Rendered after a full stop ("Couldn't attach to this terminal. "),
-        // so it has to stand on its own as a sentence.
-        setAttachError(
-          `${request.kind[0].toUpperCase()}${request.kind.slice(1)} request timed out.`,
-        );
-      }, TMUX_REQUEST_TIMEOUT_MS);
     },
     [],
   );
@@ -252,41 +194,44 @@ export function useTmuxSessions(
    * arrived. Called from each side of the rendezvous, because either can be
    * the one that completes it.
    */
-  const flushViewport = useCallback((kind: "viewport" | "refresh" = "viewport") => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const viewport = readinessRef.current.take();
-    if (viewport === null) return;
-    // The daemon opens an attachment's output bridge on its first
-    // `terminal_resize`; `terminal_set_viewport` only positions a bridge that
-    // already exists. The renderer sends a resize when its grid changes, which
-    // covers the first attachment and nothing after it: a replacement
-    // attachment arrives at unchanged geometry, so nothing remeasures and that
-    // attachment never streams. This rendezvous is the one place that knows a
-    // new attachment has both an id and a measured grid, so it opens the
-    // bridge here before positioning it. A "refresh" redraws an attachment
-    // that is already bridged and must not reopen one.
-    if (kind === "viewport") {
+  const flushViewport = useCallback(
+    (kind: "viewport" | "refresh" = "viewport") => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const viewport = readinessRef.current.take();
+      if (viewport === null) return;
+      // The daemon opens an attachment's output bridge on its first
+      // `terminal_resize`; `terminal_set_viewport` only positions a bridge that
+      // already exists. The renderer sends a resize when its grid changes, which
+      // covers the first attachment and nothing after it: a replacement
+      // attachment arrives at unchanged geometry, so nothing remeasures and that
+      // attachment never streams. This rendezvous is the one place that knows a
+      // new attachment has both an id and a measured grid, so it opens the
+      // bridge here before positioning it. A "refresh" redraws an attachment
+      // that is already bridged and must not reopen one.
+      if (kind === "viewport") {
+        ws.send(
+          terminalResizeMessage(
+            viewport.terminalId,
+            viewport.attachmentId,
+            viewport.rows,
+            viewport.cols,
+          ),
+        );
+      }
       ws.send(
-        terminalResizeMessage(
+        terminalSetViewportMessage(
+          `${kind}-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
           viewport.terminalId,
           viewport.attachmentId,
           viewport.rows,
           viewport.cols,
+          kind,
         ),
       );
-    }
-    ws.send(
-      terminalSetViewportMessage(
-        `${kind}-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
-        viewport.terminalId,
-        viewport.attachmentId,
-        viewport.rows,
-        viewport.cols,
-        kind,
-      ),
-    );
-  }, []);
+    },
+    [],
+  );
 
   /** The renderer measured its grid. */
   const reportViewport = useCallback(
@@ -300,7 +245,7 @@ export function useTmuxSessions(
   const beginAttachRequest = useCallback(
     (target: TmuxTarget): boolean => {
       const ws = wsRef.current;
-      if (pendingRequestRef.current || !ws || ws.readyState !== WebSocket.OPEN)
+      if (pendingRequest.current() || !ws || ws.readyState !== WebSocket.OPEN)
         return false;
 
       const generation = connectionGenerationRef.current;
@@ -311,16 +256,13 @@ export function useTmuxSessions(
         generation,
         target,
       };
-      pendingRequestRef.current = request;
-      setRequestPending(true);
-      setIsLoading(true);
+      pendingRequest.begin(request);
       setSessionEnded(false);
       setAttachError(null);
       ws.send(terminalAttachMessage(requestId, target.terminal_id));
-      schedulePendingRequestTimeout(request);
       return true;
     },
-    [schedulePendingRequestTimeout],
+    [pendingRequest],
   );
 
   const beginDetachRequest = useCallback(
@@ -328,7 +270,7 @@ export function useTmuxSessions(
       const ws = wsRef.current;
       const currentStreamingId = streamingIdRef.current;
       if (
-        pendingRequestRef.current ||
+        pendingRequest.current() ||
         !ws ||
         ws.readyState !== WebSocket.OPEN ||
         !currentStreamingId
@@ -343,9 +285,7 @@ export function useTmuxSessions(
         generation,
         nextTarget,
       };
-      pendingRequestRef.current = request;
-      setRequestPending(true);
-      setIsLoading(true);
+      pendingRequest.begin(request);
       setAttachError(null);
       ws.send(
         terminalDetachMessage(
@@ -354,10 +294,9 @@ export function useTmuxSessions(
           currentStreamingId,
         ),
       );
-      schedulePendingRequestTimeout(request);
       return true;
     },
-    [schedulePendingRequestTimeout],
+    [pendingRequest],
   );
 
   const handleMessage = useCallback(
@@ -402,12 +341,12 @@ export function useTmuxSessions(
               ),
             );
           }
-          if (pendingRequestRef.current === null) setIsLoading(false);
+          if (pendingRequest.current() === null) setIsLoading(false);
           break;
         }
 
         case "terminal_attach_result": {
-          const pending = matchPending(data.request_id);
+          const pending = pendingRequest.match(data.request_id);
           if (pending?.kind !== "attach") break;
 
           // Failure frames also carry attachment_id (the finalized lease), so
@@ -431,42 +370,42 @@ export function useTmuxSessions(
                     : "Attach failed";
             setAttachError(reason);
           }
-          clearPendingRequest();
+          pendingRequest.clear();
           break;
         }
 
         case "terminal_detach_result": {
-          const pending = matchPending(data.request_id);
+          const pending = pendingRequest.match(data.request_id);
           if (pending?.kind !== "detach") break;
 
           const { nextTarget } = pending;
           if (data.success) {
             updateAttachment(null, null);
-            clearPendingRequest();
+            pendingRequest.clear();
             if (nextTarget) beginAttachRequest(nextTarget);
           } else {
             setAttachError(
               typeof data.message === "string" ? data.message : "Detach failed",
             );
-            clearPendingRequest();
+            pendingRequest.clear();
           }
           break;
         }
 
         case "error": {
-          if (matchPending(data.request_id) === null) break;
+          if (pendingRequest.match(data.request_id) === null) break;
 
           setAttachError(
             typeof data.message === "string"
               ? data.message
               : "Terminal request failed",
           );
-          clearPendingRequest();
+          pendingRequest.clear();
           break;
         }
 
         case "terminal_create_result": {
-          if (matchPending(data.request_id)?.kind !== "create") break;
+          if (pendingRequest.match(data.request_id)?.kind !== "create") break;
 
           if (data.success && typeof data.terminal_id === "string") {
             setCreatedSession({
@@ -478,13 +417,13 @@ export function useTmuxSessions(
               typeof data.reason === "string" ? data.reason : "Create failed",
             );
           }
-          clearPendingRequest();
+          pendingRequest.clear();
           break;
         }
 
         case "terminal_kill_result":
           refreshSessions();
-          if (pendingRequestRef.current === null) setIsLoading(false);
+          if (pendingRequest.current() === null) setIsLoading(false);
           break;
 
         case "terminal_event":
@@ -496,14 +435,12 @@ export function useTmuxSessions(
             refreshSessions();
           }
           break;
-
       }
     },
     [
       beginAttachRequest,
-      clearPendingRequest,
       control,
-      matchPending,
+      pendingRequest,
       refreshSessions,
       flushViewport,
       sink,
@@ -572,13 +509,7 @@ export function useTmuxSessions(
       fragmentReducerRef.current.disconnect();
       fragmentReducerRef.current = createTerminalWsReducer();
       updateAttachmentRef.current(null, null);
-      if (pendingRequestTimeoutRef.current !== null) {
-        clearTimeout(pendingRequestTimeoutRef.current);
-        pendingRequestTimeoutRef.current = null;
-      }
-      pendingRequestRef.current = null;
-      setRequestPending(false);
-      setIsLoading(false);
+      pendingRequest.clear();
       setAttachError(null);
       setCreatedSession(null);
       // The old attachment ids are dead, so the lease, the pending slot and
@@ -624,7 +555,7 @@ export function useTmuxSessions(
         console.error("Failed to parse tmux message:", e);
       }
     };
-  }, [control]);
+  }, [control, pendingRequest]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -656,7 +587,7 @@ export function useTmuxSessions(
 
   const attachSession = useCallback(
     (sessionName: string, socket: string) => {
-      if (pendingRequestRef.current) return;
+      if (pendingRequest.current()) return;
       const target = { terminal_id: sessionName || socket };
       const currentTarget = attachedTargetRef.current;
       if (currentTarget?.terminal_id === target.terminal_id) return;
@@ -666,7 +597,7 @@ export function useTmuxSessions(
       }
       beginAttachRequest(target);
     },
-    [beginAttachRequest, beginDetachRequest],
+    [beginAttachRequest, beginDetachRequest, pendingRequest],
   );
 
   const detachSession = useCallback(() => {
@@ -696,23 +627,20 @@ export function useTmuxSessions(
   const createSession = useCallback(
     (name?: string, socket?: string) => {
       const ws = wsRef.current;
-      if (pendingRequestRef.current || !ws || ws.readyState !== WebSocket.OPEN)
+      if (pendingRequest.current() || !ws || ws.readyState !== WebSocket.OPEN)
         return;
 
       const generation = connectionGenerationRef.current;
       const requestId = `create-${generation}-${++requestCounterRef.current}`;
       const request: PendingRequest = { kind: "create", requestId, generation };
-      pendingRequestRef.current = request;
-      setRequestPending(true);
-      setIsLoading(true);
+      pendingRequest.begin(request);
       setAttachError(null);
       setCreatedSession(null);
       ws.send(
         terminalCreateMessage(requestId, projectIdRef.current, name, socket),
       );
-      schedulePendingRequestTimeout(request);
     },
-    [schedulePendingRequestTimeout],
+    [pendingRequest],
   );
 
   const killSession = useCallback(
@@ -730,7 +658,8 @@ export function useTmuxSessions(
   );
 
   const takeControl = useCallback(
-    (options?: { takeover?: boolean }) => control.take(options?.takeover === true),
+    (options?: { takeover?: boolean }) =>
+      control.take(options?.takeover === true),
     [control],
   );
 
@@ -794,16 +723,12 @@ export function useTmuxSessions(
         clearTimeout(stableOpenTimeoutRef.current);
         stableOpenTimeoutRef.current = null;
       }
-      if (pendingRequestTimeoutRef.current !== null) {
-        clearTimeout(pendingRequestTimeoutRef.current);
-        pendingRequestTimeoutRef.current = null;
-      }
-      pendingRequestRef.current = null;
+      pendingRequest.dispose();
       const ws = wsRef.current;
       wsRef.current = null;
       ws?.close();
     };
-  }, []);
+  }, [pendingRequest]);
 
   // The project picker changed: list again under the new scope.
   useEffect(() => {
