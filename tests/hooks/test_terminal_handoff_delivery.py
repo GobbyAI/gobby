@@ -23,7 +23,9 @@ from gobby.hooks.terminal_handoff_delivery import (
     staged_handoff_from_event,
 )
 from gobby.sessions.handoff import (
+    HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_UNAVAILABLE_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     ClaimedHandoffDelivery,
     staged_handoff_tool_result,
@@ -678,4 +680,86 @@ async def test_background_delivery_success_is_logged(caplog: pytest.LogCaptureFi
     assert _infos(caplog) == [
         f"Terminal handoff delivered for session {SESSION_ID} attempt {ATTEMPT_ID} "
         "(clear_session=False cli=grok via=native)"
+    ]
+
+
+# Delivery failures are bounded per session: the first keeps today's retry
+# guidance, the second abandons terminal delivery, lifts every handoff gate, and
+# tells the agent not to stage again (occurrence 2 of #22364 re-staged nine times).
+def _variable_manager(failures: int | None) -> MagicMock:
+    manager = MagicMock()
+    manager.get_variables.return_value = (
+        {} if failures is None else {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
+    )
+    manager.merge_variables.return_value = True
+    return manager
+
+
+async def _settle_failed_delivery(variable_manager: MagicMock) -> MagicMock:
+    claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
+    restore = MagicMock(return_value=True)
+    with (
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.deliver_staged_compact_handoff",
+            new=AsyncMock(return_value={"compacted": False, "reason": "pane disappeared"}),
+        ),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+        patch("gobby.hooks.terminal_handoff_delivery.restore_staged_handoff", restore),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.SessionVariableManager",
+            return_value=variable_manager,
+        ),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=MagicMock(),
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+    return restore
+
+
+@pytest.mark.asyncio
+async def test_first_delivery_failure_counts_and_keeps_retry_guidance() -> None:
+    variable_manager = _variable_manager(None)
+
+    restore = await _settle_failed_delivery(variable_manager)
+
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["delivery_failed"] is True
+    assert failure.get("delivery_abandoned") is not True
+    assert "Retry gobby-sessions:set_handoff" in failure["retry_guidance"]
+    variable_manager.merge_variables.assert_called_once_with(
+        SESSION_ID, {HANDOFF_DELIVERY_FAILURES_VARIABLE: 1}
+    )
+
+
+@pytest.mark.asyncio
+async def test_second_consecutive_delivery_failure_abandons_terminal_handoff(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    variable_manager = _variable_manager(1)
+
+    restore = await _settle_failed_delivery(variable_manager)
+
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["compacted"] is False
+    assert failure["delivery_failed"] is False
+    assert failure["delivery_pending"] is False
+    assert failure["delivery_abandoned"] is True
+    assert failure["error_code"] == "handoff_delivery_abandoned"
+    assert failure["reason"] == "pane disappeared"
+    assert "Do not call set_handoff again" in failure["retry_guidance"]
+    variable_manager.merge_variables.assert_called_once_with(
+        SESSION_ID,
+        {HANDOFF_DELIVERY_FAILURES_VARIABLE: 2, HANDOFF_UNAVAILABLE_VARIABLE: True},
+    )
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery abandoned for session {SESSION_ID} after 2 consecutive "
+        f"failures; attempt {ATTEMPT_ID}: pane disappeared"
     ]

@@ -15,6 +15,9 @@ class ProviderCapabilities:
     reasoning_flag: ReasoningFlagStyle | None = None
     sandbox: bool = False
     sensitive_path_enforcement: bool = False
+    # The agent-mode spawn command runs the CLI headless: it reads nothing from its
+    # terminal, so terminal-delivered commands (compact handoffs) cannot reach it.
+    headless_spawn: bool = False
 
 
 PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
@@ -37,6 +40,8 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
         reasoning_flag="reasoning-effort",
         sandbox=True,
         sensitive_path_enforcement=False,
+        # ``grok --single`` (command_builder) is Grok's headless mode.
+        headless_spawn=True,
     ),
     "qwen": ProviderCapabilities(
         reasoning_flag=None,

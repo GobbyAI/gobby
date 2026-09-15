@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
@@ -80,6 +81,14 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
+
+# A spawned run whose provider reads nothing from its terminal (Grok ``--single``):
+# typed commands never arrive and the interrupt key is a plain SIGINT (#22364).
+_HEADLESS_AGENT_RUN_ERROR_CODE = "headless_agent_run"
+_HEADLESS_AGENT_RUN_GUIDANCE = (
+    "Do not call set_handoff again in this run. Continue the task with the remaining "
+    "context, keep tool results small, and finish with end_agent_run."
+)
 
 __all__ = [
     "_CLI_COMPACT_COMMANDS",
@@ -180,6 +189,7 @@ async def _send_terminal_compaction_command(
     schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
     continuation_readiness_capture_lines: int | None = None,
     observe_interrupt: Callable[[], bool | None] | None = None,
+    turn_settled: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Persist continuation state, confirm interruption, drain the composer, then compact."""
@@ -193,6 +203,7 @@ async def _send_terminal_compaction_command(
         schedule_continuation_readiness=schedule_continuation_readiness,
         continuation_readiness_capture_lines=continuation_readiness_capture_lines,
         observe_interrupt=observe_interrupt,
+        turn_settled=turn_settled,
         settle_seconds=settle_seconds,
         interrupt_settle_seconds=(
             _OBSERVED_INTERRUPT_SETTLE_SECONDS
@@ -528,6 +539,19 @@ def register_terminal_tools(
                 "compacted": False,
                 "reason": f"no compaction command known for cli={source!r}",
                 "error_code": "no_compaction_command",
+            }
+
+        agent_run = agent_run_manager.get_by_session(resolved_session_id)
+        provider = getattr(agent_run, "provider", None)
+        if isinstance(provider, str) and provider_capabilities(provider).headless_spawn:
+            return {
+                "compacted": False,
+                "reason": (
+                    f"{provider} agent runs are headless: the CLI reads nothing from its "
+                    "terminal, so no compaction command can be delivered"
+                ),
+                "error_code": _HEADLESS_AGENT_RUN_ERROR_CODE,
+                "retry_guidance": _HEADLESS_AGENT_RUN_GUIDANCE,
             }
 
         pane, error = _resolve_pane_io(
