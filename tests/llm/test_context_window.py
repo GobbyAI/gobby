@@ -442,6 +442,14 @@ class TestResolveContextWindow:
         assert result.value == 300_000
         assert result.source == "registry"
 
+    def test_grok_4_6_resolves_to_500k_when_catalog_carries_it(self) -> None:
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=500_000):
+            result = resolve_context_window_with_source("grok-4.6", provider="grok")
+
+        assert result is not None
+        assert result.value == 500_000
+        assert result.source == "registry"
+
     def test_family_fallback_scoped_to_claude_providers(self) -> None:
         """Claude family keys stay scoped to Claude-compatible providers."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
