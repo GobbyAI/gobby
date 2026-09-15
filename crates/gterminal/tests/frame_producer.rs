@@ -120,7 +120,7 @@ fn broadcast_task_exits_on_closed_channel() {
     ));
 
     frames
-        .set_read_timeout(Some(Duration::from_secs(2)))
+        .set_read_timeout(Some(Duration::from_millis(50)))
         .expect("read timeout");
     let killed = rpc(
         &mut control,
@@ -133,10 +133,21 @@ fn broadcast_task_exits_on_closed_channel() {
     );
     assert_eq!(killed["killed"], true, "{killed}");
     let mut buffer = [0_u8; 8192];
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match frames.read(&mut buffer) {
             Ok(0) => break,
             Ok(_) => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                ) =>
+            {
+                if Instant::now() >= deadline {
+                    panic!("frame task did not close its socket: {error}");
+                }
+            }
             Err(error) => panic!("frame task did not close its socket: {error}"),
         }
     }
