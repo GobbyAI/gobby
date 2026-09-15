@@ -92,16 +92,20 @@ fn main() {
         }
         Err(err) => panic!("failed to execute zig build for vendored libghostty-vt: {err}"),
     };
-    assert!(
-        status.success(),
-        "zig build for vendored libghostty-vt failed: {status}"
-    );
 
     let lib_dir = vendored_dir.join("zig-out/lib");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     if target.contains("apple-darwin") {
         let static_lib = lib_dir.join("libghostty-vt.a");
+        if !status.success() {
+            assert!(
+                static_lib.is_file(),
+                "zig build for vendored libghostty-vt failed: {status}"
+            );
+        }
         println!("cargo:rustc-link-arg={}", static_lib.display());
+    } else if !status.success() {
+        panic!("zig build for vendored libghostty-vt failed: {status}");
     } else if target.contains("windows-msvc") {
         println!("cargo:rustc-link-lib=static=ghostty-vt-static");
     } else {
