@@ -142,7 +142,6 @@ Targets:
 - `crates/gterminal/vendor/libghostty-vt/src/terminal/c/terminal.zig`
 - `crates/gterminal/NOTICE.md`
 - `crates/gterminal/build.rs::main`
-- `crates/gterminal/build.rs::zig_target`
 - `scripts/build_vendored_libghostty_vt.sh`
 - `crates/gterminal/tests/build_env.rs::missing_zig_reports_requirement`
 - `crates/gterminal/tests/build_env.rs::darwin_nonsimd_archive_links_every_member`
@@ -275,9 +274,17 @@ and version in a comment at the top of `bindings.rs` so the next re-pin
 is reproducible. Regenerate from `vendor/libghostty-vt/include/ghostty/vt.h` with
 `-I vendor/libghostty-vt/include`, const-style enums matching
 `GhosttyResult_GHOSTTY_SUCCESS`, allowlist `ghostty_*` / `GHOSTTY_*` /
-`Ghostty*`. Do not include `ghostty.h`. After regen, delete
-`TERMINAL_DATA_COLOR_*` and `KITTY_PLACEMENT_DATA_*` numeric fallbacks in
-`mod.rs` if bindgen now exports the names.
+`Ghostty*`. Do not include `ghostty.h`. After regen, keep the
+`TERMINAL_DATA_COLOR_FOREGROUND`, `TERMINAL_DATA_COLOR_CURSOR`,
+`KITTY_PLACEMENT_DATA_IS_VIRTUAL`, `KITTY_PLACEMENT_DATA_COLUMNS`, and
+`KITTY_PLACEMENT_DATA_ROWS` identifiers in `mod.rs` and replace only their
+numeric literals with the bindgen names (for example
+`const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData = ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND;`).
+Do not delete the identifiers: `mod.rs` `include!`s `terminal_api.rs`,
+`terminal_ops.rs`, and `render_pre.rs`, which use them unqualified
+(`Terminal::effective_foreground_color`, `Terminal::effective_cursor_color`,
+`kitty_placement_bool`/`kitty_placement_u32` call sites) and stay no-edit
+consumers.
 
 Split `generated_02.rs`, `generated_03.rs`, and `generated_04.rs` (each
 already at or above 850 lines) so overflow moves into new files
@@ -313,7 +320,12 @@ Clipboard: `clipboard_write_trampoline` is
 `unsafe extern "C" fn(..., write: *const GhosttyClipboardWrite) -> GhosttyClipboardWriteResult`.
 Candidate callback is `void`. Before return, call `write.reply(write, &GhosttyClipboardWriteReply { size, result, remember: false })`
 using the same STANDARD / single text/plain / size-cap policy.
-Guard `reply` with the sized-struct `size` field. Do not set
+Guard `reply` with the sized-struct `size` field. The trampoline keeps its
+`catch_unwind`; on a panic, or when `write` is null or its `size` is too
+small to carry `reply`, it still calls `write.reply` with
+`GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA` (skipping only the null /
+undersized case where no `reply` pointer exists) before returning, so no
+exit path silently denies the write. Do not set
 `CLIPBOARD_READ`. OSC 52 "?" stays ignored.
 
 If `OPT_MODE_DEFAULT` plus the three grapheme tests pass, delete 0001 and
@@ -345,6 +357,8 @@ Consumers unchanged:
 - `crates/gterminal/src/pane/terminal_style.rs` — no-edit-reason: still calls `render_state.colors()`.
 - `crates/gterminal/src/ghostty/terminal_ops.rs` — no-edit-reason: kitty/grid helpers do not use the removed symbols.
 - `crates/gterminal/src/ghostty/render_pre.rs` — no-edit-reason: kitty/grid/cell getters are unchanged in the candidate headers.
+- `crates/gterminal/src/pane/osc/tests.rs` — no-edit-reason: still calls `render_state.colors()`; wrapper signature unchanged.
+- `crates/gterminal/src/pane/terminal/tests.rs` — no-edit-reason: still calls `mode_set` and `colors()`; wrapper signatures unchanged (Decision Record 5).
 
 ## P3: Toolchain docs and native cutover
 `kind: framing`
@@ -438,3 +452,18 @@ system simdutf rejected.
 Native activation is not part of isolated validation. After review, the
 install owner promotes via `promote_workspace_binary_set` /
 `stage_and_promote_binary_file`.
+## V1 Plan Changelog
+`kind: verification`
+
+Round 1 (Grok grok-4.6 plan-adversary-taskless, run 0fbacaaa-f011-469e-9987-3d8ca15c82b3) returned needs_review with two blocking and two nit findings. Coordinator votes (gobby#12967, delegated authority from the user's one-round directive), each verified against the worktree source with gcode grep before voting:
+
+- fallback-constant-include-consumers (blocking, missing-requirement, 2.1): ACCEPT. mod.rs include!s terminal_api.rs, terminal_ops.rs and render_pre.rs, and those files use TERMINAL_DATA_COLOR_FOREGROUND/CURSOR (terminal_api.rs:576,580) and KITTY_PLACEMENT_DATA_IS_VIRTUAL/COLUMNS/ROWS (render_pre.rs:152,164,165; terminal_ops.rs:123) unqualified. Deleting the mod.rs constants would break those no-edit consumers. Repair: keep the identifiers and alias them to the bindgen names.
+- missing-noedit-test-consumers (blocking, traceability, 2.1): ACCEPT. crates/gterminal/src/pane/osc/tests.rs calls render_state.colors() (line 16) and crates/gterminal/src/pane/terminal/tests.rs calls colors() (312) and mode_set (868, 1736); neither is inventoried in 2.1. Repair: add both to 2.1 Consumers unchanged with no-edit reasons.
+- zig-target-dual-inventory (nit, gobby-format, 1.1): ACCEPT. build.rs::zig_target is unchanged by the Zig 0.16 move; listing it under both Targets and Consumers unchanged contradicts itself. Repair: remove it from 1.1 Targets.
+- clipboard-trampoline-panic-reply (nit, unhandled-edge, 2.1): ACCEPT. With a void callback, a catch_unwind panic path that returns without reply silently denies the write. Repair: 2.1 states the trampoline replies INVALID_DATA on panic or null write pointer before returning.
+
+No typed repairs were carried; all four repairs are prose edits applied by the coordinator after finalization. This is the single authorized round; the repaired plan proceeds to implementation under Decision Record 8 without a further review round.
+
+```json plan-review-round
+{"evidence_id":"0522dd23-0b19-49e1-bc4b-234355178ab2","plan_hash":"5a410cc40fb7cc07d1d626720528698cf41d1c3d38bf21f4dbaba74577aa9b12","round_number":1,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"8d426b219ec300f602f69121f643f90ec553beb42b0146895c8526832f90b937","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":4,"emitted_findings":4,"total":8},"evidence_id":"0522dd23-0b19-49e1-bc4b-234355178ab2","lanes":[{"candidate_count":4,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":2,"lane_id":"repository_blast_radius","status":"delegated-verified"},{"candidate_count":2,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":4,"manifest_digest":"e0f226825c7206e3f07081142221b4b286c23fedd005eba8d4703c8ebde34967","status":"valid"},"source_digest":"8192a0aa1675b111e61114213606b84bb65d3031482cfecde3aa18fc96f086e1","version":1},"findings":[{"category":"missing-requirement","check_key":"numeric-fallback-consumer-compile","description":"2.1 tells the implementer to delete TERMINAL_DATA_COLOR_* and KITTY_PLACEMENT_DATA_* from crates/gterminal/src/ghostty/mod.rs once bindgen exports the names. Those names already exist in bindings/generated_03.rs (GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND = 18 and the kitty placement data constants). mod.rs include!s terminal_api.rs, terminal_ops.rs, and render_pre.rs, which use the short identifiers unqualified: Terminal::effective_foreground_color and effective_cursor_color in terminal_api.rs, and kitty_placement_bool/u32 in render_pre.rs and terminal_ops.rs. 2.1 lists render_pre.rs and terminal_ops.rs as Consumers unchanged and only targets Terminal::new, mode_get, and mode_set in terminal_api.rs. Deleting the identifiers leaves vt-engine unable to compile while those consumers stay unmodified.","finding_id":"fallback-constant-include-consumers","fix":"In 2.1, replace the numeric literals with bindgen names but keep the same Rust identifiers (for example const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData = ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND, and the same for COLOR_CURSOR and the three KITTY_PLACEMENT_DATA_* constants). Do not delete the identifiers. If the identifiers are removed, retarget Terminal::effective_foreground_color, Terminal::effective_cursor_color, render_pre.rs, and terminal_ops.rs, and take render_pre.rs and terminal_ops.rs off Consumers unchanged.","location":"§ 2.1 Research context (numeric fallbacks in mod.rs)","prevention":"When a plan says to delete a local alias, grep include! and unqualified uses of that identifier before listing sibling files as no-edit consumers.","root_cause":"The fallback-deletion step treated bindgen export as sufficient and did not trace the include! consumers that still need the short names.","section_id":"2.1","severity":"blocking"},{"category":"traceability","check_key":"consumer-coverage-noedit-inventory","description":"Exact Targets Terminal::mode_set and RenderState::colors have owned test consumers that are not in 2.1 Targets or Consumers unchanged. gcode grep found render_state.colors() in crates/gterminal/src/pane/osc/tests.rs and both colors() and mode_set in crates/gterminal/src/pane/terminal/tests.rs. The Constraints ABI audit already listed those two files. Graph usages were unavailable, which is why validate_plan did not emit consumer-coverage; the required literal sweep still finds them missing from the inventory.","finding_id":"missing-noedit-test-consumers","fix":"Add to 2.1 Consumers unchanged: crates/gterminal/src/pane/osc/tests.rs — no-edit-reason: still calls render_state.colors(); wrapper signature unchanged. crates/gterminal/src/pane/terminal/tests.rs — no-edit-reason: still calls mode_set and colors(); wrapper signatures unchanged (Decision Record 5).","location":"§ 2.1 Consumers unchanged","prevention":"After a literal consumer sweep in Constraints, copy every listed production and test path into Targets or Consumers unchanged of the owning deliverable.","root_cause":"The ABI audit enumerated the test files, then 2.1 Consumers unchanged inventoried only pane production modules.","section_id":"2.1","severity":"blocking"},{"category":"gobby-format","check_key":"target-vs-consumers-unchanged-contradiction","description":"crates/gterminal/build.rs::zig_target is listed as a 1.1 Target and again under Consumers unchanged with no-edit-reason that only main changes the Zig version string and shared-lib flag. The eight Stage-0 triples in zig_target are unchanged. Dual listing tells the implementer both to edit and not to edit the same symbol.","finding_id":"zig-target-dual-inventory","fix":"Remove crates/gterminal/build.rs::zig_target from 1.1 Targets. Keep the Consumers unchanged entry.","location":"§ 1.1 Targets and Consumers unchanged","prevention":"Do not place a symbol in Targets when the same deliverable records it as no-edit.","root_cause":"The symbol was added to Targets for validation presence even though the body is not an edit.","section_id":"1.1","severity":"nit"},{"category":"unhandled-edge","check_key":"clipboard-void-callback-all-exits-reply","description":"Candidate GhosttyClipboardWriteFn returns void; returning without reply denies the write. Today clipboard_write_trampoline catch_unwind and on panic returns GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA without calling capture_clipboard_write. 2.1 says capture_clipboard_write calls reply with the success/unsupported/invalid mapping, but does not say the trampoline must reply on the panic path or any path that never enters capture_clipboard_write. After the ABI change that panic path silently denies instead of reporting INVALID_DATA.","finding_id":"clipboard-trampoline-panic-reply","fix":"State that clipboard_write_trampoline remains catch_unwind and, on panic or a null write pointer, calls write.reply with INVALID_DATA (sized-struct guarded) before returning, matching today's mapping.","location":"§ 2.1 clipboard trampoline","prevention":"When a C callback changes from returning a result to reply-or-deny, list every current return path including catch_unwind.","root_cause":"The migration specified reply inside capture_clipboard_write and omitted the trampoline's independent panic return.","section_id":"2.1","severity":"nit"}],"verdict":"needs_review"},"session_id":"47981968-3c34-4e7b-aaee-8c5fb187c963"}
+```
