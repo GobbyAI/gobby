@@ -13,8 +13,9 @@ from gobby.hooks.grok_pending_context import clear_queued_context
 def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) -> None:
     """Refresh compact-epoch tracking on the live row after Grok PostCompact.
 
-    Grok never emits SessionStart(source=compact). This is the same-row
-    equivalent of compact SessionStart tracking resets plus handoff prep.
+    Grok never emits SessionStart(source=compact). This prepares compact
+    continuation, clears queued Grok context, and rebuilds task_context so
+    session_start(compact) YAML rules can run afterward.
     """
     prepare_compact_continuation_variables(handler, session_id, "compact")
     if not session_id or handler._session_manager is None:
@@ -28,18 +29,6 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
     sv_mgr = SessionVariableManager(handler._session_manager.db)
     _reset_agent_context_injection(handler, session_id)
     clear_queued_context(handler._session_manager, session_id)
-
-    updates: dict[str, Any] = {
-        "unlocked_tools": [],
-        "suggested_skill_names": [],
-        "loaded_skills": [],
-        "loaded_skill_references": [],
-        "injected_memory_ids": [],
-        # reset-gobby-session-feedback-on-context-reset rearms the survey from
-        # SessionStart(source=compact), which Grok never emits.
-        "_gobby_feedback_epoch_submitted": False,
-    }
-    sv_mgr.merge_variables(session_id, updates)
 
     session = handler._session_manager.get(session_id)
     project_id = getattr(session, "project_id", None) if session is not None else None

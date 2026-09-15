@@ -21,7 +21,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.config.values import ConfigRuntimeReader
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.materialization import (
     SkillScriptMaterializer,
@@ -246,7 +246,14 @@ class RuleEngine(
                     normalize_tool_fields(event.data)
 
                 raw_event_value = _event_value(event.event_type)
-                resolved_rule_events = _resolve_rule_events(event.event_type)
+                resolved_rule_events = _resolve_rule_events(event.event_type, source=event.source)
+                if (
+                    event.event_type == HookEventType.POST_COMPACT
+                    and event.source == SessionSource.GROK
+                    and isinstance(event.data, dict)
+                    and event.data.get("source") not in {"startup", "resume", "clear", "compact"}
+                ):
+                    event.data["source"] = "compact"
                 if RuleTriggerEvent.TURN_START in resolved_rule_events:
                     if variables.get(_COMPACT_TURN_END_BYPASS_PENDING):
                         variables[_COMPACT_TURN_END_BYPASS_PENDING] = False

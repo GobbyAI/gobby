@@ -29,6 +29,7 @@ from gobby.workflows.definitions import (
     split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.event_utils import _resolve_rule_events
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -3171,6 +3172,61 @@ class TestTurnEndResolution:
         await _assert_evaluation(db, event, "allow", variables=variables)
 
         assert variables.get("raw_after_agent") is not True
+
+
+class TestGrokPostCompactRuleResolution:
+    def test_grok_post_compact_resolves_to_post_compact_and_session_start(self) -> None:
+        event = _make_event(HookEventType.POST_COMPACT, source=SessionSource.GROK)
+        assert _resolve_rule_events(event.event_type, source=event.source) == [
+            RuleTriggerEvent.POST_COMPACT,
+            RuleTriggerEvent.SESSION_START,
+        ]
+
+    def test_claude_post_compact_resolves_to_post_compact_only(self) -> None:
+        event = _make_event(HookEventType.POST_COMPACT, source=SessionSource.CLAUDE)
+        assert _resolve_rule_events(event.event_type, source=event.source) == [
+            RuleTriggerEvent.POST_COMPACT,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_grok_post_compact_evaluate_runs_session_start_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "session-start-on-grok-compact",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.SESSION_START,
+                effects=[
+                    RuleEffect(type="set_variable", variable="from_session_start", value=True)
+                ],
+            ),
+        )
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.POST_COMPACT, source=SessionSource.GROK)
+        await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert variables.get("from_session_start") is True
+        assert event.data.get("source") == "compact"
+
+    @pytest.mark.asyncio
+    async def test_claude_post_compact_evaluate_skips_session_start_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "session-start-on-claude-compact",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.SESSION_START,
+                effects=[
+                    RuleEffect(type="set_variable", variable="from_session_start", value=True)
+                ],
+            ),
+        )
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.POST_COMPACT, source=SessionSource.CLAUDE)
+        await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert variables.get("from_session_start") is not True
+        assert event.data.get("source") != "compact"
 
 
 class TestLiveActiveRuleSelection:
