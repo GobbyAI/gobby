@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.github_triage.service import GitHubIssueTriageService
 from gobby.integrations.github import GitHubIntegration
 from gobby.integrations.github_helper import GitHubMCPHelper
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._delivery import _find_existing_pr
 from gobby.servers.websocket.handlers.core import HandlerMixin
 from tests.mcp_proxy.services.test_scope_resolution_matrix import (
     GLOBAL_SERVER_ID,
-    OTHER_PROJECT_ID,
     PROJECT_ID,
     PROJECT_SERVER_ID,
     RecordingManager,
@@ -50,17 +45,6 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
     )
     await helper._call_github_mcp("list_issues", {"owner": "owner", "repo": "repo"})
     _assert_only_id(github_manager, PROJECT_SERVER_ID, "get_client_session", "call_tool")
-
-    # A manager owned by a different project: only the explicit issue scope may win.
-    # A fallback to manager.project_id would resolve FOREIGN_SERVER_ID here.
-    foreign_manager = RecordingManager(scoped_github_configs(), project_id=OTHER_PROJECT_ID)
-    triage = GitHubIssueTriageService(db=MagicMock(), mcp_manager=as_mcp(foreign_manager))
-    await triage._github_call(
-        "get_issue",
-        {"owner": "o", "repo": "r", "issue_number": 1},
-        project_id=PROJECT_ID,
-    )
-    _assert_only_id(foreign_manager, PROJECT_SERVER_ID, "call_tool", "get_client_session")
 
     class _Handler(HandlerMixin):
         def __init__(self, manager: RecordingManager) -> None:
@@ -99,13 +83,6 @@ async def test_consumers_resolve_project_instance_by_id() -> None:
     await sessionless._call_external_mcp("github", "list_issues", {})
     _assert_only_id(github_manager, GLOBAL_SERVER_ID, "call_tool")
 
-    ctx = SimpleNamespace(mcp_manager=github_manager, project_id=PROJECT_ID)
-    github_manager.calls.clear()
-    await _find_existing_pr(
-        cast(RegistryContext, ctx), "owner", "repo", "head", "main", project_id=PROJECT_ID
-    )
-    _assert_only_id(github_manager, PROJECT_SERVER_ID, "call_tool")
-
 
 @pytest.mark.asyncio
 async def test_resolved_server_id_rejects_missing_scope() -> None:
@@ -119,13 +96,3 @@ async def test_resolved_server_id_rejects_missing_scope() -> None:
         with pytest.raises(ProjectScopeUnresolvedError):
             resolved_server_id(manager, "github", project_id=scope)
     assert manager.method_ids("call_tool") == []
-
-
-def test_delivery_github_server_id_requires_project_scope() -> None:
-    from gobby.mcp_proxy.tools.tasks._delivery import _github_server_id
-
-    manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
-    with pytest.raises(RuntimeError, match="project scope"):
-        _github_server_id(manager, "")
-
-    assert _github_server_id(manager, PROJECT_ID) == PROJECT_SERVER_ID

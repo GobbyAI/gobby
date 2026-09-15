@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from gobby.config.validation_detection import (
     ValidationDetectionConfig,
@@ -21,8 +21,6 @@ from gobby.servers.tool_approvals import (
     load_project_approval_rules,
     save_project_approval_rules,
 )
-from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
-from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
     CheckoutNotFoundError,
@@ -73,17 +71,6 @@ class ProjectUpdate(BaseModel):
     github_repo: str | None = None
     approval_rules: list[str] | None = None
     validation_detection: dict[str, Any] | None = None
-
-
-class GitHubTriageConfigUpdate(BaseModel):
-    """Request body for project GitHub triage config."""
-
-    sync_enabled: bool = False
-    triage_enabled: bool = False
-    webhook_enabled: bool = False
-    repositories: list[str] = Field(default_factory=list)
-    reconcile_interval_seconds: int = 3600
-    webhook_secret_ref: str | None = None
 
 
 class CheckoutRootBody(BaseModel):
@@ -498,141 +485,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         updated = await server.run_db(apply_update)
 
         return cast(dict[str, Any], await server.run_db(_project_to_response, server, updated))
-
-    @router.get("/{project_id}/github-triage")
-    async def get_github_triage_config(project_id: str) -> dict[str, Any]:
-        """Get GitHub issue triage configuration for a project."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or project.deleted_at:
-            raise HTTPException(404, "Project not found")
-        store = GitHubTriageStore(server.services.database)
-        config = await server.run_db(
-            store.get_config,
-            project_id,
-            fallback_repo=project.github_repo,
-        )
-        return cast(dict[str, Any], config.to_dict())
-
-    @router.put("/{project_id}/github-triage")
-    async def update_github_triage_config(
-        project_id: str,
-        body: GitHubTriageConfigUpdate,
-    ) -> dict[str, Any]:
-        """Update GitHub issue triage configuration for a project."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or project.deleted_at:
-            raise HTTPException(404, "Project not found")
-
-        store = GitHubTriageStore(server.services.database)
-        current = await server.run_db(
-            store.get_config, project_id, fallback_repo=project.github_repo
-        )
-        values = body.model_dump(exclude_unset=True)
-        interval = values.get("reconcile_interval_seconds")
-        if interval is None:
-            interval = current.reconcile_interval_seconds
-        if interval is not None and interval <= 0:
-            raise HTTPException(400, "reconcile_interval_seconds must be greater than 0")
-
-        candidate = GitHubTriageConfig(
-            project_id=project_id,
-            sync_enabled=(
-                current.sync_enabled
-                if values.get("sync_enabled") is None
-                else values["sync_enabled"]
-            ),
-            triage_enabled=(
-                current.triage_enabled
-                if values.get("triage_enabled") is None
-                else values["triage_enabled"]
-            ),
-            webhook_enabled=(
-                current.webhook_enabled
-                if values.get("webhook_enabled") is None
-                else values["webhook_enabled"]
-            ),
-            repositories=tuple(
-                current.repositories
-                if values.get("repositories") is None
-                else values["repositories"]
-            ),
-            reconcile_interval_seconds=interval,
-            webhook_secret_ref=(
-                values["webhook_secret_ref"]
-                if "webhook_secret_ref" in values
-                else current.webhook_secret_ref
-            ),
-        )
-        if candidate.sync_enabled or candidate.triage_enabled:
-            if server.services.mcp_manager is None:
-                raise HTTPException(400, "GitHub connector is unavailable")
-
-        updated = await server.run_db(store.upsert_config, candidate)
-        return cast(dict[str, Any], updated.to_dict())
-
-    @router.get("/{project_id}/integrations/status")
-    async def get_integrations_status(project_id: str) -> dict[str, Any]:
-        """Return configuration, readiness, and reconciliation health."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or project.deleted_at:
-            raise HTTPException(404, "Project not found")
-
-        status_store = ExternalIssueSyncStatusStore(server.services.database)
-        github_status = await server.run_db(status_store.get, project_id, "github")
-        github_counts = await server.run_db(status_store.counts, project_id, "github")
-        github_store = GitHubTriageStore(server.services.database)
-        github_config = await server.run_db(
-            github_store.get_config,
-            project_id,
-            fallback_repo=project.github_repo,
-        )
-
-        github_ready = server.services.mcp_manager is not None
-        github_error = None if github_ready else "GitHub connector is unavailable"
-        repositories = github_config.repositories
-
-        def status_payload(status: Any, counts: tuple[int, int]) -> dict[str, Any]:
-            if status:
-                payload = cast(dict[str, Any], status.to_dict())
-                payload.pop("project_id", None)
-                payload.pop("provider", None)
-                payload["linked_count"] = counts[0]
-                payload["pending_count"] = counts[1]
-                return payload
-            return {
-                "state": "pending",
-                "linked_count": counts[0],
-                "pending_count": counts[1],
-                "consecutive_failures": 0,
-                "last_attempt_at": None,
-                "last_success_at": None,
-                "last_outbound_success_at": None,
-                "retry_at": None,
-                "last_statistics": {},
-                "last_error": None,
-            }
-
-        github_config_payload = github_config.to_dict()
-        github_config_payload.pop("project_id", None)
-
-        return cast(
-            dict[str, Any],
-            jsonable_encoder(
-                {
-                    "project_id": project_id,
-                    "github": {
-                        **github_config_payload,
-                        "ready": github_ready,
-                        "repositories": list(repositories or github_config.repositories),
-                        "readiness_error": github_error,
-                        **status_payload(github_status, github_counts),
-                    },
-                }
-            ),
-        )
 
     @router.delete("/{project_id}")
     async def delete_project(project_id: str) -> dict[str, str]:

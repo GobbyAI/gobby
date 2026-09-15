@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 
 from gobby.projects.purge import PurgeOutcome
 from gobby.servers.routes import projects as projects_routes
-from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -449,89 +448,13 @@ class TestProjectRoutes:
         assert data["linear_project_id"] == prior_data.get("linear_project_id")
         assert data["linear_sync_enabled"] == prior_data.get("linear_sync_enabled")
 
-    def test_integrations_status_reports_live_counts_before_first_run(
+    def test_integrations_status_is_not_registered(
         self,
         client: TestClient,
         real_project: dict,
-        session_manager: SessionManager,
     ) -> None:
-        task_manager = LocalTaskManager(session_manager.db)
-        task_manager.create_task(
-            project_id=real_project["id"],
-            title="Pending",
-            validation_criteria="Test task completion is observable.",
-        )
-        task_manager.create_task(
-            project_id=real_project["id"],
-            title="Linked",
-            linear_issue_id="linear-1",
-            github_repo="test/my-project",
-            github_issue_number=1,
-            validation_criteria="Test task completion is observable.",
-        )
-
         response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
-
-        assert response.status_code == 200
-        payload = response.json()
-        assert "linear" not in payload
-        assert payload["github"]["linked_count"] == 1
-        assert payload["github"]["pending_count"] == 0
-        assert payload["github"]["last_outbound_success_at"] is None
-        assert payload["github"]["readiness_error"] == "GitHub connector is unavailable"
-
-    def test_integrations_status_normalizes_provider_payloads_and_repository_fallback(
-        self,
-        client: TestClient,
-        real_project: dict[str, Any],
-        session_manager: SessionManager,
-    ) -> None:
-        update_response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={"github_repo": "test/my-project"},
-        )
-        assert update_response.status_code == 200
-
-        status_store = ExternalIssueSyncStatusStore(session_manager.db)
-        status_store.upsert(
-            project_id=real_project["id"],
-            provider="github",
-            state="healthy",
-            linked_count=0,
-            pending_count=0,
-        )
-
-        response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
-
-        assert response.status_code == 200
-        payload = response.json()
-        assert "linear" not in payload
-        assert payload["github"]["repositories"] == ["test/my-project"]
-        assert "project_id" not in payload["github"]
-        assert "provider" not in payload["github"]
-        assert "last_outbound_success_at" in payload["github"]
-
-    def test_integrations_status_awaits_origin_repository_fallback(
-        self,
-        session_manager: SessionManager,
-        project_manager: LocalProjectManager,
-    ) -> None:
-        project = project_manager.create(
-            name=_unique_name("origin-only"),
-            github_url=None,
-        )
-        server = create_http_server(
-            session_manager=session_manager,
-            database=session_manager.db,
-            mcp_manager=MagicMock(),
-        )
-        response = TestClient(server.app).get(f"/api/projects/{project.id}/integrations/status")
-
-        assert response.status_code == 200
-        payload = response.json()["github"]
-        assert payload["ready"] is True
-        assert payload["readiness_error"] is None
-        assert payload["repositories"] == []
+        assert response.status_code == 404
 
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""

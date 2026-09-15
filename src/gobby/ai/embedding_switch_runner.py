@@ -39,7 +39,6 @@ from gobby.cli.installers.embedding import (
     _setup_ollama,
 )
 from gobby.config.app import DaemonConfig
-from gobby.github_triage.issue_index import issue_point_id
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.memory.vectorstore import VectorStore
@@ -48,7 +47,6 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationState,
     ProjectionChange,
 )
-from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_models import Memory
@@ -65,10 +63,6 @@ _REPLAY_MAX_PASSES = 20
 
 class EmbeddingSwitchRunError(RuntimeError):
     """Raised when a switch phase records a resumable journal error."""
-
-
-class MissingGitHubIssueSourceTextError(EmbeddingSwitchRunError):
-    """Raised when legacy GitHub issue rows cannot be re-embedded safely."""
 
 
 class EmbeddingSwitchAbortRequested(Exception):
@@ -532,36 +526,11 @@ class EmbeddingSwitchRunner:
         vector_store: VectorStore,
         change: ProjectionChange,
     ) -> int:
-        collection_name = build_physical_names(journal)["gobby_github_issues"]
-        try:
-            project_id, repo, issue_number_raw = change.source_id.rsplit(":", 2)
-            issue_number = int(issue_number_raw)
-        except (TypeError, ValueError) as exc:
-            raise EmbeddingSwitchRunError(
-                f"Invalid GitHub issue projection source ID: {change.source_id}"
-            ) from exc
-        record = GitHubTriageStore(self.db).get_issue_record(project_id, repo, issue_number)
-        if record is None:
-            await vector_store.delete(
-                issue_point_id(project_id, repo, issue_number),
-                collection_name=collection_name,
-            )
-            return 0
-        try:
-            async with self._writer(record.project_id):
-                await self._upsert_github_issue_record(
-                    record, service, vector_store, collection_name
-                )
-        except ProjectWriteRejected:
-            logger.info(
-                "Skipping embedding-switch issue replay for unavailable project %s",
-                record.project_id,
-            )
-            return 0
-        return 1
+        del journal, service, vector_store, change
+        return 0
 
-    @staticmethod
     async def _delete_projection_tombstone(
+        self,
         journal: SwitchJournal,
         vector_store: VectorStore,
         change: ProjectionChange,
@@ -571,15 +540,9 @@ class EmbeddingSwitchRunner:
             "tool": "tool_embeddings",
             "github_issue": "gobby_github_issues",
         }
-        point_id = change.source_id
         if change.source_kind == "github_issue":
-            try:
-                project_id, repo, issue_number = change.source_id.rsplit(":", 2)
-                point_id = issue_point_id(project_id, repo, int(issue_number))
-            except (TypeError, ValueError) as exc:
-                raise EmbeddingSwitchRunError(
-                    f"Invalid GitHub issue projection source ID: {change.source_id}"
-                ) from exc
+            return
+        point_id = change.source_id
         await vector_store.delete(
             point_id,
             collection_name=build_physical_names(journal)[collection_kinds[change.source_kind]],
@@ -682,65 +645,8 @@ class EmbeddingSwitchRunner:
         service: EmbeddingService,
         vector_store: VectorStore,
     ) -> int:
-        collection_name = build_physical_names(journal)["gobby_github_issues"]
-        issue_store = GitHubTriageStore(self.db)
-        total = 0
-        offset = 0
-
-        while True:
-            records = issue_store.list_issue_records(limit=_BATCH_SIZE, offset=offset)
-            if not records:
-                return total
-
-            for record in records:
-                self._check_abort()
-                try:
-                    async with self._writer(record.project_id):
-                        await self._upsert_github_issue_record(
-                            record, service, vector_store, collection_name
-                        )
-                except ProjectWriteRejected:
-                    logger.info(
-                        "Skipping embedding-switch issue build for unavailable project %s",
-                        record.project_id,
-                    )
-                    continue
-                total += 1
-            offset += len(records)
-
-    async def _upsert_github_issue_record(
-        self,
-        record: GitHubIssueTriageRecord,
-        service: EmbeddingService,
-        vector_store: VectorStore,
-        collection_name: str,
-    ) -> None:
-        if not record.source_text:
-            raise MissingGitHubIssueSourceTextError(
-                f"GitHub issue {record.repo}#{record.issue_number} lacks source_text; "
-                "run GitHub triage reconcile/reprocessing before resuming embedding switch."
-            )
-
-        embedding = await service.generate_embedding(record.source_text)
-        payload = {
-            "project_id": record.project_id,
-            "repo": record.repo,
-            "issue_number": record.issue_number,
-            "issue_url": record.issue_url,
-            "state": record.issue_state,
-            "labels": list(record.labels),
-            "updated_at": record.issue_updated_at,
-            "content_hash": record.content_hash,
-            "task_id": record.task_id,
-            "dedup_issue_key": record.dedup_issue_key,
-            "source_text": record.source_text,
-        }
-        await vector_store.upsert(
-            issue_point_id(record.project_id, record.repo, record.issue_number),
-            embedding,
-            payload,
-            collection_name=collection_name,
-        )
+        del journal, service, vector_store
+        return 0
 
     def _vector_store(self, journal: SwitchJournal) -> VectorStore:
         config = self._runtime_config()

@@ -28,7 +28,6 @@ from gobby.config.embedding_keys import (
     EMBEDDING_SWITCH_JOURNAL_KEY,
 )
 from gobby.storage.embedding_generation_state import ProjectionChange
-from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 
 pytestmark = pytest.mark.unit
 
@@ -181,30 +180,6 @@ def _journal(phase: str = PHASE_FLIPPING) -> SwitchJournal:
         phase=phase,
         started_at="2026-06-29T00:00:00Z",
         updated_at="2026-06-29T00:00:00Z",
-    )
-
-
-def _issue_record(*, source_text: str | None) -> GitHubIssueTriageRecord:
-    return GitHubIssueTriageRecord(
-        id="row-1",
-        project_id="project-1",
-        repo="owner/repo",
-        issue_number=42,
-        issue_url="https://github.com/owner/repo/issues/42",
-        issue_state="open",
-        labels=("bug",),
-        issue_updated_at="2026-05-03T00:00:00Z",
-        content_hash="hash-1",
-        verdict="implement",
-        decision_json="{}",
-        task_id="task-1",
-        vector_point_id="point-1",
-        dedup_issue_key=None,
-        source="webhook",
-        source_text=source_text,
-        last_triaged_at="2026-05-03T00:00:00Z",
-        created_at="2026-05-03T00:00:00Z",
-        updated_at="2026-05-03T00:00:00Z",
     )
 
 
@@ -458,40 +433,6 @@ async def test_memory_change_upserts_into_promoted_collection() -> None:
 
     assert projected == 1
     assert vector_store.operations == [("upsert", "memory-1", "memories@4096-run")]
-
-
-@pytest.mark.asyncio
-async def test_legacy_github_issue_without_source_text_leaves_building_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = FakeConfigStore()
-    vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
-    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
-    monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
-
-    async def no_items(*args: Any, **kwargs: Any) -> int:
-        return 0
-
-    def legacy_records(
-        self: GitHubTriageStore,
-        *,
-        project_id: str | None = None,
-        limit: int = 500,
-        offset: int = 0,
-    ) -> list[GitHubIssueTriageRecord]:
-        return [_issue_record(source_text=None)] if offset == 0 else []
-
-    monkeypatch.setattr(runner, "_build_memory_collection", no_items)
-    monkeypatch.setattr(runner, "_build_tool_collection", no_items)
-    monkeypatch.setattr(GitHubTriageStore, "list_issue_records", legacy_records)
-
-    report = await runner.run(_journal(PHASE_BUILDING))
-
-    assert report.failed is True
-    assert report.journal is not None
-    assert report.journal.phase == PHASE_BUILDING
-    assert "run GitHub triage reconcile/reprocessing" in (report.journal.error or "")
 
 
 @pytest.mark.asyncio
