@@ -4,7 +4,6 @@ import { useSourceControl } from "../useSourceControl";
 
 const PROJECT_PAYLOADS: Record<string, unknown> = {
   status: {
-    github_available: true,
     github_repo: "owner/repo",
     current_branch: "main",
     branch_count: 1,
@@ -14,9 +13,6 @@ const PROJECT_PAYLOADS: Record<string, unknown> = {
   branches: { branches: [{ name: "main" }] },
   worktrees: { worktrees: [{ id: "new-worktree", branch_name: null }] },
   clones: { clones: [{ id: "new-clone", branch_name: null }] },
-  prs: { prs: [{ number: 2 }] },
-  issues: { issues: [{ number: 3 }] },
-  runs: { runs: [{ id: 4 }] },
 };
 
 function payloadFor(url: string): unknown {
@@ -24,9 +20,7 @@ function payloadFor(url: string): unknown {
   if (url.includes("/branches?")) return PROJECT_PAYLOADS.branches;
   if (url.includes("/worktrees?")) return PROJECT_PAYLOADS.worktrees;
   if (url.includes("/clones?")) return PROJECT_PAYLOADS.clones;
-  if (url.includes("/prs?")) return PROJECT_PAYLOADS.prs;
-  if (url.includes("/issues?")) return PROJECT_PAYLOADS.issues;
-  return PROJECT_PAYLOADS.runs;
+  throw new Error(`unexpected source-control URL: ${url}`);
 }
 
 function signalsFor(
@@ -106,7 +100,7 @@ describe("useSourceControl", () => {
     );
 
     await waitFor(() =>
-      expect(signalsFor(fetchMock, "old-project")).toHaveLength(7),
+      expect(signalsFor(fetchMock, "old-project")).toHaveLength(4),
     );
     const oldSignals = signalsFor(fetchMock, "old-project");
     expect(
@@ -125,12 +119,16 @@ describe("useSourceControl", () => {
     expect(result.current.clones).toEqual([
       { id: "new-clone", branch_name: null },
     ]);
-    expect(result.current.issues).toEqual([{ number: 3 }]);
     expect(result.current.error).toBeNull();
     expect(consoleError).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        /\/(prs|issues|cicd)\b/.test(String(input)),
+      ),
+    ).toBe(false);
 
     const newSignals = signalsFor(fetchMock, "new-project");
-    expect(newSignals).toHaveLength(7);
+    expect(newSignals).toHaveLength(4);
     unmount();
     expect(newSignals.every((signal) => signal.aborted)).toBe(true);
   });

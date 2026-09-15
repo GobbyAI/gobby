@@ -1,4 +1,4 @@
-"""Source control API routes for GitHub tab."""
+"""Source control API routes for git-local status, branches, worktrees, and clones."""
 
 from __future__ import annotations
 
@@ -10,10 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from gobby.servers.routes import source_control_github as _source_control_github
 from gobby.servers.routes.source_control_git import (
     _GIT_TTL,
-    _GITHUB_TTL,
     _delete_cached,
     _run_git,
     parse_upstream_track,
@@ -42,10 +40,6 @@ from gobby.servers.routes.source_control_worktrees import (
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-
-_call_github_mcp = _source_control_github._call_github_mcp
-_get_github = _source_control_github._get_github
-_parse_github_repo = _source_control_github._parse_github_repo
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +78,6 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         cached = _get_cached(cache_key, _GIT_TTL)
         if cached:
             return cached
-
-        gh = _get_github(server, project_id)
-        github_available = gh.is_available() if gh else False
 
         current_branch = None
         branch_count = 0
@@ -136,7 +127,6 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             clone_count = len(cls)
 
         result = {
-            "github_available": github_available,
             "github_repo": github_repo,
             "current_branch": current_branch,
             "branch_count": branch_count,
@@ -307,33 +297,12 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = None,
         limit: int = Query(20, ge=1, le=100),
     ) -> dict[str, Any]:
-        """List recent commits on a branch.
-
-        Uses GitHub MCP when available for richer data (author avatar, URL),
-        falls back to git log.
-        """
+        """List recent commits on a branch via git log."""
         _validate_git_ref(branch_name, "branch_name")
-        repo_path, github_repo = await server.run_db(_resolve_project, server, project_id)
+        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             return {"commits": []}
 
-        # Try GitHub MCP for richer commit data
-        if github_repo and server.services.mcp_manager:
-            try:
-                from gobby.integrations.github_helper import GitHubMCPHelper
-
-                helper = GitHubMCPHelper(
-                    mcp_manager=server.services.mcp_manager,
-                    repo_path=repo_path,
-                    github_repo=github_repo,
-                )
-                commits = await helper.list_commits(branch_name, limit=limit)
-                if commits:
-                    return {"commits": commits}
-            except Exception as e:
-                logger.debug("GitHubMCPHelper list_commits failed, falling back: %s", e)
-
-        # Fallback: git log
         commits = []
         try:
             r = await _run_git(
@@ -418,273 +387,5 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         except Exception as e:
             logger.warning("Failed to compute diff: %s", e, exc_info=True)
             raise HTTPException(500, "Failed to compute diff") from e
-
-    @router.get("/prs")
-    async def list_pull_requests(
-        state: str = "open",
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """List pull requests from GitHub."""
-        _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server, project_id)
-        if not gh or not gh.is_available():
-            return {"prs": [], "github_available": False}
-
-        parsed = _parse_github_repo(github_repo)
-        if not parsed:
-            return {"prs": [], "github_available": True, "error": "No GitHub repo configured"}
-
-        cache_key = f"prs:{github_repo}:{state}"
-        cached = _get_cached(cache_key, _GITHUB_TTL)
-        if cached:
-            return cached
-
-        owner, repo = parsed
-        try:
-            data = await _call_github_mcp(
-                server,
-                project_id,
-                "list_pull_requests",
-                {"owner": owner, "repo": repo, "state": state},
-            )
-            prs = []
-            if isinstance(data, list):
-                for pr in data:
-                    prs.append(
-                        {
-                            "number": pr.get("number"),
-                            "title": pr.get("title"),
-                            "state": pr.get("state"),
-                            "author": pr.get("user", {}).get("login", ""),
-                            "head_branch": pr.get("head", {}).get("ref", ""),
-                            "base_branch": pr.get("base", {}).get("ref", ""),
-                            "created_at": pr.get("created_at"),
-                            "updated_at": pr.get("updated_at"),
-                            "draft": pr.get("draft", False),
-                            "checks_status": None,
-                            "linked_task_id": None,
-                        }
-                    )
-            result = {"prs": prs, "github_available": True}
-            _set_cached(cache_key, result)
-            return result
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("Failed to list PRs: %s", e, exc_info=True)
-        return {
-            "prs": [],
-            "github_available": True,
-            "error": "Failed to list pull requests",
-        }
-
-    @router.get("/prs/{number}")
-    async def get_pull_request(
-        number: int,
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Get pull request details."""
-        _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        parsed = _parse_github_repo(github_repo)
-        if not parsed:
-            raise HTTPException(400, "No GitHub repo configured")
-
-        owner, repo = parsed
-        data = await _call_github_mcp(
-            server,
-            project_id,
-            "get_pull_request",
-            {"owner": owner, "repo": repo, "pull_number": number},
-        )
-        return {"pr": data, "github_available": True}
-
-    @router.get("/prs/{number}/checks")
-    async def get_pr_checks(
-        number: int,
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Get CI check runs for a PR."""
-        _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        parsed = _parse_github_repo(github_repo)
-        if not parsed:
-            raise HTTPException(400, "No GitHub repo configured")
-
-        owner, repo = parsed
-        try:
-            # Get PR to find head SHA
-            pr = await _call_github_mcp(
-                server,
-                project_id,
-                "get_pull_request",
-                {"owner": owner, "repo": repo, "pull_number": number},
-            )
-            head_sha = pr.get("head", {}).get("sha") if isinstance(pr, dict) else None
-            if not head_sha:
-                return {"checks": [], "status": "unknown"}
-
-            # Get check runs for commit
-            checks = await _call_github_mcp(
-                server,
-                project_id,
-                "list_commits",
-                {"owner": owner, "repo": repo, "sha": head_sha},
-            )
-            return {"checks": checks if isinstance(checks, list) else [], "status": "ok"}
-        except Exception as e:
-            logger.warning("Failed to get PR checks: %s", e, exc_info=True)
-        return {
-            "checks": [],
-            "status": "error",
-            "error": "Failed to get pull request checks",
-        }
-
-    @router.get("/issues")
-    async def list_issues(
-        state: str = "open",
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """List GitHub issues."""
-        _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server, project_id)
-        if not gh or not gh.is_available():
-            return {"issues": [], "github_available": False}
-
-        parsed = _parse_github_repo(github_repo)
-        if not parsed:
-            return {"issues": [], "github_available": True, "error": "No GitHub repo configured"}
-
-        cache_key = f"issues:{github_repo}:{state}"
-        cached = _get_cached(cache_key, _GITHUB_TTL)
-        if cached:
-            return cached
-
-        owner, repo = parsed
-        try:
-            data = await _call_github_mcp(
-                server,
-                project_id,
-                "list_issues",
-                {"owner": owner, "repo": repo, "state": state},
-            )
-            issues = []
-            if isinstance(data, list):
-                for issue in data:
-                    # Skip pull requests (GitHub API returns PRs in issues)
-                    if issue.get("pull_request"):
-                        continue
-                    labels = []
-                    for lbl in issue.get("labels", []):
-                        if isinstance(lbl, dict):
-                            labels.append(
-                                {"name": lbl.get("name", ""), "color": lbl.get("color", "")}
-                            )
-                    issues.append(
-                        {
-                            "number": issue.get("number"),
-                            "title": issue.get("title"),
-                            "state": issue.get("state"),
-                            "author": issue.get("user", {}).get("login", ""),
-                            "labels": labels,
-                            "created_at": issue.get("created_at"),
-                            "updated_at": issue.get("updated_at"),
-                            "comments": issue.get("comments", 0),
-                        }
-                    )
-            result = {"issues": issues, "github_available": True}
-            _set_cached(cache_key, result)
-            return result
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("Failed to list issues: %s", e, exc_info=True)
-        return {
-            "issues": [],
-            "github_available": True,
-            "error": "Failed to list issues",
-        }
-
-    @router.get("/issues/{number}")
-    async def get_issue(
-        number: int,
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Get issue details."""
-        _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        parsed = _parse_github_repo(github_repo)
-        if not parsed:
-            raise HTTPException(400, "No GitHub repo configured")
-
-        owner, repo = parsed
-        try:
-            data = await _call_github_mcp(
-                server,
-                project_id,
-                "get_issue",
-                {"owner": owner, "repo": repo, "issue_number": number},
-            )
-            return {"issue": data, "github_available": True}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("Failed to get issue #%s: %s", number, e, exc_info=True)
-            raise HTTPException(502, "Failed to fetch issue") from e
-
-    @router.get("/cicd/runs")
-    async def list_cicd_runs(
-        project_id: str | None = None,
-        limit: int = Query(20, ge=1, le=100),
-    ) -> dict[str, Any]:
-        """List CI/CD workflow runs."""
-        _, github_repo = await server.run_db(_resolve_project, server, project_id)
-        gh = _get_github(server, project_id)
-        if not gh or not gh.is_available():
-            return {"runs": [], "github_available": False}
-
-        parsed = _parse_github_repo(github_repo)
-        if not parsed:
-            return {"runs": [], "github_available": True, "error": "No GitHub repo configured"}
-
-        cache_key = f"cicd:{github_repo}"
-        cached = _get_cached(cache_key, _GITHUB_TTL)
-        if cached:
-            return cached
-
-        owner, repo = parsed
-        try:
-            data = await _call_github_mcp(
-                server,
-                project_id,
-                "list_workflow_runs",
-                {"owner": owner, "repo": repo, "per_page": min(limit, 100)},
-            )
-            runs = []
-            workflow_runs = (
-                data.get("workflow_runs", [])
-                if isinstance(data, dict)
-                else (data if isinstance(data, list) else [])
-            )
-            for run in workflow_runs:
-                runs.append(
-                    {
-                        "id": run.get("id"),
-                        "name": run.get("name"),
-                        "status": run.get("status"),
-                        "conclusion": run.get("conclusion"),
-                        "branch": run.get("head_branch"),
-                        "event": run.get("event"),
-                        "created_at": run.get("created_at"),
-                        "html_url": run.get("html_url"),
-                    }
-                )
-            result = {"runs": runs, "github_available": True}
-            _set_cached(cache_key, result)
-            return result
-        except Exception as e:
-            logger.warning("Failed to list CI/CD runs: %s", e, exc_info=True)
-        return {
-            "runs": [],
-            "github_available": True,
-            "error": "Failed to list CI/CD runs",
-        }
 
     return router

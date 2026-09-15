@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 _cache: dict[str, tuple[float, Any]] = {}
 _cache_lock = threading.Lock()
-_GITHUB_TTL = 30.0
 _GIT_TTL = 10.0
 _MAX_CACHE_SIZE = 256
 

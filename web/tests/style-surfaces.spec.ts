@@ -1500,7 +1500,6 @@ function baseApi(
       };
     case "/api/source-control/status":
       return {
-        github_available: false,
         github_repo: null,
         current_branch: "main",
         branch_count: 1,

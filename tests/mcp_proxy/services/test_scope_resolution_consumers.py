@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.integrations.github import GitHubIntegration
-from gobby.integrations.github_helper import GitHubMCPHelper
 from gobby.servers.websocket.handlers.core import HandlerMixin
 from tests.mcp_proxy.services.test_scope_resolution_matrix import (
     GLOBAL_SERVER_ID,
@@ -32,19 +30,6 @@ def _assert_only_id(manager: RecordingManager, expected_id: str, *methods: str) 
 @pytest.mark.asyncio
 async def test_consumers_resolve_project_instance_by_id() -> None:
     github_manager = RecordingManager(scoped_github_configs(), project_id=PROJECT_ID)
-
-    github = GitHubIntegration(as_mcp(github_manager), project_id=PROJECT_ID)
-    assert github.is_available() is True
-    _assert_only_id(github_manager, PROJECT_SERVER_ID, "has_server")
-
-    helper = GitHubMCPHelper(
-        as_mcp(github_manager),
-        repo_path="/tmp/repo",
-        github_repo="owner/repo",
-        project_id=PROJECT_ID,
-    )
-    await helper._call_github_mcp("list_issues", {"owner": "owner", "repo": "repo"})
-    _assert_only_id(github_manager, PROJECT_SERVER_ID, "get_client_session", "call_tool")
 
     class _Handler(HandlerMixin):
         def __init__(self, manager: RecordingManager) -> None:
