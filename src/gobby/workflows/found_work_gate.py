@@ -202,6 +202,24 @@ def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
             return
 
 
+def _send_message_reports_to_parent(data: Mapping[str, Any]) -> bool:
+    """Treat an omitted send_message target as parent."""
+    tool_input = data.get("tool_input")
+    handler: dict[str, Any] = dict(tool_input) if isinstance(tool_input, dict) else {}
+    raw_args = handler.get("arguments", handler.get("args"))
+    if isinstance(raw_args, str):
+        try:
+            raw_args = json.loads(raw_args)
+        except (json.JSONDecodeError, TypeError):
+            raw_args = None
+    if isinstance(raw_args, dict):
+        handler = {**raw_args, **handler}
+    target = handler.get("target", "parent")
+    if target is None:
+        return True
+    return isinstance(target, str) and target.strip().lower() in {"", "parent"}
+
+
 def capture_found_work_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
     """Track tool activity and successful owner handoff within the current turn.
 
@@ -220,6 +238,8 @@ def capture_found_work_handoff(event: HookEvent, variables: dict[str, Any]) -> N
     if event.data.get("mcp_server") != "gobby-agents":
         return
     if event.data.get("mcp_tool") != "send_message":
+        return
+    if not _send_message_reports_to_parent(event.data):
         return
     from gobby.hooks.tool_outcomes import normalize_tool_outcome
 
