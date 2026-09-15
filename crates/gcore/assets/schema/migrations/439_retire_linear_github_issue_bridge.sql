@@ -1,7 +1,7 @@
--- gobby:destructive
--- Retire Linear/GitHub Gobby issue/PR identity (#22365). Apply to an installed
--- hub only after writers are gone. Fresh lineages stamp this receipt without
--- executing it; the canonical baseline already omits the retired objects.
+-- Retire Linear/GitHub Gobby issue/PR identity (#22365, #22385).
+-- Executes on fresh lineages immediately after the canonical baseline and on
+-- installed hubs at the next apply. Every statement is IF EXISTS so both
+-- converge on the same catalog.
 -- Qualify every target to the runner's schema: IF EXISTS must never fall through
 -- search_path into another schema. RESTRICT refuses unrecorded outside consumers.
 DO $retire_linear_github$

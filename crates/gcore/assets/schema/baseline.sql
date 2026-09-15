@@ -2502,6 +2502,27 @@ CREATE TABLE expansion_runs (
     CONSTRAINT expansion_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'compiled'::text, 'applying'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
+CREATE TABLE external_issue_sync_status (
+    project_id uuid NOT NULL,
+    provider text NOT NULL,
+    state text DEFAULT 'disabled'::text NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_outbound_success_at timestamp with time zone,
+    linked_count integer DEFAULT 0 NOT NULL,
+    pending_count integer DEFAULT 0 NOT NULL,
+    consecutive_failures integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone,
+    last_statistics jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_error text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT external_issue_sync_status_consecutive_failures_check CHECK ((consecutive_failures >= 0)),
+    CONSTRAINT external_issue_sync_status_linked_count_check CHECK ((linked_count >= 0)),
+    CONSTRAINT external_issue_sync_status_pending_count_check CHECK ((pending_count >= 0)),
+    CONSTRAINT external_issue_sync_status_provider_check CHECK ((provider = ANY (ARRAY['linear'::text, 'github'::text]))),
+    CONSTRAINT external_issue_sync_status_state_check CHECK ((state = ANY (ARRAY['disabled'::text, 'pending'::text, 'running'::text, 'healthy'::text, 'degraded'::text, 'rate_limited'::text, 'unready'::text])))
+);
+
 CREATE TABLE feedback_review_runs (
     id uuid NOT NULL,
     status text NOT NULL,
@@ -2516,6 +2537,58 @@ CREATE TABLE feedback_review_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
     CONSTRAINT feedback_review_runs_status_vocab CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text])))
+);
+
+CREATE TABLE gh_issues_triaged (
+    id text NOT NULL,
+    project_id uuid NOT NULL,
+    repo text NOT NULL,
+    issue_number integer NOT NULL,
+    issue_url text,
+    issue_state text,
+    labels_json jsonb DEFAULT '[]'::jsonb NOT NULL,
+    issue_updated_at timestamp with time zone,
+    content_hash text NOT NULL,
+    verdict text NOT NULL,
+    decision_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    task_id uuid,
+    vector_point_id text,
+    dedup_issue_key text,
+    source text NOT NULL,
+    source_text text,
+    last_triaged_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT gh_issues_triaged_verdict_check CHECK ((verdict = ANY (ARRAY['implement'::text, 'skip'::text, 'escalate'::text, 'dedup'::text])))
+);
+
+CREATE TABLE gh_triage_build_dispatches (
+    project_id uuid NOT NULL,
+    repo text NOT NULL,
+    issue_number integer NOT NULL,
+    task_id uuid NOT NULL,
+    dispatched_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE gh_triage_deliveries (
+    id text NOT NULL,
+    project_id uuid NOT NULL,
+    delivery_id text NOT NULL,
+    event text NOT NULL,
+    action text,
+    repository text,
+    issue_number integer,
+    status text DEFAULT 'pending'::text NOT NULL,
+    payload_hash text NOT NULL,
+    headers_json jsonb DEFAULT '{}'::jsonb NOT NULL,
+    raw_body text DEFAULT ''::text NOT NULL,
+    error text,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT gh_triage_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'processed'::text, 'ignored'::text, 'duplicate'::text, 'error'::text])))
 );
 
 CREATE TABLE hook_force_continue_budgets (
@@ -2929,6 +3002,22 @@ CREATE TABLE project_checkouts (
 
 ALTER TABLE ONLY project_checkouts FORCE ROW LEVEL SECURITY;
 
+CREATE TABLE project_github_triage_configs (
+    project_id uuid NOT NULL,
+    sync_enabled boolean DEFAULT false NOT NULL,
+    triage_enabled boolean DEFAULT false NOT NULL,
+    webhook_enabled boolean DEFAULT false NOT NULL,
+    repositories_json jsonb DEFAULT '[]'::jsonb NOT NULL,
+    reconcile_interval_seconds integer DEFAULT 3600 CONSTRAINT project_github_triage_confi_reconcile_interval_seconds_not_null NOT NULL,
+    webhook_secret_ref text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_github_triage_configs_reconcile_interval_seconds_check CHECK ((reconcile_interval_seconds > 0)),
+    CONSTRAINT project_github_triage_configs_sync_enabled_check CHECK ((sync_enabled = ANY (ARRAY[false, true]))),
+    CONSTRAINT project_github_triage_configs_triage_enabled_check CHECK ((triage_enabled = ANY (ARRAY[false, true]))),
+    CONSTRAINT project_github_triage_configs_webhook_enabled_check CHECK ((webhook_enabled = ANY (ARRAY[false, true])))
+);
+
 CREATE TABLE project_lifecycle_events (
     id integer NOT NULL,
     project_id uuid NOT NULL,
@@ -2950,9 +3039,16 @@ ALTER TABLE project_lifecycle_events ALTER COLUMN id ADD GENERATED ALWAYS AS IDE
 CREATE TABLE projects (
     id uuid NOT NULL,
     name text NOT NULL,
+    github_url text,
+    github_repo text,
+    linear_team_id text,
+    linear_project_id text,
+    linear_synced_at timestamp with time zone,
+    linear_sync_enabled boolean DEFAULT false NOT NULL,
     deleted_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT projects_linear_sync_enabled_check CHECK ((linear_sync_enabled = ANY (ARRAY[false, true])))
 );
 
 ALTER TABLE ONLY projects FORCE ROW LEVEL SECURITY;
@@ -3578,6 +3674,45 @@ CREATE TABLE task_comments (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE task_delivery_campaigns (
+    task_id uuid NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    delivery_mode text DEFAULT 'auto'::text NOT NULL,
+    source_repo text,
+    target_repo text,
+    merge_strategy text DEFAULT 'squash'::text NOT NULL,
+    structured_pr_verdict jsonb,
+    pr_report_ref text,
+    merge_sha text,
+    merge_report_ref text,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_delivery_campaigns_delivery_mode_check CHECK ((delivery_mode = ANY (ARRAY['auto'::text, 'pull_request'::text]))),
+    CONSTRAINT task_delivery_campaigns_merge_strategy_check CHECK ((merge_strategy = ANY (ARRAY['merge'::text, 'squash'::text, 'rebase'::text])))
+);
+
+CREATE TABLE task_delivery_units (
+    id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    unit_key text NOT NULL,
+    worktree_id uuid,
+    repo text,
+    source_branch text,
+    target_branch text DEFAULT 'main'::text NOT NULL,
+    pr_required boolean,
+    protection_json jsonb,
+    pr_url text,
+    github_pr_number integer,
+    gate_snapshot_json jsonb,
+    pr_state text,
+    local_update_attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_delivery_units_pr_required_check CHECK ((pr_required = ANY (ARRAY[false, true])))
+);
+
 CREATE TABLE task_dependencies (
     id integer NOT NULL,
     task_id uuid NOT NULL,
@@ -3765,6 +3900,11 @@ CREATE TABLE tasks (
     commits jsonb,
     escalated_at timestamp with time zone,
     escalation_reason text,
+    github_issue_number integer,
+    github_pr_number integer,
+    github_repo text,
+    linear_issue_id text,
+    linear_team_id text,
     seq_num integer,
     path_cache text,
     start_date date,
@@ -4225,8 +4365,26 @@ ALTER TABLE ONLY embedding_projection_changes
 ALTER TABLE ONLY expansion_runs
     ADD CONSTRAINT expansion_runs_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY external_issue_sync_status
+    ADD CONSTRAINT external_issue_sync_status_pkey PRIMARY KEY (project_id, provider);
+
 ALTER TABLE ONLY feedback_review_runs
     ADD CONSTRAINT feedback_review_runs_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY gh_issues_triaged
+    ADD CONSTRAINT gh_issues_triaged_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY gh_issues_triaged
+    ADD CONSTRAINT gh_issues_triaged_project_id_repo_issue_number_key UNIQUE (project_id, repo, issue_number);
+
+ALTER TABLE ONLY gh_triage_build_dispatches
+    ADD CONSTRAINT gh_triage_build_dispatches_pkey PRIMARY KEY (project_id, repo, issue_number);
+
+ALTER TABLE ONLY gh_triage_deliveries
+    ADD CONSTRAINT gh_triage_deliveries_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY gh_triage_deliveries
+    ADD CONSTRAINT gh_triage_deliveries_project_id_delivery_id_key UNIQUE (project_id, delivery_id);
 
 ALTER TABLE ONLY hook_force_continue_budgets
     ADD CONSTRAINT hook_force_continue_budgets_pkey PRIMARY KEY (session_id, execution_num);
@@ -4323,6 +4481,9 @@ ALTER TABLE ONLY project_checkouts
 
 ALTER TABLE ONLY project_checkouts
     ADD CONSTRAINT project_checkouts_pkey PRIMARY KEY (machine_id, project_id);
+
+ALTER TABLE ONLY project_github_triage_configs
+    ADD CONSTRAINT project_github_triage_configs_pkey PRIMARY KEY (project_id);
 
 ALTER TABLE ONLY project_lifecycle_events
     ADD CONSTRAINT project_lifecycle_events_pkey PRIMARY KEY (id);
@@ -4461,6 +4622,15 @@ ALTER TABLE ONLY task_close_reviews
 
 ALTER TABLE ONLY task_comments
     ADD CONSTRAINT task_comments_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY task_delivery_campaigns
+    ADD CONSTRAINT task_delivery_campaigns_pkey PRIMARY KEY (task_id);
+
+ALTER TABLE ONLY task_delivery_units
+    ADD CONSTRAINT task_delivery_units_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY task_delivery_units
+    ADD CONSTRAINT task_delivery_units_task_id_unit_key_key UNIQUE (task_id, unit_key);
 
 ALTER TABLE ONLY task_dependencies
     ADD CONSTRAINT task_dependencies_pkey PRIMARY KEY (id);
@@ -4773,7 +4943,21 @@ CREATE INDEX idx_expansion_runs_parent_task ON expansion_runs USING btree (paren
 
 CREATE INDEX idx_expansion_runs_status ON expansion_runs USING btree (status, created_at DESC);
 
+CREATE INDEX idx_external_issue_sync_status_state ON external_issue_sync_status USING btree (provider, state, updated_at);
+
 CREATE INDEX idx_feedback_review_runs_created ON feedback_review_runs USING btree (created_at DESC);
+
+CREATE INDEX idx_gh_issues_triaged_project_hash ON gh_issues_triaged USING btree (project_id, content_hash);
+
+CREATE INDEX idx_gh_issues_triaged_task ON gh_issues_triaged USING btree (task_id);
+
+CREATE INDEX idx_gh_triage_build_dispatches_task_id ON gh_triage_build_dispatches USING btree (task_id);
+
+CREATE INDEX idx_gh_triage_deliveries_issue ON gh_triage_deliveries USING btree (project_id, repository, issue_number);
+
+CREATE INDEX idx_gh_triage_deliveries_project_status ON gh_triage_deliveries USING btree (project_id, status);
+
+CREATE INDEX idx_gh_triage_deliveries_retry ON gh_triage_deliveries USING btree (project_id, status, next_attempt_at, updated_at);
 
 CREATE INDEX idx_inter_session_messages_from_session ON inter_session_messages USING btree (from_session);
 
@@ -5021,6 +5205,10 @@ CREATE INDEX idx_task_comments_parent ON task_comments USING btree (parent_comme
 
 CREATE INDEX idx_task_comments_task ON task_comments USING btree (task_id);
 
+CREATE INDEX idx_task_delivery_units_pr_url ON task_delivery_units USING btree (pr_url);
+
+CREATE INDEX idx_task_delivery_units_task_id ON task_delivery_units USING btree (task_id);
+
 CREATE INDEX idx_task_selection_session ON task_selection_history USING btree (session_id, selected_at DESC);
 
 CREATE INDEX idx_task_selection_task ON task_selection_history USING btree (session_id, task_id, selected_at DESC);
@@ -5042,6 +5230,8 @@ CREATE INDEX idx_tasks_closed_session ON tasks USING btree (closed_in_session_id
 CREATE INDEX idx_tasks_created_session ON tasks USING btree (created_in_session_id);
 
 CREATE INDEX idx_tasks_dispatch_scan ON tasks USING btree (allow_automation, closed_at, is_escalated);
+
+CREATE UNIQUE INDEX idx_tasks_github_issue_link ON tasks USING btree (project_id, github_repo, github_issue_number) WHERE ((github_repo IS NOT NULL) AND (github_issue_number IS NOT NULL));
 
 CREATE INDEX idx_tasks_parent ON tasks USING btree (parent_task_id);
 
@@ -5333,6 +5523,24 @@ ALTER TABLE ONLY expansion_runs
 ALTER TABLE ONLY expansion_runs
     ADD CONSTRAINT expansion_runs_triggering_session_id_fkey FOREIGN KEY (triggering_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE;
 
+ALTER TABLE ONLY external_issue_sync_status
+    ADD CONSTRAINT external_issue_sync_status_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY gh_issues_triaged
+    ADD CONSTRAINT gh_issues_triaged_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY gh_issues_triaged
+    ADD CONSTRAINT gh_issues_triaged_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE;
+
+ALTER TABLE ONLY gh_triage_build_dispatches
+    ADD CONSTRAINT gh_triage_build_dispatches_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY gh_triage_build_dispatches
+    ADD CONSTRAINT gh_triage_build_dispatches_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY gh_triage_deliveries
+    ADD CONSTRAINT gh_triage_deliveries_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
+
 ALTER TABLE ONLY inter_session_messages
     ADD CONSTRAINT inter_session_messages_from_session_fkey FOREIGN KEY (from_session) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
 
@@ -5416,6 +5624,9 @@ ALTER TABLE ONLY project_checkouts
 
 ALTER TABLE ONLY project_checkouts
     ADD CONSTRAINT project_checkouts_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY project_github_triage_configs
+    ADD CONSTRAINT project_github_triage_configs_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
 
 ALTER TABLE ONLY project_lifecycle_events
     ADD CONSTRAINT project_lifecycle_events_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
@@ -5503,6 +5714,12 @@ ALTER TABLE ONLY task_comments
 
 ALTER TABLE ONLY task_comments
     ADD CONSTRAINT task_comments_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY task_delivery_campaigns
+    ADD CONSTRAINT task_delivery_campaigns_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY task_delivery_units
+    ADD CONSTRAINT task_delivery_units_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE;
 
 ALTER TABLE ONLY task_dependencies
     ADD CONSTRAINT task_dependencies_depends_on_fkey FOREIGN KEY (depends_on) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE;
@@ -6056,11 +6273,15 @@ GRANT ALL ON SEQUENCE embedding_projection_changes_sequence_seq TO gobby_daemon_
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE expansion_runs TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE external_issue_sync_status TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE feedback_review_runs TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE gh_issues_triaged TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE gh_triage_build_dispatches TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE gh_triage_deliveries TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE hook_force_continue_budgets TO gobby_daemon_runtime;
 
@@ -6132,6 +6353,7 @@ GRANT SELECT(project_id),UPDATE(project_id) ON TABLE project_checkouts TO gobby_
 
 GRANT SELECT(root_path),UPDATE(root_path) ON TABLE project_checkouts TO gobby_gcode_capability;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE project_github_triage_configs TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE project_lifecycle_events TO gobby_daemon_runtime;
 
@@ -6241,7 +6463,9 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE task_close_reviews TO gobby_daemon_ru
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE task_comments TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE task_delivery_campaigns TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE task_delivery_units TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE task_dependencies TO gobby_daemon_runtime;
 
@@ -6327,13 +6551,13 @@ GRANT EXECUTE ON FUNCTION "public".digest(BYTEA, TEXT) TO gobby_agent_issuer;
 
 INSERT INTO config_state (id, revision) VALUES (true, 0);
 
-INSERT INTO projects (id, name, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
-INSERT INTO projects (id, name, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
-INSERT INTO projects (id, name, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
-INSERT INTO projects (id, name, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NOW(), NOW());
+INSERT INTO projects (id, name, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
 INSERT INTO task_stages_registry (name, display_label, description, category, default_agent, reviewer_agent, reviewer_agent_selector_json, review_policy, dispatch_type, dispatch_target, dispatch_inputs_json, position_hint, requires_human, is_terminal, default_max_work_attempts, default_max_review_rounds, bundled_hash, deleted_at, updated_at) VALUES ('architecture', 'Architecture', 'Cross-cutting design decisions and component shape.', 'design', 'architect', NULL, NULL, 'none', NULL, NULL, NULL, 30, false, false, 3, 5, 'd084b4acbf67c7012e577d2d386dc20ae45cbfebe347a58f3fbc89cef5038b2c', NULL, NOW());
 

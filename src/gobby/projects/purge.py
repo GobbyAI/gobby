@@ -324,7 +324,7 @@ class ProjectPurgeService:
         with self.db.transaction() as transaction:
             for statement, arity in _FOREIGN_REFERENCE_DETACH_STATEMENTS:
                 transaction.execute(statement, (project_id,) * arity)
-            for table in ("gh_issues_triaged", "tasks", "plans", "sessions"):
+            for table in ("tasks", "plans", "sessions"):
                 transaction.execute(
                     f"DELETE FROM {table} WHERE project_id = %s",  # nosec B608
                     (project_id,),
