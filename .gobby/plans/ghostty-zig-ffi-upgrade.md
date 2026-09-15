@@ -31,10 +31,14 @@ floor). Bundled, unmodified upstream simdutf/highway stay.
    with Zig 0.16.0. It contains SDK fix
    `1c861e3c476f2489008c12fc0b75af72c1b8484d` (compat `math.h` for
    `INFINITY`/`NAN`). No newer untested tip.
-2. Zig: official 0.16.0. Research tarball SHA256
-   `b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489`
-   (`zig-aarch64-macos-0.16.0`). Zig 0.15.2 cannot compile bundled libc++
-   against the macOS 27 SDK. Homebrew 0.15.2 is retired for `vt-engine`.
+2. Zig: 0.16.0. The candidate pin's `build.zig.zon` declares
+   `minimum_zig_version = "0.16.0"` (read from GitHub at `7aab0a03`).
+   Developer path: Homebrew `zig` stable is 0.16.0 (bottled), so
+   `brew install zig` / `brew upgrade zig`; the official tarball (SHA256
+   `b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489`,
+   `zig-aarch64-macos-0.16.0`) is the fallback via `ZIG=<path>`. CI uses
+   `mlugg/setup-zig` `0.16.0`. Zig 0.15.2 cannot compile bundled libc++
+   against the macOS 27 SDK and is retired for `vt-engine`.
 3. SIMD: retain bundled, unmodified upstream simdutf and highway from the
    new pin. No `-fsys=simdutf`, no Homebrew/`libsimdutf` runtime, no
    macOS 26 deployment floor. `d65cb512` (Apple shared link omitting
@@ -68,7 +72,12 @@ floor). Bundled, unmodified upstream simdutf/highway stay.
    `stage_and_promote_binary_file` for `gterm`/`gclient`. Never copy into
    `~/.gobby/bin` by hand. Coordinate with the install owner; announce
    restarts to active sessions.
-8. Load the `rust` skill before Rust edits. Preserve Stage-0 triples
+8. Expansion: none. #22310 is itself the implementing leaf. Sections
+   1.1, 1.2, 2.1 and 3.1 are its implementation specification and land on
+   one branch in dependency order; `gobby-terminal` does not link between
+   1.1 and 2.1, so no section closes as a separate task. The section
+   acceptance items are #22310's close evidence.
+9. Load the `rust` skill before Rust edits. Preserve Stage-0 triples
    (`aarch64-apple-darwin`, `x86_64-apple-darwin`,
    `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`) and the
    Windows cross clippy job with `LIBGHOSTTY_VT_SIMD=false`.
@@ -138,6 +147,7 @@ Targets:
 - `crates/gterminal/tests/build_env.rs::missing_zig_reports_requirement`
 - `crates/gterminal/tests/build_env.rs::darwin_nonsimd_archive_links_every_member`
 - `tests/gterminal/test_vendor_layer.py::*` — scope-reason: every pin, REQUIRED_ZIG, and patch-application assertion follows the new commit and Zig 0.16
+- `src/gobby/cli/install_setup_gterm.py::*` — scope-reason: the module-level `GTERM_NO_ZIG_SKIP_REASON` string says "requires Zig 0.15"; it is a constant, not an indexed symbol
 
 **Research context:** Vendoring follows herdr's dist workflow
 (`~/.gobby/clones/herdr/scripts/vendor_libghostty_vt.py`): from a *clean*
@@ -146,8 +156,17 @@ Ghostty checkout at `7aab0a0392369613472bd5dcfd66bef58e78c3ec`, with Zig
 `libghostty-vt-*+7aab0a039.tar.gz` over
 `crates/gterminal/vendor/libghostty-vt/`, write `vendor.json`
 (`source_commit`, `dist_archive`, `extracted_dir`). Do not add a new
-Python vendor script. Do not run that `zig build dist` inside
-`~/Projects/gobby` or this worktree's Cargo target.
+Python vendor script. Concretely: obtain a managed clone of
+`https://github.com/ghostty-org/ghostty` through `gobby-clones:create_clone`
+(raw clone commands are blocked by rule), check out
+`7aab0a0392369613472bd5dcfd66bef58e78c3ec`, run
+`zig build dist -Demit-lib-vt -Doptimize=ReleaseFast` with Zig 0.16.0
+(the pinned `build.zig` already defines the `dist` step at line 109 and
+the archive lands in `zig-out/dist/`), `git rm -r crates/gterminal/vendor/libghostty-vt`,
+extract the archive there, then re-apply the surviving patches with
+`git apply` from `crates/gterminal`. GitHub is reachable from the build
+shell (verified with a 200 on the raw `build.zig.zon`). Do not run that
+`zig build dist` inside `~/Projects/gobby` or this worktree's Cargo target.
 
 `build.rs::main` today runs `zig build -Demit-lib-vt -Doptimize=…
 -Dsimd=… -Dtarget=… -Dversion-string=… -Demit-xcframework=false
@@ -185,7 +204,7 @@ cross clippy keeps `LIBGHOSTTY_VT_SIMD=false`.
 - 1.1.2 - Bundled simdutf/highway stay in-tree; build.rs and the helper never pass `-fsys=simdutf`. file: `crates/gterminal/build.rs`. behavior: "bundled SIMD, no system simdutf" in `crates/gterminal/NOTICE.md`.
 - 1.1.3 - Patch 0002 is gone; neither `build.rs` nor the helper passes `-Demit-lib-vt-shared`. file: `crates/gterminal/build.rs`.
 - 1.1.4 - Patch 0003 remains applied, or `GhosttyLibVt.zig` already combines native Darwin static archives without SIMD and 0003 is deleted with that evidence in `libghostty-vt.patches.md`. file: `crates/gterminal/vendor/libghostty-vt.patches.md`. test: `crates/gterminal/tests/build_env.rs::darwin_nonsimd_archive_links_every_member`.
-- 1.1.5 - Missing-zig errors name Zig 0.16. symbol: `missing_zig_reports_requirement`. test: `tests/gterminal/test_vendor_layer.py::test_build_rs_names_zig_version_when_binary_missing`.
+- 1.1.5 - Missing-zig errors name Zig 0.16, including the installer's `GTERM_NO_ZIG_SKIP_REASON` in `src/gobby/cli/install_setup_gterm.py`. symbol: `missing_zig_reports_requirement`. test: `tests/gterminal/test_vendor_layer.py::test_build_rs_names_zig_version_when_binary_missing`.
 - 1.1.6 - Isolated `zig build -Demit-lib-vt` against the macOS 27 SDK emits static and shared libraries; `otool -L` on the dylib lists no `libsimdutf`; `nm` on the archive has no undefined simdutf. behavior: "isolated static/shared bundled SIMD build on macOS 27" in `crates/gterminal/vendor/libghostty-vt.patches.md`.
 - 1.1.7 - NOTICE records the new Ghostty commit, drops the shared-skip rationale, and inventories the extracted simdutf/highway licenses. file: `crates/gterminal/NOTICE.md`.
 
@@ -247,7 +266,13 @@ Targets:
 
 **Research context:** Bindings are rust-bindgen 0.72.1, split under
 `bindings/generated_*.rs` (`source_size.rs` excludes `generated_*`).
-Regenerate from `vendor/libghostty-vt/include/ghostty/vt.h` with
+`bindgen` is not installed on this machine and no regeneration script is
+checked in: install with `cargo install bindgen-cli --version 0.72.1` and
+point `LIBCLANG_PATH` at
+`/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib`
+(present; Homebrew LLVM is not). Record the exact `bindgen` invocation
+and version in a comment at the top of `bindings.rs` so the next re-pin
+is reproducible. Regenerate from `vendor/libghostty-vt/include/ghostty/vt.h` with
 `-I vendor/libghostty-vt/include`, const-style enums matching
 `GhosttyResult_GHOSTTY_SUCCESS`, allowlist `ghostty_*` / `GHOSTTY_*` /
 `Ghostty*`. Do not include `ghostty.h`. After regen, delete
@@ -309,6 +334,7 @@ then delete 0001.
 - 2.1.6 - Grapheme clustering is the default and survives `ESC c` without patch 0001. test: `crates/gterminal/src/ghostty/mod/tests.rs::grapheme_cluster_mode_is_default_and_survives_full_reset`.
 - 2.1.7 - Flag emoji and ZWJ family still occupy one wide cell. test: `crates/gterminal/src/pane/terminal/tests.rs::grapheme_cluster_mode_renders_flag_emoji_in_single_wide_cell`.
 - 2.1.8 - Patch 0001 is deleted once 2.1.6 and 2.1.7 pass; `libghostty-vt.patches.md` records the C API replacement. file: `crates/gterminal/vendor/libghostty-vt.patches.md`.
+- 2.1.9 - `bindings.rs` carries the exact bindgen 0.72.1 command, include path and allowlist used for the regeneration. file: `crates/gterminal/src/ghostty/bindings.rs`.
 
 Consumers unchanged:
 - `crates/gterminal/src/pane/terminal.rs` — no-edit-reason: `grapheme_cluster_mode_is_default_and_survives_full_reset` already calls `mode_get`; production code is untouched (939 lines).
@@ -364,6 +390,9 @@ Zig 0.16.0 on PATH. Never `cargo clean`. Never cargo/zig against
 Planned (not run in this planning pass):
 
 ```sh
+zig version                            # 0.16.0
+bindgen --version                      # bindgen 0.72.1
+xcrun --sdk macosx --show-sdk-version  # 27.x (observed 27.0)
 # Static + shared bundled SIMD (no -fsys=simdutf, no -Demit-lib-vt-shared=false)
 ZIG="$ZIG16" bash scripts/build_vendored_libghostty_vt.sh
 otool -L crates/gterminal/vendor/libghostty-vt/zig-out/lib/libghostty-vt.dylib
