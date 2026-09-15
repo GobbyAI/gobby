@@ -5,10 +5,10 @@ import shlex
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.config.shell_lexing import shell_command_segments
 from gobby.config.validation_detection import (
-    ValidationCommandMatcher,
     ValidationCommandWrapper,
     ValidationDetectionConfig,
     classify_validation_command,
@@ -18,6 +18,7 @@ from gobby.config.validation_detection import (
     resolve_validation_detection_config,
     save_project_validation_detection,
 )
+from gobby.config.validation_matchers import ValidationCommandMatcher, builtin_validation_matchers
 
 pytestmark = pytest.mark.unit
 
@@ -27,18 +28,18 @@ pytestmark = pytest.mark.unit
     [
         ("GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -v", "python-tests"),
         ("python -m coverage run -m pytest tests/foo.py", "python-tests"),
-        ("python -m flake8 src tests", "python-lint-type-format"),
+        ("python -m flake8 src tests", "python-lint-type"),
         ("npm run test -- --watch=false", "js-ts-tests"),
         ("npx playwright test tests/terminal-colors.spec.ts --workers=1", "js-ts-tests"),
-        ("deno lint", "js-ts-lint-type-format"),
-        ("pnpm run lint", "js-ts-lint-type-format"),
+        ("deno lint", "js-ts-direct-checks"),
+        ("pnpm run lint", "js-ts-script-checks"),
         ("cargo check --no-default-features", "rust-validation"),
         ("cargo nextest run", "rust-validation"),
         ("cargo clippy --no-default-features -- -D warnings", "rust-validation"),
         ("cargo fmt --all -- --check", "rust-format-check"),
         ("ruff format --check src tests", "python-format-check"),
         ("uv run ruff format --check src/", "python-format-check"),
-        ("uv run ruff check src/", "python-lint-type-format"),
+        ("uv run ruff check src/", "python-lint-type"),
         ("rust-token-killer -- cargo check", "rust-validation"),
         ("rust-token-killer -- 'cargo check --no-default-features'", "rust-validation"),
         ("timeout 30 -- npm test", "js-ts-tests"),
@@ -514,6 +515,50 @@ def test_project_validation_detection_round_trip(tmp_path: Path) -> None:
     assert loaded["builtin_matchers_enabled"] is False
     resolved = resolve_validation_detection_config(project_path=str(tmp_path))
     assert classify_validation_command("demo test", resolved) is not None
+
+
+def test_bounded_inputs_requires_languages() -> None:
+    with pytest.raises(ValidationError, match="bounded_inputs requires languages"):
+        ValidationCommandMatcher(id="lint", label="Lint", prefixes=["lint"], bounded_inputs=True)
+
+
+@pytest.mark.parametrize(
+    ("command", "bounded"),
+    [
+        (
+            "uv run gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new",
+            True,
+        ),
+        ("npx eslint web/src", True),
+        ("tsc --noEmit", True),
+        ("uv run mypy src/", True),
+        ("uv run ruff check src/", True),
+        ("phpstan analyse src", True),
+        ("npm run lint", False),
+        ("tox -e lint", False),
+        ("go vet ./...", False),
+        ("cargo clippy -- -D warnings", False),
+        ("uv run pytest tests/config", False),
+        ("npx vitest run", False),
+        ("prettier --check web", False),
+        ("jq -e -R 'test(\"TODO\") | not' src/app.py", False),
+        ("markdownlint --rules ./custom.js docs", False),
+        ("mix credo --strict", False),
+    ],
+)
+def test_builtin_matchers_bound_only_direct_checkers(command: str, bounded: bool) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.bounded_inputs is bounded
+
+
+def test_bounded_builtin_matchers_carry_no_test_category() -> None:
+    bounded = [matcher for matcher in builtin_validation_matchers() if matcher.bounded_inputs]
+
+    assert {"php-static-checks", "ruby-static-checks"} <= {matcher.id for matcher in bounded}
+    assert [matcher.id for matcher in bounded if "test" in matcher.categories] == []
 
 
 def test_classify_validation_segments_keeps_every_validation_segment() -> None:

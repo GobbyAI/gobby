@@ -2655,6 +2655,10 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
         TranscriptValidationSegment(command="pytest tests/unit -q", categories=("test",)),
     )
     assert [segment.segment_index for segment in run.validation_segments] == [0, 1]
+    assert [(segment.languages, segment.bounded_inputs) for segment in run.validation_segments] == [
+        (("python",), True),
+        (("python",), False),
+    ]
 
 
 @pytest.mark.asyncio
