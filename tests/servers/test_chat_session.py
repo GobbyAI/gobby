@@ -414,6 +414,7 @@ class TestProjectRouting:
             assert captured_options["cwd"] == "/home/user/my-project"
             assert captured_options["env"]["GOBBY_PROJECT_ID"] == "proj-abc"
             assert captured_options["env"]["GOBBY_SESSION_ID"] == "db-session-1"
+            assert int(captured_options["env"]["MCP_TIMEOUT"]) >= 120000
 
     @pytest.mark.asyncio
     async def test_start_falls_back_without_project_path(self, session: ChatSession) -> None:
@@ -841,6 +842,7 @@ class TestShimLaunchContract:
         assert captured["prepare"]["env"]["GOBBY_SESSION_ID"] == "db-shim"
         assert captured["env"]["TMPDIR"] == str(tmp_path / "srt-tmp")
         assert captured["env"]["GOBBY_SESSION_ID"] == "db-shim"
+        assert int(captured["env"]["MCP_TIMEOUT"]) >= 120000
         assert captured["setting_sources"] == []
         settings = json.loads(Path(captured["settings"]).read_text(encoding="utf-8"))
         # SRT wraps the CLI; the provider-native sandbox block is never enabled.

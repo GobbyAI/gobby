@@ -782,6 +782,7 @@ async def test_resume_reuses_persisted_claude_mcp_config(
     # `uv run ... gobby mcp-server` in an agent sandbox, so a resumed agent would
     # reach the model before its Gobby tools exist.
     assert int(runner._test_runtime.last_request.env["MCP_CONNECT_TIMEOUT_MS"]) >= 30000
+    assert int(runner._test_runtime.last_request.env["MCP_TIMEOUT"]) >= 120000
 
 
 @pytest.mark.asyncio
@@ -822,6 +823,36 @@ async def test_resume_discovers_workspace_mcp_config_for_claude(
     assert launch_updates["strict_mcp"] is True
     ordered = [name for name, _args, _kwargs in storage.mock_calls]
     assert ordered.index("merge_resume_metadata") < ordered.index("transition_resume_phase")
+    assert int(runner._test_runtime.last_request.env["MCP_TIMEOUT"]) >= 120000
+
+
+@pytest.mark.asyncio
+async def test_resume_without_mcp_config_still_sets_claude_server_connect_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # The Gobby server usually comes from user-scope Claude config, which a
+    # workspace without `.mcp.json` still loads, so its connect deadline applies.
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    metadata["cwd"] = str(tmp_path)
+    runner = _runner(storage=MagicMock())
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    request = runner._test_runtime.last_request
+    assert "--mcp-config" not in request.command
+    assert "MCP_CONNECT_TIMEOUT_MS" not in request.env
+    assert int(request.env["MCP_TIMEOUT"]) >= 120000
 
 
 @pytest.mark.asyncio
