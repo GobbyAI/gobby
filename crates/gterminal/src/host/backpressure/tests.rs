@@ -166,6 +166,63 @@ fn overflow_collapses_to_one_keyframe_within_cap() {
 }
 
 #[test]
+fn desynced_push_stays_at_one_keyframe() {
+    let keyframe = error_msg("keyframe");
+    let delta = error_msg("d");
+    let cap = encoded_message_bytes(&keyframe) + encoded_message_bytes(&delta) * 8;
+    let mailbox = FrameMailbox::new();
+
+    assert_eq!(
+        mailbox.push_observed(&keyframe, cap, false),
+        PushResult::Queued
+    );
+    assert_eq!(
+        mailbox.push_observed(&delta, cap, false),
+        PushResult::Queued
+    );
+    assert_eq!(
+        mailbox.push_observed(&delta, cap, false),
+        PushResult::Queued
+    );
+    assert_eq!(
+        queued_len(&mailbox),
+        3,
+        "keeping up may queue deltas under cap"
+    );
+
+    assert_eq!(
+        mailbox.push_observed(&keyframe, cap, true),
+        PushResult::Overflow
+    );
+    assert_eq!(
+        queued_len(&mailbox),
+        1,
+        "a desynced observer must collapse to one replacement keyframe"
+    );
+    assert_eq!(
+        mailbox.push_observed(&delta, cap, true),
+        PushResult::Overflow
+    );
+    assert_eq!(
+        queued_len(&mailbox),
+        1,
+        "further frames while desynced must replace, not restack"
+    );
+    assert!(mailbox.queued_bytes() <= cap);
+
+    assert!(mailbox.try_pop().is_some());
+    assert_eq!(
+        mailbox.push_observed(&delta, cap, true),
+        PushResult::Overflow
+    );
+    assert_eq!(
+        queued_len(&mailbox),
+        0,
+        "do not queue on top of an in-flight write"
+    );
+}
+
+#[test]
 fn force_push_never_exceeds_cap() {
     let small = error_msg("n");
     let over = error_msg(&"n".repeat(64));

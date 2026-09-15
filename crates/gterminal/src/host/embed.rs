@@ -604,13 +604,12 @@ async fn publish_frame(
                     }
                 }
             };
-            match att.mailbox.try_push(&msg, cap) {
+            match att.mailbox.push_observed(&msg, cap, att.desynced) {
                 PushResult::Queued => {
                     att.desynced = false;
                     att.last_send = std::time::Instant::now();
                 }
                 PushResult::Overflow => {
-                    att.mailbox.replace_with_keyframe(&msg, cap);
                     att.desynced = true;
                     att.last_send = std::time::Instant::now();
                 }

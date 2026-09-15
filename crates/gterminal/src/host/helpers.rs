@@ -154,6 +154,24 @@ pub(crate) fn push_terminal_ansi(
         full: encoded.full,
         bytes,
     });
+    if att.desynced && att.mailbox.queued_bytes() > 0 {
+        let mut keyframe = att.encoder.encode(frame, true);
+        let keyframe_bytes = std::mem::take(&mut keyframe.bytes);
+        let keyframe_msg = ServerMessage::Terminal(TerminalFrame {
+            seq,
+            width: frame.width,
+            height: frame.height,
+            full: true,
+            bytes: keyframe_bytes,
+        });
+        att.mailbox.replace_with_keyframe(&keyframe_msg, cap);
+        att.encoder.commit(frame.clone(), keyframe);
+        att.last_send = Instant::now();
+        return true;
+    }
+    if att.desynced && att.mailbox.is_writing() {
+        return true;
+    }
     match att.mailbox.try_push(&msg, cap) {
         PushResult::Queued => {
             att.encoder.commit(frame.clone(), encoded);

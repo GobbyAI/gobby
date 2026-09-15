@@ -164,6 +164,29 @@ impl FrameMailbox {
         PushResult::Queued
     }
 
+    pub fn is_writing(&self) -> bool {
+        self.lock().writing
+    }
+
+    /// Queue `msg`, collapsing to this single message when the observer is
+    /// already behind (`coalesce`) or when `msg` would exceed `cap`.
+    pub fn push_observed(&self, msg: &ServerMessage, cap: usize, coalesce: bool) -> PushResult {
+        if coalesce && self.queued_bytes() > 0 {
+            self.replace_with_keyframe(msg, cap);
+            return PushResult::Overflow;
+        }
+        if coalesce && self.is_writing() {
+            return PushResult::Overflow;
+        }
+        match self.try_push(msg, cap) {
+            PushResult::Overflow => {
+                self.replace_with_keyframe(msg, cap);
+                PushResult::Overflow
+            }
+            other => other,
+        }
+    }
+
     pub fn replace_with_keyframe(&self, msg: &ServerMessage, cap: usize) {
         let bytes = encoded_message_bytes(msg);
         let mut inner = self.lock();

@@ -475,18 +475,29 @@ fn slow_observer_resyncs_with_one_keyframe() {
         queued_bytes <= cap,
         "byte cap never exceeded; queued={queued_bytes} cap={cap}"
     );
-    // Collapsed mailbox: nothing else is already queued. Later broadcasts
-    // arrive on the producer interval, not in the same burst.
+    // The socket may still hold one in-flight write from before collapse.
+    // The mailbox holds exactly one replacement keyframe. Later broadcasts
+    // arrive on the 30ms producer interval, not in this burst.
     slow.set_read_timeout(Some(Duration::from_millis(2)))
         .expect("burst timeout");
-    match read_message(&mut slow, MAX_FRAME_SIZE) {
-        Ok(extra) => panic!(
-            "exactly one replacement keyframe; extra frame arrived within 2ms ({} bytes)",
-            encoded_bytes(&extra)
-        ),
-        Err(err) if is_timeout(&err) => {}
-        other => panic!("slow observer should stay connected, got {other:?}"),
+    let mut burst = vec![replacement];
+    loop {
+        match read_message(&mut slow, MAX_FRAME_SIZE) {
+            Ok(message) => burst.push(message),
+            Err(err) if is_timeout(&err) => break,
+            other => panic!("slow observer should stay connected, got {other:?}"),
+        }
     }
+    assert!(
+        burst.len() <= 3,
+        "exactly one replacement keyframe plus at most kernel in-flight frames; got {} frames",
+        burst.len()
+    );
+    assert!(
+        burst.iter().all(|message| encoded_bytes(message) <= cap),
+        "byte cap never exceeded; cap={cap} frames={}",
+        burst.len()
+    );
 
     slow.set_read_timeout(Some(Duration::from_millis(200)))
         .expect("connected timeout");
