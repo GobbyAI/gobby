@@ -95,7 +95,7 @@ pub fn start_tmux() -> TmuxPane {
 }
 
 pub fn start_tmux_sized(cols: u16, rows: u16) -> TmuxPane {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = crate::host_support::temp_socket_dir();
     let socket = dir.path().join("tmux.sock");
     let session = format!("gobby-{}", std::process::id());
     let status = Command::new("tmux")
@@ -146,7 +146,7 @@ fn tmux_out(socket: &Path, args: &[&str]) -> String {
 }
 
 pub fn spawn_host(extra: &[&str]) -> HostProc {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = crate::host_support::temp_socket_dir();
     let token_path = dir.path().join("gterm-control.token");
     std::fs::write(&token_path, "control-token").unwrap();
     #[cfg(unix)]
@@ -167,14 +167,7 @@ pub fn spawn_host(extra: &[&str]) -> HostProc {
 }
 
 pub fn wait_socket(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(8);
-    while Instant::now() < deadline {
-        if path.exists() && UnixStream::connect(path).is_ok() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    panic!("timed out waiting for {}", path.display());
+    crate::host_support::wait_socket(path);
 }
 
 pub fn hello_msg(identity: Option<TmuxClientIdentity>) -> ClientMessage {

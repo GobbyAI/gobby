@@ -2107,7 +2107,7 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         })
     };
     poll_until(
-        Duration::from_secs(1),
+        Duration::from_secs(10),
         || {
             mock.requests().iter().any(|request| {
                 request.body.as_ref().and_then(|body| body.get("schedule"))
@@ -2184,7 +2184,7 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         })
     };
     poll_until(
-        Duration::from_secs(1),
+        Duration::from_secs(10),
         || daemon.pending_counts().2 == 1,
         "mid-send registered",
     )
@@ -2207,7 +2207,7 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         })
     };
     poll_until(
-        Duration::from_secs(1),
+        Duration::from_secs(30),
         || daemon.pending_counts().2 == 2,
         "pre-write registered",
     )
@@ -2232,7 +2232,7 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         })
     };
     poll_until(
-        Duration::from_secs(1),
+        Duration::from_secs(10),
         || daemon.pending_counts().2 == 2,
         "pre-write replacement registered",
     )

@@ -16,8 +16,8 @@ use gobby_terminal::protocol::{
 use gobby_terminal::runtime::TerminalRuntime;
 use gobby_terminal::terminal_theme::TerminalTheme;
 use host_support::{
-    connect, hello_control, recv_json, rpc, send_json, spawn_host, spawn_host_with_args, wait_exit,
-    wait_socket, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
+    connect, hello_control, recv_json, rpc, send_json, spawn_host, spawn_host_with_args,
+    temp_socket_dir, wait_exit, wait_socket, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use serde_json::json;
 
@@ -49,7 +49,7 @@ fn recv_frame(stream: &mut UnixStream) -> ServerMessage {
 
 #[test]
 fn broadcast_task_exits_on_closed_channel() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "frame-closed-channel";
     write_token(dir.path(), token);
     let mut child = spawn_host(dir.path());
@@ -404,7 +404,7 @@ fn start_host(dir: &Path, extra: &[&str]) -> (host_support::HostProc, UnixStream
 
 #[test]
 fn slow_observer_resyncs_with_one_keyframe() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let rows = 8;
     let cols = 24;
     let cap = 400u32;
@@ -485,7 +485,7 @@ fn slow_observer_resyncs_with_one_keyframe() {
 
 #[test]
 fn lagged_observer_is_closed_and_released() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let rows = 8;
     let cols = 24;
     let (_child, mut control, frames_path) = start_host(

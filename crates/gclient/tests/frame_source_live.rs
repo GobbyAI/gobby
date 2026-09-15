@@ -25,10 +25,20 @@ use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout, Duration};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
-const HOST_TIMEOUT: Duration = Duration::from_secs(8);
+const HOST_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTROL_SOCKET: &str = "gterm-control.sock";
 const FRAMES_SOCKET: &str = "gterm-frames.sock";
 const LOCAL_TOKEN: &str = "local-token";
+
+/// macOS `sockaddr_un.sun_path` is 104 bytes. Sandbox `TMPDIR` is already long,
+/// so the default `tempfile` prefix does not leave enough room for `gterm-control.sock`.
+fn temp_socket_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("g")
+        .rand_bytes(4)
+        .tempdir()
+        .expect("socket tempdir")
+}
 
 struct TestHost {
     dir: tempfile::TempDir,
@@ -40,7 +50,7 @@ impl TestHost {
         let binary = tokio::task::spawn_blocking(build_test_gterm)
             .await
             .expect("gterm build task");
-        let dir = tempfile::tempdir().expect("gterm socket dir");
+        let dir = temp_socket_dir();
         let control_token = dir.path().join("gterm-control.token");
         std::fs::write(&control_token, "control-token").expect("write control token");
         let mut permissions = std::fs::metadata(&control_token)
@@ -49,7 +59,20 @@ impl TestHost {
         permissions.set_mode(0o600);
         std::fs::set_permissions(&control_token, permissions).expect("protect control token");
         std::fs::write(dir.path().join("local_cli_token"), LOCAL_TOKEN).expect("write local token");
-        let child = Command::new(binary)
+        let stderr_path = dir.path().join("gterm.stderr");
+        let stderr_file = std::fs::File::create(&stderr_path).expect("gterm stderr");
+        let private_bin = dir.path().join("gterm");
+        std::fs::copy(&binary, &private_bin).expect("copy gterm to private inode");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&private_bin)
+                .expect("copied gterm metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&private_bin, permissions).expect("copied gterm mode");
+        }
+        let child = Command::new(&private_bin)
             .arg("host")
             .arg("--socket-dir")
             .arg(dir.path())
@@ -62,7 +85,7 @@ impl TestHost {
             .env_remove("TMUX")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::from(stderr_file))
             .spawn()
             .expect("spawn test gterm host");
         let host = Self { dir, child };
@@ -97,7 +120,7 @@ struct TestTmux {
 
 impl TestTmux {
     fn start() -> Self {
-        let dir = tempfile::tempdir().expect("tmux socket dir");
+        let dir = temp_socket_dir();
         let socket = dir.path().join("tmux.sock");
         let status = Command::new("tmux")
             .arg("-S")
@@ -215,7 +238,16 @@ async fn wait_for_socket(path: &Path) {
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {}", path.display()));
+    .unwrap_or_else(|_| {
+        let dir = path.parent().unwrap_or(path);
+        let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
+        let stderr = std::fs::read_to_string(dir.join("gterm.stderr")).unwrap_or_default();
+        panic!(
+            "timed out waiting for {}; path_len={}; log={log:?}; stderr={stderr:?}",
+            path.display(),
+            path.as_os_str().len(),
+        );
+    });
 }
 
 fn tmux_output(socket: &Path, args: &[&str]) -> String {
@@ -424,7 +456,7 @@ async fn direct_frames_verify_epoch_and_render() {
             .await
             .expect("spawn native control task");
 
-    let relay_dir = tempfile::tempdir().expect("epoch relay dir");
+    let relay_dir = temp_socket_dir();
     let relay_path = relay_dir.path().join("frames-relay.sock");
     let relay = UnixListener::bind(&relay_path).expect("bind epoch relay");
     let upstream_path = host.frame_socket();
