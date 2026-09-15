@@ -1,6 +1,7 @@
 # gcode evidence cohort: Sonnet 5 at xhigh
 
-Status: launched 2026-09-15 (see Launch record); results pending. Owner task: #22391.
+Status: runs finished 2026-09-15 (see Results); replacement runs await a decision.
+Owner tasks: #22391 (design), #22394 (results).
 Coordinator session: gobby#13417.
 
 ## Background
@@ -21,8 +22,9 @@ shape this design:
 - Arm A spent 3 of 16 evidence calls on request-format errors (top-level `limit`,
   `read.kind: "path"`, `stale_range` for an end line past EOF). About 28% of each
   evidence response is metadata.
-- Accuracy: both arms made factual errors and missed parts of the auth path. The
-  details are held back with the answer key until the runs finish.
+- Accuracy: arm A invented Argon2 parameters and a `secure` cookie flag; arm B
+  claimed bcrypt for passwords and session tokens and a 7-day default session.
+  Both missed middleware enforcement, CLI and agent tokens, and grant routes.
 - My nudge to arm B added 14 API calls and 1.04M cache-read tokens to its totals.
 - `backend-developer` cannot run without a `task_id`: its `claim` step only allows
   `claim_task` and `get_task`, so it has no Bash or gcode.
@@ -155,9 +157,52 @@ Delivery (follow exactly):
 Scoring: each of 15 facts is scored correct 1, missed 0, or wrong -1. Claims without
 a citation, and citations that do not support their claim, are counted separately.
 
-The key stays outside the repository until every run finishes. The agents run with
-isolation `none` in this checkout, and the code index serves `docs/`, so a key in the
-working tree would be retrievable evidence. It will be added here with the results.
+The key was kept outside the repository until every run finished. The agents ran
+with isolation `none` in this checkout, and the code index serves `docs/`, so a key
+in the working tree would have been retrievable evidence. Citations were rechecked
+against HEAD after the runs; #22395 shifted the `middleware/auth.py` lines by one.
+
+1. `useAuth` checks `GET /api/auth/status` on mount and exposes login
+   (`POST /api/auth/login`) and logout (`POST /api/auth/logout`)
+   (`web/src/hooks/useAuth.ts:23,51,72`).
+2. `App.tsx` renders `LoginPage` when unauthenticated (`web/src/App.tsx:473`) and
+   gates the chat connection with `connectionEnabled: !authLoading && authenticated`
+   (`web/src/App.tsx:132`).
+3. Login rate limit: 5 failures within 5 minutes triggers a 60-second lockout
+   (`src/gobby/servers/routes/auth.py:31-33`).
+4. The rate-limit client key is the peer address, or a SHA256 of the Tailscale login
+   header when `ui_expose == "tailscale"` and the peer is loopback
+   (`src/gobby/servers/routes/auth.py`, `_login_client_id`).
+5. Passwords use Argon2id with `m=65536,t=3,p=4` (`src/gobby/identity.py:15,27`),
+   compared with `secrets.compare_digest` (`src/gobby/identity.py:122`); unknown
+   users are checked against `DUMMY_PASSWORD_HASH`
+   (`src/gobby/servers/auth_service.py`, `verify_password`).
+6. Session tokens are `os.urandom(32).hex()` and stored as SHA256 hashes in
+   `auth_sessions` (`src/gobby/storage/auth.py:32,126`).
+7. Server-side session lifetime is 12 hours, or 30 days with remember-me
+   (`src/gobby/storage/auth.py:23-24,129`).
+8. Cookie `gobby_session` is `httponly` and `samesite=lax`; `max_age` (30 days) is
+   set only with remember-me; no `secure` flag is set
+   (`src/gobby/servers/routes/auth.py:30,149-155`).
+9. Expired sessions are cleaned up on session creation and deleted on validation
+   (`src/gobby/storage/auth.py:167,174`).
+10. Changing a password deletes all of that user's sessions
+    (`src/gobby/storage/users.py:155-170`).
+11. `AuthMiddleware` is installed app-wide (`src/gobby/servers/app_factory.py:128-130`);
+    public paths include `/`, `/api/health`, and the `/api/auth`, webhook, and
+    `/assets` prefixes (`src/gobby/servers/middleware/auth.py:27-43`).
+12. Unauthenticated requests to `/api/`, `/mcp`, or `/memory` get a 401 JSON error
+    with login and CLI-token guidance; other browser routes fall through to the SPA
+    shell so React renders login (`src/gobby/servers/middleware/auth.py:45-54`,
+    `AuthMiddleware.dispatch`).
+13. Accepted credentials, in order: `Authorization: Bearer` (local CLI token or agent
+    API token), `X-Gobby-Local-Token`, then the `gobby_session` cookie
+    (`src/gobby/servers/auth_service.py`, `_legacy_rejection` and `_accepted_bearer`).
+14. Grant routes also require the `X-Gobby-Grant` header with identity matching
+    (`forged_identity` on mismatch), and effectful routes need the daemon lease
+    (409 `lease_not_held`) (`src/gobby/servers/auth_service.py`, `authenticate`).
+15. `GET /api/auth/status` returns `{"authenticated": bool}` from
+    `is_request_authenticated` (`src/gobby/servers/routes/auth.py`, `auth_status`).
 
 ## Metrics
 
@@ -215,6 +260,98 @@ run `started_at` times fall between 15:28:13 and 15:30:24 UTC. Every spawn repor
 | A2 | `91c5645a-93d2-4317-86a5-be97a1c2b9b6` | `37e84a49-9cf8-42f6-bc0e-6403c3097263` |
 | B2 | `76ef0611-b522-44c4-a61a-1e2cfeac57a0` | `f23803eb-7608-4e2f-bea4-79dc73396ab5` |
 
+## Results
+
+Line numbers in this section refer to launch HEAD `3a45d49c04`.
+
+### Delivery
+
+Two of the four runs delivered. B1 and A2 never connected to the Gobby MCP server.
+Claude Code gives each MCP server 30 seconds to connect unless `MCP_TIMEOUT` is set,
+and Gobby did not set it. With four concurrent spawns, `gobby mcp-server` took 25.2
+seconds to connect for A1 and more than 30 seconds for A2 and B1. Without Gobby
+tools, those two printed their answers in the terminal and looped on stop-hook
+reprompts. The watchdog then completed both with status `success`. Their answers
+were graded from transcript text.
+
+| Arm | Run | Delivered | Answer chars | API calls | Tool calls | Minutes to first delivery attempt |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 | `a80d8234` | yes | 8,283 | 43 | 70 | 25.6 |
+| A2 | `91c5645a` | no | 6,977 | 47 | 68 | 19.4 |
+| B1 | `9d54786a` | no | 7,990 | 49 by 16:13 UTC | 80 at completion | 24.9 |
+| B2 | `76ef0611` | yes | 10,748 | 38 | 68 | 20.8 |
+
+### Cost
+
+Research is everything up to the first delivery attempt. For A2 and B1 the later
+phase is the loop after delivery failed.
+
+| Arm | Research calls | Research output | Research cache read | Later calls | Later output | Peak context |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 | 38 | 19.7K | 3.07M | 5 | 4.0K | 119.9K |
+| A2 | 28 | 11.9K | 2.26M | 19 | 7.7K | 129.2K |
+| B1 | 38 | 13.3K | 2.84M | 11 by 16:13 UTC | 7.7K | 106.0K |
+| B2 | 30 | 16.7K | 2.26M | 8 | 3.4K | 106.4K |
+
+### Retrieval
+
+- A1 made 5 evidence range reads with no errors.
+- A2 made 16 evidence calls (15 range reads, 1 symbol read), with 2 errors: one
+  malformed JSON request, and `stale_range` for lines 1..200 of an 83-line file.
+- Arm B made no evidence or Ask attempts. No run used Explore or Ask.
+
+### Scores
+
+Partial credit counts 0.5. No answer contradicted a key fact.
+
+| Arm | Strict | With partial credit | Partial facts | Missed facts | Wrong non-key claims | Bad citations |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 | 11 | 12 | 5, 9 | 10, 14 | 2 | 4 |
+| A2 | 12 | 13 | 9, 14 | 10 | 0 | 5 |
+| B1 | 11 | 12 | 5, 14 | 9, 10 | 1 | 2 |
+| B2 | 10 | 11 | 5, 14 | 3, 4, 10 | 1 | 7 |
+
+Wrong claims outside the key:
+
+- A1 said `/api/hooks` is normally exempt. It was misled by the dead
+  `_remote_hook_requires_auth` override, which #22395 removed.
+- A1 said `authenticate` is used by both WebSocket entry points.
+- B1 said `AuthMiddleware` is the outermost middleware. `CORSMiddleware` is
+  (`src/gobby/servers/app_factory.py:132-141`).
+- B2 said requests without credentials are allowed unless they mutate.
+  `_legacy_rejection` returns a `missing_auth` 401.
+
+All five of A2's bad citations point into files it read only through evidence. The
+evidence excerpt is a JSON-escaped string with no per-line numbers, so the agent had
+to count lines. Citation drift is not specific to evidence: B2's seven bad
+citations came from ordinary reads.
+
+### Problems found
+
+1. Claude Code's MCP connection deadline cost two of the four answers. Every Claude
+   spawn, resume, and web chat now sets `MCP_TIMEOUT=120000` (#22393).
+2. On purpose, the watchdog completes an idle run that has no step workflow and no
+   claimed task with status `success`
+   (`src/gobby/agents/watchdog/completed_turn_recovery.py`). A parent therefore sees
+   success for a run that never delivered. Changing that status needs a decision.
+3. Concurrent spawns overloaded the daemon. `prepare_sandbox_run_paths` took 34.8
+   and 58.3 seconds, and A1 received `DAEMON_UNAVAILABLE` once.
+4. `gcode evidence` range excerpts have no per-line numbers, and a request past the
+   end of a file is reported as `stale_range` (`crates/gcode/src/evidence/read.rs`).
+   B1 and B2 also tried `gcode search -m`, which is unsupported.
+5. B2 filed duplicate feedback after a source validation error.
+6. The dead `_remote_hook_requires_auth` override in
+   `src/gobby/servers/middleware/auth.py` misled A1. #22395 removed it.
+
+### Conclusion
+
+Evidence availability made no measurable accuracy difference. Arm A scored 11 and 12
+strict and arm B scored 11 and 10, and every run missed fact 10 (a password change
+revokes the user's sessions). Evidence did not reduce citation errors, and research
+cost ranges overlapped between arms. Two runs per arm detect only large differences,
+and half the runs lost delivery to a harness defect. Replacement runs (one per arm,
+started a few minutes apart, after #22393) await the user's decision.
+
 ## Known confounds
 
 - Close-out gates (feedback survey, handoff reference, `end_agent_run`) add fixed
@@ -222,3 +359,5 @@ run `started_at` times fall between 15:28:13 and 15:30:24 UTC. Every spawn repor
 - Hook teaching gates fire on first raw search or read in each arm.
 - The model and effort used by Explore subagents are not controlled.
 - Two runs per arm detect only large differences.
+- All four agents were spawned at once. The load delayed the Gobby MCP connection
+  past Claude Code's 30-second deadline for two runs (fixed by #22393).
