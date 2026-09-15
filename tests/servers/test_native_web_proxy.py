@@ -774,6 +774,12 @@ async def test_attach_history_then_max_keyframe_is_fragmented_under_cap(
         lambda: ws.messages_of_type("terminal_attach_history")
         or any(item.get("event") == "terminal_attach_history" for item in ws.all_messages())
     )
+    await _until(
+        lambda: ws.messages_of_type("terminal_output")
+        or any(item.get("event") == "terminal_output" for item in ws.all_messages())
+        or ws.messages_of_type("terminal_ws_fragment"),
+        timeout=8.0,
+    )
     types = [item.get("type") or item.get("event") for item in ws.all_messages()]
     history_idx = next(
         i

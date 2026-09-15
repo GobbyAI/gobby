@@ -23,6 +23,8 @@ MAX_WRITE_BATCH_PAYLOAD_BYTES = 1024 * 1024
 MAX_WRITE_BATCH_OPERATIONS_PER_TARGET = 128
 MAX_WRITE_BATCH_DELAY_MS = 1_000
 MAX_WRITE_BATCH_TOTAL_DELAY_MS = 5_000
+# Host returns these before recording operation_seq in the per-connection ledger.
+_UNCONSUMED_SEQ_ERRORS = frozenset({"operation_gap", "operation_seq_required", "host_draining"})
 
 
 class HostEpochChangedError(RuntimeError):
@@ -186,6 +188,15 @@ class HostClient:
                 stage=stage if isinstance(stage, str) else None,
             )
 
+    def _advance_operation_seq(self, request: dict[str, Any], *, error: str | None = None) -> None:
+        raw = request.get("operation_seq")
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+            return
+        if error in _UNCONSUMED_SEQ_ERRORS:
+            return
+        if raw >= self.next_seq:
+            self.next_seq = raw + 1
+
     @staticmethod
     def require_ping(payload: dict[str, Any]) -> dict[str, Any]:
         host_pid = payload.get("host_pid")
@@ -308,6 +319,7 @@ class HostClient:
                 future = await self._begin_request(request)
             payload = await future
             self.raise_for_payload(payload)
+            self._advance_operation_seq(request)
             return payload
         except HostConnectionLost as exc:
             if is_commit:
@@ -320,7 +332,11 @@ class HostClient:
                     request_written=request_written,
                 ) from exc
             raise
-        except (asyncio.CancelledError, HostCommandError):
+        except HostCommandError as exc:
+            if not isinstance(exc, HostUnavailableError):
+                self._advance_operation_seq(request, error=exc.error)
+            raise
+        except asyncio.CancelledError:
             raise
         except (ConnectionError, OSError, TimeoutError) as exc:
             if is_commit:
@@ -394,9 +410,7 @@ class HostClient:
     async def spawn(self, **fields: Any) -> dict[str, Any]:
         seq = int(fields.pop("operation_seq", self.next_seq))
         request = {"method": "spawn", "operation_seq": seq, **fields}
-        payload = await self._roundtrip(request)
-        self.next_seq = seq + 1
-        return payload
+        return await self._roundtrip(request)
 
     async def spawn_commit(self, terminal_id: str, spawn_key: str, commit_deadline_ms: int) -> None:
         task = asyncio.current_task()
@@ -439,10 +453,7 @@ class HostClient:
         }
         if kind == "text":
             payload["submit"] = submit
-        result = await self._roundtrip(payload)
-        if operation_seq is None:
-            self.next_seq = seq + 1
-        return result
+        return await self._roundtrip(payload)
 
     async def write_batch(self, targets: Sequence[HostBatchTarget]) -> list[dict[str, Any]]:
         """Write ordered operations to bounded native targets in one roundtrip."""
@@ -519,7 +530,6 @@ class HostClient:
             else:
                 raise HostDecodeError("write_batch target result is missing ok")
             decoded.append(item)
-        self.next_seq = seq + 1
         return decoded
 
     async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
@@ -532,7 +542,6 @@ class HostClient:
                 "grace_ms": grace_ms,
             }
         )
-        self.next_seq = seq + 1
 
     async def resize(self, host_terminal_id: str, rows: int, cols: int) -> None:
         seq = self.next_seq
@@ -545,7 +554,6 @@ class HostClient:
                 "cols": cols,
             }
         )
-        self.next_seq = seq + 1
 
     async def snapshot(
         self,

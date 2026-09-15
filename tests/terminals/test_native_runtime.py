@@ -79,6 +79,7 @@ class FakeHostClient:
     snapshot_truncated: bool = False
     snapshot_dropped: int = 0
     snapshot_total: int | None = None
+    snapshot_error: str | None = None
     spawn_error: str | None = None
     reservation_error: str | None = None
     kill_on_new_connection: int = 0
@@ -264,6 +265,8 @@ class FakeHostClient:
     ) -> dict[str, Any]:
         await self.ensure_connected()
         del host_terminal_id, mode, max_bytes, max_lines
+        if self.snapshot_error is not None:
+            raise HostCommandError(self.snapshot_error)
         total = (
             self.snapshot_total
             if self.snapshot_total is not None
@@ -437,6 +440,18 @@ async def test_snapshot_metadata_survives_the_adapter() -> None:
     assert oversized.total_bytes == 16
     hint = NativeTerminalRuntime.snapshot.__annotations__["return"]
     assert "SnapshotResult" in str(hint)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_of_vanished_terminal_is_empty() -> None:
+    runtime, host = _runtime()
+    terminal = _native_terminal(host)
+    host.snapshot_error = "not_found"
+    vanished = await runtime.snapshot(terminal, lines=30)
+    assert vanished.text == ""
+    assert vanished.truncated is False
+    assert vanished.dropped_bytes == 0
+    assert vanished.total_bytes == 0
 
 
 @pytest.mark.asyncio
