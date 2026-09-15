@@ -1,8 +1,9 @@
 # Source control
 
-Load when working with commits, isolated repositories, synchronization or delivery.
-This overview is a menu; listing an operation does not authorize or execute it.
-Load the operation topic before acting, then lease the current tool schema.
+Load when working with commits, isolated repositories, synchronization or local
+delivery. This overview is a menu; listing an operation does not authorize or
+execute it. Load the operation topic before acting, then lease the current tool
+schema.
 
 | Topic | Load for | Invocation |
 | --- | --- | --- |
@@ -11,7 +12,6 @@ Load the operation topic before acting, then lease the current tool schema.
 | Clones | Work with an independent repository copy | `$gobby source-control references clones` |
 | Synchronization | Update an isolated branch or publish it | `$gobby source-control references synchronization` |
 | Merge campaigns | Survey, resolve and land local work | `$gobby source-control references merge-campaigns` |
-| PR delivery | Apply branch policy and record delivery evidence | `$gobby source-control references pr-delivery` |
 | Cleanup | Release, retire or delete managed isolation | `$gobby source-control references cleanup` |
 
 Discover `gobby-worktrees`, `gobby-clones` and `gobby-merge` tools. Task ownership
@@ -27,7 +27,7 @@ and inspect the operation result before advancing dependent work.
 
 Operator CLI/HTTP surfaces are documented in the
 [worktree guide](../../../../../../../../docs/guides/worktrees.md).
-The source-control HTTP API also exposes repository status, branches, commits,
-diffs, PRs/checks, issues and CI runs. Select the intended project before using
+The source-control HTTP API exposes git-local repository status, branches,
+commits, diffs, worktrees and clones. Select the intended project before using
 that UI/operator surface. Its branch-checkout mutation changes the selected
 checkout; preserve ownership and dirty work before any branch switch.

@@ -287,21 +287,6 @@
     {
       "surface": "mcp",
       "server": "gobby-merge",
-      "tool": "probe_branch_protection",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/merge_branch_protection_tool.py",
-        "symbol": "probe_branch_protection"
-      },
-      "verification": [
-        "registration-inventory",
-        "source-audit"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-merge",
       "tool": "analyze_merge_landscape",
       "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
       "implementation": {
@@ -1061,96 +1046,6 @@
     {
       "surface": "http",
       "method": "GET",
-      "route": "/api/source-control/prs",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/source_control.py",
-        "symbol": "list_pull_requests"
-      },
-      "verification": [
-        "registration-inventory",
-        "focused-api-clones-landscape"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/source-control/prs/{number}",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/source_control.py",
-        "symbol": "get_pull_request"
-      },
-      "verification": [
-        "registration-inventory",
-        "focused-api-clones-landscape"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/source-control/prs/{number}/checks",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/source_control.py",
-        "symbol": "get_pr_checks"
-      },
-      "verification": [
-        "registration-inventory",
-        "focused-api-clones-landscape"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/source-control/issues",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/source_control.py",
-        "symbol": "list_issues"
-      },
-      "verification": [
-        "registration-inventory",
-        "focused-api-clones-landscape"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/source-control/issues/{number}",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/source_control.py",
-        "symbol": "get_issue"
-      },
-      "verification": [
-        "registration-inventory",
-        "focused-api-clones-landscape"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "http",
-      "method": "GET",
-      "route": "/api/source-control/cicd/runs",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/source_control.py",
-        "symbol": "list_cicd_runs"
-      },
-      "verification": [
-        "registration-inventory",
-        "focused-api-clones-landscape"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "http",
-      "method": "GET",
       "route": "/api/source-control/worktrees",
       "reference": "src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md",
       "implementation": {
@@ -1286,81 +1181,6 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks-ops",
-      "tool": "get_delivery_state",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_delivery.py",
-        "symbol": "get_delivery_state"
-      },
-      "verification": [
-        "source-audit",
-        "focused-delivery"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "record_pr_state",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_delivery.py",
-        "symbol": "record_pr_state"
-      },
-      "verification": [
-        "source-audit",
-        "focused-delivery"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "open_delivery_pr",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_delivery.py",
-        "symbol": "open_delivery_pr"
-      },
-      "verification": [
-        "source-audit",
-        "focused-delivery"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "record_pr_opened",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "record_pr_opened"
-      },
-      "verification": [
-        "source-audit",
-        "focused-delivery"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "record_pr_verdict",
-      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/pr-delivery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
-        "symbol": "record_pr_verdict"
-      },
-      "verification": [
-        "source-audit",
-        "focused-delivery"
-      ],
-      "audience": "agent"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
       "tool": "record_merge_result",
       "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
       "implementation": {
@@ -1370,6 +1190,36 @@
       "verification": [
         "source-audit",
         "focused-workspaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-merge",
+      "tool": "probe_branch_protection",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/merge_branch_protection_tool.py",
+        "symbol": "probe_branch_protection"
+      },
+      "verification": [
+        "registration-inventory",
+        "source-audit"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "record_pr_verdict",
+      "reference": "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "record_pr_verdict"
+      },
+      "verification": [
+        "source-audit",
+        "focused-delivery"
       ],
       "audience": "agent"
     }

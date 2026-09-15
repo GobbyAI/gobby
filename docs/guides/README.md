@@ -103,13 +103,11 @@ seed empty content; bootstrap and files-home ownership errors require recovery.
 
 | Guide | Description |
 |-------|-------------|
-| [integrations.md](integrations.md) | GitHub and Linear integration setup |
-| [github-issue-triage.md](github-issue-triage.md) | Webhook-first GitHub issue intake, deduplication, and task creation |
+| [integrations.md](integrations.md) | GitHub and Linear as MCP servers |
 | [comm-integrations.md](comm-integrations.md) | Slack, Telegram, Discord, Teams, email, SMS, and Gobby chat adapters |
 | [telegram.md](telegram.md) | Secure Telegram bot setup, authorization, responder operation, capabilities, and troubleshooting |
 | [webhooks-and-plugins.md](webhooks-and-plugins.md) | Webhook and plugin development |
 | [webhook-action-schema.md](webhook-action-schema.md) | Webhook action schema reference |
-| [../archive/droid.md](../archive/droid.md) | Factory Droid CLI hooks, MCP, and agent spawning |
 
 ## Runtime & Safety
 
