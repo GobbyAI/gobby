@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.tasks.transcript_outcomes import classify_validation_command_equivalence
+from gobby.tasks.transcript_outcomes import (
+    classify_validation_command_equivalence,
+    is_unexecuted_tool_result,
+)
 
 
 @pytest.mark.parametrize(
@@ -72,3 +75,58 @@ def test_unprovable_top_level_structures_have_specific_reasons(
     assert equivalence.wrapped is True
     assert equivalence.core_command is None
     assert equivalence.wrapper_reason == expected_reason
+
+
+_CLAUDE_USER_REJECTED = (
+    "The user doesn't want to proceed with this tool use. The tool use was rejected "
+    "(eg. if it was a file edit, the new_string was NOT written to the file). "
+    "STOP what you are doing and wait for the user to tell you how to proceed."
+)
+_HOOK_BLOCKED = "Rule enforced by Gobby: [require-task-close]\nTask #16260 is still open."
+_PERMISSION_DENIED = "Permission to use Bash has been denied."
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param({"is_error": True, "content": _CLAUDE_USER_REJECTED}, id="rejected"),
+        pytest.param({"is_error": True, "content": _HOOK_BLOCKED}, id="hook-blocked"),
+        pytest.param({"is_error": True, "content": _PERMISSION_DENIED}, id="permission-denied"),
+        pytest.param(
+            {"output": f"Hook denied: {_HOOK_BLOCKED}", "status": "failed"},
+            id="hook-denied-prefix",
+        ),
+        pytest.param(
+            {"toolDenialKind": "user-rejected", "content": "denied"},
+            id="denial-kind",
+        ),
+        pytest.param(
+            {"attachment": {"type": "hook_blocking_error"}},
+            id="hook-blocking-attachment",
+        ),
+    ],
+)
+def test_unexecuted_tool_result_is_detected(result: object) -> None:
+    assert is_unexecuted_tool_result(result) is True
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(
+            {"is_error": True, "content": "ruff check found 3 errors"},
+            id="executed-error-output",
+        ),
+        pytest.param(
+            {"exit_code": 1, "is_error": True, "content": _CLAUDE_USER_REJECTED},
+            id="exit-code-wins",
+        ),
+        pytest.param(
+            {"is_error": True, "stdout": "permission denied"},
+            id="os-permission-denied",
+        ),
+        pytest.param({"exit_code": 0, "stdout": "passed"}, id="success"),
+    ],
+)
+def test_executed_tool_result_is_not_unexecuted(result: object) -> None:
+    assert is_unexecuted_tool_result(result) is False

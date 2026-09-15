@@ -48,6 +48,9 @@ from gobby.tasks.transcript_outcomes import (
 from gobby.tasks.transcript_outcomes import (
     extract_output as _extract_output,
 )
+from gobby.tasks.transcript_outcomes import (
+    is_unexecuted_tool_result as _is_unexecuted_tool_result,
+)
 from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
 )
@@ -791,6 +794,8 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     matches = classify_validation_segments(outcome.command, state.detection_config)
     if not outcome.command.strip():
         return
+    if _is_unexecuted_tool_result(outcome.result):
+        return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
     output, output_truncated = _extract_output(outcome.result)
@@ -895,6 +900,8 @@ def _record_validation_run(
     command = _extract_command(pending.arguments)
     matches = classify_validation_segments(command, state.detection_config)
     if not command.strip():
+        return
+    if _is_unexecuted_tool_result(result):
         return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
