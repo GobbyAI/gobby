@@ -203,8 +203,8 @@ Results (2026-09-15):
 
 ## Launch record
 
-The four agents launched concurrently at about 15:26 UTC on 2026-09-15, from HEAD
-`3a45d49c04`. Every spawn reported `reasoning.effective_effort: "xhigh"` with status
+The four agents were spawned concurrently on 2026-09-15 from HEAD `3a45d49c04`. Their
+run `started_at` times fall between 15:28:13 and 15:30:24 UTC. Every spawn reported `reasoning.effective_effort: "xhigh"` with status
 `applied`. An earlier attempt was blocked before execution by the coordinator's
 `require-restraint-skill` gate, so no agent started twice.
 
