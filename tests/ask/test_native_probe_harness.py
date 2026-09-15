@@ -35,6 +35,7 @@ from gobby.ask.runtime_validation import (
 from gobby.config.app import DaemonConfig
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.utils.dependency_requirements import SRT_RELEASE
 from tests.ask import native_probe_harness as harness
 
 
@@ -613,7 +614,7 @@ def test_contained_srt_provisioning_uses_only_the_owned_home(
     monkeypatch.setenv("GOBBY_HOME", "/unowned/global-home")
     monkeypatch.delenv("npm_config_cache", raising=False)
     monkeypatch.delenv("NPM_CONFIG_CACHE", raising=False)
-    expected = gobby_home / "tools" / "srt" / "0.0.66"
+    expected = gobby_home / "tools" / "srt" / SRT_RELEASE.version
     expected_cache = gobby_home / "cache" / "npm"
 
     def install_srt() -> SimpleNamespace:
@@ -626,7 +627,7 @@ def test_contained_srt_provisioning_uses_only_the_owned_home(
         links = expected / "node_modules" / ".bin"
         links.mkdir()
         (links / "package").symlink_to(Path("../package/index.js"))
-        return SimpleNamespace(path=expected.resolve(), version="0.0.66", installed=True)
+        return SimpleNamespace(path=expected.resolve(), version=SRT_RELEASE.version, installed=True)
 
     monkeypatch.setattr("gobby.cli.install_setup_srt.install_srt_runtime", install_srt)
 
@@ -637,7 +638,7 @@ def test_contained_srt_provisioning_uses_only_the_owned_home(
 
     assert provisioned == {
         "path": str(expected.resolve()),
-        "version": "0.0.66",
+        "version": SRT_RELEASE.version,
         "installed": True,
     }
     assert os.environ["GOBBY_HOME"] == "/unowned/global-home"
@@ -689,14 +690,14 @@ def test_contained_srt_provisioning_rejects_symlink_escape(
     runtime_root.mkdir(mode=0o700)
     gobby_home = runtime_root / "gobby"
     monkeypatch.delenv("GOBBY_HOME", raising=False)
-    expected = gobby_home / "tools" / "srt" / "0.0.66"
+    expected = gobby_home / "tools" / "srt" / SRT_RELEASE.version
     outside = tmp_path / "outside.js"
     outside.write_text("escape\n", encoding="utf-8")
 
     def install_srt() -> SimpleNamespace:
         expected.mkdir(parents=True)
         (expected / "escape.js").symlink_to(outside)
-        return SimpleNamespace(path=expected.resolve(), version="0.0.66", installed=True)
+        return SimpleNamespace(path=expected.resolve(), version=SRT_RELEASE.version, installed=True)
 
     monkeypatch.setattr("gobby.cli.install_setup_srt.install_srt_runtime", install_srt)
 
