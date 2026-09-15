@@ -2,13 +2,16 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::json;
+#[cfg(feature = "vt-engine")]
+use serde_json::Value;
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use super::{write_outbound, ControlClose, ControlQueue};
 use crate::host::config::HostConfig;
+#[cfg(feature = "vt-engine")]
 use crate::host::events::HostEvents;
 
 struct PendingWriter;
@@ -72,22 +75,25 @@ async fn control_deadline_and_event_overflow() {
     .expect("writer finishes at the test-local deadline");
     assert_eq!(close, ControlClose::Deadline);
 
-    let events = HostEvents::new("epoch".into(), 256);
-    let (_ack, mut rx) = events.subscribe(None).await;
-    for seq in 0..300u32 {
-        events
-            .emit_terminal_exited("term".into(), "host-term".into(), Some(seq))
-            .await;
-    }
-    let mut saw_overflow = false;
-    while let Some(event) = rx.recv().await {
-        if event.get("error").and_then(Value::as_str) == Some("event_overflow") {
-            saw_overflow = true;
-            break;
+    #[cfg(feature = "vt-engine")]
+    {
+        let events = HostEvents::new("epoch".into(), 256);
+        let (_ack, mut rx) = events.subscribe(None).await;
+        for seq in 0..300u32 {
+            events
+                .emit_terminal_exited("term".into(), "host-term".into(), Some(seq))
+                .await;
         }
+        let mut saw_overflow = false;
+        while let Some(event) = rx.recv().await {
+            if event.get("error").and_then(Value::as_str) == Some("event_overflow") {
+                saw_overflow = true;
+                break;
+            }
+        }
+        assert!(
+            saw_overflow,
+            "an overflowing event subscriber must receive event_overflow"
+        );
     }
-    assert!(
-        saw_overflow,
-        "an overflowing event subscriber must receive event_overflow"
-    );
 }

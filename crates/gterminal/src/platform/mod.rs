@@ -37,11 +37,12 @@ pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::Co
     pane_custom_command_pty_builder_platform(command)
 }
 
+#[cfg(feature = "vt-engine")]
 pub(crate) fn apply_pane_runtime_marker(command: &mut portable_pty::CommandBuilder) {
     apply_pane_runtime_marker_platform(command);
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), feature = "vt-engine"))]
 fn apply_pane_runtime_marker_platform(_command: &mut portable_pty::CommandBuilder) {}
 
 #[cfg(test)]

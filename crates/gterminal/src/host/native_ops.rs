@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 
 use super::backpressure::PushResult;
-use super::helpers::{err, native_entitlements, push_terminal_ansi, s, truncate_title};
+#[cfg(feature = "vt-engine")]
+use super::helpers::truncate_title;
+use super::helpers::{err, native_entitlements, push_terminal_ansi, s};
 #[cfg(feature = "vt-engine")]
 use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};

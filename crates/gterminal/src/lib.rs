@@ -1,10 +1,12 @@
 //! Terminal keep-set for the Gobby `gterm` host and `gclient` workspace.
 //!
-//! `src/ghostty/` and `src/pane/` compile only with the `vt-engine` feature.
-//! Wire protocol, input encoding, layout, selection, and theme modules stay
-//! feature-free so default-feature builds remain Zig-free.
+//! `src/ghostty/`, `src/pane/`, and `src/pty/` compile only with the `vt-engine`
+//! feature. Wire protocol, input encoding, layout, selection, and theme modules
+//! stay feature-free so default-feature builds remain Zig-free.
 
+#[cfg(feature = "vt-engine")]
 pub(crate) const GTERM_ENV_VAR: &str = "GTERM_ENV";
+#[cfg(feature = "vt-engine")]
 pub(crate) const GTERM_ENV_VALUE: &str = "1";
 
 #[cfg(feature = "vt-engine")]
@@ -15,6 +17,7 @@ pub mod ipc;
 pub mod layout;
 pub mod platform;
 pub mod protocol;
+#[cfg(feature = "vt-engine")]
 pub mod pty;
 pub mod raw_input;
 pub mod render_prof;

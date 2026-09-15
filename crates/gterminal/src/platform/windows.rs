@@ -125,6 +125,7 @@ struct WindowsProcessEntry {
 
 pub fn raise_server_nofile_limit() {}
 
+#[cfg(feature = "vt-engine")]
 pub(crate) fn apply_pane_runtime_marker_platform(command: &mut portable_pty::CommandBuilder) {
     if command_uses_git_bash(command) {
         command.env(PANE_RUNTIME_MARKER_ENV_VAR, next_pane_runtime_marker());
@@ -573,6 +574,7 @@ fn process_executable_path(process: HANDLE) -> Option<String> {
     String::from_utf16(&path[..len as usize]).ok()
 }
 
+#[cfg(feature = "vt-engine")]
 fn command_uses_git_bash(command: &portable_pty::CommandBuilder) -> bool {
     let Some(program) = command.get_argv().first() else {
         return false;
