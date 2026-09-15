@@ -76,7 +76,8 @@ prompts:
     its state as `pending_external`, with satisfied false, gap null, and
     required_evidence null. Count it as neither satisfied nor a gap. Set the
     overall status valid when every remaining implementer-owned criterion is
-    satisfied. For any other caller, evaluate `Live:` criteria normally.
+    satisfied. For any other caller, evaluate `Live:` criteria normally as
+    satisfied or gap; `pending_external` is rejected as malformed there.
 
     Compare requested and delivered magnitude and shape. Reject stub-shaped
     delivery against broad or quantitative requirements. Reject delegated,

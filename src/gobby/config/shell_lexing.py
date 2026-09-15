@@ -6,6 +6,7 @@ what a command actually invokes rather than pattern-matching raw text.
 
 from __future__ import annotations
 
+import functools
 import re
 import shlex
 from dataclasses import dataclass
@@ -151,9 +152,24 @@ def _parse_heredoc_delimiter(value: str) -> str | None:
         return None
 
 
-def safe_split(value: str) -> list[str]:
-    """Split `value` into tokens, falling back to whitespace on unbalanced quotes."""
+@functools.lru_cache(maxsize=8192)
+def _split_tokens(value: str) -> tuple[str, ...]:
     try:
-        return shlex.split(value)
+        return tuple(shlex.split(value))
     except ValueError:
-        return value.split()
+        return tuple(value.split())
+
+
+def safe_split(value: str) -> list[str]:
+    """Split `value` into tokens, falling back to whitespace on unbalanced quotes.
+
+    Validation detection splits the same matcher prefixes and command segments
+    thousands of times per transcript, so the tokens are memoized per input
+    string; every call still returns a fresh list the caller may mutate.
+    """
+    return list(_split_tokens(value))
+
+
+def clear_split_cache() -> None:
+    """Drop memoized token splits (test isolation)."""
+    _split_tokens.cache_clear()

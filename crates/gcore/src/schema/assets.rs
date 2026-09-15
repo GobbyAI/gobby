@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 420;
 pub const BASELINE_CHECKSUM: &str =
-    "9c0bc44ef5f27d5cbe141966cb8c6dfea87c96d211efe46a23c82e8fe23d53da";
+    "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -144,11 +144,9 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 438,
-        filename: "438_retire_linear_github_issue_bridge.sql",
-        checksum: "635a78c41e061eee06551bec22363eb84df44dc40200b7b3271134227c971cf5",
-        sql: include_str!(
-            "../../assets/schema/migrations/438_retire_linear_github_issue_bridge.sql"
-        ),
+        filename: "438_rotate_expired_principal.sql",
+        checksum: "630000397ba6e8aef4494d73bfa1b325a671c1e6a954c39e5db23b9a22215467",
+        sql: include_str!("../../assets/schema/migrations/438_rotate_expired_principal.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

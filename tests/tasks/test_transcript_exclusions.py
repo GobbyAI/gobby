@@ -1,5 +1,6 @@
 """Pre-link transcript observations remain separate from validation credit."""
 
+import json
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -9,7 +10,8 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.tasks import transcript_evidence
+from gobby.tasks.transcript_evidence import clear_evidence_snapshots, derive_transcript_evidence
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.tasks.test_transcript_evidence import (
@@ -77,3 +79,46 @@ async def test_no_window_does_not_parse_diagnostic_history(tmp_path: Path) -> No
             == ()
         )
     pool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_prelink_parse_resumes_from_its_own_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
+    clear_evidence_snapshots()
+    transcript = tmp_path / "resume.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="pytest tests/old.py", call_id="old", start=BASE_TIME, result="passed"
+        ),
+    )
+    session = _session("claude", transcript)
+    config = default_validation_detection_config()
+    start = BASE_TIME + timedelta(minutes=5)
+    prelink_key = f"{session.id}:prelink"
+
+    credited = await derive_transcript_evidence(session, start, config, set(), str(tmp_path))
+    window_snapshot = transcript_evidence._evidence_snapshots[session.id]
+    first = await derive_prelink_runs(session, start, config, str(tmp_path))
+    assert [run.command for run in first] == ["pytest tests/old.py"]
+    prelink_snapshot = transcript_evidence._evidence_snapshots[prelink_key]
+    assert prelink_snapshot.parsed_from_offset == 0
+    assert transcript_evidence._evidence_snapshots[session.id] is window_snapshot
+
+    with transcript.open("a") as handle:
+        appended = _claude_tool_pair(
+            command="ruff check src/",
+            call_id="later",
+            start=BASE_TIME + timedelta(minutes=2),
+            result="passed",
+        )
+        handle.write("\n".join(json.dumps(record) for record in appended) + "\n")
+
+    second = await derive_prelink_runs(session, start, config, str(tmp_path))
+    assert [run.command for run in second] == ["pytest tests/old.py", "ruff check src/"]
+    advanced = transcript_evidence._evidence_snapshots[prelink_key]
+    assert advanced.parsed_from_offset == prelink_snapshot.watermark
+    assert transcript_evidence._evidence_snapshots[session.id] is window_snapshot
+    assert await derive_transcript_evidence(session, start, config, set(), str(tmp_path)) == credited

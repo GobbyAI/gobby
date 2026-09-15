@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from typing import Any
 
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.config.validation_detection import resolve_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.transcript_evidence import (
+    TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     derive_transcript_evidence,
@@ -275,6 +278,26 @@ def task_session_window_start(
         ):
             return format_git_since(row.get("created_at") or row.get("link_created_at"))
     return None
+
+
+def task_edit_languages(
+    ctx: RegistryContext, project_id: str, edits: Iterable[TranscriptEdit]
+) -> dict[str, str]:
+    """Return gcode's indexed language for each edited path the code index knows.
+
+    Close freshness lets an unknown path invalidate every earlier run, so a failed
+    lookup degrades to an empty mapping and the conservative any-edit rule.
+    """
+    paths = sorted({edit.path for edit in edits})
+    if not paths:
+        return {}
+    storage = CodeIndexStorage(ctx.task_manager.db)
+    try:
+        rows = [(path, storage.get_file(project_id, path)) for path in paths]
+    except Exception as exc:
+        logger.debug("Edit language lookup failed for project %s: %s", project_id, exc)
+        return {}
+    return {path: row.language for path, row in rows if row is not None}
 
 
 def format_git_since(value: Any) -> str | None:

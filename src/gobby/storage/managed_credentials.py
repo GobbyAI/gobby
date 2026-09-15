@@ -379,7 +379,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         )
 
     def get_live_binding_generation(self, managed_execution_id: UUID) -> int | None:
-        """Return the live generation, reject a dead binding, or report no binding."""
+        """Return the unrevoked generation for rotate, including expired predecessors."""
         candidates = [
             row
             for row in self._database.fetchall(
@@ -396,10 +396,11 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             if isinstance(expires_at := _row_value(row, "expires_at"), datetime)
             and expires_at > now
         ]
-        if not live:
-            raise CredentialAuthorizationError("managed principal binding is revoked or expired")
+        rotatable = live or candidates
         try:
-            return max(int(str(_row_value(row, "role_name")).rsplit("_", 1)[1]) for row in live)
+            return max(
+                int(str(_row_value(row, "role_name")).rsplit("_", 1)[1]) for row in rotatable
+            )
         except (IndexError, ValueError) as error:
             raise CredentialIssuanceError(
                 "managed principal role has invalid generation"

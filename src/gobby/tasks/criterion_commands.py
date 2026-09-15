@@ -100,13 +100,14 @@ def expand_successful_and_segments(
 def criterion_command_records(
     criteria: str,
     evidence: TranscriptEvidence,
-    *,
-    last_edit_order: int | None,
 ) -> list[dict[str, object]]:
-    runs = sorted(
-        expand_successful_and_segments((*evidence.validation_runs, *evidence.command_runs)),
-        key=lambda item: (item.order, item.completed_at),
-    )
+    # Judge each top-level run before splitting it, so a chain's segments share its freshness.
+    invalidating = {
+        segment_run: first_invalidating_edit(evidence, run)
+        for run in (*evidence.validation_runs, *evidence.command_runs)
+        for segment_run in expand_successful_and_segments((run,))
+    }
+    runs = sorted(invalidating, key=lambda item: (item.order, item.completed_at))
     observed_cores = {run.core_command for run in runs if run.core_command is not None}
     records: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -132,7 +133,7 @@ def criterion_command_records(
             )
             or (core is None and run.command.strip() == command)
         ]
-        fresh = [run for run in matching if last_edit_order is None or run.order > last_edit_order]
+        fresh = [run for run in matching if invalidating[run] is None]
         definitive = [
             run
             for run in fresh
@@ -150,7 +151,7 @@ def criterion_command_records(
             latest = matching[-1]
             status = "stale"
             execution = execution_details(latest)
-            invalidating_edit = first_invalidating_edit(evidence.edits, latest.order)
+            invalidating_edit = invalidating[latest]
             if invalidating_edit is not None:
                 execution["invalidating_edit"] = edit_details(invalidating_edit)
         else:
@@ -171,10 +172,9 @@ def criterion_command_records(
             if run not in matching and not _related_command(run.command, core or command):
                 continue
             observation = execution_details(run)
-            if last_edit_order is not None and run.order <= last_edit_order:
-                edit = first_invalidating_edit(evidence.edits, run.order)
-                if edit is not None:
-                    observation["invalidating_edit"] = edit_details(edit)
+            edit = invalidating[run]
+            if edit is not None:
+                observation["invalidating_edit"] = edit_details(edit)
             if run not in matching and not run.wrapped:
                 difference = scope_difference(run.core_command or run.command, core or command)
                 observation["reason"] = f"{SCOPE_MISMATCH_REASON}: {difference}"
@@ -432,14 +432,47 @@ def edit_details(edit: TranscriptEdit) -> dict[str, object]:
     }
 
 
+# Configs any tool may read; mirrors `is_data_language` in crates/gcode/src/index/languages.rs.
+_DATA_LANGUAGES = frozenset({"yaml", "json"})
+
+
 def first_invalidating_edit(
-    edits: Iterable[TranscriptEdit], run_order: int
+    evidence: TranscriptEvidence, run: TranscriptValidationRun
 ) -> TranscriptEdit | None:
+    """Return the first later task edit that can change ``run``'s result.
+
+    Every later edit invalidates a run, except an edit in a known, non-data code
+    language outside the languages of the run's single bounded, non-test validation
+    segment. Paths the code index does not know have no language and always invalidate.
+    """
+    readable = _bounded_languages(run)
+
+    def affects(edit: TranscriptEdit) -> bool:
+        language = evidence.edit_languages.get(edit.path)
+        return (
+            readable is None
+            or language is None
+            or language in _DATA_LANGUAGES
+            or language in readable
+        )
+
     return min(
-        (edit for edit in edits if edit.order > run_order),
+        (edit for edit in evidence.edits if edit.order > run.order and affects(edit)),
         key=lambda edit: (edit.order, edit.timestamp, edit.path),
         default=None,
     )
+
+
+def _bounded_languages(run: TranscriptValidationRun) -> frozenset[str] | None:
+    """Return the languages a run can read, or None when its inputs are unbounded."""
+    if run.wrapped or run.core_command is None or len(run.validation_segments) != 1:
+        return None
+    segment = run.validation_segments[0]
+    if not segment.bounded_inputs or not segment.languages or "test" in segment.categories:
+        return None
+    if len(parse_shell_command(run.core_command).segments) != 1:
+        return None
+    return frozenset(segment.languages)
 
 
 def criterion_command_gap_message(gaps: list[dict[str, object]]) -> str:

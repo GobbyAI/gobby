@@ -39,8 +39,10 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
+from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import TddEvidenceResult
 from gobby.tasks.transcript_evidence import (
+    TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
@@ -312,6 +314,81 @@ async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
     assert evaluation.had_attributed_edits is False
     assert evaluation.commit_shas == []
     review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("get_file", "expected"),
+    [
+        (
+            lambda _project_id, path: (
+                SimpleNamespace(language="typescript") if path == "web/src/app.ts" else None
+            ),
+            {"web/src/app.ts": "typescript"},
+        ),
+        (RuntimeError("code index unavailable"), {}),
+    ],
+)
+async def test_close_attaches_indexed_edit_languages(
+    get_file: object, expected: dict[str, str]
+) -> None:
+    task = replace(_task(criteria="npm ci and focused Prettier check succeed."), category="manual")
+    ctx = _ctx(task, validator=object())
+    ctx.session_var_manager = cast(
+        SessionVariableManager,
+        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+    )
+    evidence = _successful_transcript(task, command="npx prettier --check web")
+    edit = TranscriptEdit(
+        session_id=task.claimed_by_session_id or "",
+        source="codex",
+        path="web/src/app.ts",
+        timestamp=evidence.validation_runs[0].completed_at,
+        order=2,
+        tool_name="Edit",
+    )
+    evidence = replace(evidence, edits=(edit, replace(edit, path="README.md", order=3)))
+    storage = MagicMock()
+    storage.get_file.side_effect = get_file
+    review = AsyncMock(
+        return_value=ValidationResult(can_close=False, error_type="agentic_review_required")
+    )
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(
+            lifecycle, "_derive_close_transcript_evidence", AsyncMock(return_value=evidence)
+        ),
+        patch.object(lifecycle, "active_validation_backoff"),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._close_evaluation_support.CodeIndexStorage",
+            return_value=storage,
+        ) as storage_class,
+        patch.object(
+            lifecycle, "evaluate_validation_commands", wraps=evaluate_validation_commands
+        ) as gate,
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Restored dependencies.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    storage_class.assert_called_once_with(ctx.task_manager.db)
+    storage.get_file.assert_any_call(task.project_id, "README.md")
+    judged = gate.call_args.kwargs["evidence"]
+    assert judged.edit_languages == expected
+    assert judged.edits == evidence.edits
+    assert evaluation.transcript_evidence["task_edit_count"] == 2
+    assert evaluation.extra["validation_commands"]["last_task_edit_order"] == 3
 
 
 @pytest.mark.asyncio

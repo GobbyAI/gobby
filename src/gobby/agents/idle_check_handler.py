@@ -354,6 +354,15 @@ class IdleCheckHandler:
             idle_detector.reset_idle(run.id)
             return 0
 
+        if transcript_snapshot is not None and transcript_snapshot.is_live_transcript_activity(
+            idle_timeout_seconds=idle_timeout_seconds
+        ):
+            # Grok ACP stays `latest_turn_kind=started` for the whole turn, so
+            # completed-turn recovery is None and must not fall through to Escape.
+            logger.debug("Agent %s has live transcript activity; not idle", run.id)
+            idle_detector.reset_idle(run.id)
+            return 0
+
         if status == "active" and not capacity_candidate:
             if (
                 session_recent

@@ -1225,6 +1225,15 @@ fn presentation_http_classifies_typed_daemon_codes() {
     }
     assert!(GrantError::from_presentation_http(403, "revoked").is_none());
     assert!(GrantError::from_presentation_http(200, r#"{"code":"revoked"}"#).is_none());
+    assert_eq!(
+        GrantError::from_presentation_http(
+            403,
+            r#"{"code":"claims_mismatch","error":"claims_mismatch","message":"managed principal binding is revoked or expired"}"#
+        ),
+        Some(GrantError::Unauthorized(
+            "managed principal binding is revoked or expired".into()
+        ))
+    );
 }
 
 #[test]

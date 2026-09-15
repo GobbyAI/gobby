@@ -9,7 +9,7 @@ import os
 import re
 import threading
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -110,6 +110,9 @@ class TranscriptValidationSegment:
     command: str
     categories: tuple[str, ...]
     segment_index: int = field(default=0, compare=False)
+    #: Matcher metadata; a ``bounded_inputs`` segment reads only ``languages`` code.
+    languages: tuple[str, ...] = field(default=(), compare=False)
+    bounded_inputs: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -169,6 +172,8 @@ class TranscriptEvidence:
     degraded_capabilities: tuple[str, ...] = ()
     # Observations outside the task link window never enter credit-bearing collections.
     excluded_runs: tuple[TranscriptValidationRun, ...] = ()
+    #: gcode's indexed language per task-edited path, attached by close evaluation.
+    edit_languages: Mapping[str, str] = field(default_factory=dict, compare=False)
 
     def summary(self) -> dict[str, Any]:
         """Return bounded deterministic facts for checklist diagnostics."""
@@ -863,6 +868,8 @@ def _validation_segments(
                 command=match.normalized_command,
                 categories=match.categories,
                 segment_index=match.segment_index,
+                languages=match.languages,
+                bounded_inputs=match.bounded_inputs,
             )
             for match in matches
         )

@@ -115,6 +115,12 @@ def build_agentic_review_prompt(
             "and required_evidence null. Count it as neither satisfied nor a gap. Set the "
             "overall status valid when every remaining implementer-owned criterion is satisfied. "
         )
+    elif closure_reason not in NO_WORK_CLOSE_REASONS:
+        prompt += (
+            "The close caller is not a spawned agent: judge every criterion, including any "
+            "beginning `Live:`, as satisfied or gap; `pending_external` is rejected as "
+            "malformed for this review. "
+        )
     prompt += (
         "Inspect the task and evidence relevant to the stated closure reason. "
         "For completed work, inspect linked commits, exact acceptance tests, deterministic "
