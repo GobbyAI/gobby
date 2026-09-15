@@ -513,7 +513,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     registry.register(
         name="get_task",
-        description="Get task details including dependencies. Task ID can be #N (e.g., #1), path (e.g., 1.2.3), or UUID. Returns brief format by default; set brief=false for full details including description.",
+        description="Get task details including dependencies. Task ID can be #N (e.g., #1), path (e.g., 1.2.3), or UUID. Returns an actionable card by default, including description, validation_criteria, labels, state, and dependency summaries; set brief=false for the full task record.",
         input_schema={
             "type": "object",
             "properties": {
@@ -523,7 +523,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "brief": {
                     "type": "boolean",
-                    "description": "If true (default), return compact format (~18 fields). If false, return full details (~33 fields including description, validation, integration).",
+                    "description": "If true (default), return the actionable card: identity, description, validation_criteria, labels, state, execution settings, and dependency summaries. If false, also return project and session ids, commits, closure, validation, merge and dispatch details, escalation fields, GitHub/Linear links, dates, and full dependency rows.",
                     "default": True,
                 },
             },
