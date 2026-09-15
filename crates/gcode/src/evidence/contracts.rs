@@ -277,6 +277,8 @@ pub struct SourceEvidence {
     pub byte_start: usize,
     pub byte_end: usize,
     pub excerpt: String,
+    /// `excerpt` with each line prefixed by its one-based number as `N| `.
+    pub numbered_excerpt: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

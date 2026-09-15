@@ -90,6 +90,15 @@ def _line_range(content: bytes, start: int, end: int) -> tuple[int, int]:
     return start_line, end_line
 
 
+def _numbered_excerpt(excerpt: str, line_start: int) -> str:
+    lines = excerpt.split("\n")
+    tail = lines.pop()
+    numbered = [f"{line_start + index}| {line}\n" for index, line in enumerate(lines)]
+    if tail:
+        numbered.append(f"{line_start + len(lines)}| {tail}")
+    return "".join(numbered)
+
+
 def _source_identity(binding: RepositoryBinding, source: SourceEvidence) -> str:
     identity = [
         binding.model_dump(mode="json"),
@@ -134,6 +143,10 @@ def _validate_source(
     if excerpt != source.excerpt:
         diagnostics.append(
             _diagnostic("stale_source_range", "source excerpt does not match the blob")
+        )
+    if source.numbered_excerpt != _numbered_excerpt(source.excerpt, source.line_start):
+        diagnostics.append(
+            _diagnostic("numbered_excerpt_mismatch", "numbered excerpt does not match the excerpt")
         )
     if hashlib.sha256(excerpt_bytes).hexdigest() != source.excerpt_hash:
         diagnostics.append(_diagnostic("excerpt_hash_mismatch", "source excerpt hash is invalid"))

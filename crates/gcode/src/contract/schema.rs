@@ -264,6 +264,7 @@ pub(super) fn evidence_keys() -> Vec<&'static str> {
         "byte_start",
         "byte_end",
         "excerpt",
+        "numbered_excerpt",
         "relation",
         "from",
         "to",
