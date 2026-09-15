@@ -2646,6 +2646,109 @@ class TestModelExtraction:
         assert [snapshot.context_used_tokens for snapshot in snapshots] == [151_699]
 
     @pytest.mark.asyncio
+    async def test_grok_occupancy_keeps_compact_epoch_max(
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Grok keeps the highest totalTokens stamp until a window_only epoch reset."""
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: MagicMock())
+        session = SimpleNamespace(
+            project_id="proj-1",
+            source="grok",
+            context_window=512_000,
+            model="grok-build",
+            context_used_tokens=None,
+            context_usage_confidence=None,
+        )
+        snapshots: list[ContextUsageSnapshot] = []
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        def apply_snapshot(_session_id: str, snapshot: ContextUsageSnapshot) -> None:
+            snapshots.append(snapshot)
+            session.context_used_tokens = snapshot.context_used_tokens
+            session.context_usage_confidence = snapshot.confidence
+
+        session_manager.update_context_usage.side_effect = apply_snapshot
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+
+        def message(index: int, context_used_tokens: int) -> ParsedMessage:
+            return ParsedMessage(
+                index=index,
+                role="assistant",
+                content="",
+                content_type="text",
+                tool_name=None,
+                tool_input=None,
+                tool_result=None,
+                timestamp=datetime.now(),
+                raw_json={"params": {"update": {"totalContextTokens": 512_000}}},
+                model="grok-build",
+                message_id=f"grok-{index}",
+                context_used_tokens=context_used_tokens,
+            )
+
+        await processor._persist_usage_events(
+            "session-1",
+            [message(0, 320_000), message(1, 322_000), message(2, 140_000)],
+        )
+        assert snapshots[-1].context_used_tokens == 322_000
+        assert session.context_usage_confidence == "reported"
+
+        session.context_used_tokens = None
+        session.context_usage_confidence = "unknown"
+        await processor._persist_usage_events("session-1", [message(3, 14_000)])
+        assert snapshots[-1].context_used_tokens == 14_000
+        assert snapshots[-1].confidence == "reported"
+
+    @pytest.mark.asyncio
+    async def test_grok_usage_snapshot_does_not_replace_reported_occupancy(
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-turn-boundary Grok usage record must not overwrite totalTokens occupancy."""
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: MagicMock())
+        session = SimpleNamespace(
+            project_id="proj-1",
+            source="grok",
+            context_window=512_000,
+            model="grok-build",
+            context_used_tokens=None,
+            context_usage_confidence=None,
+        )
+        snapshots: list[ContextUsageSnapshot] = []
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.update_context_usage.side_effect = (
+            lambda _session_id, snapshot: snapshots.append(snapshot)
+        )
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        usage = TokenUsage(
+            input_tokens=50_000,
+            output_tokens=1_200,
+            cache_creation_tokens=0,
+            cache_read_tokens=10_000,
+        )
+        msg = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+            usage=usage,
+            model="grok-build",
+            message_id="grok-0",
+            context_used_tokens=322_000,
+        )
+
+        await processor._persist_usage_events("session-1", [msg])
+
+        assert snapshots[-1].context_used_tokens == 322_000
+        assert snapshots[-1].confidence == "reported"
+
+    @pytest.mark.asyncio
     async def test_process_session_skips_model_update_when_none(
         self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
