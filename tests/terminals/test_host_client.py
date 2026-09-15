@@ -350,3 +350,58 @@ def test_raise_for_payload_preserves_structured_error() -> None:
     assert raised.value.code == "ENOENT"
     assert raised.value.detail == "No such file or directory"
     assert raised.value.stage == "exec"
+
+
+async def test_ledger_error_advances_seq_so_kill_does_not_conflict() -> None:
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        write_task = asyncio.create_task(
+            client.write(host_terminal_id="ht-1", kind="text", data=b"ECHO gone")
+        )
+        write_req = await writer.next_write()
+        assert write_req["operation_seq"] == 1
+        reader.feed_data(
+            host_client.encode_control_line(
+                {"ok": False, "error": "not_found", "id": write_req["id"]}
+            )
+        )
+        with pytest.raises(HostCommandError) as raised:
+            await write_task
+        assert raised.value.error == "not_found"
+        assert client.next_seq == 2
+
+        kill_task = asyncio.create_task(client.kill("ht-1", grace_ms=200))
+        kill_req = await writer.next_write()
+        assert kill_req["method"] == "kill"
+        assert kill_req["operation_seq"] == 2
+        reader.feed_data(
+            host_client.encode_control_line({"ok": True, "killed": False, "id": kill_req["id"]})
+        )
+        await kill_task
+        assert client.next_seq == 3
+    finally:
+        await client.close()
+
+
+async def test_operation_gap_does_not_advance_seq() -> None:
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        write_task = asyncio.create_task(
+            client.write(host_terminal_id="ht-1", kind="text", data=b"x")
+        )
+        write_req = await writer.next_write()
+        reader.feed_data(
+            host_client.encode_control_line(
+                {"ok": False, "error": "operation_gap", "id": write_req["id"]}
+            )
+        )
+        with pytest.raises(HostCommandError) as raised:
+            await write_task
+        assert raised.value.error == "operation_gap"
+        assert client.next_seq == 1
+    finally:
+        await client.close()

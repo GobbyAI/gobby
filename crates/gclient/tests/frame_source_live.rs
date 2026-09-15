@@ -57,6 +57,9 @@ impl TestHost {
             .arg("50")
             .args(extra)
             .env("GTERM_LOG_FILE", dir.path().join("gterm.log"))
+            .env("GTERM_TEST_HELPER", "1")
+            .env("RUST_LOG", "debug")
+            .env_remove("TMUX")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -494,6 +497,11 @@ async fn direct_frames_verify_epoch_and_render() {
 
 #[tokio::test]
 async fn tmux_pane_attaches_through_host_observer() {
+    // Warm gterm before opening the tmux pane. TestHost::spawn may block on a
+    // cargo lock for minutes; the host must still inherit the live tmux env.
+    tokio::task::spawn_blocking(build_test_gterm)
+        .await
+        .expect("gterm build task");
     let tmux = TestTmux::start();
     tmux.send_hex(b"printf 'GCLIENT-TMUX-HISTORY\\n'\n");
     timeout(HOST_TIMEOUT, async {
@@ -518,12 +526,17 @@ async fn tmux_pane_attaches_through_host_observer() {
     let mut source = UnixSocketFrameSource::connect(&locator, LOCAL_TOKEN, 80, 24)
         .await
         .expect("real tmux direct source");
-    assert!(matches!(
-        timeout(IO_TIMEOUT, source.recv())
-            .await
-            .expect("tmux attach timeout"),
-        Ok(ServerMessage::Attached { created: true, .. })
-    ));
+    let first = timeout(HOST_TIMEOUT, source.recv())
+        .await
+        .unwrap_or_else(|_| {
+            let log =
+                std::fs::read_to_string(host.socket_dir().join("gterm.log")).unwrap_or_default();
+            panic!("tmux attach timeout; locator={locator:?}; gterm.log:\n{log}");
+        });
+    assert!(
+        matches!(first, Ok(ServerMessage::Attached { created: true, .. })),
+        "tmux attach reply: {first:?}"
+    );
     let initial = collect_direct_until(&mut source, |message| {
         matches!(message, ServerMessage::AttachHistory { .. })
     })

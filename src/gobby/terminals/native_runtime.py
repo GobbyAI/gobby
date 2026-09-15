@@ -434,11 +434,16 @@ class NativeTerminalRuntime:
 
     async def _snapshot(self, terminal: Terminal, max_lines: int) -> SnapshotResult:
         await self._ensure()
-        payload = await self._client.snapshot(
-            self._host_id(terminal),
-            mode="text",
-            max_lines=max_lines,
-        )
+        try:
+            payload = await self._client.snapshot(
+                self._host_id(terminal),
+                mode="text",
+                max_lines=max_lines,
+            )
+        except HostCommandError as exc:
+            if exc.error == "not_found":
+                return SnapshotResult(text="", truncated=False, dropped_bytes=0, total_bytes=0)
+            raise
         text = str(payload.get("text", ""))
         truncated = bool(payload.get("truncated", False))
         dropped = payload.get("dropped_bytes")

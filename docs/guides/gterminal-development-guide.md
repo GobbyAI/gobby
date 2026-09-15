@@ -165,31 +165,43 @@ escapes), and Linux/WSL directory-write and socket-restriction evidence.
 
 ## Guard set G (foundation history)
 
-The original landing epic used this set, run from the `0.5.0-test`
-root with `DATABASE_URL` pointed at the isolated test hub
+The original landing epic used this set. Run each group as the command
+below from the repository root, with `DATABASE_URL` pointed at the
+isolated test hub
 (`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
-`GOBBY_TEST_PROTECT=1`:
+`GOBBY_TEST_PROTECT=1`. Group 2 also needs `GOBBY_POSTGRES_TEST_DSN`
+exported. The runner prints SHA-256 provenance for the installed
+`gterm`, `gcode`, `gdaemon`, and `ghook` binaries under `~/.gobby/bin`
+(never `target/`). Groups 2 and 3 wrap their commands in a before/after
+`gterm host` process guard that always runs the after-check, even when
+the wrapped command fails. Ownership comes from isolated run roots and
+`--socket-dir` paths, the same policy as
+`tests/terminals/conftest.py::_assert_no_leaked_hosts`. Session-owned
+leaks exit nonzero and print PID and socket evidence; cleanup does not
+erase a recorded leak. Unrelated hosts, including the daemon host under
+`~/.gobby`, are preserved.
 
-1. `uv run pytest tests/test_runner_lifecycle_restart_replay.py tests/agents/test_resume_executor.py tests/agents/test_spawn_executor.py tests/agents/test_tmux.py tests/agents/test_lifecycle_monitor.py tests/agents/test_capture_consumers.py tests/config/test_runtime_config_contract.py tests/config/test_terminal_config.py tests/cli/test_install_setup_gterm.py tests/gterminal/test_vendor_layer.py tests/mcp_proxy/tools/sessions/test_terminal.py tests/mcp_proxy/tools/sessions/test_terminal_clear.py tests/servers/test_tmux_mixin.py tests/servers/test_admin_health.py tests/install/test_version_pins.py tests/install/test_distribution.py tests/tasks/test_validation_evidence.py`
-2. `uv run pytest tests/terminals tests/storage/test_terminals.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_rename.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_native_web_proxy.py tests/servers/test_attention_respond.py tests/mcp_proxy/test_sessions_terminal_tools.py` (DB-backed; run with `GOBBY_POSTGRES_TEST_DSN` exported)
-3. `cargo build -p gobby-terminal --release --features vt-engine && cargo clippy -p gobby-terminal -p gobby-client --all-targets --features vt-engine -- -D warnings && cargo nextest run -p gobby-terminal -p gobby-client --features vt-engine`
-4. `cargo nextest run -p gobby-core -p gobby-daemon` (schema identity and grant pins)
-5. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
-6. `cd web && npx --no-install vitest run hooks/ activitySessionVisibility.test.ts`
-   The directory-segment and unique-basename substrings deliberately select
-   `src/hooks` plus `src/components/activity/__tests__/activitySessionVisibility.test.ts`.
-   Bare `hooks` also selects two hook-named tests outside `src/hooks`, while adding
-   slash-terminated filters for both original directories widens the run to the
-   whole web suite under Vitest 4.
-7. Host leak check: the set of `gterm host` PIDs after groups 2–3 equals the set
-   before, and no surviving `gterm host` references a state directory the run
-   created. For group 2 this is deterministic: the session fixture
-   `_assert_no_leaked_hosts` in `tests/terminals/conftest.py` fails the run when a
-   host under the run's temp roots survives or when a durable host (state directory
-   outside every temp root, such as the daemon's `~/.gobby` host) that existed
-   before the session is gone after it, so a green group 2 is the group 7 evidence
-   for that group. Group 3 has no such fixture; compare `ps -Ao pid,lstart,comm`
-   snapshots around it by hand.
+1. `uv run python -m gobby.guard_set_g 1`
+2. `uv run python -m gobby.guard_set_g 2`
+3. `uv run python -m gobby.guard_set_g 3`
+   Clippy and nextest for `gobby-terminal` use `--features vt-engine`
+   and fail when a required gated target (`embed`, `host_lifecycle`,
+   `control_protocol`, `frame_protocol`, `frame_producer`) is missing,
+   skipped, or executes zero tests. `gobby-client` is clippy'd and
+   tested separately with its default feature set.
+4. `uv run python -m gobby.guard_set_g 4`
+5. `uv run python -m gobby.guard_set_g 5`
+6. `uv run python -m gobby.guard_set_g 6`
+   The Vitest directory-segment and unique-basename substrings
+   deliberately select `src/hooks` plus
+   `src/components/activity/__tests__/activitySessionVisibility.test.ts`.
+   Bare `hooks` also selects two hook-named tests outside `src/hooks`,
+   while adding slash-terminated filters for both original directories
+   widens the run to the whole web suite under Vitest 4.
+7. `uv run python -m gobby.guard_set_g 7`
+   Scans live `gterm host` processes, prints PID/socket evidence, and
+   fails on surviving session-owned hosts. Group 2 still also has the
+   session fixture `_assert_no_leaked_hosts`.
 
 The following records historical carve-outs, which ended when their owners
 closed; they are not present-day exemptions. From 1.1
