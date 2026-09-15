@@ -5,6 +5,8 @@ lifecycle obligation to drive. Reprompts steer it to end_agent_run; if it keeps
 completing turns without calling it, the watchdog completes the run instead of
 reporting finished work as an error. A run holding a claimed task keeps failing
 (test_completed_turn_recovery_allows_budget_then_fails_run_holding_claimed_task).
+A run that never made a successful Gobby MCP call cannot hand back a result, so
+it fails without reprompts.
 """
 
 from __future__ import annotations
@@ -66,3 +68,37 @@ async def test_completed_turn_exhaustion_completes_unbound_run(
     assert updated_run.status == "success"
     assert any("no step workflow or task" in r.getMessage() for r in caplog.records)
     assert not any(_EXHAUSTED_ERROR in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_unbound_run_without_gobby_mcp_calls_fails_without_reprompts(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    """An unbound run whose Gobby MCP never connected cannot deliver, so it fails."""
+    transcript_path = tmp_path / "codex-unbound-no-mcp.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2235",
+        transcript_path=transcript_path,
+        max_reprompt_attempts=3,
+        made_gobby_mcp_call=False,
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        assert await monitor.check_idle_agents() == 1
+
+    assert [text for kind, text in _runtime_of(monitor).write_log if kind == "text"] == []
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"
+    assert updated_run.error is not None
+    assert "Gobby MCP proxy tools unavailable" in updated_run.error
+    assert "with no step workflow or task" in updated_run.error

@@ -104,7 +104,7 @@ class _FakeHost:
 
 
 def _run() -> AgentRun:
-    return cast(AgentRun, SimpleNamespace(id="run-1", child_session_id="sess-1"))
+    return cast(AgentRun, SimpleNamespace(id="run-1", child_session_id="sess-1", task_id=None))
 
 
 async def _recover(host: _FakeHost) -> int:
