@@ -29,6 +29,7 @@ INSTALLED_BINARIES = ("gterm", "gcode", "gdaemon", "ghook")
 HOST_WRAP_GROUPS = frozenset({2, 3})
 _RUN_ROOT_ENV = "GOBBY_GUARD_SET_G_RUN_ROOT"
 _ISOLATED_ENV_KEYS = (_RUN_ROOT_ENV, "CLAUDE_CODE_TMPDIR")
+_UNIX_SOCKET_MAX = 104
 
 CommandRunner = Callable[[Sequence[str], Mapping[str, str]], int]
 HostSnapshot = Callable[[], dict[int, Path]]
@@ -567,6 +568,31 @@ def _pytest_argv(paths: Sequence[str]) -> list[str]:
     return ["uv", "run", "pytest", *paths]
 
 
+def isolated_temp_parent() -> Path:
+    """Pick a short writable parent so gterm Unix sockets fit sockaddr_un."""
+    candidates = (
+        Path("/tmp"),
+        Path("/private/tmp"),
+        Path.home() / ".gobby" / "tmp",
+    )
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if not os.access(candidate, os.W_OK):
+            continue
+        sample = candidate / "gsg-xxxxxx" / ".tmpxxxxxx" / "gterm-control.sock"
+        if len(os.fsencode(str(sample.resolve()))) < _UNIX_SOCKET_MAX:
+            return candidate
+    return Path(tempfile.gettempdir())
+
+
+def gterm_socket_path_budget(run_root: Path) -> int:
+    sample = run_root / ".tmpxxxxxx" / "gterm-control.sock"
+    return len(os.fsencode(str(sample)))
+
+
 def _seed_sandbox_zig_packages(env: Mapping[str, str]) -> None:
     """Expose the machine Zig package cache inside a sandbox XDG cache."""
     source = Path.home() / ".cache" / "zig" / "p"
@@ -677,8 +703,16 @@ def run_group(group: int, *, repo: Path | None = None) -> int:
         outcome = check_hosts(run_roots=isolated_run_roots())
         return outcome.exit_code
     if group in HOST_WRAP_GROUPS:
-        with tempfile.TemporaryDirectory(prefix="gobby-guard-set-g-") as raw:
+        with tempfile.TemporaryDirectory(
+            prefix="gsg-", dir=str(isolated_temp_parent())
+        ) as raw:
             run_root = Path(raw).resolve()
+            budget = gterm_socket_path_budget(run_root)
+            if budget >= _UNIX_SOCKET_MAX:
+                _emit(
+                    f"isolated run root {run_root} socket path budget {budget} "
+                    f"exceeds {_UNIX_SOCKET_MAX}"
+                )
             env = _isolated_child_env(run_root)
             _emit(f"isolated run root {run_root}")
             outcome = run_wrapped(

@@ -17,7 +17,9 @@ from gobby.guard_set_g import (
     client_clippy_argv,
     client_nextest_argv,
     evaluate_gated_targets,
+    gterm_socket_path_budget,
     isolated_run_roots,
+    isolated_temp_parent,
     leaked_hosts,
     path_under,
     snapshot_gterm_hosts,
@@ -260,6 +262,12 @@ def test_check_hosts_fails_on_surviving_owned_host_and_preserves_durable(
     assert "pid=9" in captured.err
     assert "pid=57123" in captured.err
     assert "durable" in captured.err
+
+
+def test_isolated_temp_parent_keeps_gterm_socket_under_sockaddr_limit() -> None:
+    parent = isolated_temp_parent()
+    run_root = parent / "gsg-xxxxxx"
+    assert gterm_socket_path_budget(run_root.resolve()) < 104
 
 
 def test_isolated_child_env_keeps_explicit_zig_cache(tmp_path: Path) -> None:
