@@ -19,6 +19,10 @@ MCP_WRAPPER_STALE_ERROR_CODE = "GOBBY_MCP_WRAPPER_STALE"
 WAIT_TOOL_WRAPPER_GRACE_SECONDS = 5.0
 EXTENDED_TIMEOUT_TOOL_NAMES = (
     "close_task",
+    # The validator's verdict submission re-runs the same close evaluation as
+    # close_task before applying the verdict; at the default 30s the caller gave
+    # up while the daemon finished, and the rejection or close result was lost.
+    "submit_close_review",
     "expand_task",
     "merge_resolve",
     "suggest_next_task",

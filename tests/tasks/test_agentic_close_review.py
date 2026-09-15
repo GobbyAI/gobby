@@ -90,6 +90,33 @@ def test_agent_close_prompt_marks_live_criteria_pending_external() -> None:
     assert "neither satisfied nor a gap" in prompt
 
 
+def test_non_spawned_caller_prompt_forbids_pending_external() -> None:
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+    )
+
+    assert "close caller is not a spawned agent" in prompt
+    assert "satisfied or gap" in prompt
+    assert "`pending_external` is rejected as malformed" in prompt
+    assert "state `pending_external`" not in prompt
+
+    no_work = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        closure_reason="duplicate",
+    )
+    assert "spawned agent" not in no_work
+
+
 def test_launch_prompt_carries_gate10_validation_runs() -> None:
     """The taskless validator cannot read the transcript, so gate 10's record rides along."""
     validation_commands = {
