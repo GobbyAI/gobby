@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,9 @@ _INTERRUPT_POLL_SECONDS = 0.05
 # because its turn is still running; a rejection interrupts again and resubmits.
 _COMPACTION_REJECTION_SETTLE_SECONDS = 1.0
 _COMPACTION_REJECTION_POLL_SECONDS = 0.1
+# When a turn_settled observer exists, poll it this long before the first interrupt.
+_TURN_SETTLE_WAIT_SECONDS = 30.0
+_TURN_SETTLE_POLL_SECONDS = 0.25
 _COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
@@ -235,6 +239,36 @@ def _turn_already_settled(
     return True
 
 
+def _turn_settle_wait_budget(settle_seconds: float | None) -> tuple[float, float]:
+    """Return the settle wait and poll interval, honoring the test override."""
+    if settle_seconds is None:
+        return _TURN_SETTLE_WAIT_SECONDS, _TURN_SETTLE_POLL_SECONDS
+    if settle_seconds <= 0:
+        return 0.0, 0.0
+    return settle_seconds, min(_TURN_SETTLE_POLL_SECONDS, settle_seconds)
+
+
+async def _wait_for_turn_to_settle(
+    turn_settled: Callable[[], bool | None] | None,
+    session_id: str,
+    command: str,
+    *,
+    wait_seconds: float,
+    poll_seconds: float,
+) -> bool:
+    """Poll ``turn_settled`` until the CLI turn ends or the bounded wait expires."""
+    if turn_settled is None:
+        return False
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        if _turn_already_settled(turn_settled, session_id, command):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(poll_seconds, remaining) if poll_seconds > 0 else remaining)
+
+
 async def _wait_for_compaction_rejection(
     pane: PaneIO,
     before_command: str | None,
@@ -278,17 +312,19 @@ async def _send_terminal_compaction_command(
     ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
     transcript observer for CLIs that record interrupts, and its absence keeps the
     blind interrupt path for CLIs that do not. ``turn_settled`` reports whether the
-    CLI's own transcript shows its last turn ended: a settled turn is never
-    interrupted (Ctrl+C on an idle Codex or Grok composer quits or escalates toward
-    quit), so the command is submitted directly and the success detail carries
-    ``interrupted: False``. A CLI that rejects the command because its turn is
-    still running (Grok) is interrupted again and the command resubmitted once
-    before the delivery fails.
+    CLI's own transcript shows its last turn ended: a live turn is polled until it
+    settles or the bounded wait expires. A settled turn is never interrupted
+    (Ctrl+C on an idle Codex or Grok composer quits or escalates toward quit), so
+    the command is submitted directly and the success detail carries
+    ``interrupted: False``. Interrupt only on timeout. A CLI that rejects the
+    command because its turn is still running (Grok) is interrupted again and the
+    command resubmitted once before the delivery fails.
     """
     continuation_pending = False
     interrupt_key = _compact_interrupt_key(cli_source)
     interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
     rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds
+    settle_wait_seconds, settle_poll_seconds = _turn_settle_wait_budget(settle_seconds)
     if observe_interrupt is not None:
         continuation_pending = bool(mark_continuation_pending())
         if not continuation_pending:
@@ -313,7 +349,13 @@ async def _send_terminal_compaction_command(
                 _COMPACTION_REJECTION_RETRIES,
             )
         # A rejection proves the turn is live, so only the first submission may skip.
-        if resubmission or not _turn_already_settled(turn_settled, session_id, command):
+        if resubmission or not await _wait_for_turn_to_settle(
+            turn_settled,
+            session_id,
+            command,
+            wait_seconds=settle_wait_seconds,
+            poll_seconds=settle_poll_seconds,
+        ):
             interrupted, reason, detail = await _interrupt_turn(
                 pane,
                 interrupt_key,
