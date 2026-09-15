@@ -286,14 +286,19 @@ Grok uses lowercase snake-case native hook names and camelCase payload fields.
 | `stop_cancelled` | `stop` or `interrupt` | disposition-dependent |
 
 Grok registers `SubagentStart` and `SubagentStop` in `hooks-template.json`.
-Grok 1.0.30 does dispatch `subagent_start` (confirmed with
-`grok --debug --debug-file`); ACP `blockingEvents` lists only
-`pre_tool_use`, `stop`, and `subagent_stop`. Gobby often still drops the start:
-the child `sessionId` is not a Gobby row, and TTY bind can miss a parent.
-Child hooks inherit the parent tmux pane. Gobby binds them to the live pane
-owner instead of auto-registering a session, and derives `is_subagent` /
-`subagent_count` from that bind. A parent `user_prompt_submit` still resets the
-counter; a TTY-bound child `user_prompt_submit` does not. Evidence:
+Grok 1.0.30 dispatches `subagent_start` non-blocking with the parent's
+`sessionId` (ACP `blockingEvents` lists only `pre_tool_use`, `stop`, and
+`subagent_stop`); Gobby resolves it to the parent and increments the counter
+without a hooks-log row. Older builds sent the child `sessionId`. One start can
+cover a batch of parallel children, so after the first `subagent_stop` the
+counter can read zero while children still run. Child hooks carry their own
+`sessionId` but run inside the parent's process: same tmux pane, `parent_pid`,
+and `parent_create_time`. Gobby binds a Grok hook whose session is unknown to
+the live pane owner only when `terminal_process_contexts_match` proves that
+shared process, then derives `is_subagent` / `subagent_count` from the bind; a
+different process in the same pane registers as a new session. A parent
+`user_prompt_submit` still resets the counter; a process-bound child
+`user_prompt_submit` does not. Evidence:
 `tests/fixtures/provider_contracts/grok/subagent-start-debug-trace.json` and
 `tests/fixtures/provider_contracts/grok/subagent-start-drop-summary.json`.
 

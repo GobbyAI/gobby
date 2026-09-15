@@ -19,6 +19,7 @@ from gobby.hooks.terminal_context import (
     is_gobby_acp_child,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
+from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
@@ -322,12 +323,17 @@ class SessionLookupService:
             HookEventType.SUBAGENT_START,
             HookEventType.SUBAGENT_STOP,
         }
-        # Grok 1.0.x often omits SubagentStart. Child hooks still inherit the
-        # parent TTY, so bind them even when is_subagent is not yet set.
-        grok_inherited_child = event.source.value == "grok"
+        # Grok runs child conversations inside the parent's process, and one
+        # subagent_start can cover a whole batch of children, so the counter
+        # can read zero while children still run. The shared live process is
+        # the evidence; a different process in the same pane is a new session.
+        same_live_process = event.source.value == "grok" and terminal_process_contexts_match(
+            getattr(owner, "terminal_context", None),
+            terminal_context,
+        )
         if (
             not is_subagent_event
-            and not grok_inherited_child
+            and not same_live_process
             and not session_has_active_native_subagent(
                 self._session_manager.db,
                 owner.id,

@@ -2,12 +2,14 @@
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, MissingHookMachineIdError, SessionSource
@@ -396,8 +398,21 @@ def test_grok_tool_hook_with_parent_tty_binds_without_prior_subagent_start() -> 
             / "subagent-start-drop-summary.json"
         ).read_text()
     )["sanitized_child_payload"]
+    # Enrichment verifies parent_create_time against the live process table, so
+    # the child hook must name a process that exists: this test's own.
+    payload["terminal_context"]["parent_pid"] = os.getpid()
     session_manager, _, service = _uncached_service()
-    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
+    parent = SimpleNamespace(
+        id="parent-live",
+        status="active",
+        agent_run_id=None,
+        agent_depth=0,
+        # The child conversation runs inside the parent's Grok process.
+        terminal_context={
+            **payload["terminal_context"],
+            "parent_create_time": psutil.Process(os.getpid()).create_time(),
+        },
+    )
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = None
     event = _pane_event(HookEventType.BEFORE_TOOL, session_id=payload["sessionId"])
@@ -409,6 +424,34 @@ def test_grok_tool_hook_with_parent_tty_binds_without_prior_subagent_start() -> 
     assert event.metadata["_native_subagent_binding"] is True
     assert "_session_just_materialized" not in event.metadata
     session_manager.register_session.assert_not_called()
+
+
+def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> None:
+    """A new Grok process in a pane with a stale live owner is not its subagent."""
+    session_manager, _, service = _uncached_service()
+    parent = SimpleNamespace(
+        id="parent-stale",
+        status="active",
+        agent_run_id=None,
+        agent_depth=0,
+        terminal_context={
+            "tmux_pane": "%90",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 51234,
+            "parent_create_time": 1789400000.0,
+        },
+    )
+    session_manager.find_live_interactive_pane_owner.return_value = parent
+    session_manager.db.fetchone.return_value = None
+    session_manager.register_session.return_value = "created-session"
+    event = _pane_event(HookEventType.BEFORE_TOOL, session_id="01a0b000-new-process")
+    event.data["terminal_context"]["parent_pid"] = os.getpid()
+
+    result = service.resolve(event)
+
+    assert result == "created-session"
+    assert "_native_subagent_binding" not in event.metadata
+    session_manager.register_session.assert_called_once()
 
 
 def test_grok_debug_trace_records_dispatched_subagent_start() -> None:
