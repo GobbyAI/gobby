@@ -221,8 +221,6 @@ class TestBuildCliCommand:
         assert cmd == [
             "droid",
             "exec",
-            "--input-format",
-            "stream-json",
             "--cwd",
             "/tmp/wt",
             "--model",
@@ -235,6 +233,10 @@ class TestBuildCliCommand:
         ]
         assert "--worktree" not in cmd
         assert "--session-id" not in cmd
+        # Droid 0.219.0 refuses `--input-format` without a matching
+        # `--output-format`, and the spawn pane needs neither (#22402).
+        assert "--input-format" not in cmd
+        assert "--output-format" not in cmd
 
     def test_agy_agent_command_uses_noninteractive_print(self) -> None:
         cmd, _env = build_cli_command(
@@ -298,8 +300,6 @@ class TestBuildCliCommand:
         assert cmd == [
             "droid",
             "exec",
-            "--input-format",
-            "stream-json",
             "--auto",
             "low",
             "hello",
@@ -443,8 +443,6 @@ class TestBuildCliCommand:
                 [
                     "droid",
                     "exec",
-                    "--input-format",
-                    "stream-json",
                     "--session-id",
                     "native-123",
                     "--cwd",

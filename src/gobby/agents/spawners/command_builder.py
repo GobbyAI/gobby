@@ -44,7 +44,7 @@ def build_cli_command(
       -c check_for_update_on_startup=false [PROMPT]
 
     Droid CLI:
-    - droid exec --input-format stream-json --cwd <dir> [--model <id>]
+    - droid exec --cwd <dir> [--model <id>]
       [--reasoning-effort <level>] --auto <low|high> [PROMPT]
 
     Args:
@@ -172,8 +172,12 @@ def build_cli_command(
         command.extend(["-c", "check_for_update_on_startup=false"])
 
     elif cli == "droid":
-        # Droid exec flags, verified against `droid exec --help` on v0.106.0.
-        command.extend(["exec", "--input-format", "stream-json"])
+        # Droid exec flags, verified against `droid exec --help` on v0.219.0.
+        # No `--input-format`: the prompt is positional and nothing writes this
+        # pane's stdin, and 0.219.0 rejects `--input-format stream-json` unless a
+        # matching `--output-format` is given (MetaError from assertValidOptions),
+        # which killed every terminal Droid spawn before startup (#22402).
+        command.append("exec")
         if resume_session_id:
             command.extend(["--session-id", resume_session_id])
         if working_directory:
