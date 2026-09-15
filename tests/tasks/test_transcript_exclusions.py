@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
-from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks import transcript_evidence
+from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import clear_evidence_snapshots, derive_transcript_evidence
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -121,4 +121,6 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
     advanced = transcript_evidence._evidence_snapshots[prelink_key]
     assert advanced.parsed_from_offset == prelink_snapshot.watermark
     assert transcript_evidence._evidence_snapshots[session.id] is window_snapshot
-    assert await derive_transcript_evidence(session, start, config, set(), str(tmp_path)) == credited
+    assert (
+        await derive_transcript_evidence(session, start, config, set(), str(tmp_path)) == credited
+    )
