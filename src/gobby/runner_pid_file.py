@@ -449,7 +449,12 @@ def probe_daemon_lock(pid_file: Path) -> SingletonProbe:
     try:
         lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     except OSError:
-        return SingletonProbe(state=ProbeState.ABSENT)
+        # Sandboxed agents cannot write Gobby home; flock still observes a held
+        # lock through a read-only descriptor, so an unwritable lock is not absence.
+        try:
+            lock_fd = os.open(lock_path, os.O_RDONLY)
+        except OSError:
+            return SingletonProbe(state=ProbeState.ABSENT)
     try:
         try:
             _lock_file(lock_fd)

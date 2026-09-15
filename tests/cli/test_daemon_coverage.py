@@ -35,6 +35,10 @@ def _runtime(*profiles: str) -> ComposeRuntime:
 def _cli_runtime(config: MagicMock) -> CliRuntime:
     runtime = CliRuntime(config_file=None, config=config)
     runtime._database = MagicMock()
+    # Stop holds the real handoff fence: an acquired advisory lock, no pending handoffs.
+    fence = runtime._database.transaction.return_value.__enter__.return_value.execute.return_value
+    fence.fetchone.return_value = {"acquired": True}
+    fence.fetchall.return_value = []
     return runtime
 
 

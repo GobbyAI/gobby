@@ -318,11 +318,10 @@ def sensitive_write_roots() -> list[str]:
 
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     """Return Gobby state, runtime, and prompt resources needed by agents."""
-    # The whole Gobby home: bootstrap.yaml is the root of trust for daemon
-    # and hub discovery (ghook, `gobby mcp-server`, and gcode re-read
-    # it per invocation), and agents need machine_id, logs, binaries, the local
-    # operator credential, hook config, and personal project state from here.
-    # The credential remains write-denied by sensitive_write_roots().
+    # Gobby home stays readable apart from sensitive_roots(), which deny
+    # bootstrap.yaml: agents reach the daemon through GOBBY_DAEMON_URL and the
+    # hub through their managed grant (GOBBY_MANAGED_EXECUTION_BOOTSTRAP), which
+    # these exceptions re-admit alongside other per-run resources.
     home = Path.home()
     paths = [
         # Codex scrubs the MCP subprocess environment, so uv falls back to its
