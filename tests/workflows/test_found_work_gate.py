@@ -159,6 +159,52 @@ class TestPermissionDeferralFastPath:
         )
         assert variables["_found_work_owner_handoff_turn"] is True
 
+    def test_omitted_send_message_target_counts_as_parent_owner_handoff(self) -> None:
+        variables: dict[str, Any] = {}
+        capture_found_work_handoff(
+            _event(
+                HookEventType.AFTER_TOOL,
+                {
+                    "mcp_server": "gobby-agents",
+                    "mcp_tool": "send_message",
+                    "tool_input": {
+                        "server_name": "gobby-agents",
+                        "tool_name": "send_message",
+                        "arguments": {"content": "Owner handoff.", "message_type": "message"},
+                    },
+                    "tool_output": {"success": True},
+                },
+                {"is_failure": False},
+            ),
+            variables,
+        )
+        assert variables["_found_work_owner_handoff_turn"] is True
+
+    def test_session_targeted_send_message_counts_as_owner_handoff(self) -> None:
+        variables: dict[str, Any] = {}
+        capture_found_work_handoff(
+            _event(
+                HookEventType.AFTER_TOOL,
+                {
+                    "mcp_server": "gobby-agents",
+                    "mcp_tool": "send_message",
+                    "tool_input": {
+                        "server_name": "gobby-agents",
+                        "tool_name": "send_message",
+                        "arguments": {
+                            "target": "session",
+                            "target_id": SESSION_ID,
+                            "content": "Owner handoff.",
+                        },
+                    },
+                    "tool_output": {"success": True},
+                },
+                {"is_failure": False},
+            ),
+            variables,
+        )
+        assert variables["_found_work_owner_handoff_turn"] is True
+
     def test_activity_revision_tracks_only_mcp_and_shell_calls(self) -> None:
         variables: dict[str, Any] = {}
         capture_found_work_handoff(

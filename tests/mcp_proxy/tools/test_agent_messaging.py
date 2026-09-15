@@ -391,6 +391,8 @@ class TestSendMessage:
         assert "from_session" in schema["inputSchema"]["properties"]
         assert "project_id" in schema["inputSchema"]["properties"]
         assert "from_session" not in schema["inputSchema"]["required"]
+        assert "target" not in schema["inputSchema"]["required"]
+        assert "Spawned agents may omit target" in description
         assert "to_session" not in schema["inputSchema"]["properties"]
         assert "send_to_all" not in schema["inputSchema"]["properties"]
         target_schema = schema["inputSchema"]["properties"]["target"]
@@ -1274,6 +1276,59 @@ class TestSendMessage:
             call.kwargs["to_session"] for call in mock_message_manager.create_message.call_args_list
         ]
         assert recipients == ["s-parent"]
+
+    @pytest.mark.asyncio
+    async def test_spawned_agent_omitted_target_defaults_to_parent(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+    ) -> None:
+        mock_session_manager.get.side_effect = _spawned_child_session_lookup
+
+        with session_context_for_test("s-child"):
+            delivered = await messaging_registry.call("send_message", {"content": "status"})
+
+        assert delivered["success"] is True
+        recipients = [
+            call.kwargs["to_session"] for call in mock_message_manager.create_message.call_args_list
+        ]
+        assert recipients == ["s-parent"]
+
+    @pytest.mark.asyncio
+    async def test_non_spawned_omitted_target_returns_target_required(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+    ) -> None:
+        mock_session_manager.get.return_value = MockSession(id="s-from")
+
+        with session_context_for_test("s-from"):
+            result = await messaging_registry.call("send_message", {"content": "hello"})
+
+        assert result["success"] is False
+        assert result["error_code"] == "target_required"
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_spawned_agent_session_target_still_parent_only(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+    ) -> None:
+        mock_session_manager.get.side_effect = _spawned_child_session_lookup
+
+        with session_context_for_test("s-child"):
+            blocked = await messaging_registry.call(
+                "send_message",
+                {"target": "session", "target_id": "s-other", "content": "status"},
+            )
+
+        assert blocked["success"] is False
+        assert blocked["error_code"] == "send_message_parent_only"
+        mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_parent_clear_successor_receives_message_and_persists_run_result(

@@ -312,6 +312,45 @@ async def test_task_blocker_for_assigned_task_terminates(
 
 
 @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.asyncio
+async def test_task_blocker_omitted_target_defaults_to_parent(
+    db: HubDatabase,
+    agent_name: str,
+) -> None:
+    instance_manager = _register_bundled_agent_workflow(
+        db,
+        agent_name=agent_name,
+        current_step="implement",
+    )
+    engine = RuleEngine(db)
+    variables: dict[str, object] = {
+        "assigned_task_id": "#21617",
+        "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        "parent_session_id": PARENT_SESSION_UUID,
+    }
+
+    await engine.evaluate(
+        _after_tool_event(
+            mcp_server="gobby-agents",
+            mcp_tool="send_message",
+            tool_arguments={
+                "message_type": "task_blocker",
+                "metadata": {"task_id": "#21617"},
+                "content": "The assigned task cannot proceed.",
+            },
+            tool_output={"success": True, "target_id": PARENT_SESSION_UUID},
+        ),
+        session_id=AGENT_SESSION_ID,
+        variables=variables,
+    )
+
+    instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["blocker_handed_off"] is True
+
+
+@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
 @pytest.mark.parametrize("metadata", ({"task_id": "#21618"}, None))
 @pytest.mark.asyncio
 async def test_task_blocker_for_other_task_does_not_terminate(
