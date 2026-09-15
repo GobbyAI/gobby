@@ -13,20 +13,23 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 420);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"
+        "de97eecd7d9827858ce44add51d6260f95745de5e8bacda746009cd3bc40ce4e"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 437);
-    assert_eq!(identity.latest_asset.filename, "437_add_ask_artifacts.sql");
+    assert_eq!(identity.latest_asset.version, 438);
+    assert_eq!(
+        identity.latest_asset.filename,
+        "438_rotate_expired_principal.sql",
+    );
     assert_eq!(
         identity.latest_asset.checksum,
-        "760f6ff692279b5f5130c5c5a24e06ac10899685ebea90a73313f1af0b5cc88f"
+        "630000397ba6e8aef4494d73bfa1b325a671c1e6a954c39e5db23b9a22215467"
     );
     assert_eq!(
         identity.root_hash,
-        "8c1b94f207a0dbec20019e15283327e78f2b4068bf2d2a092fd3c4fa46685ba6"
+        "6d2e3476590cf7f24c17ddf320daaf83bff820a013502deb024c30e7efa174d3"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

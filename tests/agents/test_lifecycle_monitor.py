@@ -920,11 +920,12 @@ def _make_terminal_run(
     clone_id: str | None = None,
     requested_reasoning_effort: str | None = None,
     task_id: str | None = None,
+    provider: str = "claude",
 ) -> AgentRun:
     """Helper to create a running terminal-mode agent in the DB."""
     run = agent_run_manager.create(
         parent_session_id=sample_session["id"],
-        provider="claude",
+        provider=provider,
         prompt="test",
         run_id=run_id,
         child_session_id=child_session_id,
@@ -4013,6 +4014,34 @@ class TestCheckProviderStalls:
             stalled = await monitor.check_provider_stalls()
 
         assert stalled == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_terminal_is_debug(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id=_rid("run-stall-missing"),
+            terminal_id="gobby-stall-missing",
+        )
+        temp_db.execute(
+            "UPDATE terminals SET state = %s WHERE id = %s",
+            ("exited", run.terminal_id),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.agents.agent_health"):
+            stalled = await monitor.check_provider_stalls()
+
+        assert stalled == 0
+        records = [record for record in caplog.records if "missing terminal" in record.getMessage()]
+        assert records
+        assert all(record.levelno == logging.DEBUG for record in records)
 
 
 class TestCheckProviderStallsKillsAgent:

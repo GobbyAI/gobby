@@ -162,6 +162,9 @@ impl GrantError {
             (401, other) => Some(Self::Unauthorized(
                 other.unwrap_or("unspecified").to_string(),
             )),
+            (403, Some("claims_mismatch")) => Some(Self::Unauthorized(
+                daemon_rejection_message(body).unwrap_or_else(|| "claims_mismatch".to_string()),
+            )),
             _ => None,
         }
     }
@@ -171,6 +174,14 @@ impl GrantError {
 fn daemon_rejection_code(body: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     value.get("code")?.as_str().map(str::to_owned)
+}
+
+fn daemon_rejection_message(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
 }
 
 fn api_contract_mismatch_display(

@@ -180,6 +180,7 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                 "handshake rejected",
                 extra={
                     "code": error.code,
+                    "rejection_message": error.message,
                     "kind": principal_kind,
                     "execution_id": execution_id,
                     "session_id": session_id,

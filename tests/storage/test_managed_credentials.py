@@ -1729,6 +1729,20 @@ def test_issue_tool_request_accepts_registered_overlay_without_primary(  # tdd-r
                 "DELETE FROM public.worktrees WHERE project_id = %s",
                 (fixture.project_id,),
             )
+            admin.execute(
+                """
+                INSERT INTO public.project_checkouts
+                    (machine_id, project_id, root_path)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (machine_id, project_id) DO UPDATE
+                SET root_path = EXCLUDED.root_path
+                """,
+                (
+                    fixture.machine_id,
+                    fixture.project_id,
+                    f"/tmp/checkout-{fixture.machine_id}",
+                ),
+            )
         manager.close()
 
 

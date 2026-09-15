@@ -1517,8 +1517,7 @@ BEGIN
     SELECT count(*) INTO active_count
     FROM principal_bindings
     WHERE managed_execution_id = requested_execution_id
-      AND revoked_at IS NULL
-      AND expires_at > clock_timestamp();
+      AND revoked_at IS NULL;
     IF active_count <> 1 THEN
         RAISE EXCEPTION 'rotation requires exactly one active principal binding'
             USING ERRCODE = '42501';
@@ -1526,8 +1525,7 @@ BEGIN
     SELECT * INTO STRICT source_binding
     FROM principal_bindings
     WHERE managed_execution_id = requested_execution_id
-      AND revoked_at IS NULL
-      AND expires_at > clock_timestamp();
+      AND revoked_at IS NULL;
     SELECT COALESCE(max(pb.credential_generation), 0) + 1
     INTO next_generation
     FROM principal_bindings pb
@@ -1608,8 +1606,7 @@ BEGIN
     SELECT max(pb.credential_generation) INTO v_current_generation
     FROM principal_bindings AS pb
     WHERE pb.managed_execution_id = p_execution_id
-      AND pb.revoked_at IS NULL
-      AND pb.expires_at > clock_timestamp();
+      AND pb.revoked_at IS NULL;
     IF v_current_generation IS DISTINCT FROM p_expected_generation THEN
         RETURN;
     END IF;
