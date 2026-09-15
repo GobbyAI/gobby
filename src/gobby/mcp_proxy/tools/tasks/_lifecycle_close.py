@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseEvaluationFingerprint,
     format_git_since,
+    task_edit_languages,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     closes_as_structural_parent as _closes_as_structural_parent,
@@ -562,6 +563,10 @@ async def _evaluate_close(
                 attempted_paths=tuple(attempted_paths),
                 degraded_capabilities=(message,),
             )
+        transcript = replace(
+            transcript,
+            edit_languages=task_edit_languages(ctx, task.project_id, transcript.edits),
+        )
         evaluation.transcript_evidence = transcript.summary()
         command_gate = replace(
             evaluate_validation_commands(

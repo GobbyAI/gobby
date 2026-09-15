@@ -17,11 +17,11 @@ from typing import Any
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.config.validation_detection import (
-    ValidationCommandMatcher,
     ValidationDetectionConfig,
     classify_validation_command,
     resolve_validation_detection_config,
 )
+from gobby.config.validation_matchers import ValidationCommandMatcher
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.tasks.command_equivalence import target_covers
