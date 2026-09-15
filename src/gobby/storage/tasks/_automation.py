@@ -20,6 +20,7 @@ from gobby.storage.sessions._constants import (
     SESSION_REVIVAL_HORIZON_HOURS,
 )
 from gobby.storage.sql_dialect import json_array_contains_condition
+from gobby.storage.task_close_reviews import ACTIVE_TASK_CLOSE_REVIEW_STATUSES
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
@@ -259,7 +260,12 @@ def sweep_stale_claims(
     *,
     project_id: str | None = None,
 ) -> int:
-    """Release task claims held by sessions that are no longer active."""
+    """Release task claims held by sessions that are no longer active.
+
+    A task whose close review is still active keeps its claim: the close
+    fingerprint keys on the claim owner, so releasing it would turn the
+    pending verdict stale even though the headless caller already exited.
+    """
     live_session_clause, live_session_params = json_array_contains_condition(
         db,
         "tasks.labels",
@@ -267,6 +273,7 @@ def sweep_stale_claims(
     )
     params: list[Any] = list(live_session_params)
     params.append(list(LIVE_SESSION_STATUS_ORDER))
+    params.append(list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES))
     project_filter = ""
     if project_id is not None:
         project_filter = "AND tasks.project_id = %s"
@@ -288,6 +295,11 @@ def sweep_stale_claims(
                SELECT 1 FROM sessions s
                 WHERE s.id = tasks.claimed_by_session_id
               AND s.status = ANY(%s)
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM task_close_reviews review
+                WHERE review.task_id = tasks.id
+                  AND review.status = ANY(%s)
            )
            {project_filter}
         """,  # nosec B608 # project_filter is static SQL selected above.
