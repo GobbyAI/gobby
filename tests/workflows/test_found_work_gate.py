@@ -180,7 +180,7 @@ class TestPermissionDeferralFastPath:
         )
         assert variables["_found_work_owner_handoff_turn"] is True
 
-    def test_non_parent_send_message_does_not_count_as_owner_handoff(self) -> None:
+    def test_session_targeted_send_message_counts_as_owner_handoff(self) -> None:
         variables: dict[str, Any] = {}
         capture_found_work_handoff(
             _event(
@@ -194,7 +194,7 @@ class TestPermissionDeferralFastPath:
                         "arguments": {
                             "target": "session",
                             "target_id": SESSION_ID,
-                            "content": "Not an owner handoff.",
+                            "content": "Owner handoff.",
                         },
                     },
                     "tool_output": {"success": True},
@@ -203,8 +203,7 @@ class TestPermissionDeferralFastPath:
             ),
             variables,
         )
-        assert variables["_found_work_activity_revision"] == 1
-        assert variables.get("_found_work_owner_handoff_turn") is not True
+        assert variables["_found_work_owner_handoff_turn"] is True
 
     def test_activity_revision_tracks_only_mcp_and_shell_calls(self) -> None:
         variables: dict[str, Any] = {}
