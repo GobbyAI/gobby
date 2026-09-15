@@ -160,7 +160,9 @@ a citation, and citations that do not support their claim, are counted separatel
 The key was kept outside the repository until every run finished. The agents ran
 with isolation `none` in this checkout, and the code index serves `docs/`, so a key
 in the working tree would have been retrievable evidence. Citations were rechecked
-against HEAD after the runs; #22395 shifted the `middleware/auth.py` lines by one.
+against HEAD after the runs. #22395 (dead hook override) and #22385 (GitHub
+webhook prefix) each removed a line from `middleware/auth.py`, which moved its
+citations.
 
 1. `useAuth` checks `GET /api/auth/status` on mount and exposes login
    (`POST /api/auth/login`) and logout (`POST /api/auth/logout`)
@@ -190,10 +192,10 @@ against HEAD after the runs; #22395 shifted the `middleware/auth.py` lines by on
     (`src/gobby/storage/users.py:155-170`).
 11. `AuthMiddleware` is installed app-wide (`src/gobby/servers/app_factory.py:128-130`);
     public paths include `/`, `/api/health`, and the `/api/auth`, webhook, and
-    `/assets` prefixes (`src/gobby/servers/middleware/auth.py:27-43`).
+    `/assets` prefixes (`src/gobby/servers/middleware/auth.py:27-42`).
 12. Unauthenticated requests to `/api/`, `/mcp`, or `/memory` get a 401 JSON error
     with login and CLI-token guidance; other browser routes fall through to the SPA
-    shell so React renders login (`src/gobby/servers/middleware/auth.py:45-54`,
+    shell so React renders login (`src/gobby/servers/middleware/auth.py:44-53`,
     `AuthMiddleware.dispatch`).
 13. Accepted credentials, in order: `Authorization: Bearer` (local CLI token or agent
     API token), `X-Gobby-Local-Token`, then the `gobby_session` cookie
