@@ -158,7 +158,6 @@ def test_public_prefix_matrix() -> None:
         "/api/health",
         "/api/admin/startup-progress",
         "/api/comms/webhooks/slack",
-        "/api/github/webhooks/triage/project",
         "/assets/index.js",
         "/favicon.ico",
         "/logo.png",
@@ -208,18 +207,9 @@ def test_public_webhooks_signature_gated() -> None:
             return JSONResponse({}, status_code=401)
         return JSONResponse({"accepted": True})
 
-    @app.post("/api/github/webhooks/signed")
-    async def github_webhook(request: Request) -> Response:
-        body = await request.body()
-        expected = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(request.headers.get("x-hub-signature-256", ""), expected):
-            return JSONResponse({}, status_code=401)
-        return JSONResponse({"accepted": True})
-
     client = TestClient(app)
     body = b'{"event":"ping"}'
     comms_signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
-    github_signature = "sha256=" + comms_signature
 
     assert client.post("/api/comms/webhooks/signed", content=body).status_code == 401
     assert (
@@ -231,14 +221,6 @@ def test_public_webhooks_signature_gated() -> None:
         == 200
     )
     assert client.post("/api/github/webhooks/signed", content=body).status_code == 401
-    assert (
-        client.post(
-            "/api/github/webhooks/signed",
-            content=body,
-            headers={"X-Hub-Signature-256": github_signature},
-        ).status_code
-        == 200
-    )
 
 
 def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:

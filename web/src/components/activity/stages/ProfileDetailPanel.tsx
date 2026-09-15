@@ -13,7 +13,6 @@ import {
 } from "../fields";
 import type { BuildProfile, ProfileSource } from "./StagesTabData";
 import {
-  DELIVERY_MODE_OPTIONS,
   ISOLATION_OPTIONS,
   PROFILE_SOURCE_OPTIONS,
   createProfileDraft,
@@ -143,23 +142,6 @@ export function ProfileDetailPanel({
             options={[...ISOLATION_OPTIONS]}
             onChange={(value) =>
               setField("isolation", value as BuildProfile["isolation"])
-            }
-          />
-          <SelectField
-            label="Delivery mode"
-            ariaLabel="Delivery mode"
-            value={draft.delivery_mode}
-            options={[...DELIVERY_MODE_OPTIONS]}
-            onChange={(value) =>
-              setField("delivery_mode", value as BuildProfile["delivery_mode"])
-            }
-          />
-          <TextField
-            label="Delivery target repo"
-            ariaLabel="Delivery target repo"
-            value={draft.delivery_target_repo ?? ""}
-            onChange={(value) =>
-              setField("delivery_target_repo", value || null)
             }
           />
           <SwitchField

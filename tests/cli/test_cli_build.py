@@ -60,8 +60,6 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "Stage cap/settings override" in result.output
     assert "Stage selector" not in result.output
     assert "--profile" in result.output
-    assert "--delivery-mode" in result.output
-    assert "--delivery-target-repo" in result.output
     assert "--unattended" not in result.output
     assert "--yolo" not in result.output
     assert "--stages" not in result.output
@@ -116,10 +114,6 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "--skip-stage",
                 "qa,pr",
                 "--clone",
-                "--delivery-mode",
-                "auto",
-                "--delivery-target-repo",
-                "owner/repo",
                 "--no-merge",
                 "--pr",
                 "123",
@@ -161,10 +155,6 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
     assert opts.isolation_explicit is True
-    assert opts.delivery_mode == "auto"
-    assert opts.delivery_mode_explicit is True
-    assert opts.delivery_target_repo == "owner/repo"
-    assert opts.delivery_target_repo_explicit is True
     assert opts.no_merge is True
     assert opts.pr == "123"
     assert [
@@ -305,23 +295,19 @@ def test_build_payload_includes_dry_run() -> None:
     assert payload["dry_run"] is True
 
 
-def test_build_payload_includes_explicit_profile_and_delivery_fields() -> None:
+def test_build_payload_includes_explicit_profile() -> None:
     from gobby.cli.build import _build_payload
 
     payload = _build_payload(
         BuildOptions(
             profile="submit",
-            delivery_mode="pull_request",
-            delivery_mode_explicit=True,
-            delivery_target_repo="owner/repo",
-            delivery_target_repo_explicit=True,
         ),
         "#42",
     )
 
     assert payload["profile"] == "submit"
-    assert payload["delivery_mode"] == "pull_request"
-    assert payload["delivery_target_repo"] == "owner/repo"
+    assert "delivery_mode" not in payload
+    assert "delivery_target_repo" not in payload
 
 
 def test_build_payload_includes_coordinator() -> None:

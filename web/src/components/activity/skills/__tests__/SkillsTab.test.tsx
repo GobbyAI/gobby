@@ -123,7 +123,7 @@ function setupFetch(skills: SkillRecord[]) {
       name: "gobby",
       display_name: "Gobby",
       checkout: { machine_id: "machine-1", root_path: "/repo" },
-      github_repo: null,
+
       session_count: 0,
       open_task_count: 0,
     },

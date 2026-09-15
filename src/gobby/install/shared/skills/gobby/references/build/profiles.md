@@ -12,11 +12,11 @@ row wins. A disabled match fails; it does not fall back to a bundled profile.
 The omitted profile name is `default`. Explicit request fields override the
 corresponding profile values, including explicit false/zero/empty-list values.
 
-Profiles cover skipped stages, isolation, unattended posture, delivery mode and
-target repository, and enhancement-round defaults. Inspect actual installed
+Profiles cover skipped stages, isolation, unattended posture, local delivery,
+and enhancement-round defaults. Inspect actual installed
 rows rather than declaring bundled `autopilot`, `fix`, `fix-merge`, or `submit`
-active. `pull_request` delivery uses an optional `owner/repo` target; delivery
-procedures and publication authority belong to source-control guidance.
+active. Delivery is local merge/publication; source-control guidance owns
+branch push and workspace landing.
 
 Use `create_profile` for a project preset, `update_profile` for selected fields,
 and `enable_profile`/`disable_profile` for availability. Names are immutable.

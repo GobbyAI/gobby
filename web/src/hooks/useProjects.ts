@@ -37,10 +37,6 @@ export interface ProjectWithStats {
     machine_id: string;
     root_path: string;
   } | null;
-  github_url: string | null;
-  github_repo: string | null;
-  linear_team_id: string | null;
-  linear_project_id: string | null;
   approval_rules: string[];
   validation_detection: Record<string, unknown> | null;
   created_at: string;
@@ -54,10 +50,6 @@ export type ProjectUpdateFields = Partial<
   Pick<
     ProjectWithStats,
     | "name"
-    | "github_url"
-    | "github_repo"
-    | "linear_team_id"
-    | "linear_project_id"
     | "approval_rules"
     | "validation_detection"
   >
@@ -182,8 +174,8 @@ export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
     return projects.filter(
       (p) =>
         p.display_name.toLowerCase().includes(q) ||
-        (p.checkout?.root_path.toLowerCase().includes(q) ?? false) ||
-        (p.github_repo && p.github_repo.toLowerCase().includes(q)),
+        (p.checkout?.root_path.toLowerCase().includes(q) ?? false),
+
     );
   }, [projects, searchText]);
 

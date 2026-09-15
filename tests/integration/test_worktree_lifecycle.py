@@ -74,7 +74,7 @@ def project(
 ) -> Project:
     """Create a test project."""
     return isolated_checkout_factory(
-        project_manager.db, "test-project", github_url="https://github.com/test/test-project"
+        project_manager.db, "test-project"
     ).project
 
 

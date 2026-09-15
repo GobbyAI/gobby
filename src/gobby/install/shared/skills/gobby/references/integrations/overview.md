@@ -1,13 +1,14 @@
 # Integrations
 
-Load when connecting provider hooks, external issue trackers, webhook receivers,
-or extension packages. `$gobby integrations references` lists topics; menus
-do not enable automation, send events, install plugins, or update external issues.
+Load when connecting provider hooks, webhook receivers, extension packages,
+or GitHub/Linear MCP servers. `$gobby integrations references` lists topics;
+menus do not enable automation, send events, install plugins, or update
+external issues.
 
 1. Load `hooks.md` for provider hook wiring, native transport and verification hooks.
-2. Load `webhooks.md` for outbound hook/pipeline delivery and inbound GitHub intake.
+2. Load `webhooks.md` for outbound hook/pipeline delivery.
 3. Load `plugins.md` before choosing an extension mechanism.
-4. Load `external.md` for GitHub/Linear setup, import, synchronization and recovery.
+4. Load `external.md` for GitHub/Linear MCP server setup.
 
 Discover the actual external MCP server before its tools. A connected server is
 not an installed skill. Use `mcp-servers` for connection/authentication setup,

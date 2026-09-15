@@ -52,17 +52,17 @@ def populated_hub_db(temp_hub_db):
     # Insert test projects first (required for foreign keys)
     db.execute(
         """
-        INSERT INTO projects (id, name, github_url, created_at, updated_at)
-        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (PROJECT_ALPHA, "Project Alpha", None),
+        (PROJECT_ALPHA, "Project Alpha"),
     )
     db.execute(
         """
-        INSERT INTO projects (id, name, github_url, created_at, updated_at)
-        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (PROJECT_BETA, "Project Beta", None),
+        (PROJECT_BETA, "Project Beta"),
     )
 
     task_manager = LocalTaskManager(db)
@@ -130,10 +130,10 @@ class TestListAllProjects:
         """Hub registry queries the active adapter, even when it is not HubDatabase."""
         non_local_hub_db.execute(
             """
-            INSERT INTO projects (id, name, github_url, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            INSERT INTO projects (id, name, created_at, updated_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (ACTIVE_DB_PROJECT, "Active DB", None),
+            (ACTIVE_DB_PROJECT, "Active DB"),
         )
         registry = create_hub_registry(db=non_local_hub_db)
         tool = registry.get_tool("list_all_projects")
@@ -179,17 +179,17 @@ class TestListAllProjects:
         db = temp_hub_db
         db.execute(
             """
-        INSERT INTO projects (id, name, github_url, created_at, updated_at)
-        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-            (REAL_PROJECT, "my-app", None),
+            (REAL_PROJECT, "my-app"),
         )
         db.execute(
             """
-        INSERT INTO projects (id, name, github_url, created_at, updated_at)
-        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-            ("99999999-9999-4999-8999-9999999999b1", "_orphaned_test", None),
+            ("99999999-9999-4999-8999-9999999999b1", "_orphaned_test"),
         )
 
         registry = create_hub_registry(db=db)

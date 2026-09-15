@@ -31,7 +31,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_embeddings_router,
         create_feedback_router,
         create_files_router,
-        create_github_triage_router,
         create_health_router,
         create_hooks_router,
         create_hub_files_proxy_router,
@@ -90,7 +89,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_pipelines_router(server))
     app.include_router(create_files_router(server))
     app.include_router(create_hub_files_proxy_router())
-    app.include_router(create_github_triage_router(server))
     app.include_router(create_projects_router(server))
     app.include_router(create_profiles_router(server))
     app.include_router(create_providers_router(server))

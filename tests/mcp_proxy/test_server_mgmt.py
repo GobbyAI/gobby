@@ -298,7 +298,7 @@ class TestServerManagementServiceImport:
             ),
         ):
             result = await service.import_server(
-                github_url="https://github.com/test/repo",
+                
             )
 
         assert result["success"] is True
@@ -381,7 +381,6 @@ class TestServerManagementServiceImport:
         ):
             await service.import_server(
                 from_project="source",
-                github_url="https://github.com/test/repo",
                 query="test query",
             )
 

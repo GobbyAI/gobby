@@ -45,7 +45,7 @@ def no_checkout(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> _NoChe
     machine_id = insert_isolated_machine(temp_db)
     patch_local_machine_id(monkeypatch, machine_id)
     project = LocalProjectManager(temp_db).create(
-        name="no-checkout", github_url="https://github.com/test/no-checkout"
+        name="no-checkout"
     )
     session = SessionManager(temp_db).register(
         external_id="no-checkout-session",
@@ -141,19 +141,6 @@ async def test_validate_plan_file_returns_checkout_unresolved(
 
     result = await registry.call("validate_plan_file", {"plan_file": "docs/plans/plan.md"})
 
-    _assert_checkout_unresolved(result)
-
-
-@pytest.mark.asyncio
-async def test_open_delivery_pr_returns_checkout_unresolved(no_checkout: _NoCheckout) -> None:
-    registry = create_task_ops_registry(no_checkout.task_manager)
-
-    result = await registry.call(
-        "open_delivery_pr", {"task_id": no_checkout.task.id, "target_branch": "main"}
-    )
-
-    assert result["ok"] is False
-    assert result["task_id"] == no_checkout.task.id
     _assert_checkout_unresolved(result)
 
 

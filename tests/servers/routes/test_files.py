@@ -97,9 +97,6 @@ class TestFilesRoutes:
                 "id": mock_project.id,
                 "name": mock_project.name,
                 "repo_path": mock_project.repo_path,
-                "github_url": None,
-                "github_repo": None,
-                "linear_team_id": None,
                 "created_at": "2024-01-01T00:00:00",
                 "updated_at": "2024-01-01T00:00:00",
             }
@@ -112,9 +109,6 @@ class TestFilesRoutes:
                     "id": mock_project.id,
                     "name": mock_project.name,
                     "repo_path": mock_project.repo_path,
-                    "github_url": None,
-                    "github_repo": None,
-                    "linear_team_id": None,
                     "created_at": "2024-01-01T00:00:00",
                     "updated_at": "2024-01-01T00:00:00",
                 }
@@ -446,9 +440,6 @@ class TestFilesRoutes:
                 "id": GIT_PROJECT_ID,
                 "name": "git-proj",
                 "repo_path": str(git_dir),
-                "github_url": None,
-                "github_repo": None,
-                "linear_team_id": None,
                 "created_at": "2024-01-01T00:00:00",
                 "updated_at": "2024-01-01T00:00:00",
             }
@@ -521,9 +512,6 @@ class TestFilesRoutes:
                 "id": GIT_DIFF_PROJECT_ID,
                 "name": "git-diff-proj",
                 "repo_path": str(git_dir),
-                "github_url": None,
-                "github_repo": None,
-                "linear_team_id": None,
                 "created_at": "2024-01-01T00:00:00",
                 "updated_at": "2024-01-01T00:00:00",
             }

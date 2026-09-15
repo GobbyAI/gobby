@@ -1909,58 +1909,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "external_issue_sync_status.consecutive_failures",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.last_attempt_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.last_error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.last_outbound_success_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.last_statistics",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.last_success_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.linked_count",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.pending_count",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.provider",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.retry_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.state",
-      "definition": "text|text|NO|'disabled'::text|NEVER"
-    },
-    {
-      "name": "external_issue_sync_status.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
       "name": "feedback_review_runs.actions",
       "definition": "jsonb|jsonb|YES||NEVER"
     },
@@ -2011,170 +1959,6 @@
     {
       "name": "feedback_review_runs.window_start",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.content_hash",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.decision_json",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.dedup_issue_key",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.issue_number",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.issue_state",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.issue_updated_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.issue_url",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.labels_json",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.last_triaged_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.repo",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.source",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.source_text",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.task_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.vector_point_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_issues_triaged.verdict",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_build_dispatches.dispatched_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "gh_triage_build_dispatches.issue_number",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_build_dispatches.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_build_dispatches.repo",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_build_dispatches.task_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.action",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.attempt_count",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.delivery_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.event",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.headers_json",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.issue_number",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.next_attempt_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.payload_hash",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.processed_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.raw_body",
-      "definition": "text|text|NO|''::text|NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.received_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.repository",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.status",
-      "definition": "text|text|NO|'pending'::text|NEVER"
-    },
-    {
-      "name": "gh_triage_deliveries.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "hook_force_continue_budgets.count",
@@ -3277,42 +3061,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "project_github_triage_configs.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.project_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.reconcile_interval_seconds",
-      "definition": "integer|int4|NO|3600|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.repositories_json",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.sync_enabled",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.triage_enabled",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.webhook_enabled",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "project_github_triage_configs.webhook_secret_ref",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "project_lifecycle_events.by_actor",
       "definition": "text|text|NO||NEVER"
     },
@@ -3345,32 +3093,8 @@
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
-      "name": "projects.github_repo",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "projects.github_url",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "projects.id",
       "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "projects.linear_project_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "projects.linear_sync_enabled",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "projects.linear_synced_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "projects.linear_team_id",
-      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "projects.name",
@@ -5177,126 +4901,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "task_delivery_campaigns.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.delivery_mode",
-      "definition": "text|text|NO|'auto'::text|NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.last_error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.merge_report_ref",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.merge_sha",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.merge_strategy",
-      "definition": "text|text|NO|'squash'::text|NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.pr_report_ref",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.source_repo",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.state",
-      "definition": "text|text|NO|'pending'::text|NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.structured_pr_verdict",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.target_repo",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.task_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "task_delivery_campaigns.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "task_delivery_units.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "task_delivery_units.gate_snapshot_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.github_pr_number",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "task_delivery_units.last_error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.local_update_attempts",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "task_delivery_units.pr_required",
-      "definition": "boolean|bool|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.pr_state",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.pr_url",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.protection_json",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.repo",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.source_branch",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "task_delivery_units.target_branch",
-      "definition": "text|text|NO|'main'::text|NEVER"
-    },
-    {
-      "name": "task_delivery_units.task_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "task_delivery_units.unit_key",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "task_delivery_units.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "task_delivery_units.worktree_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
       "name": "task_dependencies.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -5705,18 +5309,6 @@
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "tasks.github_issue_number",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "tasks.github_pr_number",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "tasks.github_repo",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "tasks.id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -5735,14 +5327,6 @@
     {
       "name": "tasks.labels",
       "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "tasks.linear_issue_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "tasks.linear_team_id",
-      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "tasks.merge_in_progress",
@@ -7071,88 +6655,12 @@
       "definition": "FOREIGN KEY (triggering_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE"
     },
     {
-      "name": "external_issue_sync_status.external_issue_sync_status_consecutive_failures_check",
-      "definition": "CHECK (consecutive_failures >= 0)"
-    },
-    {
-      "name": "external_issue_sync_status.external_issue_sync_status_linked_count_check",
-      "definition": "CHECK (linked_count >= 0)"
-    },
-    {
-      "name": "external_issue_sync_status.external_issue_sync_status_pending_count_check",
-      "definition": "CHECK (pending_count >= 0)"
-    },
-    {
-      "name": "external_issue_sync_status.external_issue_sync_status_pkey",
-      "definition": "PRIMARY KEY (project_id, provider)"
-    },
-    {
-      "name": "external_issue_sync_status.external_issue_sync_status_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "external_issue_sync_status.external_issue_sync_status_provider_check",
-      "definition": "CHECK (provider = ANY (ARRAY['linear'::text, 'github'::text]))"
-    },
-    {
-      "name": "external_issue_sync_status.external_issue_sync_status_state_check",
-      "definition": "CHECK (state = ANY (ARRAY['disabled'::text, 'pending'::text, 'running'::text, 'healthy'::text, 'degraded'::text, 'rate_limited'::text, 'unready'::text]))"
-    },
-    {
       "name": "feedback_review_runs.feedback_review_runs_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
       "name": "feedback_review_runs.feedback_review_runs_status_vocab",
       "definition": "CHECK (status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text, 'partial'::text]))"
-    },
-    {
-      "name": "gh_issues_triaged.gh_issues_triaged_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "gh_issues_triaged.gh_issues_triaged_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "gh_issues_triaged.gh_issues_triaged_project_id_repo_issue_number_key",
-      "definition": "UNIQUE (project_id, repo, issue_number)"
-    },
-    {
-      "name": "gh_issues_triaged.gh_issues_triaged_task_id_fkey",
-      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE"
-    },
-    {
-      "name": "gh_issues_triaged.gh_issues_triaged_verdict_check",
-      "definition": "CHECK (verdict = ANY (ARRAY['implement'::text, 'skip'::text, 'escalate'::text, 'dedup'::text]))"
-    },
-    {
-      "name": "gh_triage_build_dispatches.gh_triage_build_dispatches_pkey",
-      "definition": "PRIMARY KEY (project_id, repo, issue_number)"
-    },
-    {
-      "name": "gh_triage_build_dispatches.gh_triage_build_dispatches_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "gh_triage_build_dispatches.gh_triage_build_dispatches_task_id_fkey",
-      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "gh_triage_deliveries.gh_triage_deliveries_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "gh_triage_deliveries.gh_triage_deliveries_project_id_delivery_id_key",
-      "definition": "UNIQUE (project_id, delivery_id)"
-    },
-    {
-      "name": "gh_triage_deliveries.gh_triage_deliveries_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "gh_triage_deliveries.gh_triage_deliveries_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'processing'::text, 'processed'::text, 'ignored'::text, 'duplicate'::text, 'error'::text]))"
     },
     {
       "name": "hook_force_continue_budgets.hook_force_continue_budgets_count_nonnegative",
@@ -7495,40 +7003,12 @@
       "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
     },
     {
-      "name": "project_github_triage_configs.project_github_triage_configs_pkey",
-      "definition": "PRIMARY KEY (project_id)"
-    },
-    {
-      "name": "project_github_triage_configs.project_github_triage_configs_project_id_fkey",
-      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "project_github_triage_configs.project_github_triage_configs_reconcile_interval_seconds_check",
-      "definition": "CHECK (reconcile_interval_seconds > 0)"
-    },
-    {
-      "name": "project_github_triage_configs.project_github_triage_configs_sync_enabled_check",
-      "definition": "CHECK (sync_enabled = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "project_github_triage_configs.project_github_triage_configs_triage_enabled_check",
-      "definition": "CHECK (triage_enabled = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "project_github_triage_configs.project_github_triage_configs_webhook_enabled_check",
-      "definition": "CHECK (webhook_enabled = ANY (ARRAY[false, true]))"
-    },
-    {
       "name": "project_lifecycle_events.project_lifecycle_events_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
       "name": "project_lifecycle_events.project_lifecycle_events_project_id_fkey",
       "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "projects.projects_linear_sync_enabled_check",
-      "definition": "CHECK (linear_sync_enabled = ANY (ARRAY[false, true]))"
     },
     {
       "name": "projects.projects_pkey",
@@ -8097,38 +7577,6 @@
     {
       "name": "task_comments.task_comments_task_id_fkey",
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "task_delivery_campaigns.task_delivery_campaigns_delivery_mode_check",
-      "definition": "CHECK (delivery_mode = ANY (ARRAY['auto'::text, 'pull_request'::text]))"
-    },
-    {
-      "name": "task_delivery_campaigns.task_delivery_campaigns_merge_strategy_check",
-      "definition": "CHECK (merge_strategy = ANY (ARRAY['merge'::text, 'squash'::text, 'rebase'::text]))"
-    },
-    {
-      "name": "task_delivery_campaigns.task_delivery_campaigns_pkey",
-      "definition": "PRIMARY KEY (task_id)"
-    },
-    {
-      "name": "task_delivery_campaigns.task_delivery_campaigns_task_id_fkey",
-      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "task_delivery_units.task_delivery_units_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "task_delivery_units.task_delivery_units_pr_required_check",
-      "definition": "CHECK (pr_required = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "task_delivery_units.task_delivery_units_task_id_fkey",
-      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
-      "name": "task_delivery_units.task_delivery_units_task_id_unit_key_key",
-      "definition": "UNIQUE (task_id, unit_key)"
     },
     {
       "name": "task_dependencies.task_dependencies_depends_on_fkey",
@@ -8931,32 +8379,8 @@
       "definition": "CREATE UNIQUE INDEX expansion_runs_pkey ON $schema.expansion_runs USING btree (id)"
     },
     {
-      "name": "external_issue_sync_status_pkey",
-      "definition": "CREATE UNIQUE INDEX external_issue_sync_status_pkey ON $schema.external_issue_sync_status USING btree (project_id, provider)"
-    },
-    {
       "name": "feedback_review_runs_pkey",
       "definition": "CREATE UNIQUE INDEX feedback_review_runs_pkey ON $schema.feedback_review_runs USING btree (id)"
-    },
-    {
-      "name": "gh_issues_triaged_pkey",
-      "definition": "CREATE UNIQUE INDEX gh_issues_triaged_pkey ON $schema.gh_issues_triaged USING btree (id)"
-    },
-    {
-      "name": "gh_issues_triaged_project_id_repo_issue_number_key",
-      "definition": "CREATE UNIQUE INDEX gh_issues_triaged_project_id_repo_issue_number_key ON $schema.gh_issues_triaged USING btree (project_id, repo, issue_number)"
-    },
-    {
-      "name": "gh_triage_build_dispatches_pkey",
-      "definition": "CREATE UNIQUE INDEX gh_triage_build_dispatches_pkey ON $schema.gh_triage_build_dispatches USING btree (project_id, repo, issue_number)"
-    },
-    {
-      "name": "gh_triage_deliveries_pkey",
-      "definition": "CREATE UNIQUE INDEX gh_triage_deliveries_pkey ON $schema.gh_triage_deliveries USING btree (id)"
-    },
-    {
-      "name": "gh_triage_deliveries_project_id_delivery_id_key",
-      "definition": "CREATE UNIQUE INDEX gh_triage_deliveries_project_id_delivery_id_key ON $schema.gh_triage_deliveries USING btree (project_id, delivery_id)"
     },
     {
       "name": "hook_force_continue_budgets_pkey",
@@ -9379,36 +8803,8 @@
       "definition": "CREATE INDEX idx_expansion_runs_status ON $schema.expansion_runs USING btree (status, created_at DESC)"
     },
     {
-      "name": "idx_external_issue_sync_status_state",
-      "definition": "CREATE INDEX idx_external_issue_sync_status_state ON $schema.external_issue_sync_status USING btree (provider, state, updated_at)"
-    },
-    {
       "name": "idx_feedback_review_runs_created",
       "definition": "CREATE INDEX idx_feedback_review_runs_created ON $schema.feedback_review_runs USING btree (created_at DESC)"
-    },
-    {
-      "name": "idx_gh_issues_triaged_project_hash",
-      "definition": "CREATE INDEX idx_gh_issues_triaged_project_hash ON $schema.gh_issues_triaged USING btree (project_id, content_hash)"
-    },
-    {
-      "name": "idx_gh_issues_triaged_task",
-      "definition": "CREATE INDEX idx_gh_issues_triaged_task ON $schema.gh_issues_triaged USING btree (task_id)"
-    },
-    {
-      "name": "idx_gh_triage_build_dispatches_task_id",
-      "definition": "CREATE INDEX idx_gh_triage_build_dispatches_task_id ON $schema.gh_triage_build_dispatches USING btree (task_id)"
-    },
-    {
-      "name": "idx_gh_triage_deliveries_issue",
-      "definition": "CREATE INDEX idx_gh_triage_deliveries_issue ON $schema.gh_triage_deliveries USING btree (project_id, repository, issue_number)"
-    },
-    {
-      "name": "idx_gh_triage_deliveries_project_status",
-      "definition": "CREATE INDEX idx_gh_triage_deliveries_project_status ON $schema.gh_triage_deliveries USING btree (project_id, status)"
-    },
-    {
-      "name": "idx_gh_triage_deliveries_retry",
-      "definition": "CREATE INDEX idx_gh_triage_deliveries_retry ON $schema.gh_triage_deliveries USING btree (project_id, status, next_attempt_at, updated_at)"
     },
     {
       "name": "idx_inter_session_messages_from_session",
@@ -9911,14 +9307,6 @@
       "definition": "CREATE INDEX idx_task_comments_task ON $schema.task_comments USING btree (task_id)"
     },
     {
-      "name": "idx_task_delivery_units_pr_url",
-      "definition": "CREATE INDEX idx_task_delivery_units_pr_url ON $schema.task_delivery_units USING btree (pr_url)"
-    },
-    {
-      "name": "idx_task_delivery_units_task_id",
-      "definition": "CREATE INDEX idx_task_delivery_units_task_id ON $schema.task_delivery_units USING btree (task_id)"
-    },
-    {
       "name": "idx_task_selection_session",
       "definition": "CREATE INDEX idx_task_selection_session ON $schema.task_selection_history USING btree (session_id, selected_at DESC)"
     },
@@ -9961,10 +9349,6 @@
     {
       "name": "idx_tasks_dispatch_scan",
       "definition": "CREATE INDEX idx_tasks_dispatch_scan ON $schema.tasks USING btree (allow_automation, closed_at, is_escalated)"
-    },
-    {
-      "name": "idx_tasks_github_issue_link",
-      "definition": "CREATE UNIQUE INDEX idx_tasks_github_issue_link ON $schema.tasks USING btree (project_id, github_repo, github_issue_number) WHERE ((github_repo IS NOT NULL) AND (github_issue_number IS NOT NULL))"
     },
     {
       "name": "idx_tasks_parent",
@@ -10235,10 +9619,6 @@
       "definition": "CREATE UNIQUE INDEX project_checkouts_pkey ON $schema.project_checkouts USING btree (machine_id, project_id)"
     },
     {
-      "name": "project_github_triage_configs_pkey",
-      "definition": "CREATE UNIQUE INDEX project_github_triage_configs_pkey ON $schema.project_github_triage_configs USING btree (project_id)"
-    },
-    {
       "name": "project_lifecycle_events_pkey",
       "definition": "CREATE UNIQUE INDEX project_lifecycle_events_pkey ON $schema.project_lifecycle_events USING btree (id)"
     },
@@ -10433,18 +9813,6 @@
     {
       "name": "task_comments_pkey",
       "definition": "CREATE UNIQUE INDEX task_comments_pkey ON $schema.task_comments USING btree (id)"
-    },
-    {
-      "name": "task_delivery_campaigns_pkey",
-      "definition": "CREATE UNIQUE INDEX task_delivery_campaigns_pkey ON $schema.task_delivery_campaigns USING btree (task_id)"
-    },
-    {
-      "name": "task_delivery_units_pkey",
-      "definition": "CREATE UNIQUE INDEX task_delivery_units_pkey ON $schema.task_delivery_units USING btree (id)"
-    },
-    {
-      "name": "task_delivery_units_task_id_unit_key_key",
-      "definition": "CREATE UNIQUE INDEX task_delivery_units_task_id_unit_key_key ON $schema.task_delivery_units USING btree (task_id, unit_key)"
     },
     {
       "name": "task_dependencies_pkey",

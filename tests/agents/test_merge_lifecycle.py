@@ -365,24 +365,19 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
     assert "merge -> terminate" in response.context
 
 
-@pytest.mark.parametrize(
-    ("mcp_key", "ready_to_terminate"),
-    [
-        ("gobby-tasks-ops:record_merge_result", False),
-        ("gobby-tasks-ops:close_linked_github_issue", True),
-    ],
-)
 async def test_merge_worker_tool_failure_without_durable_result_stays_in_merge(
     temp_db: HubDatabase,
-    mcp_key: str,
-    ready_to_terminate: bool,
 ) -> None:
     instance_manager = _install_merge_worker_workflow(temp_db)
     engine = RuleEngine(temp_db)
     variables: dict[str, Any] = {}
 
     await engine.evaluate(
-        _mcp_event(mcp_key, event_type=HookEventType.AFTER_TOOL, is_error=True),
+        _mcp_event(
+            "gobby-tasks-ops:record_merge_result",
+            event_type=HookEventType.AFTER_TOOL,
+            is_error=True,
+        ),
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
     )
@@ -391,11 +386,11 @@ async def test_merge_worker_tool_failure_without_durable_result_stays_in_merge(
     assert instance is not None
     assert instance.current_step == "merge"
     assert instance.variables["merge_result_recorded"] is False
-    assert instance.variables["merge_worker_ready_to_terminate"] is ready_to_terminate
+    assert instance.variables["merge_worker_ready_to_terminate"] is False
 
 
 @pytest.mark.asyncio
-async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
+async def test_merge_worker_success_record_transitions_to_cleanup(
     temp_db: HubDatabase,
 ) -> None:
     db = temp_db
@@ -414,22 +409,8 @@ async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
     )
     instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
-    assert instance.current_step == "merge"
-    assert instance.variables["merge_result_recorded"] is True
-
-    await engine.evaluate(
-        _mcp_event(
-            "gobby-tasks-ops:close_linked_github_issue",
-            event_type=HookEventType.AFTER_TOOL,
-            arguments={"task_id": "#14094", "merge_sha": "abc123"},
-        ),
-        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
-        variables=variables,
-    )
-
-    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
-    assert instance is not None
     assert instance.current_step == "cleanup"
+    assert instance.variables["merge_result_recorded"] is True
 
     await engine.evaluate(
         _mcp_event(
@@ -444,39 +425,6 @@ async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
     instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
     assert instance is not None
     assert instance.current_step == "terminate"
-
-
-@pytest.mark.asyncio
-async def test_merge_worker_issue_close_error_after_durable_result_enters_cleanup(
-    temp_db: HubDatabase,
-) -> None:
-    instance_manager = _install_merge_worker_workflow(temp_db)
-    engine = RuleEngine(temp_db)
-    variables: dict[str, Any] = {}
-
-    await engine.evaluate(
-        _mcp_event(
-            "gobby-tasks-ops:record_merge_result",
-            event_type=HookEventType.AFTER_TOOL,
-            arguments={"task_id": "#14094", "merge_sha": "abc123"},
-        ),
-        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
-        variables=variables,
-    )
-    await engine.evaluate(
-        _mcp_event(
-            "gobby-tasks-ops:close_linked_github_issue",
-            event_type=HookEventType.AFTER_TOOL,
-            is_error=True,
-        ),
-        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
-        variables=variables,
-    )
-
-    instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
-    assert instance is not None
-    assert instance.current_step == "cleanup"
-    assert instance.variables["merge_result_recorded"] is True
 
 
 @pytest.mark.asyncio

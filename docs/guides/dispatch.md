@@ -273,10 +273,9 @@ docs leaf may have its own worktree branch while its `target_branch` points at
 the nearest parent integration branch. Merge-stage dispatch uses the recorded
 workspace or clone IDs plus `target_branch` to produce a workspace merge action.
 
-For PR-stage dispatch, the merge orchestrator reads delivery campaign state and
-calls `gobby-tasks-ops:open_delivery_pr`. That tool pushes the source branch,
-reuses or opens the GitHub PR, and persists `task_delivery_units.pr_url`, `repo`,
-`source_branch`, `target_branch`, `github_pr_number`, and `pr_state`.
+For PR-stage dispatch, Gobby no longer opens GitHub pull requests. Publish a
+branch with worktree/clone push tools, then open the PR through the GitHub MCP
+server when that publication is authorized.
 
 For `development.ready` leaves, the current rule starts the stage when isolation
 is `none`, `worktree`, or `clone`; invalid isolation values escalate. Inconsistent or stale recorded integration workspace metadata is unsafe build

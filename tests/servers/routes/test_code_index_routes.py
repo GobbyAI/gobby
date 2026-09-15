@@ -53,7 +53,6 @@ def _make_project_row(project_id: str = PROJECT_ID, name: str = "gobby") -> dict
         "id": project_id,
         "name": name,
         "repo_path": "/repo",
-        "github_url": None,
         "created_at": "2026-01-01T00:00:00",
         "updated_at": "2026-01-01T00:00:00",
     }

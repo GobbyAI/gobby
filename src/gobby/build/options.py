@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from gobby.build.workspaces import WorkspaceBackend
-from gobby.config.build import DeliveryMode, Isolation, StageCapOverride
+from gobby.config.build import Isolation, StageCapOverride
 
 
 @dataclass
@@ -22,10 +22,6 @@ class BuildOptions:
     isolation_explicit: bool = False
     unattended: bool = False
     unattended_explicit: bool = False
-    delivery_mode: DeliveryMode = "auto"
-    delivery_mode_explicit: bool = False
-    delivery_target_repo: str | None = None
-    delivery_target_repo_explicit: bool = False
     no_merge: bool = False
     pr: str | None = None
     stage_caps: list[StageCapOverride] = field(default_factory=list)

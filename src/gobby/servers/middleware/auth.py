@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PREFIXES = (
     "/api/auth",
     "/api/comms/webhooks",
-    "/api/github/webhooks",
     "/assets",
 )
 

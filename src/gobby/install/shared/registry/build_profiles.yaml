@@ -46,11 +46,11 @@ profiles:
     tags: [gobby]
   - name: submit
     display_label: Submit
-    description: Run through pull request creation and stop before merge.
+    description: Run through the PR review stage and stop before merge.
     skip_stages: [merge]
     isolation: worktree
     unattended: false
-    delivery_mode: pull_request
+    delivery_mode: auto
     delivery_target_repo: null
     plan_enhancement_rounds: 0
     enabled: true

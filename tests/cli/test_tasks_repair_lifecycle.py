@@ -29,7 +29,7 @@ def test_repair_lifecycle_cli_dry_runs_by_default(
     isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
 ) -> None:
     project = isolated_checkout_factory(
-        hub_db, "test-project", github_url="https://github.com/test/test-project"
+        hub_db, "test-project"
     ).project
     manager = LocalTaskManager(hub_db)
     task = manager.create_task(
@@ -56,7 +56,7 @@ def test_repair_lifecycle_cli_json_includes_diagnostics(
     isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
 ) -> None:
     project = isolated_checkout_factory(
-        hub_db, "test-project", github_url="https://github.com/test/test-project"
+        hub_db, "test-project"
     ).project
     manager = LocalTaskManager(hub_db)
     task = manager.create_task(

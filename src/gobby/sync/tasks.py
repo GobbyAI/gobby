@@ -102,11 +102,6 @@ def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str 
     return None
 
 
-def _github_issue_uuid_seed(project_id: str, owner: str, repo: str, issue_num: int) -> str:
-    normalized_repo = repo.removesuffix(".git").lower()
-    return f"{project_id}/github/{owner.lower()}/{normalized_repo}/issues/{issue_num}"
-
-
 def _compute_path_cache(
     conn: Any,
     project_id: str | None,
@@ -394,11 +389,6 @@ class TaskBackupManager:
                     # Expansion fields
                     "category": task.category,
                     # External integrations
-                    "github_issue_number": task.github_issue_number,
-                    "github_pr_number": task.github_pr_number,
-                    "github_repo": task.github_repo,
-                    "linear_issue_id": task.linear_issue_id,
-                    "linear_team_id": task.linear_team_id,
                     # Scheduling fields
                     "start_date": _normalize_date(task.start_date),
                     "due_date": _normalize_date(task.due_date),
@@ -610,11 +600,6 @@ class TaskBackupManager:
                                 if state.get("additional_skills") is not None
                                 else None
                             ),
-                            "github_issue_number": data.get("github_issue_number"),
-                            "github_pr_number": data.get("github_pr_number"),
-                            "github_repo": data.get("github_repo"),
-                            "linear_issue_id": data.get("linear_issue_id"),
-                            "linear_team_id": data.get("linear_team_id"),
                             "start_date": data.get("start_date"),
                             "due_date": data.get("due_date"),
                             "escalated_at": escalated_at_file,

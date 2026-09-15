@@ -171,10 +171,7 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
         "created_at",
         "updated_at",
     ),
-    optional=(
-        "linear_synced_at",
-        "deleted_at",
-    ),
+    optional=("deleted_at",),
 )
 @dataclass
 class Project:
@@ -182,14 +179,8 @@ class Project:
 
     id: str
     name: str
-    github_url: str | None
     created_at: datetime
     updated_at: datetime
-    github_repo: str | None = None  # GitHub repo in "owner/repo" format
-    linear_team_id: str | None = None  # Linear team ID for project sync
-    linear_project_id: str | None = None  # Linear project ID for scoped sync
-    linear_synced_at: datetime | None = None  # Last bidirectional Linear sync timestamp
-    linear_sync_enabled: bool = False  # Daemon-managed Linear reconciliation
     deleted_at: datetime | None = None
 
     @classmethod
@@ -199,16 +190,8 @@ class Project:
         return cls(
             id=row["id"],
             name=row["name"],
-            github_url=row["github_url"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            github_repo=row["github_repo"] if "github_repo" in keys else None,
-            linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
-            linear_project_id=row["linear_project_id"] if "linear_project_id" in keys else None,
-            linear_synced_at=row["linear_synced_at"] if "linear_synced_at" in keys else None,
-            linear_sync_enabled=(
-                bool(row["linear_sync_enabled"]) if "linear_sync_enabled" in keys else False
-            ),
             deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
         )
 
@@ -217,12 +200,6 @@ class Project:
         d: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
-            "github_url": self.github_url,
-            "github_repo": self.github_repo,
-            "linear_team_id": self.linear_team_id,
-            "linear_project_id": self.linear_project_id,
-            "linear_synced_at": self.linear_synced_at,
-            "linear_sync_enabled": self.linear_sync_enabled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -363,7 +340,6 @@ class LocalProjectManager:
         self,
         name: str,
         repo_path: str | None = None,
-        github_url: str | None = None,
         *,
         machine_id: str | None = None,
         project_id: str | None = None,
@@ -374,7 +350,6 @@ class LocalProjectManager:
         Args:
             name: Unique project name
             repo_path: Local filesystem path for this machine's checkout
-            github_url: GitHub repository URL
             machine_id: Claimed machine id, or None for the local daemon
             project_id: Stable marker UUID, or None to generate one
 
@@ -389,11 +364,11 @@ class LocalProjectManager:
         if checkout is None:
             row = self.db.fetchone(
                 """
-                INSERT INTO projects (id, name, github_url)
-                VALUES (%s, %s, %s)
+                INSERT INTO projects (id, name)
+                VALUES (%s, %s)
                 RETURNING *
                 """,
-                (resolved_id, name, github_url),
+                (resolved_id, name),
             )
             if row is None:
                 raise RuntimeError(f"Project '{name}' not found after insert")
@@ -402,11 +377,11 @@ class LocalProjectManager:
         with self.db.transaction():
             row = self.db.fetchone(
                 """
-                INSERT INTO projects (id, name, github_url)
-                VALUES (%s, %s, %s)
+                INSERT INTO projects (id, name)
+                VALUES (%s, %s)
                 RETURNING *
                 """,
-                (resolved_id, name, github_url),
+                (resolved_id, name),
             )
             if row is None:
                 raise RuntimeError(f"Project '{name}' not found after insert")
@@ -436,7 +411,6 @@ class LocalProjectManager:
         self,
         name: str,
         repo_path: str | None = None,
-        github_url: str | None = None,
         *,
         machine_id: str | None = None,
     ) -> Project:
@@ -451,20 +425,18 @@ class LocalProjectManager:
                 raise NameAttachRejectedError(
                     f"project name {name!r} already exists; init is marker-authoritative"
                 )
-            return self.create(
-                name, repo_path=repo_path, github_url=github_url, machine_id=machine_id
-            )
+            return self.create(name, repo_path=repo_path, machine_id=machine_id)
 
         project_id = str(uuid.uuid4())
         row = self.db.fetchone(
             """
-            INSERT INTO projects (id, name, github_url)
-            VALUES (%s, %s, %s)
+            INSERT INTO projects (id, name)
+            VALUES (%s, %s)
             ON CONFLICT (name) WHERE deleted_at IS NULL
             DO UPDATE SET name = EXCLUDED.name
             RETURNING *
             """,
-            (project_id, name, github_url),
+            (project_id, name),
         )
         if row is None:
             raise RuntimeError(f"Project '{name}' not found after atomic upsert")
@@ -607,12 +579,6 @@ class LocalProjectManager:
 
         allowed = {
             "name",
-            "github_url",
-            "github_repo",
-            "linear_team_id",
-            "linear_project_id",
-            "linear_synced_at",
-            "linear_sync_enabled",
         }
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields and checkout is None:

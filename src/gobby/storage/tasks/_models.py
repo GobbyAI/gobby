@@ -268,13 +268,6 @@ class Task:
     escalated_at: datetime | None = None
     escalation_reason: str | None = None
     is_escalated: bool = False
-    # GitHub integration fields
-    github_issue_number: int | None = None
-    github_pr_number: int | None = None
-    github_repo: str | None = None
-    # Linear integration fields
-    linear_issue_id: str | None = None
-    linear_team_id: str | None = None
     # Human-friendly ID fields (task renumbering)
     seq_num: int | None = None
     path_cache: str | None = None
@@ -366,13 +359,6 @@ class Task:
             escalated_at=escalated_at,
             escalation_reason=row["escalation_reason"] if "escalation_reason" in keys else None,
             is_escalated=is_escalated,
-            github_issue_number=(
-                row["github_issue_number"] if "github_issue_number" in keys else None
-            ),
-            github_pr_number=row["github_pr_number"] if "github_pr_number" in keys else None,
-            github_repo=row["github_repo"] if "github_repo" in keys else None,
-            linear_issue_id=row["linear_issue_id"] if "linear_issue_id" in keys else None,
-            linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
             seq_num=row["seq_num"] if "seq_num" in keys else None,
             path_cache=row["path_cache"] if "path_cache" in keys else None,
             start_date=_normalize_date(row["start_date"] if "start_date" in keys else None),
@@ -429,11 +415,6 @@ class Task:
             "escalated_at": self.escalated_at,
             "escalation_reason": self.escalation_reason,
             "is_escalated": self.is_escalated,
-            "github_issue_number": self.github_issue_number,
-            "github_pr_number": self.github_pr_number,
-            "github_repo": self.github_repo,
-            "linear_issue_id": self.linear_issue_id,
-            "linear_team_id": self.linear_team_id,
             "seq_num": self.seq_num,
             "path_cache": self.path_cache,
             "start_date": self.start_date,
@@ -481,9 +462,6 @@ class Task:
             "is_escalated": self.is_escalated,
             "start_date": self.start_date,
             "due_date": self.due_date,
-            "github_issue_number": self.github_issue_number,
-            "github_repo": self.github_repo,
-            "github_pr_number": self.github_pr_number,
             "allow_automation": self.allow_automation,
             "unattended": self.unattended,
             "isolation": self.isolation,

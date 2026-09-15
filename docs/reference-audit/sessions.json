@@ -280,21 +280,6 @@
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
-        "symbol": "register_terminal_tools.send_keys"
-      },
-      "verification": [
-        "source-audit",
-        "focused-sessions"
-      ],
-      "audience": "agent",
-      "server": "gobby-sessions",
-      "tool": "send_keys"
-    },
-    {
-      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
@@ -832,6 +817,21 @@
       ],
       "audience": "operator/client",
       "route": "POST /api/sessions/{session_id}/restore-transcript"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py",
+        "symbol": "register_send_keys_tool.send_keys"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "send_keys"
     }
   ],
   "delegated_operations": {

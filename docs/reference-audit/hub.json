@@ -229,21 +229,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby projects update",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
-      "implementation": {
-        "path": "src/gobby/cli/projects.py",
-        "symbol": "update_project"
-      },
-      "verification": [
-        "cli-help",
-        "source-audit",
-        "focused-final"
-      ]
-    },
-    {
-      "surface": "cli",
       "command": "gobby projects refresh-verification",
       "audience": "operator",
       "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
@@ -370,36 +355,6 @@
       "implementation": {
         "path": "src/gobby/servers/routes/projects.py",
         "symbol": "create_projects_router.rebind_checkout"
-      },
-      "verification": [
-        "source-audit",
-        "focused-final"
-      ]
-    },
-    {
-      "surface": "http",
-      "method": "PUT",
-      "route": "/api/projects/{project_id}",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/projects.py",
-        "symbol": "create_projects_router.update_project"
-      },
-      "verification": [
-        "source-audit",
-        "focused-final"
-      ]
-    },
-    {
-      "surface": "http",
-      "method": "PATCH",
-      "route": "/api/projects/{project_id}",
-      "audience": "operator",
-      "reference": "src/gobby/install/shared/skills/gobby/references/hub/projects.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/projects.py",
-        "symbol": "create_projects_router.update_project"
       },
       "verification": [
         "source-audit",

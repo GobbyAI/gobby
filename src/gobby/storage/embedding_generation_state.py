@@ -15,11 +15,10 @@ from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 
-_SOURCE_KINDS = frozenset({"memory", "tool", "github_issue"})
+_SOURCE_KINDS = frozenset({"memory", "tool"})
 _SOURCE_COLLECTIONS = {
     "memory": "memories",
     "tool": "tool_embeddings",
-    "github_issue": "gobby_github_issues",
 }
 
 # Transaction-scoped advisory lock coordinating ledger sequence visibility:

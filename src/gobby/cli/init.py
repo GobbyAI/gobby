@@ -2,7 +2,6 @@
 Project initialization commands.
 """
 
-import asyncio
 import importlib.util
 import logging
 import subprocess
@@ -20,14 +19,6 @@ logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option("--name", "-n", help="Project name")
-@click.option("--github-url", "-g", help="GitHub repository URL")
-@click.option(
-    "--linear-setup/--no-linear-setup",
-    default=None,
-    help="Run guided Linear setup after project initialization",
-)
-@click.option("--linear-team-id", help="Linear team ID for --linear-setup")
-@click.option("--linear-project-id", help="Existing Linear project ID for --linear-setup")
 @click.option(
     "-C",
     "--path",
@@ -40,10 +31,6 @@ logger = logging.getLogger(__name__)
 def init(
     ctx: click.Context,
     name: str | None,
-    github_url: str | None,
-    linear_setup: bool | None,
-    linear_team_id: str | None,
-    linear_project_id: str | None,
     working_dir: Path | None,
 ) -> None:
     """Initialize a new Gobby project in the current directory."""
@@ -55,7 +42,6 @@ def init(
         result = initialize_project(
             cwd=cwd,
             name=name,
-            github_url=github_url,
             db=require_cli_database(),
         )
     except Exception as e:
@@ -158,13 +144,6 @@ def init(
                         else:
                             click.echo(f"    custom: {value}")
 
-    _maybe_run_linear_setup(
-        result.project_id,
-        linear_setup=linear_setup,
-        team_id=linear_team_id,
-        linear_project_id=linear_project_id,
-    )
-
 
 def _maybe_install_git_hooks_for_init(project_path: Path) -> None:
     """Install Git hook setup during init when project is a Git top-level root."""
@@ -213,44 +192,3 @@ def _git_toplevel(project_path: Path) -> Path | None:
 
     root = proc.stdout.strip()
     return Path(root).resolve() if root else None
-
-
-def _maybe_run_linear_setup(
-    project_id: str,
-    linear_setup: bool | None,
-    team_id: str | None,
-    linear_project_id: str | None,
-) -> None:
-    should_setup = linear_setup is True
-    if linear_setup is None and sys.stdin.isatty():
-        should_setup = click.confirm("Set up Linear sync for this project now?", default=False)
-    if not should_setup:
-        return
-
-    try:
-        from gobby.cli.linear import _create_linear_mcp_manager, _run_linear_setup
-        from gobby.cli.runtime import require_cli_database
-        from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.tasks import LocalTaskManager
-
-        db = require_cli_database()
-        project_manager = LocalProjectManager(db)
-        result = asyncio.run(
-            _run_linear_setup(
-                task_manager=LocalTaskManager(db),
-                mcp_manager=_create_linear_mcp_manager(db, project_id),
-                project_manager=project_manager,
-                project_id=project_id,
-                bootstrap=True,
-                team_id=team_id,
-                linear_project_id=linear_project_id,
-                project_name=None,
-            )
-        )
-    except Exception as e:
-        click.echo(f"Linear setup failed: {e}", err=True)
-        sys.exit(1)
-
-    click.echo("Linear setup complete")
-    click.echo(f"  Team: {result['linear_team_id']}")
-    click.echo(f"  Project: {result['linear_project_name']} ({result['linear_project_id']})")

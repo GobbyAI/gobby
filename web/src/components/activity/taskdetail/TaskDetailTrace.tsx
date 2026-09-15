@@ -1,5 +1,5 @@
 import type { GobbyTaskDetail } from "../../../types/tasks";
-import { isValidGithubRepoSlug } from "../../../lib/githubRepo";
+
 import { cn } from "../../../lib/utils";
 import { MetaKVRow } from "./TaskDetailKV";
 import { formatTaskDetailDate } from "./taskDetailFormat";
@@ -8,7 +8,7 @@ const taskDetailPillClassName =
   "inline-flex h-6 items-center gap-[0.3rem] whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)] [&_strong]:font-semibold [&_strong]:text-[var(--text-primary)]";
 
 /**
- * D5 §5 — collapsed-by-default Trace: timestamps, automation, commits, PR,
+ * D5 §5 — collapsed-by-default Trace: timestamps, automation, commits,
  * and close provenance. "Path" is intentionally cut. Escalation is handled
  * by the panel and only rendered when the task is escalated.
  */
@@ -24,25 +24,10 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
     isolation !== null ||
     dispatchFailures > 0;
 
-  const githubRepo = isValidGithubRepoSlug(task.github_repo)
-    ? task.github_repo
-    : null;
-  const prUrl =
-    task.github_pr_number != null && githubRepo
-      ? `https://github.com/${githubRepo}/pull/${task.github_pr_number}`
-      : null;
-  const prLabel =
-    task.github_pr_number != null
-      ? githubRepo
-        ? `${githubRepo}#${task.github_pr_number}`
-        : `#${task.github_pr_number}`
-      : null;
-
   const hasTrace =
     labels.length > 0 ||
     showAutomationRow ||
     commits.length > 0 ||
-    prLabel !== null ||
     Boolean(task.closed_commit_sha) ||
     Boolean(task.closed_reason) ||
     Boolean(task.closed_in_session_id);
@@ -154,16 +139,6 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
             </div>
           </MetaKVRow>
         )}
-        {prLabel &&
-          (prUrl ? (
-            <MetaKVRow label="PR" mono link href={prUrl}>
-              {prLabel}
-            </MetaKVRow>
-          ) : (
-            <MetaKVRow label="PR" mono>
-              {prLabel}
-            </MetaKVRow>
-          ))}
         {task.closed_commit_sha && (
           <MetaKVRow label="Closing commit" mono title={task.closed_commit_sha}>
             {task.closed_commit_sha.slice(0, 7)}

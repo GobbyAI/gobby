@@ -447,7 +447,7 @@ fn verify_accepts_runtime_mutation_of_seed_fields() -> anyhow::Result<()> {
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.batch_execute(
         "UPDATE projects
-         SET github_url = 'https://example.invalid/installed/personal'
+         SET deleted_at = '2026-01-01T00:00:00Z'
          WHERE id = '00000000-0000-0000-0000-000000060887';
          UPDATE sessions
             SET status = 'ended', message_count = 9
@@ -568,7 +568,7 @@ fn verify_contract_detects_catalog_seed_and_bookkeeping_drift() -> anyhow::Resul
     for mutation in [
         "DROP INDEX idx_projects_name",
         "ALTER TABLE projects DROP CONSTRAINT projects_pkey CASCADE",
-        "ALTER TABLE projects DROP COLUMN github_url",
+        "ALTER TABLE projects DROP COLUMN created_at",
     ] {
         client.batch_execute("BEGIN")?;
         client.batch_execute(mutation)?;

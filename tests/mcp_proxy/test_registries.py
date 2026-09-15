@@ -589,8 +589,8 @@ def test_setup_hub_registry_accepts_project_id(hub_db: Any) -> None:
     # Create a project in the database for foreign key constraint
     project_id = str(uuid4())
     db.execute(
-        "INSERT INTO projects (id, name, github_url, created_at, updated_at) VALUES (%s, %s, %s, NOW(), NOW())",
-        (project_id, "Test Project", None),
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
+        (project_id, "Test Project"),
     )
 
     manager = setup_internal_registries(

@@ -134,7 +134,6 @@ def test_init_skips_hooks_for_non_git_directory(
     assert "gcode not installed" in result.output
 
 
-@patch("gobby.cli.init._maybe_run_linear_setup")
 @patch("gobby.cli.init._maybe_install_git_hooks_for_init")
 @patch("gobby.cli.init.subprocess.run")
 @patch("gobby.cli.init.resolve_native_bin", return_value="/usr/local/bin/gcode")
@@ -146,7 +145,6 @@ def test_init_existing_project_runs_initial_index(
     _resolve_native_bin: MagicMock,
     mock_run: MagicMock,
     _install_hooks: MagicMock,
-    _linear_setup: MagicMock,
     runner: CliRunner,
     mock_config: MagicMock,
     temp_dir: Path,

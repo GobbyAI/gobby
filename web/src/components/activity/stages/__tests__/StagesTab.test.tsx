@@ -62,8 +62,6 @@ type ProfileRecord = {
   skip_stages: string[];
   isolation: "none" | "worktree" | "clone";
   unattended: boolean;
-  delivery_mode: "auto" | "pull_request";
-  delivery_target_repo: string | null;
   enabled: boolean;
   source: "installed" | "project";
   project_id: string | null;
@@ -113,8 +111,6 @@ function makeProfile(overrides: Partial<ProfileRecord> = {}): ProfileRecord {
     skip_stages: ["verification"],
     isolation: "worktree",
     unattended: true,
-    delivery_mode: "auto",
-    delivery_target_repo: null,
     enabled: true,
     source: "project",
     project_id: "project-1",

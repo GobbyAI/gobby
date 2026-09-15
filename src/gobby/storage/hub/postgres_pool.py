@@ -37,7 +37,6 @@ from gobby.storage.hub.protocol import (
     CronRunAdmission,
     Cursor,
     DispatchMutexRow,
-    GitHubIssueTriageMutation,
     IntegrationWorkspaceMutex,
     IsolationRegistryReconciliation,
     LockAcquisitionOrderError,
@@ -649,8 +648,6 @@ def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
         return (f"agent_task_claim:{lock.session_id}",)
     if isinstance(lock, DispatchMutexRow):
         return (f"dispatch_mutex:{lock.task_id}",)
-    if isinstance(lock, GitHubIssueTriageMutation):
-        return (f"github_issue_triage:{lock.project_id}:{lock.repo}#{lock.issue_number}",)
     if isinstance(lock, ReviewLearningPatternMutation):
         return (f"review_learning_pattern:{lock.project_id}:{lock.pattern_key}",)
     if isinstance(lock, StageReviewApprovalMutation):

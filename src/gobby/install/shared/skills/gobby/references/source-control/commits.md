@@ -26,9 +26,9 @@ repository convention. Replace example project/task names with the actual ones.
 Never commit credentials, unrelated staged files or an unverified claim of
 completion. A failed commit hook is a finding to fix and verify before retrying.
 
-For isolated work, continue through [merge campaigns](merge-campaigns.md) or
-[PR delivery](pr-delivery.md), then [cleanup](cleanup.md). Do not leave a managed
-worktree registered as active after a manual landing.
+For isolated work, continue through [merge campaigns](merge-campaigns.md), then
+[cleanup](cleanup.md). Do not leave a managed worktree registered as active after
+a manual landing.
 
 See the [task guide](../../../../../../../../docs/guides/tasks.md) for detailed
 commit attribution and close evidence.

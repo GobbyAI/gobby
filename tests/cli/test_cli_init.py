@@ -90,7 +90,7 @@ class TestInitCommandBasic:
         assert result.exit_code == 0
         assert "Initialize a new Gobby project" in result.output
         assert "--name" in result.output
-        assert "--github-url" in result.output
+        assert "--github-url" not in result.output
 
     def test_init_command_directly(self, runner: CliRunner) -> None:
         """Test invoking init command directly."""
@@ -153,134 +153,11 @@ class TestInitNewProject:
             or call_kwargs[1].get("name") == "custom-name"
         )
 
-    @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_init_with_github_url(
-        self,
-        mock_load_config: MagicMock,
-        mock_initialize: MagicMock,
-        runner: CliRunner,
-        mock_config: MagicMock,
-        mock_init_result_new: InitResult,
-        temp_dir: Path,
-    ) -> None:
-        """Test initialization with a GitHub URL."""
-        mock_load_config.return_value = mock_config
-        mock_initialize.return_value = mock_init_result_new
-
-        github_url = "https://github.com/myorg/myrepo"
-
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(cli, ["init", "--github-url", github_url])
-
-        assert result.exit_code == 0
-        # Verify the github_url was passed to initialize_project
-        call_kwargs = mock_initialize.call_args
-        assert (
-            call_kwargs.kwargs.get("github_url") == github_url
-            or call_kwargs[1].get("github_url") == github_url
-        )
-
-    @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_init_with_both_options(
-        self,
-        mock_load_config: MagicMock,
-        mock_initialize: MagicMock,
-        runner: CliRunner,
-        mock_config: MagicMock,
-        mock_init_result_new: InitResult,
-        temp_dir: Path,
-    ) -> None:
-        """Test initialization with both name and github-url options."""
-        mock_load_config.return_value = mock_config
-        mock_initialize.return_value = mock_init_result_new
-
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(
-                cli,
-                [
-                    "init",
-                    "--name",
-                    "my-custom-project",
-                    "--github-url",
-                    "https://github.com/test/repo",
-                ],
-            )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_initialize.call_args
-        # Check both positional and keyword arg forms
-        assert (
-            call_kwargs.kwargs.get("name") == "my-custom-project"
-            or call_kwargs[1].get("name") == "my-custom-project"
-        )
-
-    @patch("gobby.cli.init._maybe_run_linear_setup")
-    @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_init_skips_linear_setup_by_default(
-        self,
-        mock_load_config: MagicMock,
-        mock_initialize: MagicMock,
-        mock_linear_setup: MagicMock,
-        runner: CliRunner,
-        mock_config: MagicMock,
-        mock_init_result_new: InitResult,
-        temp_dir: Path,
-    ) -> None:
-        """init passes default skip branch to Linear setup helper."""
-        mock_load_config.return_value = mock_config
-        mock_initialize.return_value = mock_init_result_new
-
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(cli, ["init"])
-
-        assert result.exit_code == 0
-        mock_linear_setup.assert_called_once_with(
-            mock_init_result_new.project_id,
-            linear_setup=None,
-            team_id=None,
-            linear_project_id=None,
-        )
-
-    @patch("gobby.cli.init._maybe_run_linear_setup")
-    @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_init_linear_setup_option(
-        self,
-        mock_load_config: MagicMock,
-        mock_initialize: MagicMock,
-        mock_linear_setup: MagicMock,
-        runner: CliRunner,
-        mock_config: MagicMock,
-        mock_init_result_new: InitResult,
-        temp_dir: Path,
-    ) -> None:
-        """init forwards explicit Linear setup options."""
-        mock_load_config.return_value = mock_config
-        mock_initialize.return_value = mock_init_result_new
-
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(
-                cli,
-                [
-                    "init",
-                    "--linear-setup",
-                    "--linear-team-id",
-                    "team-1",
-                    "--linear-project-id",
-                    "lin-proj",
-                ],
-            )
-
-        assert result.exit_code == 0
-        mock_linear_setup.assert_called_once_with(
-            mock_init_result_new.project_id,
-            linear_setup=True,
-            team_id="team-1",
-            linear_project_id="lin-proj",
-        )
+    def test_init_github_url_option_removed(self, runner: CliRunner) -> None:
+        """gobby init no longer accepts GitHub identity flags."""
+        result = runner.invoke(cli, ["init", "--github-url", "https://github.com/test/repo"])
+        assert result.exit_code != 0
+        assert "No such option" in result.output or "no such option" in result.output.lower()
 
 
 class TestInitExistingProject:
@@ -864,9 +741,10 @@ class TestInitInvalidOptions:
         assert result.exit_code != 0
 
     def test_init_github_url_without_value(self, runner: CliRunner) -> None:
-        """Test that --github-url without value shows error."""
+        """Test that --github-url is no longer a valid option."""
         result = runner.invoke(cli, ["init", "--github-url"])
         assert result.exit_code != 0
+        assert "No such option" in result.output or "no such option" in result.output.lower()
 
 
 class TestInitContext:

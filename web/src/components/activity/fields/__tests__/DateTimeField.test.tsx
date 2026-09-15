@@ -31,10 +31,10 @@ function makeProject(overrides: Partial<ProjectWithStats>): ProjectWithStats {
     name: "alpha",
     display_name: "Alpha workspace",
     checkout: null,
-    github_url: null,
-    github_repo: null,
-    linear_team_id: null,
-    linear_project_id: null,
+
+
+
+
     approval_rules: [],
     validation_detection: null,
     created_at: "2026-01-01T00:00:00.000Z",
