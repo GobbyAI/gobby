@@ -36,10 +36,6 @@ def mock_project():
     project.id = "proj-abc123"
     project.name = "test-project"
     project.repo_path = "/home/user/projects/test-project"
-    project.github_url = "https://github.com/user/test-project"
-    project.github_repo = "user/test-project"
-    project.linear_team_id = None
-    project.linear_project_id = None
     project.deleted_at = None
     project.created_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     project.updated_at = datetime(2024, 1, 15, 14, 30, 0, tzinfo=UTC)
@@ -47,8 +43,6 @@ def mock_project():
         "id": "proj-abc123",
         "name": "test-project",
         "repo_path": "/home/user/projects/test-project",
-        "github_url": "https://github.com/user/test-project",
-        "github_repo": "user/test-project",
         "created_at": "2024-01-01T12:00:00+00:00",
         "updated_at": "2024-01-15T14:30:00+00:00",
     }
@@ -207,8 +201,8 @@ class TestShowProject:
         assert "Project: test-project" in result.output
         assert "ID: proj-abc123" in result.output
         assert "Path:" not in result.output
-        assert "GitHub:" in result.output
-        assert "Repo:" in result.output
+        assert "GitHub:" not in result.output
+        assert "Repo:" not in result.output
 
     @patch("gobby.cli.projects.get_project_manager")
     def test_show_project_not_found(
@@ -256,10 +250,6 @@ class TestShowProject:
         project.id = "proj-minimal"
         project.name = "minimal-project"
         project.repo_path = "/home/user/minimal"
-        project.github_url = None
-        project.github_repo = None
-        project.linear_team_id = None
-        project.linear_project_id = None
         project.deleted_at = None
         project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         project.updated_at = datetime(2024, 1, 1, tzinfo=UTC)
@@ -425,85 +415,6 @@ class TestDeleteProject:
         assert "Confirmation mismatch" in result.output
 
 
-class TestUpdateProject:
-    """Tests for gobby projects update command."""
-
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_update_github_url(
-        self,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_project: MagicMock,
-    ) -> None:
-        """Test updating github URL."""
-        mock_manager = MagicMock()
-        mock_manager.resolve_ref.return_value = mock_project
-        mock_manager.update.return_value = mock_project
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            ["projects", "update", "test-project", "--github-url", "https://github.com/new/url"],
-        )
-
-        assert result.exit_code == 0
-        assert "Updated project" in result.output
-        mock_manager.update.assert_called_once_with(
-            mock_project.id, github_url="https://github.com/new/url"
-        )
-
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_update_no_fields(
-        self,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_project: MagicMock,
-    ) -> None:
-        """Test update with no fields provided."""
-        mock_manager = MagicMock()
-        mock_manager.resolve_ref.return_value = mock_project
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["projects", "update", "test-project"])
-
-        assert result.exit_code == 0
-        assert "No fields to update" in result.output
-
-    @patch("gobby.cli.projects.get_project_manager")
-    def test_update_multiple_fields(
-        self,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_project: MagicMock,
-    ) -> None:
-        """Test updating multiple fields at once."""
-        mock_manager = MagicMock()
-        mock_manager.resolve_ref.return_value = mock_project
-        mock_manager.update.return_value = mock_project
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            [
-                "projects",
-                "update",
-                "test-project",
-                "--github-repo",
-                "user/repo",
-                "--github-url",
-                "https://github.com/user/repo",
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert "Updated project" in result.output
-        mock_manager.update.assert_called_once_with(
-            mock_project.id,
-            github_repo="user/repo",
-            github_url="https://github.com/user/repo",
-        )
-
-
 class TestRepairProject:
     """Tests for gobby projects repair command."""
 
@@ -647,8 +558,8 @@ class TestProjectRebindCli:
 
         text = _cli_text(result).lower()
         assert result.exit_code != 0
-        assert "no such option" in text
-        assert "repo-path" in text
+        assert "no such command" in text
+        assert "update" in text
         mock_manager.update.assert_not_called()
 
     def test_list_and_show_print_local_checkout_separately(

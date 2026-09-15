@@ -271,10 +271,6 @@ def show_project(project_ref: str, json_format: bool) -> None:
     click.echo(f"  ID: {project.id}")
     if checkout is not None:
         click.echo(f"  Checkout: {checkout.root_path}")
-    if project.github_url:
-        click.echo(f"  GitHub: {project.github_url}")
-    if project.github_repo:
-        click.echo(f"  Repo: {project.github_repo}")
     click.echo(f"  Created: {project.created_at}")
     click.echo(f"  Updated: {project.updated_at}")
 
@@ -419,42 +415,6 @@ def rebind_project(project_ref: str, path: str | None) -> None:
         checkout = _rebind_checkout(manager, machine_id, project, root)
     click.echo(f"Rebound {project.name} ({project.id}) to {checkout.root_path}")
     click.echo(_REBIND_CACHE_HINT)
-
-
-@projects.command("update")
-@click.argument("project_ref")
-@click.option("--github-url", help="GitHub repository URL")
-@click.option("--github-repo", help="GitHub repo in owner/repo format")
-def update_project(
-    project_ref: str,
-    github_url: str | None,
-    github_repo: str | None,
-) -> None:
-    """Update project fields.
-
-    PROJECT_REF can be a project name or UUID.
-    """
-    manager = get_project_manager()
-    project = resolve_project(manager, project_ref)
-
-    fields: dict[str, str] = {}
-    if github_url is not None:
-        fields["github_url"] = github_url
-    if github_repo is not None:
-        fields["github_repo"] = github_repo
-
-    if not fields:
-        click.echo("No fields to update. Use --github-url or --github-repo.")
-        return
-
-    updated = manager.update(project.id, **fields)
-    if updated:
-        click.echo(f"Updated project: {updated.name}")
-        for key, value in fields.items():
-            click.echo(f"  {key}: {value}")
-    else:
-        click.echo(f"Failed to update project: {project.name}", err=True)
-        raise SystemExit(1)
 
 
 @projects.command("refresh-verification")

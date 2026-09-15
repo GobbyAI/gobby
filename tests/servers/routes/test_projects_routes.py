@@ -89,8 +89,7 @@ class TestProjectRoutes:
     def real_project(self, project_manager: LocalProjectManager) -> dict:
         """Create a real project in the database."""
         proj = project_manager.create(
-            name="my-project",
-            github_url="https://github.com/test/my-project",
+            name="my-project"
         )
         return proj.to_dict()
 
@@ -377,33 +376,6 @@ class TestProjectRoutes:
         assert data["name"] == "new-name"
         assert data["display_name"] == "new-name"
 
-    def test_update_project_github_url(self, client: TestClient, real_project: dict) -> None:
-        """Update project github_url."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"github_url": "https://github.com/test/updated"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_url"] == "https://github.com/test/updated"
-
-    def test_update_project_clears_explicit_null_and_preserves_unset_fields(
-        self, client: TestClient, real_project: dict
-    ) -> None:
-        """Explicit null clears a field while omitted fields remain unchanged."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"github_url": None},
-        )
-        assert response.status_code == 200
-        assert response.json()["github_url"] is None
-
-        response = client.get(f"/api/projects/{real_project['id']}")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_url"] is None
-        assert data["name"] == "my-project"
-
     def test_update_project_ignores_repo_path(self, client: TestClient, real_project: dict) -> None:
         """repo_path is not a project JSON field and cannot be updated here."""
         with TestClient(client.app, raise_server_exceptions=False) as http:
@@ -415,38 +387,6 @@ class TestProjectRoutes:
         data = response.json()
         assert "repo_path" not in data
         assert data["checkout"] is None
-
-    def test_update_project_github_repo(self, client: TestClient, real_project: dict) -> None:
-        """Update project github_repo field."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"github_repo": "owner/repo"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_repo"] == "owner/repo"
-
-    def test_update_project_omits_linear_fields(
-        self, client: TestClient, real_project: dict
-    ) -> None:
-        """Linear identity fields are no longer accepted on project update."""
-        prior = client.get(f"/api/projects/{real_project['id']}")
-        assert prior.status_code == 200
-        prior_data = prior.json()
-
-        response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={
-                "linear_team_id": "TEAM-123",
-                "linear_project_id": "LIN-PROJ",
-                "linear_sync_enabled": True,
-            },
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["linear_team_id"] == prior_data.get("linear_team_id")
-        assert data["linear_project_id"] == prior_data.get("linear_project_id")
-        assert data["linear_sync_enabled"] == prior_data.get("linear_sync_enabled")
 
     def test_integrations_status_is_not_registered(
         self,
@@ -630,10 +570,9 @@ class TestProjectRoutes:
         self, client: TestClient, personal_project: dict
     ) -> None:
         """Updating _personal project keeps display_name as Personal if name stays."""
-        # Update something other than name
         response = client.put(
             f"/api/projects/{personal_project['id']}",
-            json={"github_url": "https://github.com/test/personal"},
+            json={},
         )
         assert response.status_code == 200
         data = response.json()
@@ -881,7 +820,7 @@ class TestProjectCheckoutHttp:
         )
 
         assert response.status_code == 200
-        assert response.json()["github_url"] == "https://github.com/owner/from-origin.git"
+        assert "github_url" not in response.json()
 
     def test_project_json_has_calling_checkout_not_repo_path(
         self,

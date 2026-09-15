@@ -5,7 +5,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // =============================================================================
 
 export interface SourceControlStatus {
-  github_repo: string | null;
   current_branch: string | null;
   branch_count: number;
   worktree_count: number;

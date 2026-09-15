@@ -204,11 +204,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
-        github_issue_number: int | None = None,
-        github_pr_number: int | None = None,
-        github_repo: str | None = None,
-        linear_issue_id: str | None = None,
-        linear_team_id: str | None = None,
         **kwargs: Any,
     ) -> Task:
         """Create a new task with collision handling."""
@@ -228,11 +223,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             assigned_agent=assigned_agent,
             implementation_domain=implementation_domain,
             additional_skills=additional_skills,
-            github_issue_number=github_issue_number,
-            github_pr_number=github_pr_number,
-            github_repo=github_repo,
-            linear_issue_id=linear_issue_id,
-            linear_team_id=linear_team_id,
         )
         self._notify_listeners()
         return self.get_task(task_id)
@@ -371,11 +361,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         blocked_by_merge: MaybeUnset[bool] = UNSET,
         escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
-        github_issue_number: MaybeUnset[int | None] = UNSET,
-        github_pr_number: MaybeUnset[int | None] = UNSET,
-        github_repo: MaybeUnset[str | None] = UNSET,
-        linear_issue_id: MaybeUnset[str | None] = UNSET,
-        linear_team_id: MaybeUnset[str | None] = UNSET,
         validation_override_reason: MaybeUnset[str | None] = UNSET,
         allow_automation: MaybeUnset[bool] = UNSET,
         unattended: MaybeUnset[bool] = UNSET,
@@ -437,11 +422,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
                 blocked_by_merge=blocked_by_merge,
                 escalated_at=escalated_at,
                 escalation_reason=escalation_reason,
-                github_issue_number=github_issue_number,
-                github_pr_number=github_pr_number,
-                github_repo=github_repo,
-                linear_issue_id=linear_issue_id,
-                linear_team_id=linear_team_id,
                 validation_override_reason=validation_override_reason,
                 allow_automation=allow_automation,
                 unattended=unattended,

@@ -579,16 +579,7 @@ fn contains_expected_seed_json(
 // that installed synchronization is not explicitly allowed to change.
 fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
     match table {
-        "projects" => matches!(
-            field,
-            "deleted_at"
-                | "github_repo"
-                | "github_url"
-                | "linear_project_id"
-                | "linear_sync_enabled"
-                | "linear_synced_at"
-                | "linear_team_id"
-        ),
+        "projects" => matches!(field, "deleted_at"),
         "sessions" => matches!(
             field,
             "approved_tools_json"

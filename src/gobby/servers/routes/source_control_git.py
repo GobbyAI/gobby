@@ -86,27 +86,27 @@ def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
     return LocalProjectManager(server.session_manager.db)
 
 
-def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | None, str | None]:
-    """Resolve project_id to (checkout root, github_repo).
+def _resolve_project(server: HTTPServer, project_id: str | None) -> str | None:
+    """Resolve project_id to this machine's checkout root.
 
-    A checkout-free sentinel project resolves to (None, github_repo) so callers
-    return an empty payload instead of an error. When project_id is None, falls
-    back to the first checkout-owning project with a local checkout. A named
-    real project with no checkout is HTTP 409, not an empty diff.
+    A checkout-free sentinel project resolves to None so callers return an empty
+    payload instead of an error. When project_id is None, falls back to the first
+    checkout-owning project with a local checkout. A named real project with no
+    checkout is HTTP 409, not an empty diff.
     """
     try:
         pm = _get_project_manager(server)
         if project_id:
             project = pm.get(project_id)
             if not project:
-                return None, None
+                return None
             if project.id in CHECKOUT_FREE_PROJECT_IDS:
-                return None, project.github_repo
+                return None
             machine_id = require_local_machine_id(
                 None, resource_kind="project_checkout", resource_id=project.id
             )
             try:
-                return require_root(pm.db, project.id, machine_id), project.github_repo
+                return require_root(pm.db, project.id, machine_id)
             except CheckoutNotFoundError as exc:
                 raise _checkout_http_error(exc) from exc
         for project in pm.list():
@@ -116,7 +116,7 @@ def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | 
                 machine_id = require_local_machine_id(
                     None, resource_kind="project_checkout", resource_id=project.id
                 )
-                return require_root(pm.db, project.id, machine_id), project.github_repo
+                return require_root(pm.db, project.id, machine_id)
             except (CheckoutNotFoundError, CheckoutSentinelRejectedError):
                 continue
     except HTTPException as exc:
@@ -131,7 +131,7 @@ def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | 
         raise _checkout_http_error(exc) from exc
     except (ValueError, OSError) as exc:
         logger.debug("Failed to resolve project %s: %s", project_id, exc)
-    return None, None
+    return None
 
 
 def parse_upstream_track(track: str) -> tuple[int, int]:

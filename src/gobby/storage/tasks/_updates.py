@@ -74,11 +74,6 @@ def update_task(
     blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
-    github_issue_number: MaybeUnset[int | None] = UNSET,
-    github_pr_number: MaybeUnset[int | None] = UNSET,
-    github_repo: MaybeUnset[str | None] = UNSET,
-    linear_issue_id: MaybeUnset[str | None] = UNSET,
-    linear_team_id: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
     allow_automation: MaybeUnset[bool] = UNSET,
     unattended: MaybeUnset[bool] = UNSET,
@@ -163,21 +158,7 @@ def update_task(
             raise ValueError("blocked_by_merge cannot be None")
         updates.append("blocked_by_merge = %s")
         params.append(bool(blocked_by_merge))
-    if github_issue_number is not UNSET:
-        updates.append("github_issue_number = %s")
-        params.append(github_issue_number)
-    if github_pr_number is not UNSET:
-        updates.append("github_pr_number = %s")
-        params.append(github_pr_number)
-    if github_repo is not UNSET:
-        updates.append("github_repo = %s")
-        params.append(github_repo)
-    if linear_issue_id is not UNSET:
-        updates.append("linear_issue_id = %s")
-        params.append(linear_issue_id)
-    if linear_team_id is not UNSET:
-        updates.append("linear_team_id = %s")
-        params.append(linear_team_id)
+
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = %s")
         params.append(validation_override_reason)
@@ -317,11 +298,6 @@ def update_task_metadata(
     blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
-    github_issue_number: MaybeUnset[int | None] = UNSET,
-    github_pr_number: MaybeUnset[int | None] = UNSET,
-    github_repo: MaybeUnset[str | None] = UNSET,
-    linear_issue_id: MaybeUnset[str | None] = UNSET,
-    linear_team_id: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
     allow_automation: MaybeUnset[bool] = UNSET,
     unattended: MaybeUnset[bool] = UNSET,
@@ -398,11 +374,6 @@ def update_task_metadata(
         blocked_by_merge=blocked_by_merge,
         escalated_at=escalated_at,
         escalation_reason=escalation_reason,
-        github_issue_number=github_issue_number,
-        github_pr_number=github_pr_number,
-        github_repo=github_repo,
-        linear_issue_id=linear_issue_id,
-        linear_team_id=linear_team_id,
         validation_override_reason=validation_override_reason,
         allow_automation=allow_automation,
         unattended=unattended,

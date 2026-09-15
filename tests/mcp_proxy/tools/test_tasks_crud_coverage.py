@@ -69,11 +69,6 @@ NOISY_TASK_KEYS = {
     "merge_in_progress",
     "blocked_by_merge",
     "commits",
-    "github_issue_number",
-    "github_pr_number",
-    "github_repo",
-    "linear_issue_id",
-    "linear_team_id",
 }
 
 

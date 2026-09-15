@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option("--name", "-n", help="Project name")
-@click.option("--github-url", "-g", help="GitHub repository URL")
 @click.option(
     "-C",
     "--path",
@@ -32,7 +31,6 @@ logger = logging.getLogger(__name__)
 def init(
     ctx: click.Context,
     name: str | None,
-    github_url: str | None,
     working_dir: Path | None,
 ) -> None:
     """Initialize a new Gobby project in the current directory."""
@@ -44,7 +42,6 @@ def init(
         result = initialize_project(
             cwd=cwd,
             name=name,
-            github_url=github_url,
             db=require_cli_database(),
         )
     except Exception as e:

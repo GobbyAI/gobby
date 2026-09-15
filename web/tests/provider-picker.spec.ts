@@ -176,7 +176,7 @@ function mockApiRoutes(
               machine_id: "machine-1",
               root_path: "/tmp/project-one",
             },
-            github_repo: null,
+
             session_count: 0,
             open_task_count: 0,
           },

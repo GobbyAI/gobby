@@ -103,10 +103,10 @@ const PROJECT = {
     machine_id: "machine-1",
     root_path: "/tmp/project-one",
   },
-  github_url: null,
-  github_repo: null,
-  linear_team_id: null,
-  linear_project_id: null,
+
+
+
+
   approval_rules: [],
   validation_detection: null,
   created_at: "2026-04-08T12:00:00Z",
@@ -1500,7 +1500,7 @@ function baseApi(
       };
     case "/api/source-control/status":
       return {
-        github_repo: null,
+
         current_branch: "main",
         branch_count: 1,
         worktree_count: 0,

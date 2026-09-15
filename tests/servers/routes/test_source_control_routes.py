@@ -127,7 +127,7 @@ async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
         await release.wait()
         return GitTimeout("timeout", ("git", *args), 0.01)
 
-    monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: ("/tmp/repo", None))
+    monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: "/tmp/repo")
     monkeypatch.setattr("gobby.servers.routes.source_control_git.daemon_git.run", timeout_git)
     async with AsyncClient(transport=ASGITransport(app=client.app), base_url="http://test") as http:
         request = asyncio.create_task(http.get("/api/source-control/status"))
@@ -285,7 +285,6 @@ class TestResolveProject:
     ) -> None:
         mock_project = MagicMock()
         mock_project.id = "proj-123"
-        mock_project.github_repo = "owner/repo"
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = mock_project
@@ -304,10 +303,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, "proj-123")
+            repo_path = _resolve_project(mock_server, "proj-123")
 
         assert repo_path == "/tmp/repo"
-        assert github_repo == "owner/repo"
 
     def test_resolve_without_project_id_falls_back(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -315,7 +313,6 @@ class TestResolveProject:
         mock_proj = MagicMock()
         mock_proj.id = "proj-fallback"
         mock_proj.name = "my-project"
-        mock_proj.github_repo = "org/fallback"
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [mock_proj]
@@ -334,10 +331,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, None)
+            repo_path = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/fallback"
-        assert github_repo == "org/fallback"
 
     def test_resolve_skips_hidden_projects(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -349,7 +345,6 @@ class TestResolveProject:
         real = MagicMock()
         real.id = "real"
         real.name = "real-project"
-        real.github_repo = None
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [orphaned, real]
@@ -370,19 +365,17 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, None)
+            repo_path = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/real"
-        assert github_repo is None
 
     def test_resolve_returns_none_none_on_failure(self, mock_server: MagicMock) -> None:
         mock_server.session_manager = None
 
         from gobby.servers.routes.source_control import _resolve_project
 
-        repo_path, github_repo = _resolve_project(mock_server, "proj-123")
+        repo_path = _resolve_project(mock_server, "proj-123")
         assert repo_path is None
-        assert github_repo is None
 
     def test_resolve_fallback_skips_checkout_free_sentinels(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -396,7 +389,6 @@ class TestResolveProject:
         real = MagicMock()
         real.id = "real"
         real.name = "real-project"
-        real.github_repo = "org/real"
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [global_project, personal, real]
@@ -422,9 +414,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, None)
+            repo_path = _resolve_project(mock_server, None)
 
-        assert (repo_path, github_repo) == ("/tmp/real", "org/real")
+        assert repo_path == "/tmp/real"
         assert resolved == ["real"]
 
     def test_resolve_explicit_sentinel_is_empty_not_conflict(
@@ -433,7 +425,6 @@ class TestResolveProject:
         personal = MagicMock()
         personal.id = PERSONAL_PROJECT_ID
         personal.name = "_personal"
-        personal.github_repo = None
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = personal
@@ -449,10 +440,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
+            repo_path = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
 
         assert repo_path is None
-        assert github_repo is None
 
     def test_status_for_sentinel_project_is_empty_200(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -460,7 +450,6 @@ class TestResolveProject:
         personal = MagicMock()
         personal.id = PERSONAL_PROJECT_ID
         personal.name = "_personal"
-        personal.github_repo = None
         mock_pm = MagicMock()
         mock_pm.get.return_value = personal
         mock_pm.db = MagicMock()
@@ -473,7 +462,6 @@ class TestResolveProject:
 
         assert response.status_code == 200
         assert response.json() == {
-            "github_repo": None,
             "current_branch": None,
             "branch_count": 0,
             "worktree_count": 0,
@@ -519,7 +507,7 @@ class TestGetStatus:
         """When no project resolves, returns minimal status."""
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/status")
 
@@ -541,7 +529,7 @@ class TestGetStatus:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", "owner/repo"),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -570,7 +558,7 @@ class TestGetStatus:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, None),
+                return_value=None,
             ),
         ):
             response = client.get("/api/source-control/status")
@@ -590,7 +578,7 @@ class TestListBranches:
     def test_branches_no_repo(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/branches")
 
@@ -619,7 +607,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -660,7 +648,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -694,7 +682,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -735,7 +723,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -766,7 +754,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -798,7 +786,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -835,7 +823,7 @@ class TestCheckoutBranch:
     def test_checkout_no_repo_returns_400(self, client: TestClient) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.post(
                 "/api/source-control/branches/checkout",
@@ -850,7 +838,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -876,7 +864,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -903,7 +891,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -937,7 +925,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -958,7 +946,7 @@ class TestListBranchCommits:
     def test_commits_no_repo(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/branches/main/commits")
 
@@ -977,7 +965,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -995,7 +983,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1024,7 +1012,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", "owner/repo"),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1048,7 +1036,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1076,7 +1064,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1097,7 +1085,7 @@ class TestGetDiff:
     def test_diff_no_repo_path(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/diff")
 
@@ -1115,7 +1103,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1131,7 +1119,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1153,7 +1141,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1334,7 +1322,7 @@ class TestDeleteWorktree:
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
@@ -1391,7 +1379,7 @@ class TestDeleteWorktree:
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
@@ -1422,7 +1410,7 @@ class TestDeleteWorktree:
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
@@ -1641,7 +1629,7 @@ def clone_git(mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path:
     )
     monkeypatch.setattr(
         "gobby.servers.routes.source_control_git._resolve_project",
-        lambda _server, _project_id: (str(tmp_path), None),
+        lambda _server, _project_id: str(tmp_path),
     )
     return manager
 
@@ -1667,7 +1655,7 @@ class TestDeleteClone:
         monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", clones_root)
         monkeypatch.setattr(
             "gobby.servers.routes.source_control_git._resolve_project",
-            lambda _server, _project_id: (str(tmp_path), None),
+            lambda _server, _project_id: str(tmp_path),
         )
 
         first = client.delete("/api/source-control/clones/clone-1")
@@ -1817,10 +1805,9 @@ def test_resolve_project_uses_machine_checkout(  # tdd-red window
     mock_server.session_manager.db = temp_db
     from gobby.servers.routes.source_control import _resolve_project
 
-    repo_path, github_repo = _resolve_project(mock_server, isolated.project.id)
+    repo_path = _resolve_project(mock_server, isolated.project.id)
 
     assert repo_path == isolated.root_path
-    assert github_repo == isolated.project.github_repo
 
 
 @pytest.mark.parametrize(
@@ -1852,7 +1839,7 @@ def test_status_reports_ahead_behind(
     with (
         patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=("/tmp/repo", "owner/repo"),
+            return_value="/tmp/repo",
         ),
         patch(
             "gobby.servers.routes.source_control._run_git",
@@ -1868,7 +1855,6 @@ def test_status_reports_ahead_behind(
         )
 
     expected = {
-        "github_repo": "owner/repo",
         "current_branch": "feature/test",
         "branch_count": 3,
         "worktree_count": 0,
@@ -1934,8 +1920,8 @@ def test_create_client_worktree(
     storage.create.return_value = worktree
     mock_server.services.worktree_storage = storage
 
-    def resolve_project(_server: MagicMock, project_id: str) -> tuple[str | None, None]:
-        return (None, None) if project_id == "missing" else ("/repo", None)
+    def resolve_project(_server: MagicMock, project_id: str) -> str | None:
+        return None if project_id == "missing" else "/repo"
 
     with (
         patch(

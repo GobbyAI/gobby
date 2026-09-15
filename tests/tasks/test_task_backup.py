@@ -76,9 +76,7 @@ def task_manager(hub_db: HubDatabase) -> LocalTaskManager:
 def sample_project(
     isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
 ) -> dict[str, Any]:
-    project = isolated_checkout_factory(
-        hub_db, "test-project", github_url="https://github.com/test/test-project"
-    ).project
+    project = isolated_checkout_factory(hub_db, "test-project").project
     return project.to_dict()
 
 
@@ -984,11 +982,6 @@ class TestClosedStateRoundTrip:
                 closed_commit_sha = 'abc123def456',
                 labels = '["bug", "p0"]',
                 category = 'code',
-                github_issue_number = 42,
-                github_pr_number = 99,
-                github_repo = 'owner/repo',
-                linear_issue_id = 'LIN-123',
-                linear_team_id = 'TEAM-1',
                 start_date = '2026-01-10',
                 due_date = '2026-01-20'
             WHERE id = %s""",
@@ -1007,11 +1000,11 @@ class TestClosedStateRoundTrip:
         assert data["closed_commit_sha"] == "abc123def456"
         assert data["labels"] == ["bug", "p0"]
         assert data["category"] == "code"
-        assert data["github_issue_number"] == 42
-        assert data["github_pr_number"] == 99
-        assert data["github_repo"] == "owner/repo"
-        assert data["linear_issue_id"] == "LIN-123"
-        assert data["linear_team_id"] == "TEAM-1"
+        assert "github_issue_number" not in data
+        assert "github_pr_number" not in data
+        assert "github_repo" not in data
+        assert "linear_issue_id" not in data
+        assert "linear_team_id" not in data
         assert data["start_date"] == "2026-01-10"
         assert data["due_date"] == "2026-01-20"
 
@@ -1032,11 +1025,7 @@ class TestClosedStateRoundTrip:
         assert reimported.closed_commit_sha == "abc123def456"
         assert reimported.labels == ["bug", "p0"]
         assert reimported.category == "code"
-        assert reimported.github_issue_number == 42
-        assert reimported.github_pr_number == 99
-        assert reimported.github_repo == "owner/repo"
-        assert reimported.linear_issue_id == "LIN-123"
-        assert reimported.linear_team_id == "TEAM-1"
+        assert not hasattr(reimported, "github_issue_number")
         assert reimported.start_date == "2026-01-10"
         assert reimported.due_date == "2026-01-20"
 

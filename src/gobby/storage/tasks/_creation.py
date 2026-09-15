@@ -42,11 +42,6 @@ def create_task(
     assigned_agent: str | None = None,
     implementation_domain: str | None = None,
     additional_skills: list[str] | None = None,
-    github_issue_number: int | None = None,
-    github_pr_number: int | None = None,
-    github_repo: str | None = None,
-    linear_issue_id: str | None = None,
-    linear_team_id: str | None = None,
 ) -> str:
     """Create a new task with collision handling.
 
@@ -70,11 +65,6 @@ def create_task(
             assigned_agent=assigned_agent,
             implementation_domain=implementation_domain,
             additional_skills=additional_skills,
-            github_issue_number=github_issue_number,
-            github_pr_number=github_pr_number,
-            github_repo=github_repo,
-            linear_issue_id=linear_issue_id,
-            linear_team_id=linear_team_id,
         )
 
 
@@ -137,11 +127,6 @@ def _create_task_in_transaction(
     assigned_agent: str | None = None,
     implementation_domain: str | None = None,
     additional_skills: list[str] | None = None,
-    github_issue_number: int | None = None,
-    github_pr_number: int | None = None,
-    github_repo: str | None = None,
-    linear_issue_id: str | None = None,
-    linear_team_id: str | None = None,
 ) -> str:
     """Insert a task using a caller-owned TaskSeqAllocation transaction."""
     max_retries = 3
@@ -179,9 +164,8 @@ def _create_task_in_transaction(
                     validation_status, category,
                     validation_criteria, validation_fail_count,
                     assigned_agent, implementation_domain, additional_skills,
-                    github_issue_number, github_pr_number, github_repo,
-                    linear_issue_id, linear_team_id, seq_num
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    seq_num
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s)
                 """,
                 (
                     task_id,
@@ -200,11 +184,6 @@ def _create_task_in_transaction(
                     assigned_agent,
                     implementation_domain,
                     additional_skills_json,
-                    github_issue_number,
-                    github_pr_number,
-                    github_repo,
-                    linear_issue_id,
-                    linear_team_id,
                     next_seq_num,
                 ),
             )

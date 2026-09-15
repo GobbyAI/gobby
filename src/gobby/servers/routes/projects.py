@@ -51,9 +51,8 @@ from gobby.utils.checkout_root import (
     MarkerMismatchError,
     validate_checkout_root,
 )
-from gobby.utils.git import get_github_url_async
 from gobby.utils.machine_id import get_machine_id
-from gobby.utils.project_init import initialize_project_from_resolved_metadata
+from gobby.utils.project_init import initialize_project
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -67,8 +66,6 @@ class ProjectUpdate(BaseModel):
     """Request body for updating a project."""
 
     name: str | None = None
-    github_url: str | None = None
-    github_repo: str | None = None
     approval_rules: list[str] | None = None
     validation_detection: dict[str, Any] | None = None
 
@@ -290,7 +287,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         """Initialize a local directory and return its project payload."""
         pm = _get_project_manager(server)
         project_path = Path(body.path)
-        github_url = await get_github_url_async(project_path)
 
         def apply_init() -> tuple[Project, bool]:
             try:
@@ -299,9 +295,8 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     checkout.project_id
                     for checkout in LocalProjectCheckoutManager(pm.db).list_for_machine(machine_id)
                 }
-                result = initialize_project_from_resolved_metadata(
+                result = initialize_project(
                     cwd=project_path,
-                    github_url=github_url,
                     db=pm.db,
                 )
                 project = pm.get(result.project_id)

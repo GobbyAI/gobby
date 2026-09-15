@@ -31,7 +31,6 @@ def test_init_succeeds_with_array_package_json(
     with (
         patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
         patch("gobby.utils.project_context.get_project_context", return_value=None),
-        patch("gobby.utils.git.get_github_url", return_value=None),
         patch(
             "gobby.cli.runtime.require_cli_database",
             return_value=hub_db,

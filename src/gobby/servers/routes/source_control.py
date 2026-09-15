@@ -72,7 +72,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     @router.get("/status")
     async def get_status(project_id: str | None = None) -> dict[str, Any]:
         """Get source control status overview."""
-        repo_path, github_repo = await server.run_db(_resolve_project, server, project_id)
+        repo_path = await server.run_db(_resolve_project, server, project_id)
 
         cache_key = f"status:{project_id or 'default'}"
         cached = _get_cached(cache_key, _GIT_TTL)
@@ -127,7 +127,6 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             clone_count = len(cls)
 
         result = {
-            "github_repo": github_repo,
             "current_branch": current_branch,
             "branch_count": branch_count,
             "worktree_count": worktree_count,
@@ -142,7 +141,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     @router.get("/branches")
     async def list_branches(project_id: str | None = None) -> dict[str, Any]:
         """List git branches with ahead/behind info."""
-        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
+        repo_path = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             return {"branches": [], "current_branch": None}
 
@@ -252,7 +251,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         branch_name = payload.get("branch_name", "")
         _validate_git_ref(branch_name, "branch_name")
 
-        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
+        repo_path = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             raise HTTPException(400, "No repository path for project")
 
@@ -299,7 +298,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """List recent commits on a branch via git log."""
         _validate_git_ref(branch_name, "branch_name")
-        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
+        repo_path = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             return {"commits": []}
 
@@ -344,7 +343,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         """Get diff between two refs."""
         _validate_git_ref(base, "base")
         _validate_git_ref(head, "head")
-        repo_path, _ = await server.run_db(_resolve_project, server, project_id)
+        repo_path = await server.run_db(_resolve_project, server, project_id)
         if not repo_path:
             raise HTTPException(400, "No repository path for project")
 

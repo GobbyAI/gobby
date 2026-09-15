@@ -69,8 +69,8 @@ def create_source_control_worktrees_router(
         if worktree_storage is None:
             raise HTTPException(503, "Worktree storage not available")
 
-        repo_path, _ = cast(
-            tuple[str | None, str | None],
+        repo_path = cast(
+            str | None,
             await server.run_db(source_control_git._resolve_project, server, body.project_id),
         )
         if repo_path is None:
@@ -136,7 +136,7 @@ def create_source_control_worktrees_router(
             if fallback is None:
                 return None
             try:
-                candidate_repo_path, _ = source_control_git._resolve_project(
+                candidate_repo_path = source_control_git._resolve_project(
                     server, candidate.project_id
                 )
                 if candidate_repo_path:
@@ -270,7 +270,7 @@ def create_source_control_worktrees_router(
             raise HTTPException(404, "Clone not found")
 
         try:
-            repo_path, _ = await server.run_db(
+            repo_path = await server.run_db(
                 source_control_git._resolve_project, server, clone.project_id
             )
             if not repo_path:

@@ -4,7 +4,7 @@ import { useSourceControl } from "../useSourceControl";
 
 const PROJECT_PAYLOADS: Record<string, unknown> = {
   status: {
-    github_repo: "owner/repo",
+
     current_branch: "main",
     branch_count: 1,
     worktree_count: 1,
