@@ -2189,9 +2189,10 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         "mid-send registered",
     )
     .await;
-    for _ in 0..100 {
-        tokio::task::yield_now().await;
-    }
+    // Give the 8MiB mid-send time to enter the websocket write without
+    // occupying the only current-thread worker; a yield_now spin starves
+    // the second control under suite load.
+    tokio::time::sleep(Duration::from_millis(20)).await;
     let pre_write = {
         let daemon = daemon.clone();
         tokio::spawn(async move {

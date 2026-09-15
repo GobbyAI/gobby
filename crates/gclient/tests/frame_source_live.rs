@@ -19,6 +19,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
@@ -211,7 +212,7 @@ fn build_test_gterm() -> PathBuf {
     // Every worktree shares this target directory, so an existing binary may come from another
     // checkout. Always let Cargo validate it against this tree; incremental no-op builds keep the
     // common path cheap, and Cargo's shared build lock safely serializes required rebuilds.
-    let status = Command::new(env!("CARGO"))
+    let mut child = Command::new(env!("CARGO"))
         .current_dir(&workspace)
         .args([
             "build",
@@ -222,8 +223,21 @@ fn build_test_gterm() -> PathBuf {
             "--bin",
             "gterm",
         ])
-        .status()
-        .expect("build test gterm");
+        .spawn()
+        .expect("spawn test gterm build");
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() > HOST_TIMEOUT * 4 => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("gterm cargo build exceeded {:?}", HOST_TIMEOUT * 4);
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => panic!("wait test gterm build: {error}"),
+        }
+    };
     assert!(status.success(), "test gterm build failed");
     binary
 }
@@ -451,17 +465,23 @@ fn semantic_frame(symbol: &str) -> ServerMessage {
 async fn direct_frames_verify_epoch_and_render() {
     let host = TestHost::spawn(&[]).await;
     let host_dir = host.socket_dir().to_path_buf();
-    let (epoch, host_terminal_id) =
-        tokio::task::spawn_blocking(move || spawn_native_terminal_at(&host_dir))
-            .await
-            .expect("spawn native control task");
+    let (epoch, host_terminal_id) = timeout(
+        HOST_TIMEOUT * 2,
+        tokio::task::spawn_blocking(move || spawn_native_terminal_at(&host_dir)),
+    )
+    .await
+    .expect("spawn native control deadline")
+    .expect("spawn native control task");
 
     let relay_dir = temp_socket_dir();
     let relay_path = relay_dir.path().join("frames-relay.sock");
     let relay = UnixListener::bind(&relay_path).expect("bind epoch relay");
     let upstream_path = host.frame_socket();
     let relay_task = tokio::spawn(async move {
-        let (mut client, _) = relay.accept().await.expect("accept epoch client");
+        let (mut client, _) = timeout(HOST_TIMEOUT, relay.accept())
+            .await
+            .expect("accept epoch client deadline")
+            .expect("accept epoch client");
         let mut upstream = UnixStream::connect(upstream_path)
             .await
             .expect("connect real host from relay");
