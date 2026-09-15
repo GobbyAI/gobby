@@ -1,7 +1,8 @@
 {
   "capture_type": "gobby-hooks-log-and-grok-discovery",
   "grok_version": "1.0.30",
-  "note": "Grok ~/.grok/logs/hooks.log is discovery-only. Per-hook dispatch is in Gobby ~/.gobby/logs/hooks.log.",
+  "debug_trace": "subagent-start-debug-trace.json",
+  "note": "Grok ~/.grok/logs/hooks.log is discovery-only. Per-hook dispatch is in grok --debug --debug-file and Gobby ~/.gobby/logs/hooks.log.",
   "discovery": {
     "source": "~/.grok/logs/hooks.log",
     "sample": "hooks: discovery complete total_hooks=23 subagent_start=1 subagent_stop=1"

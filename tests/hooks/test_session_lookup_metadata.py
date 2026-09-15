@@ -411,6 +411,29 @@ def test_grok_tool_hook_with_parent_tty_binds_without_prior_subagent_start() -> 
     session_manager.register_session.assert_not_called()
 
 
+def test_grok_debug_trace_records_dispatched_subagent_start() -> None:
+    payload = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "provider_contracts"
+            / "grok"
+            / "subagent-start-debug-trace.json"
+        ).read_text()
+    )
+    observations = payload["observations"]
+    lines = "\n".join(payload["sanitized_lines"])
+
+    assert observations["subagent_start_dispatched"] is True
+    assert observations["subagent_stop_dispatched"] is True
+    assert observations["acp_blocking_events_omit_subagent_start"] is True
+    assert "subagent_start" not in observations["acp_blocking_events"]
+    assert payload["parent_session_id"] != payload["child_session_id"]
+    assert "spawn_subagent" in lines
+    assert "subagent_start" in lines
+    assert "subagent_stop" in lines
+
+
 def test_materialized_row_uses_normalized_deferred_identity() -> None:
     session_manager = MagicMock()
     session_manager.get_session_id.return_value = None
