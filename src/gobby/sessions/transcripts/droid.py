@@ -195,6 +195,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
             transcript_path=transcript_path,
         )
         self._sidecar_usage: TokenUsage | None = None
+        self._sidecar_context_used: int | None = None
         self._sidecar_model: str | None = None
         self._last_emitted_usage: TokenUsage | None = None
         self._last_assistant_index: int | None = None
@@ -211,6 +212,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         """Side-read <droid-uuid>.settings.json beside the JSONL transcript."""
         sidecar_path = jsonl_path.with_suffix(".settings.json")
         self._sidecar_usage = None
+        self._sidecar_context_used = None
         self._sidecar_model = None
 
         try:
@@ -241,6 +243,15 @@ class DroidTranscriptParser(BaseTranscriptParser):
                 cache_creation_tokens=_coerce_token_count(usage_raw.get("cacheCreationTokens")),
                 cache_read_tokens=_coerce_token_count(usage_raw.get("cacheReadTokens")),
             )
+        # tokenUsage is cumulative, so it is accounting only. The prompt of the latest
+        # model call is the context actually in use.
+        last_call_raw = data.get("lastCallTokenUsage")
+        if isinstance(last_call_raw, dict):
+            prompt_tokens = sum(
+                _coerce_token_count(last_call_raw.get(key))
+                for key in ("inputTokens", "cacheReadTokens", "cacheCreationTokens")
+            )
+            self._sidecar_context_used = prompt_tokens or None
         model = data.get("model")
         self._sidecar_model = model if isinstance(model, str) else None
 
@@ -493,7 +504,14 @@ class DroidTranscriptParser(BaseTranscriptParser):
             delta = _usage_delta(self._sidecar_usage, self._last_emitted_usage)
             self._last_emitted_usage = self._sidecar_usage
             if _usage_has_tokens(delta):
-                return [ParsedAdjustment(last_assistant_index, "usage", delta)]
+                adjustments = [ParsedAdjustment(last_assistant_index, "usage", delta)]
+                if self._sidecar_context_used is not None:
+                    adjustments.append(
+                        ParsedAdjustment(
+                            last_assistant_index, "context_used_tokens", self._sidecar_context_used
+                        )
+                    )
+                return adjustments
         return []
 
     def extract_last_messages(

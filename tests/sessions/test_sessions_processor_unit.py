@@ -2737,6 +2737,59 @@ class TestModelExtraction:
         assert [snapshot.context_used_tokens for snapshot in snapshots] == [151_699]
 
     @pytest.mark.asyncio
+    async def test_reported_occupancy_outranks_the_same_messages_usage(
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Droid puts a cumulative usage delta beside last-call occupancy; occupancy wins."""
+        store = MagicMock()
+        store.get_session_totals.return_value = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        store.record.return_value = False
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: store)
+        session = SimpleNamespace(
+            project_id="proj-1",
+            source="droid",
+            context_window=200_000,
+            model="glm-5.3-flash",
+            context_usage_confidence=None,
+        )
+        snapshots: list[ContextUsageSnapshot] = []
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.update_context_usage.side_effect = (
+            lambda _session_id, snapshot: snapshots.append(snapshot)
+        )
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        message = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="done",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+            usage=TokenUsage(
+                input_tokens=95_608,
+                output_tokens=900,
+                cache_creation_tokens=0,
+                cache_read_tokens=849_920,
+            ),
+            model="glm-5.3-flash",
+            message_id="droid-0",
+            context_used_tokens=46_182,
+        )
+
+        await processor._persist_usage_events("session-1", [message])
+
+        assert [snapshot.context_used_tokens for snapshot in snapshots] == [46_182]
+
+    @pytest.mark.asyncio
     async def test_grok_occupancy_keeps_compact_epoch_max(
         self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -147,6 +147,42 @@ def test_missing_sidecar_is_retried_when_created_later(tmp_path: Path) -> None:
     assert assistant_records[-1].usage.cache_read_tokens == 7
 
 
+def test_context_occupancy_comes_from_the_last_call_not_cumulative_usage(tmp_path: Path) -> None:
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.with_suffix(".settings.json").write_text(
+        json.dumps(
+            {
+                "model": "glm-5.3-flash",
+                "tokenUsage": {
+                    "inputTokens": 95608,
+                    "outputTokens": 900,
+                    "cacheCreationTokens": 0,
+                    "cacheReadTokens": 849920,
+                },
+                "lastCallTokenUsage": {
+                    "inputTokens": 1126,
+                    "outputTokens": 40,
+                    "cacheCreationTokens": 10,
+                    "cacheReadTokens": 45056,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    parser = DroidTranscriptParser(transcript_path=transcript_path)
+
+    records = parser.parse_lines(_fixture_lines(), start_index=0)
+
+    last_assistant = [
+        record
+        for record in records
+        if isinstance(record, ParsedMessage) and record.role == "assistant"
+    ][-1]
+    assert last_assistant.usage is not None
+    assert last_assistant.usage.cache_read_tokens == 849920
+    assert last_assistant.context_used_tokens == 1126 + 10 + 45056
+
+
 def test_null_sidecar_usage_is_retried_and_emits_deltas(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"
     sidecar_path = transcript_path.with_suffix(".settings.json")
