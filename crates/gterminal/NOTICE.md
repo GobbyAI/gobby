@@ -45,12 +45,14 @@ module map. This is a one-time fork; there is no re-pin procedure.
 - Source: https://github.com/ghostty-org/ghostty
 - License: MIT
 - Copyright: 2024 Mitchell Hashimoto, Ghostty contributors
-- Vendored pin: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
-  (`1.3.2-HEAD-+c5a21edfc`)
+- Vendored pin: `7aab0a0392369613472bd5dcfd66bef58e78c3ec`
+  (`1.3.2-HEAD-+7aab0a0`)
 - Location: `vendor/libghostty-vt/`
-- Built only with `-Demit-lib-vt -Demit-lib-vt-shared=false` when this crate's
-  `vt-engine` feature is enabled, so only the static archive is emitted. The
-  full Ghostty application, renderer, and font stack are not linked.
+- Built with `-Demit-lib-vt` (Zig 0.16.0, bundled SIMD, no `-fsys=simdutf`)
+  when this crate's `vt-engine` feature is enabled. The build emits both the
+  static archive and the shared library; this crate links only
+  `libghostty-vt.a`. The full Ghostty application, renderer, and font stack
+  are not linked.
 
 The MIT license text is at `vendor/libghostty-vt/LICENSE`.
 
@@ -89,14 +91,11 @@ Local patch `vendor/patches/libghostty-vt/0001-default-grapheme-cluster-mode.pat
 defaults lib-vt panes to grapheme clustering (DEC private mode 2027) so RIS
 does not disable it.
 
-Local patch `vendor/patches/libghostty-vt/0002-optional-lib-vt-shared.patch`
-adds `-Demit-lib-vt-shared`, letting this crate emit only the static archive
-it links.
-
 Local patch `vendor/patches/libghostty-vt/0003-normalize-darwin-nonsimd-archive.patch`
 routes native Darwin static archives through `CombineArchivesStep` even without
-SIMD, so Apple `ld` accepts the compiler runtime member. All three are
-documented in `vendor/libghostty-vt.patches.md`.
+SIMD, so Apple `ld` accepts the compiler runtime member. Both are documented in
+`vendor/libghostty-vt.patches.md`, together with the removed
+`0002-optional-lib-vt-shared.patch`.
 
 ### portable-pty
 
@@ -116,9 +115,10 @@ except `pkg/afl++/LICENSE` (MIT © 2024 Loris Cro, zig-afl-kit).
 The wrappers reference third-party tarballs through `build.zig.zon` fetch
 URLs. Most of those nested projects are present in this source tree only as
 wrapper code plus fetch metadata and are not compiled into libghostty-vt
-(`-Demit-lib-vt`) builds. **The two exceptions are `simdutf` and `highway`**,
-which carry in-tree C++ sources that `-Demit-lib-vt` does compile and link
-into `libghostty-vt.a`; both are marked below. Inventory:
+(`-Demit-lib-vt`) builds. **The three exceptions are `simdutf`, `highway`, and
+`wuffs`**, whose C/C++ sources `-Demit-lib-vt` does compile and link into
+`libghostty-vt.a` (archive members `simdutf.o`, `abort.o`, `per_target.o`,
+`targets.o`, `wuffs-v0.4.o`); all three are marked below. Inventory:
 
 | `pkg/` directory | Nested project (fetch-only unless noted) |
 | --- | --- |
@@ -127,7 +127,7 @@ into `libghostty-vt.a`; both are marked below. Inventory:
 | `apple-sdk` | Apple SDK bindings |
 | `breakpad` | Breakpad (`breakpad-b99f444ba5…`) |
 | `dcimgui` | Dear ImGui / DearBindings |
-| `fontconfig` | fontconfig 2.14.2 |
+| `fontconfig` | fontconfig 2.18.3 |
 | `freetype` | FreeType |
 | `glslang` | glslang |
 | `gtk4-layer-shell` | gtk4-layer-shell 1.1.0; wayland-protocols |
@@ -140,7 +140,8 @@ into `libghostty-vt.a`; both are marked below. Inventory:
 | `oniguruma` | Oniguruma |
 | `opengl` | OpenGL bindings |
 | `sentry` | sentry-native (getsentry); also pulls `breakpad` |
-| `simdutf` | simdutf 9.0.0 — **compiled in**: in-tree amalgamation `vendor/simdutf.cpp` and `vendor/simdutf.h`, no fetch. Imported by Ghostty commit `e89cc0b3`; dual-licensed Apache-2.0 OR MIT, with upstream texts in `LICENSE-APACHE` and `LICENSE-MIT` |
+| `simdutf` | simdutf 9.0.0 — **compiled in**: in-tree amalgamation `vendor/simdutf.cpp` and `vendor/simdutf.h`, no fetch. Imported by Ghostty commit `e89cc0b3`; dual-licensed Apache-2.0 OR MIT. Upstream dropped the in-tree `LICENSE-APACHE` and `LICENSE-MIT` copies at this pin; the license texts are in the simdutf repository |
 | `spirv-cross` | SPIRV-Cross |
-| `wuffs` | Wuffs; pixels |
+| `translate-c` | Zig `translate-c` (vancluever fork) build-time wrapper |
+| `wuffs` | Wuffs (google/wuffs `7411f488`) — **compiled in**: `release/c/wuffs-v0.4.c` from the fetched tarball, pulled in by lib-vt for Kitty graphics pixel operations. Its `LICENSE` distributes the software under both the MIT license and Apache-2.0, with texts in `LICENSE-MIT` and `LICENSE-APACHE`. Also references `pixels` (fetch-only) |
 | `zlib` | zlib |

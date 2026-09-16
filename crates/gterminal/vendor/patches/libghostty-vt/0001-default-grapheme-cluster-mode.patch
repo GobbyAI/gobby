@@ -8,15 +8,17 @@ store multi-codepoint grapheme clusters in one terminal cell. Set it in the
 terminal's default modes so RIS restores clustering instead of disabling it.
 
 Herdr issue: https://github.com/herdrdev/herdr/issues/243
-Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
+Vendored base: 7aab0a0392369613472bd5dcfd66bef58e78c3ec
 ---
-diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-index 1c3b9f0c..a896c0fd 100644
---- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
-+++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-@@ -344,4 +344,5 @@ fn new_(
-         .rows = opts.rows,
-         .max_scrollback = opts.max_scrollback,
-+        .default_modes = .{ .grapheme_cluster = true },
-     });
+diff --git a/crates/gterminal/vendor/libghostty-vt/src/terminal/c/terminal.zig b/crates/gterminal/vendor/libghostty-vt/src/terminal/c/terminal.zig
+index 736d0ca084..47a5c8499e 100644
+--- a/crates/gterminal/vendor/libghostty-vt/src/terminal/c/terminal.zig
++++ b/crates/gterminal/vendor/libghostty-vt/src/terminal/c/terminal.zig
+@@ -834,6 +834,7 @@ fn new_(
+         .{
+             .cols = cols,
+             .rows = rows,
++            .default_modes = .{ .grapheme_cluster = true },
+         },
+     );
      errdefer t.deinit(alloc);

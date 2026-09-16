@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the vendored libghostty-vt tree with Zig 0.15.
+# Build the vendored libghostty-vt tree with Zig 0.16.
 # Triple map matches crates/gterminal/build.rs::zig_target.
-# On macOS SDK 26.4+, use Homebrew zig@0.15 (LLVM backend); the official
-# 0.15.2 tarball fails to link the build runner against libSystem.
+# Zig 0.16.0 compiles its bundled libc++ against the macOS 27 SDK that
+# Command Line Tools ships, so no Xcode SDK override is needed.
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -34,7 +34,7 @@ if [[ ! -f "$VENDORED_DIR/build.zig" ]]; then
 fi
 
 if [[ ! -x "$ZIG_BIN" ]] && ! command -v "$ZIG_BIN" >/dev/null 2>&1; then
-  echo "error: zig not found (required Zig 0.15). Install Zig 0.15 and ensure it is on PATH, or set ZIG to the zig binary." >&2
+  echo "error: zig not found (required Zig 0.16). Install Zig 0.16 and ensure it is on PATH, or set ZIG to the zig binary." >&2
   exit 1
 fi
 
@@ -59,11 +59,6 @@ build_args=(
   "-Dsimd=${SIMD}"
   "-Dversion-string=${version_string}"
   -Demit-xcframework=false
-  # Mirror crates/gterminal/build.rs: only the static archive is ever linked, and
-  # emitting the shared library forces zig to compile its own libc++, which zig
-  # 0.15.2 cannot do against the macOS 27 SDK ("use of undeclared identifier
-  # 'INFINITY'"). Keep this in step with build.rs; see crates/gterminal/NOTICE.md.
-  -Demit-lib-vt-shared=false
 )
 if [[ -n "${GTERM_TARGET:-}" ]]; then
   build_args+=("-Dtarget=${zig_tgt}")

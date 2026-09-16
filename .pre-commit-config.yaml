@@ -16,10 +16,15 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # `crates/gterminal/vendor/` is excluded from the rewriting hooks: the
+      # vendored trees must stay byte-identical to the upstream dist archives,
+      # and trailing whitespace in `vendor/patches/*.patch` context lines is
+      # part of the diff.
       - id: trailing-whitespace
-        exclude: ^\.gobby/
+        exclude: ^(?:\.gobby/|crates/gterminal/vendor/)
       - id: end-of-file-fixer
-        exclude: ^(?:\.gobby/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
+        exclude: >-
+          ^(?:\.gobby/|crates/gterminal/vendor/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
       - id: check-yaml
         args: [--unsafe]  # Allow custom tags
       - id: check-json
@@ -37,6 +42,9 @@ repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0
     hooks:
+      # This hook passes no filenames and scans the staged diff itself, so an
+      # `exclude:` here has no effect; the scan allowlist lives in
+      # `.gitleaks.toml`.
       - id: gitleaks
 
   # ==========================================================================

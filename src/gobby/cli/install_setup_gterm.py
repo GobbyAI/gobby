@@ -18,7 +18,7 @@ from gobby.install.version_probe import probe_native_bin_version
 from . import install_release
 
 GTERM_NO_ZIG_SKIP_REASON = (
-    "zig not found on PATH; skipping local gterm workspace build (vt-engine requires Zig 0.15)"
+    "zig not found on PATH; skipping local gterm workspace build (vt-engine requires Zig 0.16)"
 )
 _WORKSPACE_BUILD_TIMEOUT_SECONDS = 600
 _CRATE_PACKAGE = "gobby-terminal"

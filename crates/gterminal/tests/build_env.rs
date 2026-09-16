@@ -84,8 +84,8 @@ fn missing_zig_reports_requirement() {
     );
     assert_ne!(code, 0, "vt-engine build must fail without zig:\n{text}");
     assert!(
-        text.contains("Zig 0.15") || text.contains("0.15"),
-        "missing zig must name Zig 0.15:\n{text}"
+        text.contains("Zig 0.16"),
+        "missing zig must name Zig 0.16:\n{text}"
     );
 }
 
