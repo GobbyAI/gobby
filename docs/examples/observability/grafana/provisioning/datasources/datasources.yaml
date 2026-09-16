@@ -1,0 +1,26 @@
+# Grafana datasource provisioning for the Gobby observability stack.
+# Both datasources are reached over the compose network; no credentials apply.
+# The Loki datasource stays provisioned even without the `logs` profile, where
+# it simply reports as unreachable until `--profile logs` starts Loki.
+
+apiVersion: 1
+
+datasources:
+  - name: Gobby Prometheus
+    uid: gobby-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+
+  - name: Gobby Loki
+    uid: gobby-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: false
