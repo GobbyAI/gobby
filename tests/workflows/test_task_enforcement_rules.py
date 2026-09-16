@@ -275,11 +275,20 @@ async def _evaluate_close_event(
     )
 
 
+NATIVE_TRACKER_TOOLS = {
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskGet",
+    "TaskList",
+    "TodoWrite",
+    "todo_write",
+    "update_plan",
+}
+
 TASK_ENFORCEMENT_RULES = {
     "block-cross-session-foreign-dirty-edit",
-    "block-native-task-tools-unclaimed",
+    "block-native-task-tracker-unclaimed",
     "block-spawned-agent-create-task",
-    "block-native-todo-write",
     "block-reopen-task",
     "nudge-native-tracker-after-claim",
     "require-tasks-skill-for-mutations",
@@ -437,28 +446,24 @@ class TestRequireTaskBeforeCommit:
         assert response.decision == "allow"
 
 
-class TestBlockNativeTaskToolsUnclaimed:
-    """Verify block-native-task-tools-unclaimed blocks task tools without a Gobby task."""
+class TestBlockNativeTaskTrackerUnclaimed:
+    """Verify one rule gates every CLI's native task tracker on a claimed Gobby task."""
 
-    def test_blocks_task_tools_when_unclaimed(self, db, manager) -> None:
-        """Should block TaskCreate, TaskUpdate, TaskGet, TaskList."""
+    def test_blocks_every_native_tracker_tool(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("block-native-task-tools-unclaimed")
+        row = manager.get_by_name("block-native-task-tracker-unclaimed")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-
-        expected_tools = {"TaskCreate", "TaskUpdate", "TaskGet", "TaskList"}
-        assert set(body.effects[0].tools) == expected_tools
+        assert set(body.effects[0].tools) == NATIVE_TRACKER_TOOLS
 
     def test_when_checks_is_subagent_and_task_claimed(self, db, manager) -> None:
-        """Should only block when not subagent AND no task claimed."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("block-native-task-tools-unclaimed")
+        row = manager.get_by_name("block-native-task-tracker-unclaimed")
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -551,33 +556,6 @@ class TestNativeTrackerClaimNudge:
         assert "Gobby task = deliverable" in response.context
         assert "provider-native tracker = implementation substeps" in response.context
         assert "every owned finding" in response.context
-
-
-class TestBlockNativeTodoWrite:
-    """Verify block-native-todo-write blocks TodoWrite unconditionally."""
-
-    def test_blocks_todo_write(self, db, manager) -> None:
-        """Should block TodoWrite."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("block-native-todo-write")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "before_tool"
-        assert body.effects[0].type == "block"
-        assert set(body.effects[0].tools) == {"TodoWrite"}
-
-    def test_when_only_checks_is_subagent(self, db, manager) -> None:
-        """Should block for all non-subagent sessions regardless of task_claimed."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("block-native-todo-write")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        assert body.when is not None
-        assert "is_subagent" in body.when
-        assert "task_claimed" not in body.when
 
 
 class TestRequireTaskBeforeEdit:
@@ -2782,9 +2760,11 @@ async def test_reference_contract_4_1_2(db: HubDatabase, route: str) -> None:
                     "loaded_skill_references": references,
                 },
             )
+            # Schema lookup is never blocked, so only mutation routes need the references.
             expected = (
                 "allow"
-                if overview in references and (operation != "close_task" or closing in references)
+                if route == "schema"
+                or (overview in references and (operation != "close_task" or closing in references))
                 else "block"
             )
             assert response.decision == expected

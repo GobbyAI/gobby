@@ -17,30 +17,16 @@ rules:
           failing command,
           diagnostics, paths, and impact.
 
-  block-native-task-tools-unclaimed:
-    description: "Block CC native task tools when no Gobby task is claimed"
+  block-native-task-tracker-unclaimed:
+    description: "Gate every CLI's native task tracker on a claimed Gobby task"
     event: before_tool
     enabled: true
     priority: 30
     when: "not variables.get('is_subagent') and not variables.get('task_claimed')"
     effects:
       - type: block
-        tools: [TaskCreate, TaskUpdate, TaskGet, TaskList]
-        reason: |
-          Use create_task(title, description, category, claim=True) or
-          claim_task(task_id) to unlock native task tools for sub-step tracking.
-          The gobby-task tracks the deliverable; native tools track its sub-steps.
-
-  block-native-todo-write:
-    description: "Block TodoWrite - use gobby-tasks instead"
-    event: before_tool
-    enabled: true
-    priority: 30
-    when: "not variables.get('is_subagent')"
-    effects:
-      - type: block
-        tools: [TodoWrite]
+        tools: [TaskCreate, TaskUpdate, TaskGet, TaskList, TodoWrite, todo_write, update_plan]
         reason: |
           Use create_task(title, category, claim=True) or claim_task(task_id) to
-          unlock TaskCreate / TaskUpdate / TaskGet / TaskList for sub-step tracking.
-          The gobby-task tracks the deliverable; native tools track its sub-steps.
+          unlock the native task tracker for sub-step tracking until the task closes.
+          The gobby-task tracks the deliverable; the native tracker tracks its sub-steps.

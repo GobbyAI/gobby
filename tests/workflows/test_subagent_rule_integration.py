@@ -1,9 +1,8 @@
 """Integration tests for is_subagent variable and rule engine interaction.
 
 Verifies that:
-- block-native-task-tools-unclaimed fires when is_subagent is False and task_claimed is False
-- block-native-task-tools-unclaimed is skipped when is_subagent is True or task_claimed is True
-- block-native-todo-write fires when is_subagent is False (regardless of task_claimed)
+- block-native-task-tracker-unclaimed fires when is_subagent is False and task_claimed is False
+- block-native-task-tracker-unclaimed is skipped when is_subagent is True or task_claimed is True
 - reset-subagent-flag clears is_subagent on turn_start
 - Bidirectional toggle works within same session
 """
@@ -25,6 +24,15 @@ pytestmark = pytest.mark.integration
 # SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+NATIVE_TRACKER_TOOLS = (
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskGet",
+    "TaskList",
+    "TodoWrite",
+    "todo_write",
+    "update_plan",
+)
 
 
 @pytest.fixture
@@ -41,8 +49,7 @@ def engine(db: HubDatabase) -> RuleEngine:
     # Disable everything, then enable only our target rules
     db.execute("UPDATE rule_definitions SET enabled = FALSE")
     for name in (
-        "block-native-task-tools-unclaimed",
-        "block-native-todo-write",
+        "block-native-task-tracker-unclaimed",
         "reset-subagent-flag",
     ):
         db.execute(
@@ -99,47 +106,37 @@ class TestSubagentRuleIntegration:
 
     @pytest.mark.asyncio
     async def test_allows_task_tools_when_task_claimed(self, engine) -> None:
-        """TaskCreate should be allowed when a Gobby task is claimed."""
+        """Every native tracker tool should be allowed when a Gobby task is claimed."""
         variables: dict = {"is_subagent": False, "task_claimed": True}
-        for tool in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList"):
+        for tool in NATIVE_TRACKER_TOOLS:
             event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
             result = await engine.evaluate(event, SESSION_ID, variables)
             assert result.decision == "allow", f"{tool} should be allowed with task claimed"
 
     @pytest.mark.asyncio
-    async def test_todo_write_blocked_even_with_task_claimed(self, engine) -> None:
-        """TodoWrite should be blocked regardless of task_claimed."""
-        variables: dict = {"is_subagent": False, "task_claimed": True}
-        event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TodoWrite")
-        result = await engine.evaluate(event, SESSION_ID, variables)
-
-        assert result.decision == "block"
-
-    @pytest.mark.asyncio
     async def test_allows_all_tools_when_subagent(self, engine) -> None:
-        """All native task tools including TodoWrite should be allowed for subagents."""
+        """Every native tracker tool should be allowed for subagents."""
         variables: dict = {"is_subagent": True}
-        for tool in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TodoWrite"):
+        for tool in NATIVE_TRACKER_TOOLS:
             event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
             result = await engine.evaluate(event, SESSION_ID, variables)
             assert result.decision == "allow", f"{tool} should be allowed for subagent"
 
     @pytest.mark.asyncio
-    async def test_bidirectional_toggle(self, engine) -> None:
-        """Toggling task_claimed should change blocking behavior for task tools."""
+    @pytest.mark.parametrize("tool", NATIVE_TRACKER_TOOLS)
+    async def test_claim_lifecycle_gates_tracker(self, engine, tool: str) -> None:
+        """Blocked before a claim, allowed while claimed, blocked again after close."""
         variables: dict = {"is_subagent": False, "task_claimed": False}
-        event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
+        event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
 
-        # Blocked when unclaimed
         result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "block"
 
-        # Allowed when claimed
         variables["task_claimed"] = True
         result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
-        # Blocked again when unclaimed
+        # close_task releases the last claim, which sets task_claimed back to False.
         variables["task_claimed"] = False
         result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "block"

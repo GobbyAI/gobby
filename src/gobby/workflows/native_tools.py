@@ -96,6 +96,7 @@ _QWEN_TOOLS = {
     "run_shell_command",
     "save_memory",
     "search_file_content",
+    "todo_write",
     "web_fetch",
     "write_file",
 }
