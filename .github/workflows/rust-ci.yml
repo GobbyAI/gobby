@@ -112,7 +112,7 @@ jobs:
       - name: Test (gobby-terminal)
         run: cargo nextest run --profile ci -p gobby-terminal
 
-      # gobby-client: Zig-free workspace client (before Zig setup on purpose)
+      # gobby-client: clippy is Zig-free; its tests run after the Zig setup
       - name: Clippy (gobby-client)
         run: cargo clippy -p gobby-client --all-targets -- -D warnings
 
