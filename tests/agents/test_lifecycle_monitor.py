@@ -28,7 +28,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
-from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.agents.tmux import configure_tmux
@@ -49,6 +49,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import NamedKey, SnapshotResult, TerminalWriteError, WriteOutcome
 from gobby.terminals.services import TerminalServices
@@ -69,6 +70,8 @@ if TYPE_CHECKING:
 
 DETECTION_REGISTRY = cast("DetectionManifestRegistry", BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
+
+_DRAIN_KEYS = [("key", key) for key in composer_clear_sequence(None)]
 
 
 @pytest.fixture(autouse=True)
@@ -1864,7 +1867,7 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         assert runtime.write_log == [
-            ("key", "escape"),
+            *_DRAIN_KEYS,
             ("text", _written_text(runtime)[0]),
             ("key", "enter"),
         ]
@@ -2024,7 +2027,7 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         assert _runtime_of(idle_monitor).write_log == [
-            ("key", "escape"),
+            *_DRAIN_KEYS,
             ("text", IdleDetector.REPROMPT_MESSAGE),
             ("key", "enter"),
         ]
@@ -2049,13 +2052,13 @@ class TestCheckIdleAgents:
         state.first_idle_at = time.monotonic() - 360
 
         with _pane_text(idle_monitor, "\u276f\n") as runtime:
-            runtime.write_failures = [False, False, True]
+            runtime.write_failures = [*([False] * len(_DRAIN_KEYS)), False, True]
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
         assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 0
         assert runtime.write_log == [
-            ("key", "escape"),
+            *_DRAIN_KEYS,
             ("text", IdleDetector.REPROMPT_MESSAGE),
             ("key", "enter"),
         ]
@@ -2089,8 +2092,9 @@ class TestCheckIdleAgents:
         assert handled == 1
         assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 1
         assert runtime.live_probes == 2
+        # The drain stops at its first failed key; ctrl-c recovery then reprompts.
         assert runtime.write_log == [
-            ("key", "escape"),
+            ("key", "ctrl_u"),
             ("text", "\x03"),
             ("key", "enter"),
             ("text", IdleDetector.REPROMPT_MESSAGE),
@@ -2437,9 +2441,10 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        # Pane capture SHOULD have been called since session was stale
-        assert len(runtime.snapshot_calls) == 1
-        assert _runtime_of(mon).write_log[0] == ("key", "escape")
+        # Pane capture SHOULD have been called since session was stale; the
+        # reprompt then probes the composer once more before draining it.
+        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert _runtime_of(mon).write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
     async def test_idle_step_workflow_agent_gets_actionable_handoff_reprompt(
@@ -2521,7 +2526,7 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert _runtime_of(mon).write_log[0] == ("key", "escape")
+        assert _runtime_of(mon).write_log[0] == ("key", "ctrl_u")
         prompt = _written_text(_runtime_of(mon))[0]
         assert "Workflow: planner. Current step: plan." in prompt
         assert 'submit_for_review(stage_name="planning")' in prompt
@@ -2579,8 +2584,8 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert len(runtime.snapshot_calls) == 1
-        assert runtime.write_log[0] == ("key", "escape")
+        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert runtime.write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
     async def test_xhigh_session_within_scaled_timeout_only_probes_capacity(
@@ -2704,8 +2709,8 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert len(runtime.snapshot_calls) == 1
-        assert runtime.write_log[0] == ("key", "escape")
+        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert runtime.write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
     async def test_xhigh_session_past_scaled_timeout_can_fail_after_reprompts(
@@ -2826,7 +2831,7 @@ class TestCheckIdleAgents:
 
         # Agent should be reprompted despite active-looking pane
         assert handled == 1
-        assert runtime.write_log[0] == ("key", "escape")
+        assert runtime.write_log[0] == ("key", "ctrl_u")
         assert "Continue working" in _written_text(runtime)[0]
 
 

@@ -145,7 +145,7 @@ async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
 
     assert parked == 0
     assert resolved == 1
-    assert _written_keys(runtime)[0] == "escape"
+    assert _written_keys(runtime)[0] == "ctrl_u"
 
 
 async def test_agent_mid_turn_is_not_reprompted(

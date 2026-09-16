@@ -534,7 +534,9 @@ match, timeout, terminal, and pane-loss outcomes. It is not a durable subscripti
 No session-service wait tool exists. Use the applicable service’s `wait_for_*`
 primitive for other dependencies and reserve repeated snapshots for bounded
 diagnostics. Cross-session messaging uses `send_message`; explicit `wake=true`
-requests immediate processing, subject to protected interaction states.
+requests immediate processing, subject to protected interaction states and to an
+operator draft in the target's composer (`skipped: "composer_occupied"`, delivered on
+the next turn instead).
 
 ### Handoff Boundaries
 

@@ -8,6 +8,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.terminals.pane_io import PaneIO, SendResult, clear_composer
@@ -15,7 +17,10 @@ from gobby.terminals.runtime import NamedKey
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
+
+ComposerReader = Callable[[str | None], ComposerRead]
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +56,16 @@ _COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
+_COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
 _INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
 _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE = "interrupt_observation_unavailable"
+
+
+def composer_reader(db: HubDatabase, cli_source: str | None) -> ComposerReader | None:
+    """Bind the provider's composer probe for a compaction, or None without a provider."""
+    if not cli_source:
+        return None
+    return IdleDetector(DetectionManifestRegistry(db), cli_source).composer_read
 
 
 def _compact_interrupt_key(source: str | None) -> NamedKey:
@@ -306,6 +319,7 @@ async def _send_terminal_compaction_command(
     settle_seconds: float | None = None,
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
+    composer_read: ComposerReader | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Interrupt a live turn, drain the composer, submit the command, watch for a rejection.
 
@@ -318,9 +332,26 @@ async def _send_terminal_compaction_command(
     the command is submitted directly and the success detail carries
     ``interrupted: False``. Interrupt only on timeout. A CLI that rejects the
     command because its turn is still running (Grok) is interrupted again and the
-    command resubmitted once before the delivery fails.
+    command resubmitted once before the delivery fails. ``composer_read`` probes
+    the composer first: a positive operator draft refuses the whole delivery with
+    ``composer_occupied`` before any key is sent, so the operator's draft and the
+    live turn are both left alone; the agent retries once the draft is submitted.
     """
     continuation_pending = False
+    if composer_read is not None:
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES))
+        if read.state == "draft":
+            logger.info(
+                "Refusing %s for session %s: composer holds an operator draft",
+                command,
+                session_id,
+            )
+            return (
+                False,
+                "composer holds an operator draft",
+                False,
+                {"error_code": _COMPOSER_OCCUPIED_ERROR_CODE, "continuation_pending": False},
+            )
     interrupt_key = _compact_interrupt_key(cli_source)
     interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
     rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds

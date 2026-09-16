@@ -763,3 +763,49 @@ async def test_second_consecutive_delivery_failure_abandons_terminal_handoff(
         f"Terminal handoff delivery abandoned for session {SESSION_ID} after 2 consecutive "
         f"failures; attempt {ATTEMPT_ID}: pane disappeared"
     ]
+
+
+@pytest.mark.asyncio
+async def test_composer_occupied_delivery_failure_tells_the_agent_to_wait_for_the_operator() -> (
+    None
+):
+    claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
+    restore = MagicMock(return_value=True)
+
+    async def run_delivery(
+        _run_id: str,
+        operation: Callable[[], Awaitable[dict[str, Any]]],
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        return await operation()
+
+    with (
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.deliver_staged_compact_handoff",
+            new=AsyncMock(
+                return_value={
+                    "compacted": False,
+                    "reason": "composer holds an operator draft",
+                    "error_code": "composer_occupied",
+                }
+            ),
+        ),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=run_delivery,
+        ),
+        patch("gobby.hooks.terminal_handoff_delivery.restore_staged_handoff", restore),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=MagicMock(),
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["error_code"] == "composer_occupied"
+    assert failure["delivery_failed"] is True
+    assert "unsent draft" in failure["retry_guidance"]
+    assert "retry gobby-sessions:set_handoff" in failure["retry_guidance"]

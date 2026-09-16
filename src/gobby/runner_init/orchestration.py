@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
 from gobby.autonomous.progress_tracker import ProgressTracker
@@ -261,6 +262,46 @@ async def _drain_composer_before_wake(
     _settle_earlier_wake(coordinator, terminal, f"wake:{terminal.id}")
 
 
+async def _probe_composer(runner: GobbyRunner, session: Any, terminal: Any | None) -> ComposerRead:
+    """Read the composer of ``session`` through its terminal row, else its raw tmux pane.
+
+    The managed row is the backend-neutral path (tmux and gterm alike); the raw
+    pane is only for a tmux session Gobby holds no row for. Anything that
+    prevents a read is ``unknown``, and the caller drains blind as before.
+    """
+    from gobby.agents.idle_detector import IdleDetector
+    from gobby.sessions.tmux_context import parse_terminal_context_value
+    from gobby.terminals.lookup import manager_for_terminal_context
+    from gobby.terminals.pane_io import TmuxPaneIO
+
+    unknown = ComposerRead("unknown")
+    source = getattr(session, "source", None)
+    registry = getattr(runner, "detection_registry", None)
+    if not source or registry is None:
+        return unknown
+    try:
+        if terminal is not None:
+            services = runner.terminal_services
+            if services is None:
+                return unknown
+            result = await services.runtime_for(terminal).snapshot(terminal, COMPOSER_PROBE_LINES)
+            text: str | None = result.text
+        else:
+            ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
+            target = ctx.get("tmux_pane") if ctx else None
+            if not target:
+                return unknown
+            text = await TmuxPaneIO(manager_for_terminal_context(ctx), str(target)).snapshot(
+                COMPOSER_PROBE_LINES
+            )
+        return IdleDetector(registry, str(source)).composer_read(text)
+    except Exception:
+        logger.debug(
+            "Composer probe failed for session %s", getattr(session, "id", None), exc_info=True
+        )
+        return unknown
+
+
 def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
     """Release the latch of an earlier wake once the composer is known empty.
 
@@ -459,6 +500,9 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         if processor is not None:
             await processor.flush_session(session_id)
 
+    async def probe_composer(session: Any, terminal: Any | None) -> ComposerRead:
+        return await _probe_composer(runner, session, terminal)
+
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
@@ -468,6 +512,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,
+        composer_probe=probe_composer,
     )
 
     runner.completion_registry = CompletionEventRegistry(

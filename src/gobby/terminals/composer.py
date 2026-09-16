@@ -3,8 +3,11 @@
 Gobby types into a CLI's composer for handoff commands (``/clear``, ``/compact``),
 wake messages, and the handoff pull prompt. An operator draft already in the box
 would otherwise be submitted together with the injected text, so every injection
-drains the composer first. The drain is blind: pane captures proved unreliable
-for reading the composer back, so nothing is verified before the command is sent.
+drains the composer first. Injection sites probe the composer through the
+provider's detection manifest (``IdleDetector.composer_read``) and withhold the
+injection when the probe positively reads an operator draft; the drain itself
+stays blind, so an ``unknown`` read (no frame, no snapshot, unrecognised
+provider) still drains exactly as before.
 """
 
 from __future__ import annotations

@@ -6,9 +6,13 @@ import asyncio
 import json
 import logging
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
@@ -20,11 +24,16 @@ from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.terminals.lookup import manager_for_terminal_context
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+# A follow-up Enter is only sent when the composer still shows the pull prompt;
+# this many leading characters identify it against an operator's own draft.
+_PULL_PROMPT_MATCH_CHARS = 24
 
 __all__ = [
     "COMPACT_HANDOFF_MARKER_VARIABLE",
@@ -173,6 +182,8 @@ def schedule_handoff_compact_continuation(
     *,
     loop: Any | None = None,
     delay_seconds: float = HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
+    db: HubDatabase | None = None,
+    on_send_failure: Callable[[], None] | None = None,
 ) -> bool:
     """Schedule a best-effort tmux prompt send without blocking SessionStart."""
     session_id = getattr(session, "id", "unknown")
@@ -190,15 +201,56 @@ def schedule_handoff_compact_continuation(
         return False
 
     tmux = manager_for_terminal_context(ctx)
+    cli_source = getattr(session, "source", None)
     coro = _send_handoff_compact_continuation(
         tmux,
         str(target),
         prompt,
         str(session_id),
         delay_seconds=delay_seconds,
-        cli_source=getattr(session, "source", None),
+        cli_source=cli_source,
+        on_send_failure=on_send_failure,
+        composer_read=_composer_reader(db, cli_source),
     )
     return _schedule_coroutine(coro, loop=loop)
+
+
+def _composer_reader(
+    db: HubDatabase | None, cli_source: str | None
+) -> Callable[[str | None], ComposerRead] | None:
+    if db is None or not cli_source:
+        return None
+    return IdleDetector(DetectionManifestRegistry(db), cli_source).composer_read
+
+
+def _persist_pull_prompt_message(
+    db: HubDatabase,
+    session_id: str,
+    prompt: str,
+    attempt_id: str | None,
+) -> None:
+    """Queue the pull prompt as a self-addressed ISM when typing it failed.
+
+    The hook piggyback injects undelivered messages on the session's next
+    turn, so the operator's next submit still pulls the handoff.
+    """
+    try:
+        InterSessionMessageManager(db).create_message(
+            from_session=session_id,
+            to_session=session_id,
+            content=prompt,
+            message_type="handoff_continuation",
+            metadata_json=json.dumps(
+                {"attempt_id": attempt_id, "compact_continuation": True},
+                sort_keys=True,
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to queue the handoff pull prompt for session %s after a send failure",
+            session_id,
+            exc_info=True,
+        )
 
 
 def schedule_codex_handoff_compact_continuation_readiness(
@@ -273,7 +325,21 @@ def consume_and_schedule_handoff_compact_continuation(
             return False
         source_session_id, pending = sibling
     prompt, payload = pending
-    if schedule_handoff_compact_continuation(target_session, prompt, loop=loop):
+    attempt_id = payload.get("attempt_id") if isinstance(payload, dict) else None
+    target_session_id = str(getattr(target_session, "id", source_session_id))
+    if schedule_handoff_compact_continuation(
+        target_session,
+        prompt,
+        loop=loop,
+        db=db,
+        on_send_failure=partial(
+            _persist_pull_prompt_message,
+            db,
+            target_session_id,
+            prompt,
+            str(attempt_id) if attempt_id is not None else None,
+        ),
+    ):
         return True
     try:
         _restore_session_variable_if_absent(
@@ -345,6 +411,32 @@ async def _send_handoff_compact_continuation(
     *,
     delay_seconds: float,
     cli_source: str | None = None,
+    on_send_failure: Callable[[], None] | None = None,
+    composer_read: Callable[[str | None], ComposerRead] | None = None,
+) -> bool:
+    sent = await _type_handoff_compact_continuation(
+        tmux,
+        target,
+        prompt,
+        session_id,
+        delay_seconds=delay_seconds,
+        cli_source=cli_source,
+        composer_read=composer_read,
+    )
+    if not sent and on_send_failure is not None:
+        on_send_failure()
+    return sent
+
+
+async def _type_handoff_compact_continuation(
+    tmux: Any,
+    target: str,
+    prompt: str,
+    session_id: str,
+    *,
+    delay_seconds: float,
+    cli_source: str | None,
+    composer_read: Callable[[str | None], ComposerRead] | None,
 ) -> bool:
     from gobby.terminals.composer import composer_clear_sequence
     from gobby.terminals.pane_io import TmuxPaneIO
@@ -382,6 +474,8 @@ async def _send_handoff_compact_continuation(
     # on an already-submitted (empty) composer. Delivery already succeeded, so
     # a retry failure is logged, never propagated.
     await asyncio.sleep(HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
+    if composer_read is not None and not await _follow_up_enter_wanted(pane, prompt, composer_read):
+        return True
     try:
         retry_ok = await tmux.dispatch_keys(target, "Enter", literal=False)
     except Exception:
@@ -476,22 +570,20 @@ async def _continue_after_codex_compaction_ready(
             if pending is None:
                 return
             prompt, payload = pending
-            sent = await _send_handoff_compact_continuation(
+            # A restored marker has no consumer inside the readiness window, so
+            # a failed send queues the prompt for the hook piggyback instead.
+            await _send_handoff_compact_continuation(
                 tmux,
                 target,
                 prompt,
                 pending_session_id,
                 delay_seconds=0,
                 cli_source="codex",
+                on_send_failure=partial(
+                    _persist_pull_prompt_message, db, pending_session_id, prompt, attempt_id
+                ),
+                composer_read=_composer_reader(db, "codex"),
             )
-            if not sent:
-                await asyncio.to_thread(
-                    _restore_session_variable_if_absent,
-                    db,
-                    pending_session_id,
-                    HANDOFF_COMPACT_CONTINUE_VARIABLE,
-                    payload,
-                )
             return
 
         if poll_seconds > 0:
@@ -501,6 +593,24 @@ async def _continue_after_codex_compaction_ready(
         "Timed out waiting for Codex compact readiness for session %s",
         pending_session_id,
     )
+
+
+async def _follow_up_enter_wanted(
+    pane: Any,
+    prompt: str,
+    composer_read: Callable[[str | None], ComposerRead],
+) -> bool:
+    """Send the second Enter only when the composer still holds the pull prompt.
+
+    Empty means the first Enter landed; a draft that is not the prompt is the
+    operator's, typed after the pull went through; unknown keeps the blind Enter.
+    """
+    read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES))
+    if read.state == "empty":
+        return False
+    if read.state == "draft":
+        return read.line.startswith(prompt[:_PULL_PROMPT_MATCH_CHARS])
+    return True
 
 
 def _count_codex_compact_ready_status_lines(output: str) -> int:

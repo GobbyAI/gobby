@@ -441,3 +441,34 @@ class TestTranscriptPathDerivation:
             local_machine_id=LOCAL_MACHINE_ID,
         )
         assert result == str(target)
+
+
+def test_derive_claude_transcript_path_follows_cwd_relocation(
+    event_handlers: EventHandlers, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EnterWorktree moves the transcript under the new cwd's project directory."""
+    import gobby.hooks.event_handlers._session_start as session_mod
+
+    monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
+    target = (
+        tmp_path
+        / ".claude"
+        / "projects"
+        / "-Users-josh--gobby-worktrees-gobby-feat-drafts"
+        / "ext-123.jsonl"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+
+    result = event_handlers._derive_transcript_path(
+        "claude",
+        {
+            "cwd": "/Users/josh/.gobby/worktrees/gobby/feat-drafts",
+            "transcript_path": str(tmp_path / ".claude" / "projects" / "old" / "ext-123.jsonl"),
+        },
+        "ext-123",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
+
+    assert result == str(target)

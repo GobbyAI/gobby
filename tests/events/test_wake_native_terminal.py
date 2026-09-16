@@ -10,6 +10,8 @@ from uuid import UUID
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
+from gobby.events.live_wake import ComposerProbe, composer_occupied_result
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.terminals import Terminal
@@ -574,3 +576,115 @@ async def test_terminal_row_lookup_failure_degrades_to_the_tmux_pane() -> None:
     assert result["delivered"] is True
     assert result["method"] == "tmux_pane"
     pane_sender.assert_awaited_once()
+
+
+async def _draft(_session: object, _terminal: object) -> ComposerRead:
+    return ComposerRead("draft", "hello draft")
+
+
+async def _empty(_session: object, _terminal: object) -> ComposerRead:
+    return ComposerRead("empty")
+
+
+async def _broken(_session: object, _terminal: object) -> ComposerRead:
+    raise RuntimeError("no pane")
+
+
+def _pane_dispatcher(probe: ComposerProbe | None, pane_sender: AsyncMock) -> WakeDispatcher:
+    return WakeDispatcher(
+        session_manager=_session_manager({"tmux_pane": "%12", "tmux_socket_path": "/tmp/s"}),
+        ism_manager=MagicMock(),
+        tmux_sender=AsyncMock(),
+        tmux_pane_sender=pane_sender,
+        terminal_manager=MemoryTerminalStore(),
+        composer_probe=probe,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pane_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
+    pane_sender = AsyncMock()
+    dispatcher = _pane_dispatcher(_draft, pane_sender)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result == composer_occupied_result(WAKE_SESSION_ID, method="tmux_pane")
+    pane_sender.assert_not_awaited()
+    # No debounce record: the next wake probes the composer again.
+    assert dispatcher._last_live_wake == {}
+
+
+@pytest.mark.asyncio
+async def test_urgent_wake_drains_over_a_draft() -> None:
+    pane_sender = AsyncMock()
+    dispatcher = _pane_dispatcher(_draft, pane_sender)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+
+    assert result["delivered"] is True
+    pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probe", [_empty, _broken, None])
+async def test_anything_short_of_a_draft_keeps_the_blind_drain(
+    probe: ComposerProbe | None,
+) -> None:
+    pane_sender = AsyncMock()
+    dispatcher = _pane_dispatcher(probe, pane_sender)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is True
+    pane_sender.assert_awaited_once_with(
+        "%12",
+        CONTINUE_WAKE_MESSAGE,
+        "/tmp/s",
+        submit=True,
+        clear_before_submit=True,
+        cli_source=ANY,
+    )
+
+
+@pytest.mark.asyncio
+async def test_managed_terminal_wake_is_withheld_for_a_draft(managed_chain: ManagedChain) -> None:
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=managed_chain.store,
+        composer_probe=_draft,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
+    assert managed_chain.native.write_log == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probe", [_draft, _empty])
+async def test_batch_wake_probes_each_native_recipient(probe: ComposerProbe) -> None:
+    row = replace(make_memory_terminal(backend="native"), session_id=WAKE_SESSION_ID)
+    store = MemoryTerminalStore(row)
+    batch_sender = AsyncMock(
+        return_value=[{"session_id": WAKE_SESSION_ID, "delivered": True, "method": "terminal"}]
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=AsyncMock(),
+        native_batch_sender=batch_sender,
+        terminal_manager=store,
+        composer_probe=probe,
+    )
+
+    results = await dispatcher.dispatch_live_wakes([WAKE_SESSION_ID])
+
+    if probe is _draft:
+        assert results == [composer_occupied_result(WAKE_SESSION_ID, method="terminal")]
+        batch_sender.assert_not_awaited()
+    else:
+        assert results[0]["delivered"] is True
+        assert batch_sender.await_args is not None
+        assert [t.session_id for t in batch_sender.await_args.args[0]] == [WAKE_SESSION_ID]

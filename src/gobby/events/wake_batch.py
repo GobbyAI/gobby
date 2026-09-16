@@ -106,6 +106,12 @@ async def dispatch_live_wakes(
                 continue
             if current is not None:
                 session = current
+            blocked = await dispatcher._composer_blocks_wake(
+                session_id, session, terminal, method="terminal", priority=priority
+            )
+            if blocked is not None:
+                results[session_id] = blocked
+                continue
             native_sessions[session_id] = session
             native_targets.append(
                 NativeWakeTarget(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
@@ -23,6 +24,9 @@ from gobby.agents.detection.schema import (
 )
 
 IssueCode = Literal["invalid_pattern", "pattern_timeout"]
+
+# A horizontal rule the provider draws above and below its composer.
+_COMPOSER_RULE_RE = re.compile(r"^\s*[─━]{8,}\s*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,12 +151,28 @@ def _select_region(pane_snapshot: str, region: str) -> str:
         return pane_snapshot
     if region == "prompt_box":
         return _last_prompt_box(pane_snapshot)
+    if region == "composer":
+        return composer_region(pane_snapshot)
 
     line_count = bottom_non_empty_line_count(region)
     if line_count is None:
         return ""
     lines = [line for line in pane_snapshot.splitlines() if line.strip()]
     return "\n".join(lines[-line_count:])
+
+
+def composer_region(pane_snapshot: str) -> str:
+    """Return the bottom-most composer frame: rule-delimited, else the last prompt box.
+
+    Claude Code draws the composer between two horizontal rules; Droid draws it
+    as a box. Status bars sit below the frame, so they never enter the region.
+    An empty string means no complete frame is visible.
+    """
+    lines = pane_snapshot.splitlines()
+    rule_indexes = [index for index, line in enumerate(lines) if _COMPOSER_RULE_RE.match(line)]
+    if len(rule_indexes) >= 2:
+        return "\n".join(lines[rule_indexes[-2] + 1 : rule_indexes[-1]])
+    return _last_prompt_box(pane_snapshot)
 
 
 def _last_prompt_box(pane_snapshot: str) -> str:

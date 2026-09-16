@@ -19,9 +19,11 @@ from gobby.agents.watchdog.completed_turn_recovery import (
     format_reprompt_message,
     recover_completed_turn,
 )
+from gobby.agents.watchdog.composer_probe import composer_holds_draft
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.storage.terminals import Terminal
 from gobby.tasks.state_semantics import projected_task_state
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.error_classification import is_vanished_terminal_target
 from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
@@ -370,11 +372,14 @@ class WatchdogRecoveryCoordinator:
         if target is None:
             return False
         terminal, coordinator = target
+        if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
+            logger.debug("Skipping idle reprompt for agent %s: composer holds a draft", run.id)
+            return False
         cleared = await self._deliver(
             coordinator,
             terminal.id,
             f"idle-reprompt-clear:{run.id}",
-            [("key", "escape")],
+            [("key", key) for key in composer_clear_sequence(run.provider)],
         )
         if not cleared:
             logger.debug("Failed to clear queued prompt before reprompting agent %s", run.id)

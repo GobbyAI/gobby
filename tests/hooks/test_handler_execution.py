@@ -415,3 +415,39 @@ class TestPendingTranscriptRecheck:
         assert session.transcript_path == str(target)
         assert manager._pending_transcript_rechecks == {}
         cast(Any, manager._session_manager).update.assert_not_called()
+
+
+class TestStaleTranscriptPathRecheck:
+    def test_stored_path_that_no_longer_reads_is_rederived(
+        self,
+        manager_with_mocks: HookManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Claude relocates the transcript with the cwd; the row follows it."""
+        monkeypatch.setattr(manager_with_mocks, "get_machine_id", lambda: LOCAL_MACHINE_ID)
+        moved = tmp_path / "moved.jsonl"
+        moved.write_text("{}\n", encoding="utf-8")
+        session = SimpleNamespace(
+            id="platform-1",
+            transcript_path=str(tmp_path / "gone.jsonl"),
+            source="agy",
+            external_id="conv-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        manager = _pending_recheck_manager(manager_with_mocks, session=session)
+        event = HookEvent(
+            event_type=HookEventType.STOP,
+            session_id="conv-1",
+            source=SessionSource.AGY,
+            timestamp=datetime.now(UTC),
+            data={"transcript_path": str(moved)},
+            project_id="proj-1",
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
+            manager._handle_after_daemon_ready(event)
+        cast(Any, manager._session_manager).update.assert_called_once_with(
+            "platform-1", transcript_path=str(moved)
+        )
+        assert manager._pending_transcript_rechecks == {}
