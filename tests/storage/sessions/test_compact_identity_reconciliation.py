@@ -16,7 +16,10 @@ from gobby.sessions.compact_identity import (
 )
 from gobby.storage import session_activity
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_activity import reconcile_compact_session_activity
+from gobby.storage.session_activity import (
+    ProviderIdentityRebind,
+    reconcile_compact_session_activity,
+)
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
@@ -176,6 +179,63 @@ def test_compact_reconciliation_ignores_post_commit_notification_failure(
     assert resolution.deleted_ghost_ids == (ghost_id,)
     assert manager.get(ghost_id) is None
     assert "Session change notification failed" in caplog.text
+
+
+@pytest.mark.parametrize("terminal_process", [True, False], ids=["terminal-process", "no-terminal"])
+def test_compact_rebind_moves_row_onto_the_rotated_provider_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    terminal_process: bool,
+) -> None:
+    manager = SessionManager(temp_db)
+    if terminal_process:
+        canonical_id = _register(
+            manager,
+            project_id=sample_project["id"],
+            external_id="compress-parent-id",
+        )
+        # An empty ghost already holding the successor id must go before the rebind.
+        ghost_ids: tuple[str, ...] = (
+            _register(
+                manager,
+                project_id=sample_project["id"],
+                external_id="compress-successor-id",
+            ),
+        )
+    else:
+        canonical_id = manager.register_session(
+            external_id="compress-parent-id",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        ghost_ids = ()
+    _mark_compact(temp_db, canonical_id, message_count=1838)
+
+    resolution = reconcile_compact_session_activity(
+        manager,
+        canonical_id,
+        rebind=ProviderIdentityRebind(
+            "compress-successor-id", "/droid/compress-successor-id.jsonl"
+        ),
+    )
+
+    assert resolution.success
+    assert resolution.deleted_ghost_ids == ghost_ids
+    restarted_manager = SessionManager(temp_db)
+    rebound = restarted_manager.find_by_external_id(
+        "compress-successor-id",
+        sample_project["id"],
+        "claude",
+    )
+    assert rebound is not None
+    assert rebound.id == canonical_id
+    assert rebound.status == "active"
+    assert rebound.transcript_path == "/droid/compress-successor-id.jsonl"
+    assert (
+        restarted_manager.find_by_external_id("compress-parent-id", sample_project["id"], "claude")
+        is None
+    )
 
 
 def test_populated_duplicate_blocks_compact_reconciliation_without_mutation(

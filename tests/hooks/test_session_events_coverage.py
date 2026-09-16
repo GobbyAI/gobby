@@ -12,6 +12,8 @@ import pytest
 
 from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.sessions.compact_identity import CompactIdentityResolution
+from gobby.storage.session_activity import ProviderIdentityRebind
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
@@ -861,13 +863,88 @@ class TestSessionMoreCoverage:
 
             handler.handle_session_start(event)
 
-            reconcile_activity.assert_called_once_with(handler._session_manager, "sess-1")
+            reconcile_activity.assert_called_once_with(
+                handler._session_manager, "sess-1", rebind=None
+            )
             handler._session_manager.register_session.assert_not_called()
             assert event.data["source"] == "compact"
             assert event.metadata["_platform_session_id"] == "sess-1"
             # In-place handoff: nothing expires and claims never change owner
             handler._session_manager.mark_session_expired.assert_not_called()
             handler._task_manager.claim_task.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("previous_session_id", "rotated"),
+        [("ext-3", True), (None, False), ("ext-unrelated", False)],
+        ids=["provider-rotated", "spurious-observed-id", "unrelated-predecessor"],
+    )
+    def test_compact_start_follows_only_a_provider_rotation(
+        self, previous_session_id: str | None, rotated: bool
+    ) -> None:
+        """Only a successor naming the canonical id as predecessor rebinds the row."""
+        handler = _TestHandler()
+        terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        data: dict[str, Any] = {"source": "compact", "terminal_context": terminal_context}
+        if previous_session_id is not None:
+            data["previous_session_id"] = previous_session_id
+        event = _make_event(session_id="ext-4", source=SessionSource.DROID, data=data)
+
+        row = _make_session(session_id="sess-1", status="awaiting_handoff", seq_num=1)
+        row.terminal_context = terminal_context
+        row.external_id = "ext-3"
+        row.transcript_path = "/droid/ext-3.jsonl"
+        row.machine_id = TEST_MACHINE_ID
+        row.session_type = "terminal"
+        handler._session_manager.get.side_effect = lambda sid: row if sid == "sess-1" else None
+        handler._session_manager.find_by_external_id.return_value = None
+        handler._session_manager.find_by_external_id_any_project.return_value = None
+
+        with (
+            patch.object(
+                handler, "_derive_transcript_path", return_value="/droid/ext-4.jsonl"
+            ) as derive_transcript_path,
+            patch.object(handler, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.handoff.resolve_compact_continuation",
+                return_value=CompactIdentityResolution(session=row),
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                return_value={"handoff_source": "compact"},
+            ),
+            patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
+            patch(
+                "gobby.hooks.event_handlers._session_start.handoff.consume_compact_handoff_marker"
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.reconcile_compact_session_activity"
+            ) as reconcile_activity,
+        ):
+            reconcile_activity.return_value.success = True
+
+            handler.handle_session_start(event)
+
+        external_id = "ext-4" if rotated else "ext-3"
+        reconcile_activity.assert_called_once_with(
+            handler._session_manager,
+            "sess-1",
+            rebind=ProviderIdentityRebind("ext-4", "/droid/ext-4.jsonl") if rotated else None,
+        )
+        assert derive_transcript_path.call_args.args[2] == external_id
+        assert derive_transcript_path.call_args.kwargs["stored_path"] == (
+            None if rotated else "/droid/ext-3.jsonl"
+        )
+        assert event.session_id == external_id
+        assert event.metadata.get("_observed_external_id") == (None if rotated else "ext-4")
+        assert event.metadata["_platform_session_id"] == "sess-1"
+        handler._session_manager.cache_session_mapping.assert_called_once_with(
+            external_id=external_id,
+            source="droid",
+            session_id="sess-1",
+            project_id="proj-1",
+            session_type="terminal",
+        )
+        handler._session_manager.register_session.assert_not_called()
 
     def test_compact_start_without_row_degrades_without_backoff(self) -> None:
         """A compact start with no persisted row degrades to startup with no polling."""
@@ -1131,12 +1208,12 @@ class TestClaimedTaskHelpers:
         task.seq_num = 55
         task.status = "needs_review"
         task.title = "Review the patch"
-        handler._task_manager.list_tasks.return_value = [task]
+        cast(MagicMock, handler._task_manager).list_tasks.return_value = [task]
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
 
         assert result == [("#55", "needs_review", "Review the patch")]
-        handler._task_manager.list_tasks.assert_called_once_with(
+        cast(MagicMock, handler._task_manager).list_tasks.assert_called_once_with(
             claimed_by_session_id="sess-1",
             current_stage_state=list(ACTIVE_STAGE_STATES),
             project_id="proj-1",
@@ -1158,7 +1235,7 @@ class TestClaimedTaskHelpers:
         task.seq_num = 55
         task.status = "needs_review"
         task.title = "Review the patch"
-        handler._task_manager.list_tasks.return_value = [task]
+        cast(MagicMock, handler._task_manager).list_tasks.return_value = [task]
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
 
@@ -1184,7 +1261,7 @@ class TestClaimedTaskHelpers:
         task_b.title = "Write tests"
         task_b.claimed_by_session_id = "sess-1"
 
-        handler._task_manager.get_task.side_effect = [task_a, task_b]
+        cast(MagicMock, handler._task_manager).get_task.side_effect = [task_a, task_b]
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result is not None
@@ -1200,7 +1277,7 @@ class TestClaimedTaskHelpers:
             "task_claimed": True,
             "claimed_tasks": {"abcdef12-dead-0000-0000-000000000000": True},
         }
-        handler._task_manager.get_task.side_effect = ValueError("Task not found")
+        cast(MagicMock, handler._task_manager).get_task.side_effect = ValueError("Task not found")
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result is None
@@ -1219,7 +1296,7 @@ class TestClaimedTaskHelpers:
         task.status = "open"
         task.title = "No seq task"
         task.claimed_by_session_id = "sess-1"
-        handler._task_manager.get_task.return_value = task
+        cast(MagicMock, handler._task_manager).get_task.return_value = task
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result == [("abcdef12", "open", "No seq task")]

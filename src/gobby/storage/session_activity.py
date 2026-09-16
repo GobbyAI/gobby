@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
-from gobby.storage.hub.protocol import Cursor, HubDatabase
+from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
 from gobby.storage.session_lifecycle import session_has_retained_references
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
@@ -24,6 +24,14 @@ class SessionActivityManager(Protocol):
 
 class _SessionChangeNotifier(Protocol):
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class ProviderIdentityRebind:
+    """Provider session a compaction continued into, when the provider rotates its id."""
+
+    external_id: str
+    transcript_path: str | None
 
 
 @dataclass(frozen=True)
@@ -51,8 +59,14 @@ class SessionActivityResolution:
 def reconcile_compact_session_activity(
     manager: SessionActivityManager,
     session_id: str,
+    *,
+    rebind: ProviderIdentityRebind | None = None,
 ) -> SessionActivityResolution:
-    """Reactivate an explicit compact caller and guardedly remove empty ghosts."""
+    """Reactivate an explicit compact caller and guardedly remove empty ghosts.
+
+    ``rebind`` moves the row onto the provider session the compaction continued
+    into, after ghosts that could hold that identity are gone.
+    """
     current = manager.get(session_id)
     if current is None:
         return SessionActivityResolution(
@@ -65,7 +79,7 @@ def reconcile_compact_session_activity(
             error=f"Compact session {session_id} is deleted.",
         )
     if current.session_type != "terminal" or not current.terminal_context:
-        return _activate_without_competitors(manager, current)
+        return _activate_without_competitors(manager, current, rebind)
 
     now = utc_now()
     deleted_ids: list[str] = []
@@ -131,6 +145,7 @@ def reconcile_compact_session_activity(
         for ghost in ghosts:
             conn.execute("DELETE FROM sessions WHERE id = %s", (ghost.id,))
             deleted_ids.append(ghost.id)
+        _rebind_provider_identity(conn, current.id, rebind)
 
     _notify_session_change(manager, "session_updated", current.id)
     for deleted_id in deleted_ids:
@@ -154,27 +169,43 @@ def reconcile_compact_session_activity(
 def _activate_without_competitors(
     manager: SessionActivityManager,
     current: Session,
+    rebind: ProviderIdentityRebind | None,
 ) -> SessionActivityResolution:
     now = utc_now()
-    updated = manager.db.execute(
-        """
-        UPDATE sessions
-        SET status = 'active',
-            transcript_processed = FALSE,
-            updated_at = %s,
-            last_activity = %s
-        WHERE id = %s
-          AND status != 'deleted'
-        """,
-        (now, now, current.id),
-    )
-    if not _updated_once(updated):
-        return SessionActivityResolution(
-            error_code="session_deleted",
-            error=f"Compact session {current.id} is deleted.",
+    with manager.db.transaction() as conn:
+        updated = conn.execute(
+            """
+            UPDATE sessions
+            SET status = 'active',
+                transcript_processed = FALSE,
+                updated_at = %s,
+                last_activity = %s
+            WHERE id = %s
+              AND status != 'deleted'
+            """,
+            (now, now, current.id),
         )
+        if not _updated_once(updated):
+            return SessionActivityResolution(
+                error_code="session_deleted",
+                error=f"Compact session {current.id} is deleted.",
+            )
+        _rebind_provider_identity(conn, current.id, rebind)
     _notify_session_change(manager, "session_updated", current.id)
     return SessionActivityResolution(session=manager.get(current.id))
+
+
+def _rebind_provider_identity(
+    conn: Transaction,
+    session_id: str,
+    rebind: ProviderIdentityRebind | None,
+) -> None:
+    if rebind is None:
+        return
+    conn.execute(
+        "UPDATE sessions SET external_id = %s, transcript_path = %s WHERE id = %s",
+        (rebind.external_id, rebind.transcript_path, session_id),
+    )
 
 
 def _is_ended_terminal_sibling(session: Session) -> bool:

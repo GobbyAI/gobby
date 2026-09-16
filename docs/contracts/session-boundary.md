@@ -205,6 +205,10 @@ interrupted, `get_handoff()` retries it idempotently while consuming the marker.
 A compact successor binds to a row of its exact terminal process that is
 `awaiting_handoff`, or expired with a compact marker while still that process's newest
 session. A newer session row in the process supersedes an older expired marker.
+The bound row keeps its provider id when the successor reports a different one, except
+when the successor's SessionStart names that id as `previous_session_id`: Droid
+`/compress` continues in a new provider session, so the row moves to the new id and its
+transcript.
 
 Manual or automatic provider compaction without `set_handoff` has no pending marker, so
 `get_handoff()` returns an empty result.

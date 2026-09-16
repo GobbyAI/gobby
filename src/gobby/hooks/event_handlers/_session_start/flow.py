@@ -17,7 +17,10 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     is_gobby_acp_child,
 )
-from gobby.storage.session_activity import reconcile_compact_session_activity
+from gobby.storage.session_activity import (
+    ProviderIdentityRebind,
+    reconcile_compact_session_activity,
+)
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_parent_turn_seq
@@ -322,9 +325,27 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     session_id = None
     if handler._session_manager and session_source == "compact" and resolution.session is not None:
         canonical_session = resolution.session
+        observed_external_id = external_id
+        # A provider that compacts into a new session (Droid /compress) names the
+        # canonical id as its predecessor; the row follows it to the new id and transcript.
+        rotated = (
+            observed_external_id != canonical_session.external_id
+            and input_data.get("previous_session_id") == canonical_session.external_id
+        )
+        if not rotated:
+            external_id = canonical_session.external_id
+        transcript_path = handler._derive_transcript_path(
+            cli_source,
+            input_data,
+            external_id,
+            owner_machine_id=canonical_session.machine_id,
+            local_machine_id=machine_id,
+            stored_path=None if rotated else canonical_session.transcript_path,
+        )
         activity = reconcile_compact_session_activity(
             handler._session_manager,
             canonical_session.id,
+            rebind=ProviderIdentityRebind(external_id, transcript_path) if rotated else None,
         )
         if not activity.success:
             detail = activity.error_result()
@@ -342,19 +363,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 reason=f"{detail['error_code']}: {detail['error']}",
             )
 
-        observed_external_id = external_id
-        external_id = canonical_session.external_id
         event.session_id = external_id
         if observed_external_id != external_id:
             event.metadata["_observed_external_id"] = observed_external_id
-        transcript_path = handler._derive_transcript_path(
-            cli_source,
-            input_data,
-            external_id,
-            owner_machine_id=canonical_session.machine_id,
-            local_machine_id=machine_id,
-            stored_path=canonical_session.transcript_path,
-        )
         input_data["transcript_path"] = transcript_path
         session_id = canonical_session.id
         handler._session_manager.cache_session_mapping(
