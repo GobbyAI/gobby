@@ -740,7 +740,11 @@ class TestClaudeRecordEnvelopes:
                 "type": "system",
                 "subtype": "compact_boundary",
                 "content": "Conversation compacted",
-                "compactMetadata": {"trigger": "manual", "preTokens": 266101},
+                "compactMetadata": {
+                    "trigger": "manual",
+                    "preTokens": 266101,
+                    "postTokens": 17923,
+                },
                 "uuid": "u1",
                 "timestamp": "2024-01-01T12:00:00Z",
             }
@@ -753,6 +757,8 @@ class TestClaudeRecordEnvelopes:
         assert block.content == "Conversation compacted (manual)"
         assert block.tool_use_id == "u1"  # keyed for render dedup
         assert block.raw_json["compactMetadata"]["preTokens"] == 266101
+        assert block.context_used_tokens == 17923
+        assert block.usage is None
 
         single = parser.parse_line(line, 0)
         assert single is not None
@@ -760,6 +766,7 @@ class TestClaudeRecordEnvelopes:
         assert single.content == "Conversation compacted (manual)"
         assert single.tool_use_id == "u1"
         assert single.raw_json["compactMetadata"]["preTokens"] == 266101
+        assert single.context_used_tokens == 17923
 
     @pytest.mark.parametrize("flag", ["isCompactSummary", "isMeta"])
     def test_synthetic_user_entries_are_dropped(self, parser, flag: str) -> None:
@@ -836,6 +843,7 @@ class TestClaudeRecordEnvelopes:
         msgs = parser._expand_line(line, 0)
         assert len(msgs) == 1
         assert msgs[0].content == "Conversation compacted"
+        assert msgs[0].context_used_tokens is None
 
     def test_unknown_record_type_emits_sentinel_and_logs(self, parser, monkeypatch) -> None:
         """Unknown records use both discovery channels and remain non-rendering."""

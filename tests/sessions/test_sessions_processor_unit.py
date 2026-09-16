@@ -26,6 +26,7 @@ from gobby.sessions.transcript_index import (
 )
 from gobby.sessions.transcripts import PARSER_REGISTRY
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -2145,6 +2146,96 @@ class TestModelExtraction:
         assert session.context_usage_ratio == pytest.approx(8_000 / 258_400)
         session_manager.update_usage.assert_called_once()
         websocket_server.broadcast_token_event.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_claude_compact_boundary_rebaselines_occupancy_before_next_model_call(
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = MagicMock()
+        store.get_session_totals.return_value = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        store.record.return_value = True
+        monkeypatch.setattr("gobby.sessions.processor.TokenEventStore", lambda _db: store)
+
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.project_id = "proj-1"
+        session.source = "claude"
+        session.context_window = 1_000_000
+        session.model = "claude-fable-5-1"
+        session.context_used_tokens = None
+        session.context_usage_confidence = None
+        session_manager.get.return_value = session
+
+        def persist_context(_session_id: str, snapshot: Any) -> bool:
+            session.context_used_tokens = snapshot.context_used_tokens
+            session.context_usage_confidence = snapshot.confidence
+            return True
+
+        session_manager.update_context_usage.side_effect = persist_context
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        transcript = tmp_path / "claude-compaction.jsonl"
+
+        def assistant_line(message_id: str, cache_read_tokens: int) -> str:
+            return json.dumps(
+                {
+                    "type": "assistant",
+                    "uuid": f"uuid-{message_id}",
+                    "timestamp": "2026-09-16T17:00:04Z",
+                    "message": {
+                        "id": message_id,
+                        "model": "claude-fable-5-1",
+                        "content": [{"type": "text", "text": "working"}],
+                        "usage": {
+                            "input_tokens": 10,
+                            "cache_read_input_tokens": cache_read_tokens,
+                            "cache_creation_input_tokens": 5,
+                            "output_tokens": 400,
+                        },
+                    },
+                }
+            )
+
+        boundary = json.dumps(
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "content": "Conversation compacted",
+                "compactMetadata": {
+                    "trigger": "manual",
+                    "preTokens": 290_283,
+                    "postTokens": 17_923,
+                },
+                "uuid": "boundary-1",
+                "timestamp": "2026-09-16T17:02:37Z",
+            }
+        )
+        transcript.write_text(f"{assistant_line('msg_pre', 289_600)}\n{boundary}\n")
+        processor._active_sessions["session-1"] = str(transcript)
+        processor._parsers["session-1"] = ClaudeTranscriptParser()
+
+        await processor._process_session("session-1", str(transcript))
+
+        # The boundary replaces the pre-compaction reading without adding accounting.
+        assert session.context_used_tokens == 17_923
+        assert session.context_usage_confidence == "reported"
+        assert store.record.call_count == 1
+        assert store.record.call_args.args[0].cache_read_tokens == 289_600
+
+        with transcript.open("a") as transcript_file:
+            transcript_file.write(f"{assistant_line('msg_post', 60_897)}\n")
+
+        await processor._process_session("session-1", str(transcript))
+
+        assert session.context_used_tokens == 60_912
+        assert store.record.call_count == 2
 
     @pytest.mark.asyncio
     async def test_duplicate_token_usage_refreshes_session_without_token_broadcast(

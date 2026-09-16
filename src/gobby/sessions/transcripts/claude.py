@@ -63,6 +63,15 @@ def _make_unmodeled_record(
     )
 
 
+def _compact_post_tokens(meta: object) -> int | None:
+    # The boundary lands before the next model call, so its compacted size is the
+    # only occupancy reading available to the first post-compaction prompt.
+    tokens = meta.get("postTokens") if isinstance(meta, dict) else None
+    if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
+        return None
+    return tokens
+
+
 class ClaudeTranscriptParser(BaseTranscriptParser):
     """
     Parses JSONL transcript files from Claude Code.
@@ -441,12 +450,14 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             # uuid keys the renderer's content dedup so repeated compactions in
             # one transcript each render their own divider.
             uuid = data.get("uuid")
-            return builder.make(
+            summary = builder.make(
                 role="system",
                 content=text,
                 content_type="compaction_summary",
                 tool_use_id=uuid if isinstance(uuid, str) else None,
             )
+            summary.context_used_tokens = _compact_post_tokens(meta)
+            return summary
 
         hook_block = self._hook_blocking_attachment(data)
         if hook_block is not None:
@@ -540,6 +551,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         tool_input = None
         tool_result = None
         tool_use_id = None
+        context_used_tokens = None
 
         hook_block = self._hook_blocking_attachment(data)
         if hook_block is not None:
@@ -629,6 +641,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     content = f"{content} ({trigger})"
                 uuid = data.get("uuid")
                 tool_use_id = uuid if isinstance(uuid, str) else None
+                context_used_tokens = _compact_post_tokens(meta)
             elif (event_content := system_event_content(data)) is not None:
                 role = "system"
                 content = event_content
@@ -673,6 +686,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             tool_use_id=tool_use_id,
             model=model,
             message_id=message_id,
+            context_used_tokens=context_used_tokens,
         )
 
     def _extract_usage(self, data: dict[str, Any]) -> tuple[TokenUsage | None, str | None]:
