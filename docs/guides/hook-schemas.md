@@ -321,6 +321,15 @@ and provider waits from a completed user turn.
 | `SessionStart` | `session_start` | `session_start` |
 | `SessionEnd` | `session_end` | `session_end` |
 
+Droid declares all nine events, and the table above is the translation contract used
+whenever one arrives. Only five were observed firing in non-interactive `droid exec`
+runs on 0.219.0: `PreToolUse`, `PostToolUse`, `Stop`, `SessionStart`, and `SessionEnd`.
+`UserPromptSubmit`, `Notification`, `SubagentStop`, and `PreCompact` never fired, so a
+spawned Droid agent never reaches `turn_start` and cannot be given context through
+`UserPromptSubmit.additionalContext` -- `SessionStart` is its only context hook. This
+was measured in `droid exec` only; it is not a claim about interactive Droid sessions
+(#22402).
+
 ## Common Payload Fields
 
 Adapters preserve provider payloads in `HookEvent.data`, then add normalized
@@ -456,18 +465,43 @@ normally the installed ghook does that work.
 
 ### Droid
 
+Captured live from Droid `0.219.0` in a non-interactive `droid exec` run. Every event
+carries `session_id`, `cwd`, `transcript_path`, and `permission_mode` (`auto-high` under
+`--auto high`, `off` at session start):
+
 ```json
 {
   "source": "droid",
-  "hook_type": "UserPromptSubmit",
+  "hook_type": "PreToolUse",
   "input_data": {
-    "hook_event_name": "UserPromptSubmit",
-    "session_id": "droid-session-123",
+    "hook_event_name": "PreToolUse",
+    "session_id": "ac313540-534b-48a7-96fb-06e72acdda33",
     "cwd": "/path/to/project",
-    "user_prompt": "Refresh the hook schema guide"
+    "transcript_path": "/path/to/.factory/sessions/<project>/<session>.jsonl",
+    "permission_mode": "auto-high",
+    "tool_name": "Execute",
+    "tool_input": {
+      "command": "echo gobby-probe-ok",
+      "riskLevel": "low",
+      "riskLevelReason": "This echo command only prints a fixed string and has no side effects.",
+      "summary": "Echo gobby probe marker"
+    }
   }
 }
 ```
+
+Fields beyond that common set, by event:
+
+| Event | Additional fields |
+| --- | --- |
+| `PreToolUse` | `tool_name`, `tool_input` (`Execute`: `command`, `riskLevel`, `riskLevelReason`, `summary`) |
+| `PostToolUse` | `tool_name`, `tool_input`, `tool_response` |
+| `Stop` | `elapsed_time` (ms), `message_id`, `stop_hook_active`, `tool_execution_count` |
+| `SessionStart` | `source` (e.g. `startup`), `CLAUDE_ENV_FILE` |
+| `SessionEnd` | `message_id`, `message_count`, `reason`, `session_duration_ms` |
+
+Droid also exports `CLAUDE_*`, `DROID_*`, and `FACTORY_*` project-directory variables into
+the hook process environment, including `CLAUDE_ENV_FILE` and `CLAUDE_PROJECT_DIR`.
 
 ### Grok
 
