@@ -17,6 +17,7 @@ from gobby.agents.codex_oss import (
     codex_oss_provider_for_local_endpoint,
 )
 from gobby.agents.constants import (
+    CLAUDE_MANAGED_AGENT_ENV,
     MCP_CONNECT_TIMEOUT_MS,
     MCP_CONNECT_TIMEOUT_MS_VALUE,
     MCP_TIMEOUT,
@@ -516,6 +517,7 @@ async def resume_agent_run(
     )
     launch_updates: dict[str, Any] = {}
     if provider == "claude":
+        env.update(CLAUDE_MANAGED_AGENT_ENV)
         env[MCP_TIMEOUT] = MCP_TIMEOUT_VALUE
         claude_mcp_path = _metadata_str(resume_metadata, "mcp_path")
         strict_mcp = bool(resume_metadata.get("strict_mcp"))

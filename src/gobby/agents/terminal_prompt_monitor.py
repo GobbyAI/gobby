@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.terminals.error_classification import is_vanished_terminal_target
@@ -59,6 +60,7 @@ class TerminalPromptMonitor:
         get_active_terminal_runs: Callable[[], list[AgentRun]],
         get_tmux: Callable[[], TmuxSessionManager],
         prompt_detector: PromptDetector,
+        idle_detector: IdleDetector,
         loop_tracker: LoopTracker,
         get_tmux_config: Callable[[], TmuxConfig],
         handle_looping_agent: Callable[[AgentRun], Awaitable[None]],
@@ -70,6 +72,7 @@ class TerminalPromptMonitor:
         self._get_active_terminal_runs = get_active_terminal_runs
         self._get_tmux = get_tmux
         self._prompt_detector = prompt_detector
+        self._idle_detector = idle_detector
         self._loop_tracker = loop_tracker
         self._get_tmux_config = get_tmux_config
         self._handle_looping_agent = handle_looping_agent
@@ -321,13 +324,23 @@ class TerminalPromptMonitor:
                 continue
 
             try:
-                pane_output = await self._pane_text(run, lines=15)
+                pane_output = await self._pane_text(run, lines=COMPOSER_PROBE_LINES)
                 if pane_output is None:
                     pane_output = ""
-                if self._should_skip_periodic_enter_for_dialog(pane_output, config, detector):
+                dialog_tail = "".join(pane_output.splitlines(keepends=True)[-15:])
+                if self._should_skip_periodic_enter_for_dialog(dialog_tail, config, detector):
                     logger.debug(
                         "Skipped periodic Enter for agent %s while known dialog is visible",
                         run.id,
+                    )
+                    continue
+                # Enter would submit an operator's unsent draft as a prompt.
+                composer = self._idle_detector.for_provider(run.provider).composer_read(
+                    pane_output
+                )
+                if composer.state == "draft":
+                    logger.debug(
+                        "Skipped periodic Enter for agent %s: composer holds a draft", run.id
                     )
                     continue
 
