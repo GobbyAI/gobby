@@ -48,6 +48,8 @@ def test_control_goldens_match_rust_emitter() -> None:
         "control_kill.json": "kill-1",
         "control_resize.json": "resize-1",
         "control_snapshot.json": "snapshot-1",
+        "control_snapshot_text.json": "snapshot-2",
+        "control_snapshot_result.json": "snapshot-2",
         "control_write.json": "write-1",
         "control_write_batch.json": "batch-1",
         "control_write_paste_on.json": "paste-on-1",
@@ -189,6 +191,23 @@ def test_control_client_matches_golden_corpus() -> None:
             "max_lines": 500,
         }
     ) == _golden("control_snapshot.json")
+    assert encode_control_line(
+        {
+            "id": "snapshot-2",
+            "method": "snapshot",
+            "host_terminal_id": "ht-1",
+            "mode": "text",
+            "max_bytes": 262144,
+            "max_lines": 500,
+        }
+    ) == _golden("control_snapshot_text.json")
+    snapshot_result = decode_control_line(_golden("control_snapshot_result.json"))
+    assert snapshot_result["ok"] is True
+    assert snapshot_result["mode"] == "text"
+    assert snapshot_result["text"] == "one\ntwo"
+    assert snapshot_result["truncated"] is True
+    assert snapshot_result["dropped_bytes"] == 4
+    assert snapshot_result["total_bytes"] == 12
 
     ping = decode_control_line(_golden("control_ping.json"))
     assert ping["host_pid"] == 1234

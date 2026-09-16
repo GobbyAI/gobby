@@ -864,12 +864,10 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
     pub fn recent_unwrapped_text(&self, lines: usize) -> String {
         self.recent_unwrapped_text_snapshot(lines).text
     }
 
-    #[cfg(test)]
     pub(crate) fn recent_unwrapped_text_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
         self.core
             .lock()

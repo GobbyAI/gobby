@@ -405,3 +405,36 @@ async def test_operation_gap_does_not_advance_seq() -> None:
         assert client.next_seq == 1
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_requires_the_host_to_echo_the_requested_mode() -> None:
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        for reply, answered in (
+            ({"ok": True, "mode": "ansi", "text": "\x1b[31mred"}, "'ansi'"),
+            ({"ok": True, "text": "red"}, "None"),
+        ):
+            task = asyncio.create_task(client.snapshot("ht-1", mode="text"))
+            request = await writer.next_write()
+            assert request["mode"] == "text"
+            reader.feed_data(host_client.encode_control_line(reply | {"id": request["id"]}))
+            with pytest.raises(HostCommandError) as refused:
+                await task
+            assert refused.value.error == "snapshot_mode_mismatch"
+            assert refused.value.detail is not None
+            assert answered in refused.value.detail
+
+        task = asyncio.create_task(client.snapshot("ht-1", mode="ansi"))
+        request = await writer.next_write()
+        assert request["mode"] == "ansi"
+        reader.feed_data(
+            host_client.encode_control_line(
+                {"ok": True, "mode": "ansi", "text": "\x1b[31mred", "id": request["id"]}
+            )
+        )
+        assert (await task)["text"] == "\x1b[31mred"
+    finally:
+        await client.close()

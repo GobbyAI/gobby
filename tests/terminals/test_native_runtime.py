@@ -80,6 +80,7 @@ class FakeHostClient:
     snapshot_dropped: int = 0
     snapshot_total: int | None = None
     snapshot_error: str | None = None
+    snapshot_modes: list[str] = field(default_factory=list)
     spawn_error: str | None = None
     reservation_error: str | None = None
     kill_on_new_connection: int = 0
@@ -264,7 +265,8 @@ class FakeHostClient:
         self, host_terminal_id: str, *, mode: str = "text", max_bytes: int = 0, max_lines: int = 0
     ) -> dict[str, Any]:
         await self.ensure_connected()
-        del host_terminal_id, mode, max_bytes, max_lines
+        del host_terminal_id, max_bytes, max_lines
+        self.snapshot_modes.append(mode)
         if self.snapshot_error is not None:
             raise HostCommandError(self.snapshot_error)
         total = (
@@ -274,6 +276,7 @@ class FakeHostClient:
         )
         return {
             "ok": True,
+            "mode": mode,
             "text": self.snapshot_text,
             "truncated": self.snapshot_truncated,
             "dropped_bytes": self.snapshot_dropped,
@@ -440,6 +443,19 @@ async def test_snapshot_metadata_survives_the_adapter() -> None:
     assert oversized.total_bytes == 16
     hint = NativeTerminalRuntime.snapshot.__annotations__["return"]
     assert "SnapshotResult" in str(hint)
+    assert host.snapshot_modes == ["text", "text", "text"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_asks_the_host_for_plain_text() -> None:
+    runtime, host = _runtime()
+    terminal = _native_terminal(host)
+    host.snapshot_text = "plain"
+
+    await runtime.snapshot(terminal, lines=20)
+    await runtime.snapshot_full(terminal)
+
+    assert host.snapshot_modes == ["text", "text"]
 
 
 @pytest.mark.asyncio
