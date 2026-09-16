@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.code_index.models import IndexedProject, IndexWriteMode
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -34,12 +36,18 @@ class StageReviewSetup:
 
 @pytest.fixture(name="stage_review_setup")
 def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup:
-    project = install_isolated_checkout_project(
+    isolated = install_isolated_checkout_project(
         temp_db,
         tmp_path,
         name="stage-review-findings",
         machine_id=require_machine_id(),
-    ).project
+    )
+    project = isolated.project
+    # Review snapshots validate manifest consumers, which needs an indexed project.
+    CodeIndexStorage(temp_db).upsert_project_stats(
+        IndexedProject(id=project.id, root_path=isolated.root_path),
+        mode=IndexWriteMode.PRIMARY,
+    )
     sessions = SessionManager(temp_db)
     with patch(
         "gobby.utils.machine_id._cached_machine_id",

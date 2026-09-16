@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.code_index.models import IndexedProject, IndexWriteMode
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, SectionHash
 from gobby.review_learning.recorders import mint_plan_review_lessons
@@ -411,9 +413,15 @@ def _persist_round(
 
 
 def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLineage:
-    project = install_isolated_checkout_project(
+    isolated = install_isolated_checkout_project(
         temp_db, tmp_path, name="round-diff", machine_id=require_machine_id()
-    ).project
+    )
+    project = isolated.project
+    # Review snapshots validate manifest consumers, which needs an indexed project.
+    CodeIndexStorage(temp_db).upsert_project_stats(
+        IndexedProject(id=project.id, root_path=isolated.root_path),
+        mode=IndexWriteMode.PRIMARY,
+    )
     session = SessionManager(temp_db).register(
         external_id="round-diff-parent",
         machine_id="21000000-0000-4000-8000-000000000002",
