@@ -42,20 +42,25 @@ def resolve_compact_continuation(
         LEFT JOIN session_variables sv ON sv.session_id = s.id
         WHERE s.source = %s
           AND s.session_type = 'terminal'
-          AND s.status IN ('awaiting_handoff', 'expired')
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT %s
         """,
         (source, MAX_COMPACT_CONTINUATION_CANDIDATES),
     )
+    process_rows = [
+        (row, candidate)
+        for row in rows
+        if terminal_process_contexts_match(
+            (candidate := Session.from_row(row)).terminal_context, terminal_context
+        )
+    ]
+    # An expired marked row revives only as its process's newest session: a newer row
+    # means the process moved on and the compaction it marked never continued.
     matching = [
         candidate
-        for row in rows
-        if (
-            (candidate := Session.from_row(row)).status == "awaiting_handoff"
-            or row["compact_marker"] == "compact"
-        )
-        and terminal_process_contexts_match(candidate.terminal_context, terminal_context)
+        for index, (row, candidate) in enumerate(process_rows)
+        if candidate.status == "awaiting_handoff"
+        or (index == 0 and candidate.status == "expired" and row["compact_marker"] == "compact")
     ]
     if len(matching) == 1:
         return CompactIdentityResolution(session=matching[0])

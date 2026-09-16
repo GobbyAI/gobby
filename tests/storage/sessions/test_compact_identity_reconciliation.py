@@ -58,15 +58,16 @@ def _mark_compact(
     session_id: str,
     *,
     message_count: int = 0,
+    status: str = "expired",
 ) -> None:
     db.execute(
         """
         UPDATE sessions
-        SET status = 'expired',
+        SET status = %s,
             message_count = %s
         WHERE id = %s
         """,
-        (message_count, session_id),
+        (status, message_count, session_id),
     )
     db.execute(
         """
@@ -339,8 +340,8 @@ def test_ambiguous_marked_terminal_process_matches_return_no_session(
         project_id=sample_project["id"],
         external_id="second-canonical-id",
     )
-    _mark_compact(temp_db, first_id, message_count=1)
-    _mark_compact(temp_db, second_id, message_count=1)
+    _mark_compact(temp_db, first_id, message_count=1, status="awaiting_handoff")
+    _mark_compact(temp_db, second_id, message_count=1, status="awaiting_handoff")
 
     resolution = resolve_compact_continuation(
         temp_db,
@@ -352,6 +353,43 @@ def test_ambiguous_marked_terminal_process_matches_return_no_session(
     assert set(resolution.conflicting_session_ids) == {first_id, second_id}
 
 
+@pytest.mark.parametrize(
+    "newer_compaction_pending",
+    [True, False],
+    ids=["newer-compaction-pending", "newer-session-live"],
+)
+def test_newer_process_session_supersedes_an_expired_compact_marker(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    newer_compaction_pending: bool,
+) -> None:
+    manager = SessionManager(temp_db)
+    superseded_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="superseded-provider-id",
+    )
+    _mark_compact(temp_db, superseded_id, message_count=1)
+    newer_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="newer-provider-id",
+    )
+    if newer_compaction_pending:
+        _mark_compact(temp_db, newer_id, message_count=1, status="awaiting_handoff")
+
+    resolution = resolve_compact_continuation(
+        temp_db,
+        source="claude",
+        terminal_context=dict(TERMINAL_CONTEXT),
+    )
+
+    assert not resolution.ambiguous
+    assert (resolution.session.id if resolution.session else None) == (
+        newer_id if newer_compaction_pending else None
+    )
+
+
 def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -> None:
     db = MagicMock()
     db.fetchall.return_value = [
@@ -359,8 +397,8 @@ def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -
         {"id": "older", "compact_marker": "compact"},
     ]
     candidates = [
-        SimpleNamespace(id="newer", status="expired", terminal_context={"pid": 1}),
-        SimpleNamespace(id="older", status="expired", terminal_context={"pid": 1}),
+        SimpleNamespace(id="newer", status="awaiting_handoff", terminal_context={"pid": 1}),
+        SimpleNamespace(id="older", status="awaiting_handoff", terminal_context={"pid": 1}),
     ]
 
     with (

@@ -202,6 +202,9 @@ SessionStart handling — including Grok PostCompact, which evaluates the
 provider compact-identity marker; it leaves the `set_handoff` marker for retrieval.
 Successful dispatch records a compact delivery receipt. If that receipt write is
 interrupted, `get_handoff()` retries it idempotently while consuming the marker.
+A compact successor binds to a row of its exact terminal process that is
+`awaiting_handoff`, or expired with a compact marker while still that process's newest
+session. A newer session row in the process supersedes an older expired marker.
 
 Manual or automatic provider compaction without `set_handoff` has no pending marker, so
 `get_handoff()` returns an empty result.
