@@ -54,6 +54,12 @@ def _write_secret_env_file(env: dict[str, str]) -> Path:
 # are left to tmux, matching the native host.
 _TMUX_OVERWRITTEN_ENV = frozenset({"PATH", "SHELL"})
 
+# Pane commands are POSIX sh: the ``unset`` prefix, the env-file prefix, and the
+# sourced launcher. tmux hands a lone command string to ``default-shell``, which
+# follows the user's SHELL and may be fish, where that prefix is a parse error and
+# the command never runs. Passing argv makes tmux exec sh directly.
+_POSIX_PANE_SHELL = ("/bin/sh", "-c")
+
 
 def _requires_tmux_env_file(key: str, value: str) -> bool:
     return key in _TMUX_OVERWRITTEN_ENV or ";" in value or value.endswith("\\")
@@ -245,9 +251,9 @@ async def activate_session(
         command_text = shlex.join(command) if isinstance(command, list) else command
     if secret_env_file_arg:
         command_text = _source_secret_env_command(command_text, secret_env_file_arg)
-    if command_text and sum(len(arg.encode()) + 1 for arg in [*args, command_text]) > (
-        INLINE_LAUNCH_LIMIT
-    ):
+    if command_text and sum(
+        len(arg.encode()) + 1 for arg in [*args, *_POSIX_PANE_SHELL, command_text]
+    ) > (INLINE_LAUNCH_LIMIT):
         try:
             launcher_file, command_text = write_launcher(command_text)
         except BaseException:
@@ -255,7 +261,7 @@ async def activate_session(
                 secret_env_file.unlink(missing_ok=True)
             raise
     if command_text:
-        args.append(command_text)
+        args.extend([*_POSIX_PANE_SHELL, command_text])
 
     target = exact_session_target(safe_name)
     # Chain set-option to disable destroy-unattached atomically

@@ -61,3 +61,37 @@ async def test_pane_receives_the_callers_path_and_shell(tmp_path: Path) -> None:
         )
 
     assert pane_env.splitlines() == [caller_path, caller_shell]
+
+
+@pytest.mark.asyncio
+async def test_pane_command_runs_when_default_shell_cannot_parse_sh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user SHELL such as fish becomes tmux's default-shell; Gobby's sh must still run."""
+    tmux = shutil.which("tmux")
+    if tmux is None:
+        pytest.skip("tmux binary is not installed")
+
+    # tmux seeds default-shell from the server's SHELL. /usr/bin/false stands in for a
+    # shell that cannot run Gobby's POSIX prefix: handed a lone string, nothing runs.
+    monkeypatch.setenv("SHELL", "/usr/bin/false")
+    socket_name = f"gobby-test-{uuid4().hex}"
+    capture_path = tmp_path / "ran.txt"
+    manager = TmuxSessionManager(TmuxConfig(socket_name=socket_name))
+    try:
+        await manager.create_session(
+            name=f"sh-{uuid4().hex}",
+            command=f"echo ran > {shlex.quote(str(capture_path))}",
+            cwd=str(tmp_path),
+            env={"PATH": "/usr/bin:/bin"},
+        )
+        ran = await _wait_for_file(capture_path)
+    finally:
+        subprocess.run(
+            [tmux, "-L", socket_name, "kill-server"],
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+
+    assert ran == "ran\n"
