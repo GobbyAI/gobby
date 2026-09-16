@@ -9,32 +9,65 @@ use tempfile::TempDir;
 
 const PROJECT_ID: &str = "11111111-1111-4111-8111-111111111111";
 
+/// A run outlives its wait connection, and the recovery the CLI prints is the
+/// command that finishes it. The printed command is executed verbatim rather than
+/// matched as text, so a hint naming a stale run or a flag the parser rejects
+/// fails here. The real authenticated service acceptance is
+/// `tests/servers/routes/test_ask.py::test_installed_cli_lifecycle_against_authenticated_service`,
+/// which owns the Python side of this contract.
 #[test]
 fn test_ask_cli_lifecycle_contract() -> anyhow::Result<()> {
-    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crate belongs to workspace");
-    let database = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test".into());
-    let output = Command::new("uv")
-        .current_dir(repository)
-        .args([
-            "run",
-            "pytest",
-            "tests/servers/routes/test_ask.py::test_installed_cli_lifecycle_against_authenticated_service",
-            "-q",
-        ])
-        .env("GOBBY_GCODE_BIN", AskCliFixture::binary())
-        .env("DATABASE_URL", database)
-        .env("GOBBY_TEST_PROTECT", "1")
-        .output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "real authenticated Ask service acceptance failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    let fixture = AskCliFixture::new()?;
+
+    let (daemon_url, requests) =
+        spawn_http_responses(vec![(202, run_payload("running", None, None))]);
+    let interrupted = fixture.command(&daemon_url, &["ask", "Where is the source of truth?"])?;
+    let started = requests.join().expect("join interrupted start daemon")?;
+    assert_eq!(
+        started.len(),
+        1,
+        "the wait must outlive the scripted daemon"
     );
+    assert_eq!(interrupted.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&interrupted.stderr).into_owned();
+    let failure = stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|payload| payload.get("error").is_some())
+        .unwrap_or_else(|| panic!("interrupted start reports a typed error: {stderr}"));
+    assert_eq!(failure["error"], "ask_wait_disconnected");
+    let recovery = failure["recovery"]
+        .as_str()
+        .unwrap_or_else(|| panic!("interrupted start names a recovery: {stderr}"));
+    let mut recovered = recovery
+        .split('`')
+        .nth(1)
+        .unwrap_or_else(|| panic!("the recovery quotes a command: {recovery}"))
+        .split_whitespace();
+    assert_eq!(recovered.next(), Some("gcode"), "recovery: {recovery}");
+    let resume: Vec<&str> = recovered.collect();
+
+    let (daemon_url, requests) = spawn_http_responses(vec![
+        (200, run_payload("running", None, None)),
+        (200, run_payload("completed", Some("complete"), None)),
+    ]);
+    let resumed = fixture.command(&daemon_url, &resume)?;
+    let served = requests.join().expect("join resume daemon")?;
+    assert!(
+        resumed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    assert!(
+        served[0].starts_with("POST /api/ask/runs/ask-run-1/resume?"),
+        "the printed recovery must address the started run: {}",
+        served[0]
+    );
+    let answer: Value = serde_json::from_slice(&resumed.stdout)?;
+    assert_eq!(answer["run_id"], "ask-run-1");
+    assert_eq!(answer["status"], "completed");
+    assert_eq!(answer["answer_outcome"], "complete");
     Ok(())
 }
 
