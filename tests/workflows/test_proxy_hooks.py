@@ -119,7 +119,7 @@ def fake_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 stdout=f"rtk {command}".encode(),
                 stderr=b"rtk: rewrite failed",
             )
-        if mode == "unsupported_jq":
+        if mode in {"unsupported_jq", "keep_context"}:
             return FakeProcess(code=3, stdout=os.environ["FAKE_RTK_REWRITE"].encode())
         if mode == "invalid":
             return FakeProcess(code=0, stdout=b"\xff")
@@ -597,26 +597,69 @@ async def test_rtk_nonzero_exit_falls_back_to_original_command(
     assert response.modified_input is None
 
 
-async def test_rtk_rewrite_preserves_leading_assignment(
+@pytest.mark.parametrize(
+    ("command", "rewrite"),
+    [
+        pytest.param(
+            "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+            " GOBBY_TEST_PROTECT=1 uv run pytest tests/x.py -q",
+            "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+            " GOBBY_TEST_PROTECT=1 uv run rtk pytest tests/x.py -q",
+            id="env-assignments",
+        ),
+        pytest.param(
+            'A="x y" B=2 cargo test -p gobby-core',
+            'A="x y" B=2 rtk cargo test -p gobby-core',
+            id="quoted-assignment",
+        ),
+        pytest.param(
+            'X=/some/path; git -C "$X" status',
+            'X=/some/path; rtk git -C "$X" status',
+            id="assignment-statement",
+        ),
+        pytest.param(
+            "cd /some/path && git status",
+            "cd /some/path && rtk git status",
+            id="leading-cd",
+        ),
+        pytest.param("cdk deploy --all", "rtk cdk deploy --all", id="cd-prefixed-word"),
+    ],
+)
+async def test_rtk_rewrite_applies_when_the_shell_context_is_kept(
+    command: str,
+    rewrite: str,
     db: HubDatabase,
     manager: RuleDefinitionManager,
     fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    command = 'X=/some/path; git -C "$X" status'
-    _create_rule(manager, "proxy-assignment", [_proxy_effect()], priority=10)
+    monkeypatch.setenv("FAKE_RTK_MODE", "keep_context")
+    monkeypatch.setenv("FAKE_RTK_REWRITE", rewrite)
+    _create_rule(manager, "proxy-context", [_proxy_effect()], priority=10)
 
     response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
 
-    assert response.modified_input is None
+    assert response.modified_input == {"command": rewrite}
+    assert response.permission_decision is None
 
 
-async def test_rtk_rewrite_preserves_leading_cd(
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param('X=/some/path; git -C "$X" status', id="assignment-statement"),
+        pytest.param("GOBBY_TEST_PROTECT=1 uv run pytest tests/x.py", id="env-assignment"),
+        pytest.param("cd /some/path && git status", id="leading-cd"),
+    ],
+)
+async def test_rtk_rewrite_that_detaches_the_shell_context_falls_back(
+    command: str,
     db: HubDatabase,
     manager: RuleDefinitionManager,
     fake_rtk: Path,
 ) -> None:
-    command = "cd /some/path && git status"
-    _create_rule(manager, "proxy-cd", [_proxy_effect()], priority=10)
+    # The default fake prepends the launcher, which moves ``rtk`` in front of the
+    # assignments or ``cd`` and would run the command in another environment.
+    _create_rule(manager, "proxy-context", [_proxy_effect()], priority=10)
 
     response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
 

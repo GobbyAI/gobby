@@ -26,7 +26,15 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PROXY_TIMEOUT_SECONDS = 2.0
 _MAX_PROXY_OUTPUT_BYTES = 64 * 1024
-_SHELL_CONTEXT_PREFIX = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=|cd(?:[ \t]|$))")
+# Leading shell context RTK must carry through a rewrite: the ``NAME=value``
+# words before the command (each value bare or quoted) or a leading ``cd``
+# segment up to its separator.
+_SHELL_CONTEXT_PREFIX = re.compile(
+    r"^\s*(?:"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|[^\s;&|'\"])*[ \t]*)+"
+    r"|cd(?:[ \t][^;&|]*|$)"
+    r")"
+)
 _RTK_DIAGNOSTIC_PREFIX = re.compile(r"^\s*(?:\[rtk\s*:|rtk(?:\s+error)?\s*:)", re.IGNORECASE)
 _RTK_UNSUPPORTED_JQ_REWRITE = re.compile(r"(?:^|\s)rtk\s+(?:\S*/)?jq(?:\s|$)")
 _RTK_GIT_REWRITE = re.compile(r"(?:^|[\s;&|(])rtk\s+(?:\S*/)?git(?:\s|$)")
@@ -35,9 +43,20 @@ _RTK_GIT_REWRITE = re.compile(r"(?:^|[\s;&|(])rtk\s+(?:\S*/)?git(?:\s|$)")
 _rtk_unavailable_warned = False
 
 
-def _has_shell_context_prefix(command: str) -> bool:
-    """Return whether RTK could detach a command from its shell context."""
-    return _SHELL_CONTEXT_PREFIX.match(command) is not None
+def _shell_context(command: str) -> str:
+    """Return the leading assignments or ``cd`` segment a rewrite must keep."""
+    match = _SHELL_CONTEXT_PREFIX.match(command)
+    return match.group(0).strip() if match else ""
+
+
+def _detaches_shell_context(command: str, transformed: str) -> bool:
+    """Report a rewrite that moved the launcher in front of the shell context.
+
+    ``DATABASE_URL=... uv run pytest`` must come back as ``DATABASE_URL=... uv run
+    rtk pytest``; a rewrite that reorders or drops the assignments or the leading
+    ``cd`` would run the command in a different environment or directory.
+    """
+    return _shell_context(transformed) != _shell_context(command)
 
 
 def _is_plausible_rewrite(command: str) -> bool:
@@ -210,13 +229,6 @@ class ProxyHooksMixin:
         command = tool_input.get("command")
         if not isinstance(command, str):
             return False
-        if _has_shell_context_prefix(command):
-            logger.debug(
-                "proxy_hook[%s]: bypassing RTK for shell-context prefix",
-                invocation.row.name,
-            )
-            return False
-
         # This stage runs last (``core.py`` defers proxy transformations until
         # every original-input denial has passed), so a shared budget with a
         # zero floor would starve it alone and drop the rewrite exactly under
@@ -315,6 +327,13 @@ class ProxyHooksMixin:
                 "proxy_hook[%s]: RTK output rejected%s",
                 invocation.row.name,
                 f": {detail}" if detail else "",
+            )
+            return False
+        if _detaches_shell_context(command, transformed):
+            logger.debug(
+                "proxy_hook[%s]: RTK detached the shell context, keeping %s",
+                invocation.row.name,
+                _shell_context(command),
             )
             return False
         if _is_refused_worktree_git_rewrite(event, transformed):
