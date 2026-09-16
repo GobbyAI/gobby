@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { StageRegistryEntry } from "../../hooks/useStagesRegistry";
 import { areSetsEqual } from "./TasksTabData";
 import { DEFAULT_FILTERS, type TaskFilterKey } from "./TasksTabModel";
@@ -11,8 +11,9 @@ export function useTasksTabFilters(stagesRegistry: StageRegistryEntry[]) {
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const previousDefaultStageFiltersRef = useRef<Set<string>>(new Set());
-  const stageFiltersInitializedRef = useRef(false);
+  const [appliedDefaultStageFilters, setAppliedDefaultStageFilters] = useState<
+    Set<string>
+  >(() => new Set());
 
   const registryStageNames = useMemo(
     () => stagesRegistry.map((stage) => stage.name).sort(),
@@ -23,27 +24,24 @@ export function useTasksTabFilters(stagesRegistry: StageRegistryEntry[]) {
     [registryStageNames],
   );
 
-  useEffect(() => {
-    const previousDefaultStageFilters = previousDefaultStageFiltersRef.current;
+  // Adopt a new registry while rendering rather than from an effect. An effect
+  // first commits one frame whose stage selection still belongs to the previous
+  // registry, and an empty selection against a loaded registry reads as "every
+  // stage filtered out": the task tree empties and takes the caller's selection
+  // with it before the correction lands.
+  if (appliedDefaultStageFilters !== defaultStageFilters) {
+    setAppliedDefaultStageFilters(defaultStageFilters);
     setSelectedStageFilters((prev) => {
-      const shouldUseDefault =
-        !stageFiltersInitializedRef.current ||
-        areSetsEqual(prev, previousDefaultStageFilters);
-      stageFiltersInitializedRef.current = true;
-
-      if (shouldUseDefault) {
-        return areSetsEqual(prev, defaultStageFilters)
-          ? prev
-          : new Set(defaultStageFilters);
-      }
-
-      const next = new Set(
-        [...prev].filter((stageName) => defaultStageFilters.has(stageName)),
-      );
+      // An untouched selection still matches the registry it came from; anything
+      // else is the user's own choice and only loses stages the registry dropped.
+      const next = areSetsEqual(prev, appliedDefaultStageFilters)
+        ? defaultStageFilters
+        : new Set(
+            [...prev].filter((stageName) => defaultStageFilters.has(stageName)),
+          );
       return areSetsEqual(prev, next) ? prev : next;
     });
-    previousDefaultStageFiltersRef.current = new Set(defaultStageFilters);
-  }, [defaultStageFilters]);
+  }
 
   const stageSelectionMatchesDefault = useMemo(
     () => areSetsEqual(selectedStageFilters, defaultStageFilters),
