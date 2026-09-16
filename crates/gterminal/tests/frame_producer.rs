@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use bytes::Bytes;
+use gobby_terminal::ghostty::Terminal;
 use gobby_terminal::pane::{PaneShellConfig, ShellMode};
 use gobby_terminal::protocol::{
     read_message, write_message, CellData, ClientMessage, FrameData, FramingError, PaneModes,
@@ -457,21 +458,19 @@ fn write_line(control: &mut UnixStream, host_terminal_id: &str, operation_seq: u
     );
 }
 
-fn diag(message: &ServerMessage) -> String {
-    match message {
-        ServerMessage::Terminal(frame) => format!(
-            "seq={} full={} wire={} body={:?}",
-            frame.seq,
-            frame.full,
-            encoded_bytes(message),
-            String::from_utf8_lossy(&frame.bytes)
-        ),
-        other => format!("{other:?}"),
-    }
-}
-
 fn is_delta(message: &ServerMessage) -> bool {
     matches!(message, ServerMessage::Terminal(frame) if !frame.full)
+}
+
+/// Apply a `terminal_ansi` frame to `screen` and return the visible text.
+fn replay(screen: &mut Terminal, message: &ServerMessage, rows: u16, cols: u16) -> String {
+    let ServerMessage::Terminal(frame) = message else {
+        panic!("a terminal_ansi observer only receives terminal frames, got {message:?}");
+    };
+    screen.write(&frame.bytes);
+    screen
+        .read_text_viewport((0, 0), (cols - 1, u32::from(rows) - 1), false)
+        .expect("read the replayed screen")
 }
 
 /// The wire half of the slow-observer contract: the peer is caught up by
@@ -494,9 +493,10 @@ fn slow_observer_resyncs_with_one_keyframe() {
         dir.path(),
         &["--delta-queue-bytes", &cap_arg, "--lag-timeout-ms", "5000"],
     );
-    // Screen changes come from control writes, so the producer is quiet exactly
-    // when the test stops writing. "Exactly one replacement keyframe" is then
-    // observable on the peer socket as silence after that keyframe.
+    // Screen changes come from control writes, so once the peer's screen shows
+    // the last write the producer owes it nothing. "Exactly one replacement
+    // keyframe" is then observable on the peer socket as only deltas after that
+    // keyframe, then silence.
     let host_terminal_id = spawn_committed(
         &mut control,
         "term-keyframe",
@@ -520,9 +520,6 @@ fn slow_observer_resyncs_with_one_keyframe() {
         cols,
     );
     let initial = drain_frames(&mut slow, Duration::from_millis(200));
-    for message in &initial {
-        eprintln!("DIAG initial {}", diag(message));
-    }
     let first_keyframe = initial
         .iter()
         .find(|message| is_keyframe(message))
@@ -545,12 +542,7 @@ fn slow_observer_resyncs_with_one_keyframe() {
         // otherwise fold a burst of writes into a single delta.
         let tick = Instant::now() + Duration::from_millis(45);
         while Instant::now() < tick {
-            if let Some(message) = next_message(&mut fast, Duration::from_millis(45)) {
-                eprintln!(
-                    "DIAG fast after write {} {}",
-                    operation_seq - 1,
-                    diag(&message)
-                );
+            if next_message(&mut fast, Duration::from_millis(45)).is_some() {
                 kept_reading += 1;
             }
         }
@@ -561,7 +553,8 @@ fn slow_observer_resyncs_with_one_keyframe() {
     );
 
     // Resume. Whatever the kernel accepted before the queue collapsed is a stale
-    // delta; the mailbox holds one keyframe in place of everything it dropped.
+    // delta; the mailbox holds one keyframe in place of everything it dropped,
+    // followed by deltas for any changes after that keyframe's snapshot.
     let mut stale: Vec<ServerMessage> = Vec::new();
     let replacement = loop {
         let Some(message) = next_message(&mut slow, Duration::from_millis(1000)) else {
@@ -570,7 +563,6 @@ fn slow_observer_resyncs_with_one_keyframe() {
                 stale.len()
             );
         };
-        eprintln!("DIAG slow resume {}", diag(&message));
         if is_keyframe(&message) {
             break message;
         }
@@ -594,13 +586,32 @@ fn slow_observer_resyncs_with_one_keyframe() {
         "the replacement keyframe fits the byte cap; keyframe={} cap={cap}",
         encoded_bytes(&replacement)
     );
+    // The keyframe becomes the encoder baseline, so changes made after its
+    // snapshot follow it as deltas. Which write the last collapse lands on
+    // depends on how many bytes the kernel's socket buffer accepted before the
+    // writer blocked, and that differs by platform (Linux takes fewer small
+    // frames than macOS). Replay the stream until the peer's screen shows the
+    // last write instead of assuming the keyframe already does.
+    let last_line = format!("line-{:06}", operation_seq - 1);
+    let mut screen = Terminal::new(cols, rows, 0).expect("replay terminal");
+    let mut text = replay(&mut screen, &replacement, rows, cols);
+    let mut trailing = 0usize;
+    while !text.contains(&last_line) {
+        let Some(message) = next_message(&mut slow, Duration::from_millis(1000)) else {
+            panic!(
+                "the resynced observer must catch up to {last_line}; trailing={trailing} deltas, screen={text:?}"
+            );
+        };
+        assert!(
+            is_delta(&message),
+            "exactly one replacement keyframe: frames after it are deltas against it, got {message:?}"
+        );
+        text = replay(&mut screen, &message, rows, cols);
+        trailing += 1;
+    }
     if let Some(extra) = next_message(&mut slow, Duration::from_millis(600)) {
-        eprintln!("DIAG extra {}", diag(&extra));
-        while let Some(more) = next_message(&mut slow, Duration::from_millis(600)) {
-            eprintln!("DIAG more {}", diag(&more));
-        }
         panic!(
-            "exactly one replacement keyframe: the quiet producer added another frame (keyframe={}, {} bytes)",
+            "the quiet producer added a frame after the peer caught up to {last_line} (keyframe={}, {} bytes, trailing={trailing} deltas)",
             is_keyframe(&extra),
             encoded_bytes(&extra)
         );
