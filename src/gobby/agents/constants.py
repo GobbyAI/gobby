@@ -86,6 +86,15 @@ MCP_CONNECT_TIMEOUT_MS_VALUE = "60000"
 MCP_TIMEOUT = "MCP_TIMEOUT"
 MCP_TIMEOUT_VALUE = "120000"
 
+# Env every managed Claude launch carries, on spawn and on resume. Gobby owns
+# agent memory, and a prompt suggestion renders in the composer exactly like
+# typed text: composer probes would read it as an operator draft and hold every
+# wake and watchdog injection into an idle agent.
+CLAUDE_MANAGED_AGENT_ENV = {
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
+}
+
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""

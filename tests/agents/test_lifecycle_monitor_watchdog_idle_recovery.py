@@ -2211,6 +2211,55 @@ async def test_undeliverable_reprompt_stops_retrying_and_fails_the_run(
 
 
 @pytest.mark.asyncio
+async def test_reprompt_held_on_an_operator_draft_never_fails_the_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A held reprompt is not an undeliverable one, however long the draft stays."""
+    transcript_path = tmp_path / "codex-draft-held.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, response_payload_type="reasoning")
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1302",
+        transcript_path=transcript_path,
+    )
+    recovery = monitor._idle_check_handler._recovery
+    iterations = recovery._tmux_config.max_reprompt_attempts + 1
+
+    with (
+        _pane_text(monitor, "────────────\n❯ Reply ACK\n────────────\n"),
+        patch.object(
+            recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="continue",
+        ),
+        patch.object(recovery, "_record_watchdog_task_event", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG, logger="gobby.agents.watchdog.recovery"),
+    ):
+        handled = [await monitor.check_idle_agents() for _ in range(iterations)]
+
+    assert handled == [0] * iterations
+    assert _runtime_of(monitor).write_log == []
+    held = [r for r in caplog.records if r.getMessage().startswith("Holding idle reprompt")]
+    assert len(held) == iterations
+    assert _recovery_records(caplog.records, logging.WARNING) == []
+    assert _recovery_records(caplog.records, logging.ERROR) == []
+    assert run.id not in recovery._reprompt_delivery_failures
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "running"
+
+
+@pytest.mark.asyncio
 async def test_capacity_reprompt_delivery_failures_are_bounded(
     temp_db: HubDatabase,
     session_manager: SessionManager,

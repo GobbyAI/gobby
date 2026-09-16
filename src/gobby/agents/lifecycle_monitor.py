@@ -31,6 +31,7 @@ from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.watchdog import WatchdogReaderRegistry
+from gobby.agents.watchdog.composer_probe import composer_holds_draft
 from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
 from gobby.storage.coordination_waits import CoordinationWaitManager
@@ -148,6 +149,7 @@ class AgentLifecycleMonitor:
             get_active_terminal_runs=self._get_active_terminal_runs,
             get_tmux=lambda: self._tmux,
             prompt_detector=self._prompt_detector,
+            idle_detector=self._idle_detector,
             loop_tracker=self._loop_tracker,
             get_tmux_config=lambda: self._tmux_config,
             handle_looping_agent=lambda run: self._checkpoint_and_kill_looping_agent(run),
@@ -672,12 +674,15 @@ class AgentLifecycleMonitor:
                     )
                 self._draft_grace_observations.pop(run.id, None)
             elif run.terminal_id and self._terminal_services is not None:
-                await self._terminal_services.write(
-                    run,
-                    action_key=f"stuck-enter:{run.id}",
-                    kind="key",
-                    payload="enter",
-                )
+                if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
+                    logger.debug("Skipped stuck Enter for agent %s: composer holds a draft", run.id)
+                else:
+                    await self._terminal_services.write(
+                        run,
+                        action_key=f"stuck-enter:{run.id}",
+                        kind="key",
+                        payload="enter",
+                    )
 
         if handled:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)

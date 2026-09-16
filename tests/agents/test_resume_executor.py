@@ -856,6 +856,34 @@ async def test_resume_without_mcp_config_still_sets_claude_server_connect_deadli
 
 
 @pytest.mark.asyncio
+async def test_resumed_claude_launch_carries_the_managed_agent_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # A resumed launch must not bring back the prompt suggestion that composer
+    # probes read as an operator draft, nor Claude's own auto-memory.
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    metadata["cwd"] = str(tmp_path)
+    runner = _runner(storage=MagicMock())
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    env = runner._test_runtime.last_request.env
+    assert env["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
+    assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_successor_metadata_strips_inherited_protocol_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

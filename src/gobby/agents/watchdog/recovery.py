@@ -324,7 +324,12 @@ class WatchdogRecoveryCoordinator:
         Every other give-up counter advances only on success, so a terminal
         refusing all automatic writes bypasses all of them and retries
         forever. This is the one boundary the three re-arming callers share.
+        An operator draft in the composer holds the reprompt without counting
+        as a failed delivery, so the draft never gets its agent failed.
         """
+        if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
+            logger.debug("Holding idle reprompt for agent %s: composer holds a draft", run.id)
+            return False
         delivered = await self._attempt_idle_reprompt(
             run,
             tmux_name=tmux_name,
@@ -372,9 +377,6 @@ class WatchdogRecoveryCoordinator:
         if target is None:
             return False
         terminal, coordinator = target
-        if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
-            logger.debug("Skipping idle reprompt for agent %s: composer holds a draft", run.id)
-            return False
         cleared = await self._deliver(
             coordinator,
             terminal.id,

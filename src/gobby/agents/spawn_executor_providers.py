@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gobby.agents.constants import (
+    CLAUDE_MANAGED_AGENT_ENV,
     GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_RUN_ID,
     GOBBY_PROJECT_ID,
@@ -272,7 +273,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
-    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    env.update(CLAUDE_MANAGED_AGENT_ENV)
     env[MCP_TIMEOUT] = MCP_TIMEOUT_VALUE
     if strict_mcp:
         env[MCP_CONNECT_TIMEOUT_MS] = MCP_CONNECT_TIMEOUT_MS_VALUE

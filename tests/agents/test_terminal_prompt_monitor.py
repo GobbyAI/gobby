@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.config.tmux import TmuxConfig
@@ -23,6 +24,8 @@ from tests.terminals.fakes import (
     make_memory_terminal,
     runtime_registry,
 )
+
+from .detection_test_support import BundledDetectionRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -70,6 +73,7 @@ async def test_prompt_callback_failure_preserves_successful_injection(
         get_active_terminal_runs=lambda: [run],
         get_tmux=lambda: MagicMock(),
         prompt_detector=prompt_detector,
+        idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),
         get_tmux_config=TmuxConfig,
         handle_looping_agent=AsyncMock(),
@@ -108,6 +112,7 @@ def _monitor_with_probe_error(error: Exception) -> TerminalPromptMonitor:
         get_active_terminal_runs=lambda: [_run()],
         get_tmux=lambda: MagicMock(),
         prompt_detector=prompt_detector,
+        idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),
         get_tmux_config=TmuxConfig,
         handle_looping_agent=AsyncMock(),
