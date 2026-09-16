@@ -18,7 +18,17 @@ use crate::protocol::{
 
 const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn set_send_buffer(stream: &UnixStream, bytes: u32) {
+/// How much longer than `lag_timeout` a single frame write may block. The
+/// broadcast pass declares an observer lagged at `lag_timeout` and queues the
+/// `lagged` error for it; cancelling the in-flight write at the same instant
+/// would race that pass, truncate the frame mid-message, and close the peer
+/// without ever telling it why. The cancellation stays as the backstop for a
+/// peer that never drains at all.
+const LAG_CLOSE_GRACE: Duration = Duration::from_secs(1);
+
+/// Cap what the kernel will hold for this socket's send side, which is what
+/// bounds the bytes in flight to the peer.
+pub(crate) fn set_send_buffer(stream: &UnixStream, bytes: u32) {
     let size = i32::try_from(bytes.max(256)).unwrap_or(i32::MAX);
     // SAFETY: `stream` is a live Unix socket; `SO_SNDBUF` takes an `i32` whose
     // storage outlives the call. Failure is ignored so a kernel that rejects the
@@ -239,7 +249,11 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     tracing::debug!("frame connection sender closed");
                     break;
                 };
-                match tokio::time::timeout(state.config.lag_timeout(), write_frame(&mut writer, &msg)).await
+                match tokio::time::timeout(
+                    state.config.lag_timeout() + LAG_CLOSE_GRACE,
+                    write_frame(&mut writer, &msg),
+                )
+                .await
                 {
                     Ok(Ok(())) => {
                         if let Some(mailbox) = out_rx.as_ref() {
@@ -252,10 +266,13 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     }
                     Err(_) => {
                         if let Some(mailbox) = out_rx.as_ref() {
-                            mailbox.close_with(ServerMessage::Error {
-                                code: "lagged".into(),
-                                message: None,
-                            });
+                            mailbox.close_with(
+                                ServerMessage::Error {
+                                    code: "lagged".into(),
+                                    message: None,
+                                },
+                                state.config.delta_queue_bytes as usize,
+                            );
                         }
                         break;
                     }

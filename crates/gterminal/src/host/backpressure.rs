@@ -15,51 +15,7 @@ use crate::protocol::{write_message, ServerMessage};
 pub enum ControlClose {
     Deadline,
     Overflow,
-}
-
-#[cfg(test)]
-struct ControlEntry {
-    value: Value,
-    queued_at: Instant,
-}
-
-#[cfg(test)]
-pub struct ControlQueue {
-    cap: usize,
-    deadline: Duration,
-    entries: VecDeque<ControlEntry>,
-}
-
-#[cfg(test)]
-impl ControlQueue {
-    pub fn new(cap: usize, deadline: Duration) -> Self {
-        Self {
-            cap,
-            deadline,
-            entries: VecDeque::new(),
-        }
-    }
-
-    pub fn push(&mut self, value: Value) -> Result<(), ControlClose> {
-        if self.entries.len() >= self.cap {
-            return Err(ControlClose::Overflow);
-        }
-        self.entries.push_back(ControlEntry {
-            value,
-            queued_at: Instant::now(),
-        });
-        Ok(())
-    }
-
-    pub fn pop(&mut self) -> Option<Value> {
-        self.entries.pop_front().map(|entry| entry.value)
-    }
-
-    pub fn deadline_exceeded(&self) -> bool {
-        self.entries
-            .front()
-            .is_some_and(|entry| entry.queued_at.elapsed() >= self.deadline)
-    }
+    Disconnected,
 }
 
 pub async fn write_outbound<W: AsyncWrite + Unpin>(
@@ -95,7 +51,18 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
             }
         }
     }
-    ControlClose::Overflow
+    ControlClose::Disconnected
+}
+
+pub fn enqueue_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ControlClose> {
+    tx.try_send(value).map_err(|err| match err {
+        mpsc::error::TrySendError::Full(_) => ControlClose::Overflow,
+        mpsc::error::TrySendError::Closed(_) => ControlClose::Disconnected,
+    })
+}
+
+pub async fn send_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ControlClose> {
+    tx.send(value).await.map_err(|_| ControlClose::Disconnected)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +88,12 @@ struct FrameShared {
 #[derive(Clone)]
 pub struct FrameMailbox {
     shared: Arc<FrameShared>,
+}
+
+impl Default for FrameMailbox {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FrameMailbox {
@@ -149,7 +122,7 @@ impl FrameMailbox {
         if inner.closed {
             return PushResult::Closed;
         }
-        if !inner.items.is_empty() && inner.queued_bytes.saturating_add(bytes) > cap {
+        if inner.queued_bytes.saturating_add(bytes) > cap {
             return PushResult::Overflow;
         }
         inner.queued_bytes = inner.queued_bytes.saturating_add(bytes);
@@ -159,23 +132,65 @@ impl FrameMailbox {
         PushResult::Queued
     }
 
-    pub fn replace_with_keyframe(&self, msg: &ServerMessage) {
+    pub fn is_writing(&self) -> bool {
+        self.lock().writing
+    }
+
+    /// Queue `msg`, collapsing to this single message when the observer is
+    /// already behind (`coalesce`) or when `msg` would exceed `cap`.
+    pub fn push_observed(&self, msg: &ServerMessage, cap: usize, coalesce: bool) -> PushResult {
+        if coalesce && self.queued_bytes() > 0 {
+            let _ = self.replace_with_keyframe(msg, cap);
+            return PushResult::Overflow;
+        }
+        if coalesce && self.is_writing() {
+            return PushResult::Overflow;
+        }
+        match self.try_push(msg, cap) {
+            PushResult::Overflow => {
+                let _ = self.replace_with_keyframe(msg, cap);
+                PushResult::Overflow
+            }
+            other => other,
+        }
+    }
+
+    /// Replace everything queued with one keyframe. Returns false when the
+    /// mailbox is closed or the keyframe alone exceeds `cap`; the queue is then
+    /// left untouched and the observer is still owed a repaint.
+    pub fn replace_with_keyframe(&self, msg: &ServerMessage, cap: usize) -> bool {
         let bytes = encoded_message_bytes(msg);
         let mut inner = self.lock();
         if inner.closed {
-            return;
+            return false;
+        }
+        if bytes > cap {
+            return false;
         }
         inner.items.clear();
         inner.queued_bytes = bytes;
         inner.items.push_back((bytes, msg.clone()));
         drop(inner);
         self.shared.notify.notify_waiters();
+        true
     }
 
-    pub fn force_push(&self, msg: ServerMessage) {
+    pub fn force_push(&self, msg: ServerMessage, cap: usize) {
         let bytes = encoded_message_bytes(&msg);
         let mut inner = self.lock();
         if inner.closed {
+            return;
+        }
+        if bytes > cap {
+            return;
+        }
+        while inner.queued_bytes.saturating_add(bytes) > cap {
+            let Some((dropped, _)) = inner.items.pop_front() else {
+                break;
+            };
+            inner.queued_bytes = inner.queued_bytes.saturating_sub(dropped);
+        }
+        if inner.queued_bytes.saturating_add(bytes) > cap {
             return;
         }
         inner.queued_bytes = inner.queued_bytes.saturating_add(bytes);
@@ -218,12 +233,16 @@ impl FrameMailbox {
             && inner.last_drain.elapsed() >= timeout
     }
 
-    pub fn close_with(&self, msg: ServerMessage) {
+    pub fn close_with(&self, msg: ServerMessage, cap: usize) {
         let bytes = encoded_message_bytes(&msg);
         let mut inner = self.lock();
         inner.items.clear();
-        inner.queued_bytes = bytes;
-        inner.items.push_back((bytes, msg));
+        if bytes <= cap {
+            inner.queued_bytes = bytes;
+            inner.items.push_back((bytes, msg));
+        } else {
+            inner.queued_bytes = 0;
+        }
         inner.closed = true;
         inner.writing = false;
         drop(inner);

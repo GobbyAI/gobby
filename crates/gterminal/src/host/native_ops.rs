@@ -698,24 +698,26 @@ impl HostState {
             };
             if let Some(att) = inner.attachments.get_mut(&id) {
                 if att.mailbox.is_lagged(lag) {
-                    att.mailbox.close_with(ServerMessage::Error {
-                        code: "lagged".into(),
-                        message: None,
-                    });
+                    att.mailbox.close_with(
+                        ServerMessage::Error {
+                            code: "lagged".into(),
+                            message: None,
+                        },
+                        cap,
+                    );
                     lagged.push(id);
                     continue;
                 }
                 let sent = match encoding {
                     RenderEncoding::SemanticFrame => {
                         let msg = ServerMessage::Frame(frame);
-                        match att.mailbox.try_push(&msg, cap) {
+                        match att.mailbox.push_observed(&msg, cap, att.desynced) {
                             PushResult::Queued => {
                                 att.last_send = Instant::now();
                                 att.desynced = false;
                                 true
                             }
                             PushResult::Overflow => {
-                                att.mailbox.replace_with_keyframe(&msg);
                                 att.last_send = Instant::now();
                                 att.desynced = true;
                                 true

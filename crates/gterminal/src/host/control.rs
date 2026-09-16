@@ -10,6 +10,7 @@ use tokio::net::{unix::OwnedReadHalf, UnixStream};
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
+use super::backpressure::{enqueue_control, send_control};
 use super::events::EventReceiver;
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
@@ -111,9 +112,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         }) = ordered_rx.recv().await
         {
             let result = dispatch_ordered(&ordered_state, conn_id, &request, &mut ledger).await;
-            let _ = ordered_outbound
-                .send(with_id(result.response, &request.id))
-                .await;
+            let _ = send_control(&ordered_outbound, with_id(result.response, &request.id)).await;
             ordered_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")
@@ -125,59 +124,71 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         let request = match read_request(&mut reader, &mut request_buffer).await {
             Ok(RequestRead::Request(request)) => request,
             Ok(RequestRead::InvalidJson) => {
-                let _ = outbound_tx
-                    .send(json!({"ok": false, "error": "invalid_json"}))
-                    .await;
+                if enqueue_control(&outbound_tx, json!({"ok": false, "error": "invalid_json"}))
+                    .is_err()
+                {
+                    break;
+                }
                 continue;
             }
             Ok(RequestRead::Overflow) => {
-                let _ = outbound_tx
-                    .send(json!({"ok": false, "error": "control_overflow"}))
-                    .await;
+                let _ = enqueue_control(
+                    &outbound_tx,
+                    json!({"ok": false, "error": "control_overflow"}),
+                );
                 break;
             }
             Ok(RequestRead::Closed) | Err(_) => break,
         };
         let Some(id) = request.id.clone() else {
-            let _ = outbound_tx
-                .send(json!({"ok": false, "error": "missing_id"}))
-                .await;
+            if enqueue_control(&outbound_tx, json!({"ok": false, "error": "missing_id"})).is_err() {
+                break;
+            }
             continue;
         };
         if !authed {
             if request.method != "hello" {
-                let _ = outbound_tx
-                    .send(with_id(
+                let _ = enqueue_control(
+                    &outbound_tx,
+                    with_id(
                         json!({"ok": false, "error": "unauthenticated"}),
                         &request.id,
-                    ))
-                    .await;
+                    ),
+                );
                 break;
             }
             let presented = request.control_token.as_deref().unwrap_or("");
             if presented != state.token.as_str() {
-                let _ = outbound_tx
-                    .send(with_id(
-                        json!({"ok": false, "error": "invalid_token"}),
-                        &request.id,
-                    ))
-                    .await;
+                if enqueue_control(
+                    &outbound_tx,
+                    with_id(json!({"ok": false, "error": "invalid_token"}), &request.id),
+                )
+                .is_err()
+                {
+                    break;
+                }
                 continue;
             }
             let version_in = request.protocol_version.unwrap_or(0);
             if version_in != PROTOCOL_VERSION {
-                let _ = outbound_tx
-                    .send(with_id(
+                if enqueue_control(
+                    &outbound_tx,
+                    with_id(
                         json!({"ok": false, "error": "unsupported_protocol"}),
                         &request.id,
-                    ))
-                    .await;
+                    ),
+                )
+                .is_err()
+                {
+                    break;
+                }
                 continue;
             }
             authed = true;
             state.claim_control_owner(conn_id).await;
-            let _ = outbound_tx
-                .send(with_id(
+            if enqueue_control(
+                &outbound_tx,
+                with_id(
                     json!({
                         "ok": true,
                         "host_epoch": state.host_epoch.as_str(),
@@ -185,8 +196,12 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                         "protocol_version": PROTOCOL_VERSION,
                     }),
                     &request.id,
-                ))
-                .await;
+                ),
+            )
+            .is_err()
+            {
+                break;
+            }
             continue;
         }
 
@@ -196,21 +211,28 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
             .expect("in-flight request lock poisoned")
             .contains(&id_key);
         if duplicate {
-            let _ = outbound_tx
-                .send(with_id(
-                    json!({"ok": false, "error": "duplicate_id"}),
-                    &request.id,
-                ))
-                .await;
+            if enqueue_control(
+                &outbound_tx,
+                with_id(json!({"ok": false, "error": "duplicate_id"}), &request.id),
+            )
+            .is_err()
+            {
+                break;
+            }
             continue;
         }
         let Ok(permit) = permits.clone().try_acquire_owned() else {
-            let _ = outbound_tx
-                .send(with_id(
+            if enqueue_control(
+                &outbound_tx,
+                with_id(
                     json!({"ok": false, "error": "too_many_inflight"}),
                     &request.id,
-                ))
-                .await;
+                ),
+            )
+            .is_err()
+            {
+                break;
+            }
             continue;
         };
         in_flight
@@ -250,7 +272,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     .expect("event task lock poisoned")
                     .push(event_task);
             }
-            let _ = task_outbound.send(with_id(response, &request.id)).await;
+            let _ = send_control(&task_outbound, with_id(response, &request.id)).await;
             task_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")
@@ -275,9 +297,17 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let _ = writer_task.await;
 }
 
+/// Forward one subscriber's events onto the connection's outbound queue.
+///
+/// Waiting for capacity instead of giving up on a momentarily full queue is
+/// what makes `event_overflow` reachable: that marker is the last thing the
+/// subscriber's channel holds, so a try-send that dropped it would take away
+/// the one message explaining why the events stopped. A peer that never drains
+/// is still bounded, because `write_outbound` closes it at `control_deadline`
+/// and dropping the receiver ends this loop.
 async fn recv_event(mut rx: EventReceiver, outbound: mpsc::Sender<Value>) {
     while let Some(event) = rx.recv().await {
-        if outbound.send(event).await.is_err() {
+        if send_control(&outbound, event).await.is_err() {
             break;
         }
     }
