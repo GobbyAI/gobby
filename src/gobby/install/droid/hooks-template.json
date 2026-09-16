@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-          "command": "__GOBBY_HOOK_COMMAND__",
+          "command": "ghook --gobby-owned --cli=droid --type=SessionEnd --enqueue-only",
           "timeout": 120
           }
         ]
