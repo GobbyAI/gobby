@@ -192,7 +192,10 @@ Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the 
 session row. Droid answers `/compress` with a confirm modal, and dispatch presses Enter
 once the modal is on screen. Droid replaces its `droid exec` backend on `/compress` and
 `/clear` under a stable TUI process, so hook enrichment records the TUI as the terminal
-process identity that compact and clear successors match. If typing the continuation prompt fails, the prompt is queued as a
+process identity that compact and clear successors match. Droid emits PreCompact only
+for `/compress`, which starts a new provider session, and its native `trigger` reads
+`auto` unless custom instructions were given, so the adapter normalizes it to `manual`
+and the row waits for its successor as `awaiting_handoff`. If typing the continuation prompt fails, the prompt is queued as a
 self-addressed message and the hook piggyback delivers it on the next turn. The continuation prompt instructs the agent to call `get_handoff()`. Compact
 SessionStart handling — including Grok PostCompact, which evaluates the
 `session_start(compact)` rules — resets context-epoch tracking and consumes only the

@@ -113,6 +113,10 @@ class DroidAdapter(BaseAdapter):
             prompt = normalized_data.get("prompt")
             if isinstance(prompt, str):
                 normalized_data["prompt"] = _normalize_router_help(prompt)
+        elif event_type is HookEventType.PRE_COMPACT:
+            # Droid emits PreCompact only for /compress, a manual compaction into a new
+            # session; its native trigger reads "auto" whenever no instructions were given.
+            normalized_data["trigger"] = "manual"
         session_id = self._resolve_session_id(native_event, input_data)
         normalized_session_id = normalized_data.get("session_id")
         normalized_session_id = (

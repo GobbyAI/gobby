@@ -179,6 +179,24 @@ class TestDroidTranslateToHookEvent:
         assert event.data["mcp_server"] == "gobby"
         assert event.data["mcp_tool"] == "list_mcp_servers"
 
+    @pytest.mark.parametrize(
+        "compress_args",
+        [{"trigger": "auto"}, {"trigger": "manual", "custom_instructions": "keep the plan"}],
+        ids=["bare-compress", "compress-with-instructions"],
+    )
+    def test_every_pre_compact_is_a_manual_compaction_handoff(
+        self, compress_args: dict[str, str]
+    ) -> None:
+        event = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PreCompact",
+                "input_data": {"session_id": "compress-session", **compress_args},
+            }
+        )
+
+        assert event.event_type is HookEventType.PRE_COMPACT
+        assert event.data["trigger"] == "manual"
+
     def test_live_post_tool_use_marks_execute_success_definitively(self) -> None:
         payload = json.loads(DROID_COMMAND_OUTCOMES_FIXTURE.read_text())
         native = {
