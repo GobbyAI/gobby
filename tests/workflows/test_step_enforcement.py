@@ -2924,6 +2924,46 @@ async def test_capability_neutral_tools_pass_step_allowlist(
     assert response.decision == "allow"
 
 
+@pytest.mark.asyncio
+async def test_grok_output_poll_is_capability_neutral(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """Grok's background-output poll carries no capability and passes any step.
+
+    The Grok CLI exposes ``get_command_or_subagent_output`` as a read-only poll
+    for a backgrounded call. A spawned run that reached for it inside an
+    MCP-only step collected identical ``step-native-tool-allowlist`` denials
+    until the run was killed at the third one.
+    """
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    event = _make_event(data={"tool_name": "get_command_or_subagent_output"})
+
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_non_neutral_grok_native_tool_still_denied(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """Neutrality covers one poll tool, not a Grok-wide native exemption."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    event = _make_event(data={"tool_name": "read_file"})
+
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "Tool 'read_file' is not allowed in the 'claim' step." in response.reason
+
+
 def _send_message_event(arguments: dict[str, Any] | None = None) -> HookEvent:
     tool_input: dict[str, Any] = {
         "server_name": "gobby-agents",

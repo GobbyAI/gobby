@@ -39,6 +39,10 @@ _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
         "gobby-skills:get_skill_files",
     }
 )
+# Grok's read-only poll for a backgrounded call. It returns the result of a call
+# the step already allowed or denied, so it grants no capability of its own.
+# Denying it stalled MCP-only steps until the run hit the identical-denial kill.
+_CAPABILITY_NEUTRAL_NATIVE_TOOLS = frozenset({"get_command_or_subagent_output"})
 
 
 def _is_parent_send_message(mcp_key: str, tool_input: dict[str, Any]) -> bool:
@@ -611,7 +615,7 @@ class EnforcementCheckMixin:
                 return None
 
         # Check native tool allow-list
-        if step.allowed_tools != "all":
+        if step.allowed_tools != "all" and canonical_tool not in _CAPABILITY_NEUTRAL_NATIVE_TOOLS:
             if canonical_tool not in {
                 canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools
             }:
