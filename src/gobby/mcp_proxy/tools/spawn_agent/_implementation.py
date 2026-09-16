@@ -434,7 +434,16 @@ async def spawn_agent_impl(
                     task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
                 claimed_session_id = get_claimed_session_id(resolved_task)
         except Exception as e:
+            # The caller asked the child to own this task. Continuing task-less spawns an
+            # agent that trips require-task-before-edit on every file operation while the
+            # spawn still reports success (#22402), so refuse at the boundary instead.
             logger.warning("Failed to resolve task_id %s: %s", task_id, e)
+            return {
+                "success": False,
+                "skipped": True,
+                "task_id": task_id,
+                "error": f"Task {task_id} could not be resolved; refusing to spawn agent: {e}",
+            }
 
     if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
         if not (allow_closed_task and is_task_reviewable(resolved_task)):

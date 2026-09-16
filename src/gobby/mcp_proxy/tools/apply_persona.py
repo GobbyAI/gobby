@@ -268,7 +268,13 @@ async def apply_persona_impl(
                     task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
                     extra_vars["assigned_task_id"] = task_ref
         except Exception as e:
+            # Applying the persona anyway drops assigned_task_id, so the session gets a
+            # persona silently missing the task binding the caller asked for (#22402).
             logger.warning("Failed to resolve task_id %s: %s", task_id, e)
+            return {
+                "success": False,
+                "error": f"Task {task_id} could not be resolved: {e}",
+            }
 
     changes, active_skills = build_session_persona_changes(agent_body, db)
     collision = colliding_persona_variable_error(

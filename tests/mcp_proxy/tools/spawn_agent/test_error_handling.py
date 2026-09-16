@@ -146,6 +146,48 @@ class TestSpawnAgentImplErrorBranches:
             assert result["success"] is False
             assert "Max depth" in result["error"]
 
+    async def test_unresolvable_task_id_refuses_before_launch(self) -> None:
+        """A task_id that cannot be resolved must refuse, not spawn a task-less agent."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+        from gobby.storage.tasks import TaskNotFoundError
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "ok", 0)
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": "/path",
+                },
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                side_effect=TaskNotFoundError("Task #99999 not found in project"),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new_callable=AsyncMock,
+            ) as mock_execute,
+        ):
+            result = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="test",
+                runner=runner,
+                provider="claude",
+                parent_session_id="sess-1",
+                task_id="#99999",
+                task_manager=MagicMock(),
+            )
+
+        assert result["success"] is False
+        assert result["skipped"] is True
+        assert "#99999" in result["error"]
+        # The live failure was spawning anyway: the child then tripped
+        # require-task-before-edit on every file operation (#22402).
+        mock_execute.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_worktree_id_not_found_returns_error(self) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
