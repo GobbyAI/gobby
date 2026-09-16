@@ -35,6 +35,9 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
         reasoning_flag="reasoning-effort",
         sandbox=False,
         sensitive_path_enforcement=False,
+        # ``droid exec`` (command_builder) is Droid's headless mode: ``/compress``
+        # typed into the pane stays unconsumed and the handoff is lost (#22402).
+        headless_spawn=True,
     ),
     "grok": ProviderCapabilities(
         reasoning_flag="reasoning-effort",

@@ -1,8 +1,9 @@
-"""Grok compact handoff: headless spawned runs are never typed into; TUI turns are
+"""Compact handoff: headless spawned runs are never typed into; TUI turns are
 interrupted only after the live turn fails to settle.
 
-A spawned Grok worker runs ``grok --single`` (headless): it reads nothing from its
-terminal and its first Ctrl+C is a plain SIGINT that kills the run (#22364). The
+A spawned Grok worker runs ``grok --single`` and a spawned Droid worker runs
+``droid exec``; both are headless, reading nothing from their terminal, and Grok's
+first Ctrl+C is a plain SIGINT that kills the run (#22364, #22402). The
 staging tool refuses such runs outright. A Grok TUI session whose ``events.jsonl``
 shows its last turn ended is compacted without an interrupt. A live turn is polled
 until it settles or the wait expires; only a timeout interrupts with Ctrl+C before
@@ -260,9 +261,9 @@ async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
 
 @pytest.mark.parametrize(
     ("provider", "headless"),
-    [("grok", True), ("claude", False), ("codex", False), ("droid", False), ("qwen", False)],
+    [("grok", True), ("droid", True), ("claude", False), ("codex", False), ("qwen", False)],
 )
-def test_only_grok_spawns_headless(provider: str, headless: bool) -> None:
+def test_only_headless_clis_declare_headless_spawn(provider: str, headless: bool) -> None:
     assert provider_capabilities(provider).headless_spawn is headless
 
 
@@ -294,9 +295,10 @@ def _set_handoff_tool(
     return set_handoff, session_manager
 
 
-def test_set_handoff_refuses_to_stage_delivery_for_a_headless_grok_run() -> None:
+@pytest.mark.parametrize("provider", ["grok", "droid"])
+def test_set_handoff_refuses_to_stage_delivery_for_a_headless_run(provider: str) -> None:
     agent_run_manager = MagicMock()
-    agent_run_manager.get_by_session.return_value = SimpleNamespace(id="run-1", provider="grok")
+    agent_run_manager.get_by_session.return_value = SimpleNamespace(id="run-1", provider=provider)
     set_handoff, _session_manager = _set_handoff_tool(agent_run_manager)
 
     with (
