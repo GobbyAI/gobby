@@ -69,7 +69,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 from gobby.terminals.lookup import manager_for_terminal_context
-from gobby.terminals.pane_io import PaneIO, RuntimePaneIO, TmuxPaneIO
+from gobby.terminals.pane_io import PaneIO, TmuxPaneIO, live_runtime_pane
 from gobby.workflows.session_feedback_survey import survey_is_active
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -144,11 +144,9 @@ def _resolve_pane_io(
     terminal_runtime_registry: Any | None,
 ) -> tuple[PaneIO | None, str | None]:
     """Route through the session's live terminals row when one exists, else raw tmux."""
-    if terminal_manager is not None and terminal_runtime_registry is not None:
-        terminal = terminal_manager.get_live_for_session(session_id)
-        if terminal is not None:
-            runtime = terminal_runtime_registry.resolve(terminal.backend)
-            return RuntimePaneIO(runtime, terminal), None
+    pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
+    if pane is not None:
+        return pane, None
     target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
     if error:
         return None, error

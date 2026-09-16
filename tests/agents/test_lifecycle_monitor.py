@@ -37,6 +37,7 @@ from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.sessions import activity as session_activity
+from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -1370,6 +1371,39 @@ async def test_xhigh_draft_grace_uses_scaled_idle_window(
         run,
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
+
+
+async def test_stagnant_run_at_fresh_post_compaction_prompt_is_stopped_not_woken(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    # The SessionStart compact scheduler owns continuation delivery; a pending
+    # marker 600s after set_handoff means that delivery already failed.
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+    session_id = run.child_session_id or run.parent_session_id
+    assert mark_handoff_compact_continuation_pending(temp_db, session_id, attempt_id="attempt-1")
+
+    with (
+        _pane_text(monitor, "❯\n") as runtime,
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    cleanup_agent.assert_awaited_once_with(
+        run,
+        terminal_payload="autonomous stuck: No progress events for 634 seconds",
+    )
+    assert runtime.write_log == []
 
 
 def _make_dispatched_stage_run(

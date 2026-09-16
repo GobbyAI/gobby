@@ -97,8 +97,8 @@ async def deliver_staged_compact_handoff(
         def schedule_readiness(before_command: str | None) -> bool:
             return schedule_codex_handoff_compact_continuation_readiness(
                 db,
+                pane=pane,
                 pending_session_id=session_id,
-                target_session=session,
                 before_command=before_command,
                 attempt_id=attempt_id,
             )

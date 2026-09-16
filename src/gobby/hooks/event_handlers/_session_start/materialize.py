@@ -93,6 +93,8 @@ def _consume_pending_handoff_compact_continuation(
             pending_session_id=pending_session_id,
             target_session=target_session,
             loop=getattr(handler._session_coordinator, "_event_loop", None),
+            terminal_manager=getattr(handler, "terminal_manager", None),
+            terminal_runtime_registry=getattr(handler, "_terminal_runtime_registry", None),
         )
     )
 

@@ -36,6 +36,7 @@ from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObservationError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.terminals.pane_io import TmuxPaneIO
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -206,15 +207,14 @@ async def test_shutdown_stops_readiness_watcher_and_preserves_pending_marker(
             return None
 
     tmux = WaitingTmux()
-    session = SimpleNamespace(id=SESSION_ID, terminal_context={"tmux_pane": "%12"})
     assert mark_handoff_compact_continuation_pending(session_db, SESSION_ID)
     loop = asyncio.get_running_loop()
 
     def schedule() -> bool:
         return schedule_codex_handoff_compact_continuation_readiness(
             session_db,
+            pane=TmuxPaneIO(tmux, "%12"),
             pending_session_id=SESSION_ID,
-            target_session=session,
             before_command="Compacting conversation",
             loop=loop,
         )
@@ -292,8 +292,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
-            tmux=tmux,
-            target="%12",
+            pane=TmuxPaneIO(tmux, "%12"),
             pending_session_id=SESSION_ID,
             before_command=before_command,
             poll_seconds=0,
@@ -329,8 +328,7 @@ async def test_codex_readiness_stops_when_attempt_marker_is_replaced(
     with caplog.at_level("WARNING"):
         await _continue_after_codex_compaction_ready(
             session_db,
-            tmux=UnexpectedTmux(),
-            target="%12",
+            pane=TmuxPaneIO(UnexpectedTmux(), "%12"),
             pending_session_id=SESSION_ID,
             before_command="Earlier output",
             poll_seconds=0,
@@ -366,8 +364,7 @@ async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
     tmux = RacingTmux()
     await _continue_after_codex_compaction_ready(
         session_db,
-        tmux=tmux,
-        target="%12",
+        pane=TmuxPaneIO(tmux, "%12"),
         pending_session_id=SESSION_ID,
         before_command="Earlier output",
         poll_seconds=0,
@@ -399,8 +396,7 @@ async def test_codex_readiness_stops_when_tmux_pane_disappears(
     with caplog.at_level("WARNING"):
         await _continue_after_codex_compaction_ready(
             session_db,
-            tmux=MissingPaneTmux(),
-            target="%12",
+            pane=TmuxPaneIO(MissingPaneTmux(), "%12"),
             pending_session_id=SESSION_ID,
             before_command="Earlier output",
             poll_seconds=0,
@@ -434,8 +430,7 @@ async def test_codex_send_failure_queues_the_pull_prompt_for_the_next_turn(
 
     await _continue_after_codex_compaction_ready(
         session_db,
-        tmux=tmux,
-        target="%12",
+        pane=TmuxPaneIO(tmux, "%12"),
         pending_session_id=SESSION_ID,
         before_command="Compacting conversation",
         poll_seconds=0,
@@ -469,8 +464,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
-            tmux=tmux,
-            target="%12",
+            pane=TmuxPaneIO(tmux, "%12"),
             pending_session_id=SESSION_ID,
             before_command=before_command,
             poll_seconds=0,
@@ -513,8 +507,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
-            tmux=tmux,
-            target="%12",
+            pane=TmuxPaneIO(tmux, "%12"),
             pending_session_id=SESSION_ID,
             before_command=before_command,
             poll_seconds=0,
@@ -528,12 +521,10 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
 
 
 def test_codex_readiness_rejects_missing_baseline(session_db: HubDatabase) -> None:
-    session = SimpleNamespace(terminal_context={"tmux_pane": "%12"})
-
     assert not schedule_codex_handoff_compact_continuation_readiness(
         session_db,
+        pane=TmuxPaneIO(_FakeTmux(), "%12"),
         pending_session_id=SESSION_ID,
-        target_session=session,
         before_command=None,
     )
 
@@ -852,8 +843,7 @@ class TestPullPromptFallback:
             0.0,
         ):
             sent = await _send_handoff_compact_continuation(
-                tmux,
-                "%12",
+                TmuxPaneIO(tmux, "%12"),
                 _PULL_PROMPT,
                 SESSION_ID,
                 delay_seconds=0,

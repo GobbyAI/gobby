@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,13 +16,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.adapters.grok import GrokAdapter
+from gobby.agents.idle_detector import IdleDetector
 from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.event_handlers._session_start.materialize import (
+    _consume_pending_handoff_compact_continuation,
+)
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.terminal_handoff_delivery import (
     schedule_terminal_handoff_delivery,
     staged_handoff_from_event,
+)
+from gobby.sessions.compact_continuation import (
+    _HANDOFF_COMPACT_CONTINUATION_TASKS,
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
+    mark_handoff_compact_continuation_pending,
 )
 from gobby.sessions.handoff import (
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -28,7 +39,18 @@ from gobby.sessions.handoff import (
     HANDOFF_UNAVAILABLE_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     ClaimedHandoffDelivery,
+    build_handoff_continue_prompt,
     staged_handoff_tool_result,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
 )
 
 pytestmark = pytest.mark.unit
@@ -809,3 +831,140 @@ async def test_composer_occupied_delivery_failure_tells_the_agent_to_wait_for_th
     assert failure["delivery_failed"] is True
     assert "unsent draft" in failure["retry_guidance"]
     assert "retry gobby-sessions:set_handoff" in failure["retry_guidance"]
+
+
+# --- set_handoff -> compaction -> continuation through the terminal runtime (#22441) ---
+
+_COMPACT_DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
+_COMPACT_PROJECT_ID = "33333333-3333-4333-8333-333333333333"
+_NATIVE_WORKER_CONTEXT = {"parent_pid": 12364, "gobby_session_id": SESSION_ID}
+
+
+def _compact_session_manager(hub_db: HubDatabase, terminal_context: dict[str, Any]) -> Any:
+    hub_db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
+        (_COMPACT_PROJECT_ID, "compact-continuation-delivery"),
+    )
+    hub_db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
+        "session_type, terminal_context) VALUES (%s, %s, %s, 'claude', %s, 'terminal', %s)",
+        (
+            SESSION_ID,
+            SESSION_ID,
+            "21000000-0000-4000-8000-000000000001",
+            _COMPACT_PROJECT_ID,
+            json.dumps(terminal_context),
+        ),
+    )
+    return SessionManager(hub_db)
+
+
+def _session_start_handler(session_manager: Any, store: Any, registry: Any) -> Any:
+    return SimpleNamespace(
+        _session_manager=session_manager,
+        _session_coordinator=None,
+        terminal_manager=store,
+        _terminal_runtime_registry=registry,
+    )
+
+
+async def _await_continuations() -> None:
+    await asyncio.gather(*list(_HANDOFF_COMPACT_CONTINUATION_TASKS))
+
+
+async def test_native_worker_receives_the_continuation_after_set_handoff_compaction(
+    hub_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
+    runtime = FakeRuntime(backend="native")
+    store = MemoryTerminalStore(
+        replace(make_memory_terminal(backend="native"), session_id=SESSION_ID)
+    )
+    registry = runtime_registry(runtime)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal._COMPACTION_REJECTION_SETTLE_SECONDS", 0.0
+    )
+    monkeypatch.setattr(
+        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        0.0,
+    )
+
+    # set_handoff(clear_session=false) completed: the post-result delivery sends /compact.
+    with (
+        patch(f"{_COMPACT_DELIVERY}._interrupt_observer", return_value=(lambda: True, None)),
+        patch(f"{_COMPACT_DELIVERY}._turn_settled_observer", return_value=lambda: True),
+        patch(f"{_COMPACT_DELIVERY}.composer_reader", return_value=None),
+        patch(f"{_COMPACT_DELIVERY}.clear_queued_context"),
+        patch(f"{_COMPACT_DELIVERY}.record_handoff_delivery", return_value=True),
+        patch(
+            "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
+            side_effect=_run_operation,
+        ),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False),
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=store,
+            terminal_runtime_registry=registry,
+        )
+    compact_writes = len(runtime.write_log)
+    assert ("text", "/compact") in runtime.write_log
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE in SessionVariableManager(hub_db).get_variables(
+        SESSION_ID
+    )
+
+    # Claude restarts in place: SessionStart source=compact on the pre-created row.
+    runtime.snapshot_text = ""
+    handler = _session_start_handler(session_manager, store, registry)
+    with patch(
+        "gobby.sessions.compact_continuation._composer_reader",
+        return_value=IdleDetector(BundledDetectionRegistry(), "claude").composer_read,
+    ):
+        scheduled = _consume_pending_handoff_compact_continuation(
+            handler,
+            session_source="compact",
+            pending_session_id=SESSION_ID,
+            target_session=session_manager.get(SESSION_ID),
+        )
+        await _await_continuations()
+
+    assert scheduled is True
+    # FakeRuntime records submit=True as a trailing newline; RuntimePaneIO strips the
+    # newline it was given, so this entry is the prompt written and submitted natively.
+    assert ("text", f"{build_handoff_continue_prompt()}\n") in runtime.write_log[compact_writes:]
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(hub_db).get_variables(
+        SESSION_ID
+    )
+
+
+async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
+    hub_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
+    tmux = MagicMock()
+    tmux.dispatch_keys = AsyncMock(return_value=True)
+    tmux.snapshot_lines = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        0.0,
+    )
+    assert mark_handoff_compact_continuation_pending(hub_db, SESSION_ID, attempt_id=ATTEMPT_ID)
+    registry = runtime_registry(FakeRuntime(backend="native"))
+    handler = _session_start_handler(session_manager, MemoryTerminalStore(), registry)
+
+    with patch(
+        "gobby.sessions.compact_continuation.manager_for_terminal_context", return_value=tmux
+    ):
+        scheduled = _consume_pending_handoff_compact_continuation(
+            handler,
+            session_source="compact",
+            pending_session_id=SESSION_ID,
+            target_session=session_manager.get(SESSION_ID),
+        )
+        await _await_continuations()
+
+    assert scheduled is True
+    tmux.dispatch_keys.assert_any_await("%12", f"{build_handoff_continue_prompt()}\n", literal=True)
