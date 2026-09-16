@@ -422,6 +422,9 @@ mod tests {
 
     mod serial_db {
         use super::*;
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::mpsc;
+        use std::time::Duration;
 
         #[test]
         #[serial_test::serial(serial_db)]
@@ -797,6 +800,127 @@ mod tests {
             assert_eq!(
                 status,
                 FreshnessStatus::Degraded("unreadable project root".to_string())
+            );
+        }
+
+        /// Forward the first hub connection and answer nothing afterwards.
+        ///
+        /// A freshness refresh connects twice: once for the index locks, then
+        /// once for the indexing pipeline. Silencing every connection after the
+        /// first reproduces #22412 — the pipeline socket is ESTABLISHED and the
+        /// startup handshake is never answered — while the lock connection
+        /// keeps working, which is what put the project advisory lock at risk.
+        fn spawn_silent_after_first_hub_relay(database_url: &str) -> u16 {
+            let upstream = hub_address(database_url);
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind the hub relay");
+            let port = listener.local_addr().expect("hub relay address").port();
+            std::thread::spawn(move || {
+                let mut forwarded = false;
+                let mut silenced = Vec::new();
+                for stream in listener.incoming() {
+                    let Ok(stream) = stream else { break };
+                    if forwarded {
+                        // Accepted, never answered, and held open so the client
+                        // waits on the handshake instead of reading EOF.
+                        silenced.push(stream);
+                        continue;
+                    }
+                    forwarded = true;
+                    let hub = TcpStream::connect(upstream.as_str())
+                        .expect("hub relay connect to the test hub");
+                    pump(
+                        stream.try_clone().expect("clone the client socket"),
+                        hub.try_clone().expect("clone the hub socket"),
+                    );
+                    pump(hub, stream);
+                }
+            });
+            port
+        }
+
+        fn pump(mut source: TcpStream, mut sink: TcpStream) {
+            std::thread::spawn(move || {
+                let _ = std::io::copy(&mut source, &mut sink);
+                let _ = sink.shutdown(std::net::Shutdown::Write);
+            });
+        }
+
+        /// `host:port` of a `postgresql://user:password@host:port/database` DSN.
+        fn hub_address(database_url: &str) -> String {
+            let (_credentials, rest) = database_url
+                .split_once('@')
+                .expect("the test DSN carries credentials");
+            let (authority, _database) = rest
+                .split_once('/')
+                .expect("the test DSN carries a database name");
+            match authority.split_once(':') {
+                Some(_) => authority.to_string(),
+                None => format!("{authority}:5432"),
+            }
+        }
+
+        /// The same DSN pointed at the relay, with a one-second connect bound.
+        fn relay_database_url(database_url: &str, port: u16) -> String {
+            let (credentials, rest) = database_url
+                .split_once('@')
+                .expect("the test DSN carries credentials");
+            let (_authority, database) = rest
+                .split_once('/')
+                .expect("the test DSN carries a database name");
+            let separator = if database.contains('?') { '&' } else { '?' };
+            format!(
+                "{credentials}@127.0.0.1:{port}/{database}{separator}\
+                 sslmode=disable&connect_timeout=1"
+            )
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn refresh_connect_failure_releases_project_lock() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            std::fs::write(tmp.path().join("lib.rs"), b"pub fn one() {}\n").expect("write source");
+            let ctx = postgres_context_with_root(
+                &test_project_id("gcode-freshness-lock-release"),
+                tmp.path(),
+            );
+            let port = spawn_silent_after_first_hub_relay(&ctx.database_url);
+            let relay_ctx = Context {
+                database_url: relay_database_url(&ctx.database_url, port),
+                ..ctx.clone()
+            };
+            let file = relay_ctx.project_root.join("lib.rs");
+
+            // The refresh must give up on its silenced pipeline connection; a
+            // hang here is the #22412 failure, so it is bounded, not awaited.
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(ensure_fresh(&relay_ctx, FreshnessScope::Files(vec![file])));
+            });
+            let status = receiver
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the refresh must fail closed instead of holding the lock forever")
+                .expect("a failed pipeline connect degrades the refresh");
+
+            match &status {
+                FreshnessStatus::Degraded(message) => assert!(
+                    message.contains("startup handshake"),
+                    "the degraded reason must name the unanswered handshake: {message}"
+                ),
+                other => panic!("a failed pipeline connect must degrade, got {other:?}"),
+            }
+
+            let competitor =
+                index_lock::with_project_lock(&ctx, IndexLockPolicy::brief_freshness_try(), || {
+                    Ok(())
+                })
+                .expect("competitor lock attempt");
+            assert!(
+                matches!(competitor, IndexLockResult::Acquired(())),
+                "the failed refresh must leave the project lock free, got {competitor:?}"
             );
         }
 
