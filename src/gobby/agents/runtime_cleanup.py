@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -63,4 +64,28 @@ def cleanup_agent_runtime_state(
         dispatch_mutex_rows=dispatch_mutex_rows,
         workflow_instance_rows=workflow_instance_rows,
         errors=tuple(errors),
+    )
+
+
+def release_session_end_run(
+    db: HubDatabase,
+    run_id: str,
+    clone_id: str | None,
+    child_session_id: str,
+) -> AgentRuntimeCleanupResult:
+    """Hand back the clone and dispatch mutex of a run its session end terminalized.
+
+    Same order as ``TerminalResourceCleaner.post_terminal_cleanup``: clone ownership
+    before the mutex, so a same-task respawn finds both free.
+    """
+    if clone_id:
+        try:
+            LocalCloneManager(db).release(clone_id)
+        except Exception as exc:
+            logger.warning("Failed to release clone %s for agent run %s: %s", clone_id, run_id, exc)
+    return cleanup_agent_runtime_state(
+        db,
+        run_id=run_id,
+        child_session_id=child_session_id,
+        terminal_reason=None,
     )

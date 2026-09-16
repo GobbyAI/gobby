@@ -22,6 +22,7 @@ import threading
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -33,12 +34,14 @@ from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.processor_lifecycle import SessionFlushResult
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.agent_definitions import make_agent_definition
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -1325,6 +1328,74 @@ class TestAgentRunCompletion:
         assert updated.result == supplied_summary
         assert updated.result.count(completion_suffix) == 1
         notification.assert_called_once_with(run.id, "success")
+
+    def test_complete_agent_run_releases_dispatch_mutex_and_clone(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """#22444: a run ended by its session hands the spawn lease and clone back."""
+        patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        task = LocalTaskManager(temp_db).create_task(
+            project_id=PROJECT_ID,
+            title="Escalate for the parent's answer",
+            validation_criteria="The parent supplies the word.",
+        )
+        clones = LocalCloneManager(temp_db)
+        clone = clones.create(
+            project_id=PROJECT_ID,
+            branch_name="task-escalate-for-answer",
+            clone_path=str(tmp_path / "clone"),
+            task_id=task.id,
+            agent_session_id=CHILD_SESSION_ID,
+        )
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="droid",
+            prompt="write the word the parent supplies",
+            child_session_id=CHILD_SESSION_ID,
+            task_id=task.id,
+            clone_id=clone.id,
+        )
+        run_manager.start(run.id)
+        mutexes = TaskDispatchMutexManager(temp_db)
+        assert mutexes.acquire_mutex(
+            task.id,
+            holder="spawn-agent:escalated-run",
+            kind="spawn_agent",
+            ttl_seconds=600,
+            run_id=run.id,
+        )
+        coordinator = SessionCoordinator(agent_run_manager=run_manager)
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=run.id,
+            summary_markdown="Escalated; waiting for the parent's word.",
+            tool_call_count=20,
+            turn_count=9,
+        )
+
+        with patch.object(coordinator, "_notify_agent_completion"):
+            coordinator.complete_agent_run(session)
+
+        updated = run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert mutexes.get_mutex(task.id) is None
+        released_clone = clones.get(clone.id)
+        assert released_clone is not None
+        assert released_clone.agent_session_id is None
+        # The respawn takes the lease without a build stop or waiting for expiry.
+        assert mutexes.acquire_mutex(
+            task.id,
+            holder="spawn-agent:respawn",
+            kind="spawn_agent",
+            ttl_seconds=600,
+        )
 
     def test_complete_agent_run_allows_completed_step_workflow(
         self,

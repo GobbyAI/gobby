@@ -29,6 +29,7 @@ from gobby.agents.run_completion import (
     cooperative_close_handoff_pending,
     ended_caller_close_review_outcome,
 )
+from gobby.agents.runtime_cleanup import release_session_end_run
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
@@ -485,6 +486,7 @@ class SessionCoordinator:
             )
             self._notify_agent_completion(run_id, status)
             self.release_session_worktrees(session_id)
+            release_session_end_run(manager.db, run_id, agent_run.clone_id, session_id)
             self._reap_agent_sandbox_roots(run_id)
             return updated_run
 
