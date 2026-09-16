@@ -828,67 +828,73 @@ def _claude_frame(row: str) -> str:
     return f"⏺ done\n{rule}\n{row}\n{rule}\n   Fable 5.1  12%\n"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("composer_text", "second_enter"),
-    [
-        (_claude_frame("❯\xa0"), False),
-        (_claude_frame(f"❯ {_PULL_PROMPT}"), True),
-        (_claude_frame("❯ the operator typed this"), False),
-        (None, True),
-    ],
-)
-async def test_follow_up_enter_is_gated_on_the_composer_read(
-    composer_text: str | None, second_enter: bool
-) -> None:
-    tmux = _FakeTmux()
-    tmux.composer_text = composer_text
+class TestPullPromptFallback:
+    """The pull prompt survives a failed send and never submits an operator draft."""
 
-    with patch(
-        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
-        0.0,
-    ):
-        sent = await _send_handoff_compact_continuation(
-            tmux,
-            "%12",
-            _PULL_PROMPT,
-            SESSION_ID,
-            delay_seconds=0,
-            cli_source="claude",
-            composer_read=_CLAUDE_READ,
-        )
-
-    assert sent is True
-    assert (("%12", "Enter", False) in tmux.sent_keys) is second_enter
-
-
-@pytest.mark.asyncio
-async def test_scheduled_send_failure_queues_the_pull_prompt(session_db: HubDatabase) -> None:
-    prompt = "Continue the claimed task."
-    mark_handoff_compact_continuation_pending(
-        session_db, SESSION_ID, prompt=prompt, attempt_id="attempt-9"
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("composer_text", "second_enter"),
+        [
+            (_claude_frame("❯\xa0"), False),
+            (_claude_frame(f"❯ {_PULL_PROMPT}"), True),
+            (_claude_frame("❯ the operator typed this"), False),
+            (None, True),
+        ],
     )
+    async def test_follow_up_enter_is_gated_on_the_composer_read(
+        self, composer_text: str | None, second_enter: bool
+    ) -> None:
+        tmux = _FakeTmux()
+        tmux.composer_text = composer_text
 
-    session = SimpleNamespace(id=SESSION_ID, source="claude", terminal_context={"tmux_pane": "%12"})
-    with (
-        patch(
-            "gobby.sessions.compact_continuation.manager_for_terminal_context",
-            return_value=_FakeTmux(),
-        ),
-        patch(
-            "gobby.sessions.compact_continuation._type_handoff_compact_continuation",
-            new=AsyncMock(return_value=False),
-        ),
-    ):
-        scheduled = consume_and_schedule_handoff_compact_continuation(
-            session_db, pending_session_id=SESSION_ID, target_session=session
+        with patch(
+            "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+            0.0,
+        ):
+            sent = await _send_handoff_compact_continuation(
+                tmux,
+                "%12",
+                _PULL_PROMPT,
+                SESSION_ID,
+                delay_seconds=0,
+                cli_source="claude",
+                composer_read=_CLAUDE_READ,
+            )
+
+        assert sent is True
+        assert (("%12", "Enter", False) in tmux.sent_keys) is second_enter
+
+    @pytest.mark.asyncio
+    async def test_scheduled_send_failure_queues_the_pull_prompt(
+        self, session_db: HubDatabase
+    ) -> None:
+        prompt = "Continue the claimed task."
+        mark_handoff_compact_continuation_pending(
+            session_db, SESSION_ID, prompt=prompt, attempt_id="attempt-9"
         )
-        await asyncio.gather(*_HANDOFF_COMPACT_CONTINUATION_TASKS)
 
-    assert scheduled is True
-    queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
-    assert [m.content for m in queued] == [prompt]
-    assert json.loads(queued[0].metadata_json or "{}") == {
-        "attempt_id": "attempt-9",
-        "compact_continuation": True,
-    }
+        session = SimpleNamespace(
+            id=SESSION_ID, source="claude", terminal_context={"tmux_pane": "%12"}
+        )
+        with (
+            patch(
+                "gobby.sessions.compact_continuation.manager_for_terminal_context",
+                return_value=_FakeTmux(),
+            ),
+            patch(
+                "gobby.sessions.compact_continuation._type_handoff_compact_continuation",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            scheduled = consume_and_schedule_handoff_compact_continuation(
+                session_db, pending_session_id=SESSION_ID, target_session=session
+            )
+            await asyncio.gather(*_HANDOFF_COMPACT_CONTINUATION_TASKS)
+
+        assert scheduled is True
+        queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
+        assert [m.content for m in queued] == [prompt]
+        assert json.loads(queued[0].metadata_json or "{}") == {
+            "attempt_id": "attempt-9",
+            "compact_continuation": True,
+        }

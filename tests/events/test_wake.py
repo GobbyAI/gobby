@@ -8,7 +8,7 @@ import json
 import logging
 import weakref
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
@@ -1342,3 +1342,86 @@ class TestWakeDispatch:
         assert result["delivered"] is False
         assert result["method"] == "web_chat"
         assert result["error_code"] == "no_live_web_chat_session"
+
+
+class TestComposerGate:
+    """A positive draft read withholds the live wake; anything else drains as before."""
+
+    @staticmethod
+    def _dispatcher(probe: object, pane_sender: AsyncMock) -> WakeDispatcher:
+        from gobby.events.live_wake import ComposerProbe
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID, terminal_context={"tmux_pane": "%7"}
+        )
+        terminal_manager = MagicMock()
+        terminal_manager.get_live_for_session.return_value = None
+        return WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=MagicMock(),
+            tmux_sender=AsyncMock(),
+            tmux_pane_sender=pane_sender,
+            terminal_manager=terminal_manager,
+            composer_probe=cast("ComposerProbe | None", probe),
+        )
+
+    @pytest.mark.asyncio
+    async def test_draft_defers_the_wake_to_the_next_turn(self) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(return_value=ComposerRead("draft", "hello draft"))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result == {
+            "session_id": WAKE_SESSION_ID,
+            "delivered": False,
+            "method": "tmux_pane",
+            "skipped": "composer_occupied",
+            "ism_persisted": True,
+        }
+        pane_sender.assert_not_awaited()
+        assert dispatcher._last_live_wake == {}
+
+    @pytest.mark.asyncio
+    async def test_urgent_wake_bypasses_the_probe(self) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(return_value=ComposerRead("draft", "hello draft"))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID, priority="urgent")
+
+        assert result["delivered"] is True
+        probe.assert_not_awaited()
+        pane_sender.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("state", ["empty", "unknown"])
+    async def test_non_draft_reads_drain_blind(self, state: str) -> None:
+        from gobby.agents.idle_detector import ComposerRead, ComposerState
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(return_value=ComposerRead(cast(ComposerState, state)))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result["delivered"] is True
+        pane_sender.assert_awaited_once_with(
+            "%7", CONTINUE_WAKE_MESSAGE, None, submit=True, clear_before_submit=True, cli_source=ANY
+        )
+
+    @pytest.mark.asyncio
+    async def test_probe_error_drains_blind(self) -> None:
+        pane_sender = AsyncMock()
+        dispatcher = self._dispatcher(AsyncMock(side_effect=RuntimeError("no pane")), pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result["delivered"] is True
+        pane_sender.assert_awaited_once()

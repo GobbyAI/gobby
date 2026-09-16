@@ -260,7 +260,7 @@ async def test_grok_rejection_after_a_settled_submission_interrupts_before_resub
 
 
 @pytest.mark.asyncio
-async def test_operator_draft_refuses_the_compaction_before_any_key_is_sent() -> None:
+async def test_compaction_refuses_occupied_composer_before_interrupt() -> None:
     pane = _GrokPane()
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)

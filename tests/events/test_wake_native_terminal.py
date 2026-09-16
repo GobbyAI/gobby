@@ -662,9 +662,7 @@ async def test_managed_terminal_wake_is_withheld_for_a_draft(managed_chain: Mana
     assert managed_chain.native.write_log == []
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("probe", [_draft, _empty])
-async def test_batch_wake_probes_each_native_recipient(probe: ComposerProbe) -> None:
+def _batch_dispatcher(probe: ComposerProbe) -> tuple[WakeDispatcher, AsyncMock]:
     row = replace(make_memory_terminal(backend="native"), session_id=WAKE_SESSION_ID)
     store = MemoryTerminalStore(row)
     batch_sender = AsyncMock(
@@ -678,13 +676,26 @@ async def test_batch_wake_probes_each_native_recipient(probe: ComposerProbe) -> 
         terminal_manager=store,
         composer_probe=probe,
     )
+    return dispatcher, batch_sender
+
+
+@pytest.mark.asyncio
+async def test_batch_wake_skips_occupied_composer() -> None:
+    dispatcher, batch_sender = _batch_dispatcher(_draft)
 
     results = await dispatcher.dispatch_live_wakes([WAKE_SESSION_ID])
 
-    if probe is _draft:
-        assert results == [composer_occupied_result(WAKE_SESSION_ID, method="terminal")]
-        batch_sender.assert_not_awaited()
-    else:
-        assert results[0]["delivered"] is True
-        assert batch_sender.await_args is not None
-        assert [t.session_id for t in batch_sender.await_args.args[0]] == [WAKE_SESSION_ID]
+    assert results == [composer_occupied_result(WAKE_SESSION_ID, method="terminal")]
+    batch_sender.assert_not_awaited()
+    assert dispatcher._last_live_wake == {}
+
+
+@pytest.mark.asyncio
+async def test_batch_wake_still_injects_an_empty_composer() -> None:
+    dispatcher, batch_sender = _batch_dispatcher(_empty)
+
+    results = await dispatcher.dispatch_live_wakes([WAKE_SESSION_ID])
+
+    assert results[0]["delivered"] is True
+    assert batch_sender.await_args is not None
+    assert [t.session_id for t in batch_sender.await_args.args[0]] == [WAKE_SESSION_ID]

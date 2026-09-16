@@ -152,7 +152,7 @@ _CLAUDE_FRAME = "\n".join(
 )
 
 
-def test_composer_region_is_the_bottom_most_rule_frame() -> None:
+def test_composer_region_prefers_bottom_frame() -> None:
     assert matcher.composer_region(_CLAUDE_FRAME) == "❯ hello draft"
 
 
