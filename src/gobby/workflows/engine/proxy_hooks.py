@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.effect_deadline import (
@@ -14,9 +15,10 @@ from gobby.hooks.effect_deadline import (
     blocking_budget_overrun,
     elapsed_blocking_effect_seconds,
 )
-from gobby.hooks.events import HookEvent
+from gobby.hooks.events import HookEvent, SessionSource
 from gobby.integrations.rtk import resolve_rtk
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.utils.dev import linked_worktree_root
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine._offload import offload
 
@@ -27,6 +29,7 @@ _MAX_PROXY_OUTPUT_BYTES = 64 * 1024
 _SHELL_CONTEXT_PREFIX = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=|cd(?:[ \t]|$))")
 _RTK_DIAGNOSTIC_PREFIX = re.compile(r"^\s*(?:\[rtk\s*:|rtk(?:\s+error)?\s*:)", re.IGNORECASE)
 _RTK_UNSUPPORTED_JQ_REWRITE = re.compile(r"(?:^|\s)rtk\s+(?:\S*/)?jq(?:\s|$)")
+_RTK_GIT_REWRITE = re.compile(r"(?:^|[\s;&|(])rtk\s+(?:\S*/)?git(?:\s|$)")
 
 # One WARNING per unavailability episode; DEBUG until RTK resolves again.
 _rtk_unavailable_warned = False
@@ -47,6 +50,21 @@ def _is_plausible_rewrite(command: str) -> bool:
     if _RTK_UNSUPPORTED_JQ_REWRITE.search(command):
         return False
     return not any(ord(char) < 32 and char not in "\t\n\r" for char in command)
+
+
+def _is_refused_worktree_git_rewrite(event: HookEvent, transformed: str) -> bool:
+    """Report a rewrite that Claude Code's worktree containment would refuse.
+
+    Claude Code judges git commands in a linked worktree by what they run, and it
+    cannot see through the RTK launcher, so ``rtk git`` there is refused even when
+    the bare ``git`` it wraps would run.
+    """
+    if event.source is not SessionSource.CLAUDE or not event.cwd:
+        return False
+    return (
+        _RTK_GIT_REWRITE.search(transformed) is not None
+        and linked_worktree_root(Path(event.cwd)) is not None
+    )
 
 
 def _note_rtk_unavailable(rule_name: str) -> None:
@@ -297,6 +315,13 @@ class ProxyHooksMixin:
                 "proxy_hook[%s]: RTK output rejected%s",
                 invocation.row.name,
                 f": {detail}" if detail else "",
+            )
+            return False
+        if _is_refused_worktree_git_rewrite(event, transformed):
+            logger.debug(
+                "proxy_hook[%s]: keeping bare git in linked worktree %s",
+                invocation.row.name,
+                event.cwd,
             )
             return False
 
