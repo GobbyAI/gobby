@@ -8,9 +8,12 @@ Finish in this order:
 
 1. Finish all edits; resolve every owned finding and verify applicable criteria.
 2. Run focused validation after the final edit and follow it to definitive exit.
-   Direct commands, including environment-prefixed ones, are credited. Pipelines,
-   fallbacks, backgrounding, subshells, obscuring wrappers, and trailing output
-   commands are not credited and require a direct rerun.
+   Credit is judged per shell call. Direct commands, environment prefixes,
+   leading `cd <dir> &&`, and `<check-a> && <check-b>` chains (each segment) are
+   credited. Pipelines such as `| tail`, `;` command sequences, trailing output
+   such as `echo`, fallbacks, backgrounding, subshells, and obscuring wrappers
+   are not; one of them anywhere voids every check in that call. Recover with a
+   direct rerun of each validation as its own call.
 3. Stage only task paths and commit with a task reference. Use
    `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
@@ -51,4 +54,4 @@ validator-only and is never a shortcut for the implementing session.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-16_

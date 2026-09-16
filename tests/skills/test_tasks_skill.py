@@ -47,17 +47,27 @@ def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
     for expected in (
         "final validation after every final edit and formatting change",
         "definitive exit",
+        "later edit makes",
+        "prior evidence stale; committing",
+    ):
+        assert expected in implementation
+    # The credit rule lives in the close reference; it mirrors _wrapper_reason in
+    # src/gobby/tasks/transcript_outcomes.py, including whole-call voiding.
+    for expected in (
+        "Credit is judged per shell call",
         "environment prefixes",
-        "pipelines",
+        "`cd <dir> &&`",
+        "chains (each segment)",
+        "`| tail`",
+        "`;` command sequences",
+        "trailing output",
         "fallbacks",
         "backgrounding",
         "subshells",
-        "trailing output",
-        "direct rerun",
-        "later edit makes",
-        "prior evidence stale; committing does not",
+        "voids every check in that call",
+        "direct rerun of each validation",
     ):
-        assert expected in implementation
+        assert expected in closing
     assert "claiming, closing, and worked-on sessions" in closing
     assert "link windows" in closing
     for provider in ("Claude Code", "Qwen", "Droid", "Grok", "Codex"):
@@ -175,7 +185,9 @@ def test_handoff_feedback_precedes_handoff_without_duplicate_epoch_submission() 
     assert "`feedback(observations=[])`" in content
     assert "duplicate acknowledgment for the same epoch" in content
     assert "human-reviewed" in content
-    assert content.index("`feedback(observations=[])`") < content.index("Call `set_handoff` last.")
+    assert content.index("`feedback(observations=[])`") < content.index(
+        "Interactive sessions call `set_handoff` last."
+    )
     assert "gobby-sessions:feedback first" in prompt
     assert prompt.index("gobby-sessions:feedback first") < prompt.index("set_handoff last")
 
