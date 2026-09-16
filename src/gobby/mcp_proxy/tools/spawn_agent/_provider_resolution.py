@@ -175,8 +175,9 @@ def incompatible_spawn_model_provider(
 
     Reuses ``CapabilityResolver.find_model`` on collector snapshots (Codex reads
     ``models_cache.json``, the same catalog that emits "Model metadata for
-    `grok-4.6` not found"). Unknown models pass through when the target
-    provider has no catalog loaded. Generation-endpoint selectors are skipped.
+    `grok-4.6` not found"). Unknown models pass through when the target provider
+    has no collector-backed catalog loaded, so the bundled cold-start seed never
+    rejects a model newer than itself. Generation-endpoint selectors are skipped.
     """
     supplied_model = _normalize_optional_model(model)
     if supplied_model is None or _is_generation_endpoint_model(supplied_model):
@@ -188,7 +189,7 @@ def incompatible_spawn_model_provider(
         supplied_model, tuple(sorted(SPAWN_CAPABLE_PROVIDERS))
     )
     serving = tuple(name for name in serving if name != provider)
-    if not serving and not capability_resolver.has_provider_catalog(provider):
+    if not serving and not capability_resolver.has_authoritative_provider_catalog(provider):
         return None
     if serving:
         hint = f" Providers that serve this model: {', '.join(serving)}."

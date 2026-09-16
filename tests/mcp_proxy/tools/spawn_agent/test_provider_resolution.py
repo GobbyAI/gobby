@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +22,8 @@ from gobby.providers.capabilities.models import (
     ModelCapability,
     ProviderSnapshot,
     ReasoningSupport,
+    SourceHealth,
+    SourceState,
 )
 from gobby.providers.capabilities.resolve import CapabilityResolver
 
@@ -198,6 +201,76 @@ def test_unknown_model_passes_when_provider_catalog_is_missing() -> None:
         )
         is None
     )
+
+
+def _source(state: SourceState) -> SourceHealth:
+    observed_at = datetime(2026, 9, 16, tzinfo=UTC)
+    return SourceHealth(
+        source_key="factory-models",
+        source_url="https://docs.factory.ai/models.md",
+        required=True,
+        state=state,
+        attempts=1,
+        last_attempt_at=observed_at,
+        last_success_at=observed_at if state is SourceState.OK else None,
+        last_error=None,
+    )
+
+
+def _droid_resolver(state: SourceState) -> CapabilityResolver:
+    return CapabilityResolver(
+        _SnapshotStore(
+            {
+                "droid": ProviderSnapshot(
+                    provider="droid",
+                    generation=0,
+                    models=(_model_capability("glm-5.2"),),
+                    sources=(_source(state),),
+                )
+            }
+        ),
+        _NoMetadata(),
+    )
+
+
+def test_stale_seed_catalog_does_not_reject_a_newer_model() -> None:
+    # The bundled seed is a cold-start floor, not an inventory: before the first
+    # collector run it lists whatever shipped with the release, so rejecting against
+    # it refuses models the provider really serves (#22402).
+    assert (
+        incompatible_spawn_model_provider(
+            provider="droid",
+            model="glm-5.3-flash",
+            resolver=_droid_resolver(SourceState.STALE),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("state", [SourceState.PENDING, SourceState.ERROR])
+def test_catalog_whose_sources_never_answered_does_not_reject(state: SourceState) -> None:
+    # A refresh that never succeeded records STALE when seed rows exist and ERROR when
+    # none do. Neither knows what the provider serves, so neither may reject.
+    assert (
+        incompatible_spawn_model_provider(
+            provider="droid",
+            model="glm-5.3-flash",
+            resolver=_droid_resolver(state),
+        )
+        is None
+    )
+
+
+def test_collected_catalog_still_rejects_an_unknown_model() -> None:
+    error = incompatible_spawn_model_provider(
+        provider="droid",
+        model="glm-5.3-flash",
+        resolver=_droid_resolver(SourceState.OK),
+    )
+
+    assert error is not None
+    assert error.error_code == INCOMPATIBLE_MODEL_PROVIDER
+    assert error.model == "glm-5.3-flash"
 
 
 def test_codex_catalog_rejects_grok_model_and_names_serving_providers() -> None:

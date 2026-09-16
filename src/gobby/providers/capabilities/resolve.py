@@ -17,6 +17,7 @@ from gobby.providers.capabilities.models import (
     ModelCapability,
     ProviderSnapshot,
     ReasoningSupport,
+    SourceState,
 )
 
 
@@ -258,9 +259,28 @@ class CapabilityResolver:
             None,
         )
 
-    def has_provider_catalog(self, provider: str) -> bool:
-        """Return whether a capability snapshot is loaded for ``provider``."""
-        return self._store.get_provider_snapshot(provider) is not None
+    def has_authoritative_provider_catalog(self, provider: str) -> bool:
+        """Return whether a live-collected capability snapshot is loaded for ``provider``.
+
+        Only a source that has actually answered proves the model list is complete
+        enough to reject against. The bundled cold-start seed marks every source
+        ``STALE``: it is a floor that keeps model selection working before the first
+        collector run, not an inventory of what the provider serves. Treating it as
+        authoritative rejects models the provider genuinely supports but that shipped
+        after the seed was written. A refresh that never succeeded leaves ``STALE``
+        (when seed rows exist) or ``ERROR`` (when none do), and neither knows what the
+        provider serves either.
+
+        Snapshots carrying no sources at all (local endpoint scans) stay authoritative:
+        their model list comes from the running server, which is the best inventory
+        available for those providers.
+        """
+        snapshot = self._store.get_provider_snapshot(provider)
+        if snapshot is None:
+            return False
+        if not snapshot.sources:
+            return True
+        return any(source.state is SourceState.OK for source in snapshot.sources)
 
     def providers_for_model(self, model: str, providers: tuple[str, ...]) -> tuple[str, ...]:
         """Return providers in ``providers`` whose snapshot lists ``model``."""
