@@ -7,6 +7,7 @@ import importlib
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -635,12 +636,17 @@ def _recheck_event(
     return event
 
 
-@pytest.mark.parametrize("stored_path", [None, "/tmp/late-rollout.jsonl"])
+@pytest.mark.parametrize("stored", [None, "late"])
 def test_later_hook_registers_transcript_for_live_processing(
     manager_with_mocks: HookManager,
     monkeypatch: pytest.MonkeyPatch,
-    stored_path: str | None,
+    tmp_path: Path,
+    stored: str | None,
 ) -> None:
+    # A persisted path only stops the rechecks while it still reads on disk.
+    late = tmp_path / "late-rollout.jsonl"
+    late.write_text("{}\n", encoding="utf-8")
+    stored_path = str(late) if stored == "late" else None
     manager = cast(Any, manager_with_mocks)
     session = SimpleNamespace(
         id="platform-1",
@@ -658,17 +664,15 @@ def test_later_hook_registers_transcript_for_live_processing(
     event = _recheck_event(HookEventType.BEFORE_TOOL)
     event.source = SessionSource.CODEX
 
-    with patch(_DERIVE_PATCH, return_value="/tmp/late-rollout.jsonl") as derive:
+    with patch(_DERIVE_PATCH, return_value=str(late)) as derive:
         manager_with_mocks._recheck_pending_transcript(event)
-        session.transcript_path = "/tmp/late-rollout.jsonl"
+        session.transcript_path = str(late)
         manager_with_mocks._recheck_pending_transcript(event)
         manager_with_mocks._recheck_pending_transcript(event)
 
     assert derive.call_count == (1 if stored_path is None else 0)
     assert processor.register_session.call_count == 2
-    processor.register_session.assert_called_with(
-        "platform-1", "/tmp/late-rollout.jsonl", source="codex"
-    )
+    processor.register_session.assert_called_with("platform-1", str(late), source="codex")
     processor.unregister_session.assert_not_called()
     assert handler._session_message_processors == {"platform-1": processor}
 

@@ -119,6 +119,20 @@ region = "whole_recent"
 line_regex = ['(?m)^\s*[❯>$]\s+\S']
 
 [[rules]]
+id = "composer_empty"
+state = "idle"
+priority = 80
+region = "composer"
+line_regex = ['(?m)^\s*[❯>$]\s*$']
+
+[[rules]]
+id = "composer_draft"
+state = "idle"
+priority = 79
+region = "composer"
+line_regex = ['(?m)^\s*[❯>$]\s+\S']
+
+[[rules]]
 id = "source_shaped"
 state = "working"
 priority = 10

@@ -13,7 +13,10 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_pane_io,
     _send_terminal_compaction_command,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import _CLI_COMPACT_COMMANDS
+from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+    _CLI_COMPACT_COMMANDS,
+    composer_reader,
+)
 from gobby.sessions.compact_continuation import (
     CODEX_COMPACT_READY_CAPTURE_LINES,
     clear_handoff_compact_continuation_pending,
@@ -123,6 +126,7 @@ async def deliver_staged_compact_handoff(
             ),
             observe_interrupt=observe_interrupt,
             turn_settled=turn_settled,
+            composer_read=composer_reader(db, source),
         )
     except Exception as exc:
         logger.warning(

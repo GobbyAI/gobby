@@ -71,7 +71,7 @@ class DetectionRule(MatchClause):
     @field_validator("region")
     @classmethod
     def validate_region(cls, value: str) -> str:
-        if value in {"whole_recent", "prompt_box"}:
+        if value in {"whole_recent", "prompt_box", "composer"}:
             return value
         line_count = bottom_non_empty_line_count(value)
         if line_count is None or line_count > MAX_BOTTOM_NON_EMPTY_LINES:

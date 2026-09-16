@@ -24,6 +24,7 @@ from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.runtime import TerminalWriteError
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
@@ -41,6 +42,8 @@ from .detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = cast(DetectionManifestRegistry, BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
+
+_DRAIN_KEYS = [("key", key) for key in composer_clear_sequence(None)]
 _CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 _CAPACITY_PANE = "\x1b[31mSelected model is at\ncapacity. Please try a different model.\x1b[0m\n›\n"
 
@@ -466,7 +469,7 @@ async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay
     assert handled == 1
     mock_message.assert_awaited_once()
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "workflow-aware continuation"),
         ("key", "enter"),
     ]
@@ -513,7 +516,7 @@ async def test_claude_turn_duration_reprompts_after_base_timeout(
 
     assert handled == 1
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "workflow-aware continuation"),
         ("key", "enter"),
     ]
@@ -558,7 +561,7 @@ async def test_grok_turn_completed_reprompts_and_records_watchdog_event(
     assert handled == 1
     mock_message.assert_awaited_once()
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "workflow-aware continuation"),
         ("key", "enter"),
     ]
@@ -845,7 +848,7 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
     state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "workflow-aware continuation"),
         ("key", "enter"),
     ]
@@ -1008,13 +1011,13 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
             new_callable=AsyncMock,
         ) as mock_audit,
     ):
-        runtime.write_failures = [False, True, False, False, False]
+        runtime.write_failures = [*([False] * len(_DRAIN_KEYS)), True]
         first = await monitor.check_idle_agents()
         second = await monitor.check_idle_agents()
         duplicate = await monitor.check_idle_agents()
 
     assert (first, second, duplicate) == (0, 1, 0)
-    assert len(_runtime_of(monitor).write_log) == 5
+    assert len(_runtime_of(monitor).write_log) == 2 * len(_DRAIN_KEYS) + 3
     mock_audit.assert_awaited_once()
     state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
@@ -1055,7 +1058,7 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
         exhausted = await monitor.check_idle_agents()
 
     assert (first, second, exhausted) == (1, 1, 1)
-    assert len(_runtime_of(monitor).write_log) == 6
+    assert len(_runtime_of(monitor).write_log) == 2 * (len(_DRAIN_KEYS) + 2)
     assert mock_audit.await_count == 2
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
@@ -1159,7 +1162,7 @@ async def test_capacity_retry_budget_resets_after_model_output(
         recovered = await monitor.check_idle_agents()
 
     assert recovered == 1
-    assert len(_runtime_of(monitor).write_log) == 9
+    assert len(_runtime_of(monitor).write_log) == 3 * (len(_DRAIN_KEYS) + 2)
     assert _runtime_of(monitor).killed == []
     state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
@@ -1246,7 +1249,7 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
 
     assert handled == 1
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "delayed continuation"),
         ("key", "enter"),
     ]
@@ -1285,7 +1288,7 @@ async def test_completed_turn_recovery_proceeds_despite_unsubmitted_input(
 
     assert handled == 1
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "completed continuation"),
         ("key", "enter"),
     ]
@@ -1586,7 +1589,7 @@ async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
     assert handled == 1
     mock_read.assert_not_awaited()
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "shared continuation"),
         ("key", "enter"),
     ]
@@ -1630,7 +1633,7 @@ async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_l
 
     assert handled == 1
     assert _runtime_of(monitor).write_log == [
-        ("key", "escape"),
+        *_DRAIN_KEYS,
         ("text", "shared continuation"),
         ("key", "enter"),
     ]
@@ -1679,7 +1682,7 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 0
         assert state.successful_reprompts == 1
-        assert len(_runtime_of(monitor).write_log) == 3
+        assert len(_runtime_of(monitor).write_log) == 1 * (len(_DRAIN_KEYS) + 2)
 
         temp_db.execute(
             "UPDATE sessions SET updated_at = %s WHERE id = %s",
@@ -1698,7 +1701,7 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
         assert await monitor.check_idle_agents() == 1
 
     assert state.successful_reprompts == 2
-    assert len(_runtime_of(monitor).write_log) == 6
+    assert len(_runtime_of(monitor).write_log) == 2 * (len(_DRAIN_KEYS) + 2)
 
 
 @pytest.mark.asyncio
@@ -1749,7 +1752,7 @@ async def test_completed_turn_recovery_allows_budget_then_fails_run_holding_clai
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 1
 
-    assert len(_runtime_of(monitor).write_log) == 9
+    assert len(_runtime_of(monitor).write_log) == 3 * (len(_DRAIN_KEYS) + 2)
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
     assert updated_run.status == "error"
@@ -1889,7 +1892,7 @@ async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 1
 
-    assert len(_runtime_of(monitor).write_log) == 9
+    assert len(_runtime_of(monitor).write_log) == 3 * (len(_DRAIN_KEYS) + 2)
     assert state.workflow_fingerprint == "developer-steps:build"
     assert state.successful_reprompts == 1
     updated_run = agent_run_manager.get(run.id)
@@ -1920,7 +1923,7 @@ async def test_failed_completed_turn_prompt_submission_does_not_consume_attempt(
     with (
         _pane_text(monitor, "❯\n") as runtime,
     ):
-        runtime.write_failures = [False, False, True]
+        runtime.write_failures = [*([False] * len(_DRAIN_KEYS)), False, True]
         assert await monitor.check_idle_agents() == 0
         state = handler._recovery._completed_turn_recovery[run.id]
         assert state.successful_reprompts == 0
@@ -1980,7 +1983,7 @@ async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
     state = monitor._idle_check_handler._recovery._completed_turn_recovery[run.id]
     assert state.workflow_fingerprint == "developer-steps:plan"
     assert state.successful_reprompts == 1
-    assert len(_runtime_of(monitor).write_log) == 3
+    assert len(_runtime_of(monitor).write_log) == 1 * (len(_DRAIN_KEYS) + 2)
     mock_fail.assert_awaited_once()
 
 
@@ -2254,3 +2257,79 @@ async def test_capacity_reprompt_delivery_failures_are_bounded(
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
     assert updated_run.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_recovery_leaves_a_framed_operator_draft_alone(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    """A positively read draft withholds the drain; nothing is written to the terminal."""
+    transcript_path = tmp_path / "codex-framed-draft.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1099",
+        transcript_path=transcript_path,
+    )
+
+    with (
+        _pane_text(monitor, "────────────\n❯ uv run pytest tests/foo.py\n────────────\n"),
+        patch.object(
+            monitor._idle_check_handler._recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="completed continuation",
+        ),
+    ):
+        await monitor.check_idle_agents()
+
+    assert _runtime_of(monitor).write_log == []
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_idle_reprompt_drains_with_clear_sequence(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    """An unreadable composer (no frame) is drained with the composer sequence, never escape."""
+    transcript_path = tmp_path / "codex-drain-sequence.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1098",
+        transcript_path=transcript_path,
+    )
+
+    with (
+        _pane_text(monitor, "❯\n"),
+        patch.object(
+            monitor._idle_check_handler._recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="completed continuation",
+        ),
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    assert _runtime_of(monitor).write_log == [
+        *_DRAIN_KEYS,
+        ("text", "completed continuation"),
+        ("key", "enter"),
+    ]
+    assert ("key", "escape") not in _runtime_of(monitor).write_log
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 1

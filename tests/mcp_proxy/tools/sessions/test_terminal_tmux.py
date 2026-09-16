@@ -13,8 +13,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead, ComposerState
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _COMPACTION_REJECTION_ERROR_CODE,
+    _COMPOSER_OCCUPIED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
     _INTERRUPT_UNCONFIRMED_ERROR_CODE,
     _send_terminal_compaction_command,
@@ -255,3 +257,47 @@ async def test_grok_rejection_after_a_settled_submission_interrupts_before_resub
     assert pane.typed == [_COMMAND, _COMMAND]
     mark.assert_called_once()
     clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compaction_refuses_occupied_composer_before_interrupt() -> None:
+    pane = _GrokPane()
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+
+    ok, reason, pending, detail = await _send_terminal_compaction_command(
+        pane,
+        _COMMAND,
+        "session-grok",
+        cli_source="grok",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: True,
+        settle_seconds=_SETTLE,
+        composer_read=lambda _text: ComposerRead("draft", "hello draft"),
+    )
+
+    assert (ok, pending) == (False, False)
+    assert reason == "composer holds an operator draft"
+    assert detail == {"error_code": _COMPOSER_OCCUPIED_ERROR_CODE, "continuation_pending": False}
+    assert pane.keys == [] and pane.typed == []
+    mark.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["empty", "unknown"])
+async def test_non_draft_reads_compact_as_before(state: ComposerState) -> None:
+    pane = _GrokPane()
+    mark = MagicMock(return_value=True)
+    ok, _reason, _pending, _detail = await _send_terminal_compaction_command(
+        pane,
+        _COMMAND,
+        "session-grok",
+        cli_source="grok",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=MagicMock(return_value=True),
+        settle_seconds=_SETTLE,
+        composer_read=lambda _text: ComposerRead(state),
+    )
+    assert ok is True
+    assert pane.typed == [_COMMAND]

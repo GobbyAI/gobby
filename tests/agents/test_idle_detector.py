@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.idle_detector import ComposerRead, IdleDetector
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -436,3 +436,44 @@ class TestStopHookBlocked:
             "  ⎿  Stop hook error: [ghook --gobby-owned --cli=claude --type=stop]\n"
         )
         assert self.detector.detect(output) == "idle"
+
+
+def _framed(*rows: str) -> str:
+    rule = "─" * 20
+    return "\n".join(("⏺ done", rule, *rows, rule, "   Fable 5.1  12%   ⎇ main")) + "\n"
+
+
+class TestComposerRead:
+    def setup_method(self) -> None:
+        self.detector = make_detector()
+
+    def test_empty_frame(self) -> None:
+        read = self.detector.composer_read(_framed("❯\xa0"))
+        assert (read.state, read.line) == ("empty", "")
+
+    def test_single_line_draft_carries_its_text(self) -> None:
+        read = self.detector.composer_read(_framed("❯ hello draft"))
+        assert (read.state, read.line) == ("draft", "hello draft")
+
+    def test_multi_line_draft_reads_the_marker_row(self) -> None:
+        read = self.detector.composer_read(_framed("❯ first line", "  second line"))
+        assert (read.state, read.line) == ("draft", "first line")
+
+    def test_no_frame_is_unknown(self) -> None:
+        assert self.detector.composer_read("❯ \n   Fable 5.1  12%\n").state == "unknown"
+        assert self.detector.composer_read(None).state == "unknown"
+
+    def test_droid_box_frame(self) -> None:
+        droid = IdleDetector(BundledDetectionRegistry(), "droid")
+        box = "╭──────────╮\n│ >        │\n╰──────────╯\n[⏱ 7m] MCP ✓"
+        assert droid.composer_read(box).state == "empty"
+        drafted = "╭──────────╮\n│ > fix it │\n╰──────────╯\n[⏱ 7m] MCP ✓"
+        assert droid.composer_read(drafted) == ComposerRead("draft", "fix it")
+        # Droid draws its steer/queue hint inside the box while a turn runs.
+        busy = "╭──────────────────────────────────╮\n│ > Enter to steer · Ctrl+Enter to queue │\n╰──────────────────────────────────╯"
+        assert droid.composer_read(busy).state == "unknown"
+        assert droid.detect(busy) == "active"
+
+    def test_framed_prompt_is_idle_under_an_unrecognised_status_bar(self) -> None:
+        assert self.detector.detect(_framed("❯\xa0")) == "idle"
+        assert self.detector.detect(_framed("❯ typed but unsent")) == "idle"

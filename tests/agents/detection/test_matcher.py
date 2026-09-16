@@ -138,3 +138,29 @@ contains = ["ready"]
     assert evaluation.match is not None
     assert evaluation.match.rule_id == "fallback"
     assert [issue.code for issue in evaluation.issues] == ["pattern_timeout"]
+
+
+_CLAUDE_FRAME = "\n".join(
+    (
+        "⏺ done",
+        "> quoted line above the frame",
+        "────────────────────",
+        "❯ hello draft",
+        "────────────────────",
+        "   Fable 5.1  12%   ⎇ main",
+    )
+)
+
+
+def test_composer_region_prefers_bottom_frame() -> None:
+    assert matcher.composer_region(_CLAUDE_FRAME) == "❯ hello draft"
+
+
+def test_composer_region_falls_back_to_the_last_prompt_box() -> None:
+    pane = "╭──────╮\n│ >    │\n╰──────╯\n[⏱ 7m] MCP ✓"
+    assert matcher.composer_region(pane) == "╭──────╮\n│ >    │\n╰──────╯"
+
+
+def test_composer_region_is_empty_without_a_complete_frame() -> None:
+    assert matcher.composer_region("❯ \n────────────────────\n status") == ""
+    assert matcher.composer_region("") == ""

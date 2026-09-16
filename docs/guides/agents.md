@@ -322,7 +322,12 @@ must not override it. `session`, `agent`, and `build` require `target_id`.
 
 Message text never triggers a wake. Set `wake=true` only when immediate processing is
 intended; it may steer an active turn. Interrupted sessions and sessions awaiting input,
-approval, or handoff retain the durable message without daemon input. A later mailbox
+approval, or handoff retain the durable message without daemon input. Before typing
+into a terminal, the daemon probes the composer through the provider's detection
+manifest; a composer that positively shows an operator draft is left alone and the
+wake result carries `skipped: "composer_occupied"` (same bucket as `session_active`:
+the message is persisted and the hook piggyback injects it on the session's next
+turn). `priority="urgent"` bypasses the probe. A later mailbox
 receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interruption in
 Qwen and AGY cannot be protected without positive provider or Gobby-mediated key/output
 evidence, so unconfirmed sessions remain active.
@@ -333,7 +338,7 @@ daemon is back:
 ```python
 send_message(
     target="project",
-    content="Daemon restart pending; save terminal drafts.",
+    content="Daemon restart pending.",
     wake=False,
 )
 

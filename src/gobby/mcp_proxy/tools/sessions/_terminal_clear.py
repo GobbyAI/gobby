@@ -20,6 +20,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_session_for_compaction,
     _send_terminal_compaction_command,
 )
+from gobby.mcp_proxy.tools.sessions._terminal_tmux import composer_reader
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,
@@ -527,6 +528,7 @@ async def deliver_staged_clear_session(
             mark_continuation_pending=lambda: True,
             clear_continuation_pending=lambda: True,
             observe_interrupt=observe_interrupt,
+            composer_read=composer_reader(db, source if isinstance(source, str) else None),
         )
     except Exception as exc:
         logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)

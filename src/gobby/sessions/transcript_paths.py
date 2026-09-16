@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -224,6 +225,26 @@ def _qwen_tmp_hook_candidates(
     ]
 
 
+def _claude_hook_candidates(
+    *,
+    home: Path,
+    cwd: str | None,
+    external_id: str,
+    session_id: str,
+) -> list[Path]:
+    """Claude Code keys its project directory on the cwd with every non-alphanumeric as ``-``.
+
+    The transcript moves with the cwd (EnterWorktree relocates it), while hook
+    payloads keep naming the original path, so the cwd-derived location is the
+    one bounded candidate a hook can check.
+    """
+    del session_id
+    if not cwd:
+        return []
+    project_dir = re.sub(r"[^A-Za-z0-9]", "-", cwd)
+    return [home / ".claude" / "projects" / project_dir / f"{external_id}.jsonl"]
+
+
 def _recover_claude(home: Path, external_id: str, escaped: str, max_days: int) -> str | None:
     del escaped
     projects_dir = home / ".claude" / "projects"
@@ -337,6 +358,7 @@ PROVIDER_TRANSCRIPT_SPECS: tuple[TranscriptProviderSpec, ...] = (
     TranscriptProviderSpec(
         source="claude",
         detect_rules=(_PathDetectRule(parts=(".claude", "projects")),),
+        hook_search=_claude_hook_candidates,
         recover=_recover_claude,
         supplemental=_claude_subagent_transcripts,
     ),

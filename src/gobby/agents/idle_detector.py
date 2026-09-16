@@ -9,11 +9,36 @@ pane analysis only runs when the session appears stale.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from dataclasses import dataclass
+from typing import Literal
 
-from gobby.agents.detection.matcher import CompiledManifest
+from gobby.agents.detection.matcher import CompiledManifest, composer_region
 from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
+
+# Pane lines a composer probe captures: enough to hold the frame around a
+# multi-line draft plus the status lines a provider draws below it.
+COMPOSER_PROBE_LINES = 40
+
+ComposerState = Literal["empty", "draft", "unknown"]
+
+# Box edge, then the provider's prompt marker, then the draft text; the trailing
+# box edge Droid draws after the text is stripped separately.
+_COMPOSER_ROW_RE = re.compile(r"^\s*│?\s*[❯›>$]\s*(?P<text>.*?)\s*│?\s*$")
+
+
+@dataclass(frozen=True)
+class ComposerRead:
+    """What a pane snapshot says about the provider's composer.
+
+    ``empty`` and ``draft`` are positive reads of a visible composer frame;
+    ``unknown`` covers no snapshot, no frame, or a frame the manifest cannot
+    classify, and callers fall back to the blind drain.
+    """
+
+    state: ComposerState
+    line: str = ""
 
 
 @dataclass
@@ -98,6 +123,27 @@ class IdleDetector:
         """Return whether pane output shows text typed at a prompt but not submitted."""
         return self.unsubmitted_input_fingerprint(pane_output) is not None
 
+    def composer_read(self, pane_output: str | None) -> ComposerRead:
+        """Classify the composer frame at the bottom of ``pane_output``.
+
+        A ``draft`` carries the text after the prompt marker on the marker row.
+        Anything short of a positive read is ``unknown``.
+        """
+        if pane_output is None:
+            return ComposerRead("unknown")
+        manifest = self._manifest()
+        if manifest is None:
+            return ComposerRead("unknown")
+        if manifest.match_rule("composer_draft", pane_output).match is not None:
+            for line in composer_region(pane_output).splitlines():
+                row = _COMPOSER_ROW_RE.match(line)
+                if row is not None and row.group("text"):
+                    return ComposerRead("draft", row.group("text"))
+            return ComposerRead("draft")
+        if manifest.match_rule("composer_empty", pane_output).match is not None:
+            return ComposerRead("empty")
+        return ComposerRead("unknown")
+
     def turn_in_flight_fingerprint(self, pane_output: str) -> str | None:
         """Fingerprint the provider's live turn indicator, when one is rendered.
 
@@ -148,6 +194,11 @@ class IdleDetector:
         has_active = manifest.match_rule("active_work", pane_output).match is not None
         if has_queued and has_active:
             return "active"
+        # A visible composer frame is the idle signal regardless of what the
+        # provider draws below it; status bars are operator-configurable, so the
+        # bottom-line walk cannot rely on recognising them.
+        if self.composer_read(pane_output).state != "unknown":
+            return "idle"
         for line in reversed(lines):
             stripped = line.strip()
             if not stripped:

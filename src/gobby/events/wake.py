@@ -20,7 +20,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
-from gobby.events.live_wake import wake_state_failure
+from gobby.events.live_wake import (
+    ComposerProbe,
+    composer_occupied_result,
+    wake_state_failure,
+)
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 
 if TYPE_CHECKING:
@@ -126,6 +130,7 @@ class WakeDispatcher:
         terminal_manager: LiveTerminalLookup | None = None,
         run_db: RunDb | None = None,
         lifecycle_refresh: LifecycleRefresh | None = None,
+        composer_probe: ComposerProbe | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -138,6 +143,7 @@ class WakeDispatcher:
         self._terminal_manager = terminal_manager
         self._run_db = run_db or _default_run_db
         self._lifecycle_refresh = lifecycle_refresh
+        self._composer_probe = composer_probe
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
@@ -315,6 +321,7 @@ class WakeDispatcher:
                     session,
                     terminal,
                     self._tmux_sender,
+                    priority=priority,
                 )
             if not terminal_context:
                 return self._live_wake_failure(
@@ -346,6 +353,11 @@ class WakeDispatcher:
                 return state_failure
             if current is not None:
                 session = current
+            blocked = await self._composer_blocks_wake(
+                session_id, session, None, method="tmux_pane", priority=priority
+            )
+            if blocked is not None:
+                return blocked
             try:
                 await self._tmux_pane_sender(
                     tmux_pane,
@@ -402,6 +414,15 @@ class WakeDispatcher:
                     return state_failure
                 if current is not None:
                     session = current
+                blocked = await self._composer_blocks_wake(
+                    session_id,
+                    session,
+                    await self._live_terminal_for_session(session_id),
+                    method="tmux",
+                    priority=priority,
+                )
+                if blocked is not None:
+                    return blocked
                 try:
                     await self._tmux_sender(
                         wake_identity,
@@ -454,6 +475,11 @@ class WakeDispatcher:
                     return state_failure
                 if current is not None:
                     session = current
+                blocked = await self._composer_blocks_wake(
+                    session_id, session, None, method="tmux_pane", priority=priority
+                )
+                if blocked is not None:
+                    return blocked
                 try:
                     await self._tmux_pane_sender(
                         tmux_pane,
@@ -568,12 +594,44 @@ class WakeDispatcher:
             )
         return session, wake_state_failure(session_id, getattr(session, "status", None))
 
+    async def _composer_blocks_wake(
+        self,
+        session_id: str,
+        session: Any,
+        terminal: Any | None,
+        *,
+        method: str,
+        priority: str,
+    ) -> dict[str, Any] | None:
+        """Withhold the drain when the composer positively shows an operator draft.
+
+        Only a ``draft`` read blocks; ``empty``, ``unknown``, a missing probe and
+        a probe error all fall through to the blind drain. An urgent wake always
+        drains. No debounce record is written, so the next wake probes again.
+        """
+        if priority == "urgent" or self._composer_probe is None:
+            return None
+        try:
+            read = await self._composer_probe(session, terminal)
+        except Exception:
+            logger.debug("composer probe failed for session %s", session_id, exc_info=True)
+            return None
+        if read.state != "draft":
+            return None
+        logger.info(
+            "wake for session %s deferred to the next turn: composer holds an operator draft",
+            session_id,
+        )
+        return composer_occupied_result(session_id, method=method)
+
     async def _send_managed_terminal_wake(
         self,
         session_id: str,
         session: Any,
         terminal: Any,
         send: TmuxSender,
+        *,
+        priority: str = "normal",
     ) -> dict[str, Any]:
         """Wake a session through the terminal row that hosts it.
 
@@ -589,6 +647,11 @@ class WakeDispatcher:
             return state_failure
         if current is not None:
             session = current
+        blocked = await self._composer_blocks_wake(
+            session_id, session, terminal, method="terminal", priority=priority
+        )
+        if blocked is not None:
+            return blocked
         try:
             await send(
                 terminal_id,

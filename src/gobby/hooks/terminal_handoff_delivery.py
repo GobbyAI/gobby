@@ -53,6 +53,13 @@ _RETRY_GUIDANCE = (
     "Terminal handoff delivery failed after set_handoff returned. "
     "Retry gobby-sessions:set_handoff before calling any other tool."
 )
+_COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
+_COMPOSER_OCCUPIED_GUIDANCE = (
+    "Terminal handoff delivery was withheld: the operator has an unsent draft in the "
+    "composer. Nothing was interrupted. Tell the operator the handoff is waiting on "
+    "their draft, then retry gobby-sessions:set_handoff once they have sent or "
+    "cleared it."
+)
 # Consecutive failures per session before terminal delivery is abandoned: a CLI
 # that cannot take the command twice will not take it a ninth time (#22364).
 _MAX_CONSECUTIVE_DELIVERY_FAILURES = 2
@@ -347,7 +354,13 @@ async def _settle_delivery(
         )
         return
     reason = result.get("reason") or result.get("error") or "terminal delivery failed"
-    _compensate_delivery_failure(db, claimed, str(reason))
+    error_code = result.get("error_code")
+    _compensate_delivery_failure(
+        db,
+        claimed,
+        str(reason),
+        error_code=str(error_code) if isinstance(error_code, str) else None,
+    )
 
 
 def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bool:
@@ -367,9 +380,14 @@ def _compensate_delivery_failure(
     db: HubDatabase,
     claimed: ClaimedHandoffDelivery | StagedTerminalHandoff,
     reason: str,
+    *,
+    error_code: str | None = None,
 ) -> None:
     failures = _consecutive_delivery_failures(db, claimed.session_id) + 1
     abandoned = failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
+    guidance = _RETRY_GUIDANCE
+    if error_code == _COMPOSER_OCCUPIED_ERROR_CODE:
+        guidance = _COMPOSER_OCCUPIED_GUIDANCE
     failure: dict[str, Any] = {
         "compacted": False,
         "delivery_failed": not abandoned,
@@ -378,10 +396,12 @@ def _compensate_delivery_failure(
         "attempt_id": claimed.attempt_id,
         "clear_session": claimed.clear_session,
         "reason": reason,
-        "retry_guidance": _ABANDON_GUIDANCE if abandoned else _RETRY_GUIDANCE,
+        "retry_guidance": _ABANDON_GUIDANCE if abandoned else guidance,
     }
     if abandoned:
         failure["error_code"] = _ABANDONED_ERROR_CODE
+    elif error_code is not None:
+        failure["error_code"] = error_code
     if claimed.clear_session:
         restored = clear_failed_attempt(
             db,

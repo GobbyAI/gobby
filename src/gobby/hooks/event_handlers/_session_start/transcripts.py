@@ -210,7 +210,9 @@ def recheck_pending_transcript_path(
         return None
     stored = getattr(session, "transcript_path", None)
     source = str(session.source)
-    if stored and stored != MISSING_TRANSCRIPT_PATH:
+    # A stored path that no longer reads (Claude relocates the transcript with
+    # the cwd) is re-derived like a missing one, within the same bounded budget.
+    if stored and stored != MISSING_TRANSCRIPT_PATH and usable_transcript_path(stored):
         return platform_session_id, stored, source
     attempts = budgets.get(platform_session_id, 0)
     if attempts >= MAX_PENDING_TRANSCRIPT_RECHECKS:

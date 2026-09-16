@@ -184,9 +184,13 @@ compaction and clear remain synchronous because they do not replace a terminal c
 
 Before compact staging, `set_handoff` validates bounded handoff content and checks
 the separate feedback submission. A staging failure can be retried without
-resubmitting feedback. Compact dispatch interrupts the provider, clears its composer, submits `/compact` for
+resubmitting feedback. Compact dispatch probes the composer first: a positively read operator draft refuses
+the delivery with `error_code: "composer_occupied"` before any key is sent, and the
+retry guidance tells the agent to wait for the operator to send or clear the draft.
+Otherwise it interrupts the provider, clears its composer, submits `/compact` for
 Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the same
-session row. The continuation prompt instructs the agent to call `get_handoff()`. Compact
+session row. If typing the continuation prompt fails, the prompt is queued as a
+self-addressed message and the hook piggyback delivers it on the next turn. The continuation prompt instructs the agent to call `get_handoff()`. Compact
 SessionStart handling — including Grok PostCompact, which evaluates the
 `session_start(compact)` rules — resets context-epoch tracking and consumes only the
 provider compact-identity marker; it leaves the `set_handoff` marker for retrieval.
@@ -199,6 +203,7 @@ Manual or automatic provider compaction without `set_handoff` has no pending mar
 ## Clear Path
 
 Clear dispatch stages a one-shot predecessor marker before the post-result worker
+probes the composer (refusing with `composer_occupied` on an operator draft),
 interrupts the provider, clears its composer, and submits `/clear`. A matching
 successor atomically consumes that marker, records the clear delivery receipt, records
 direct predecessor parentage, and expires the predecessor. Live task claims then move
