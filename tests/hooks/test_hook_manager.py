@@ -1826,7 +1826,7 @@ def _register_grok_session(
 
 
 @pytest.mark.parametrize("gate_kind", ["workflow", "webhook"])
-def test_grok_preserve_original_gate_flushes_pending_context(
+def test_grok_preserve_original_gate_keeps_pending_context_queued(
     gate_kind: str,
     manager_with_mocks: HookManager,
     session_manager: SessionManager,
@@ -1881,11 +1881,15 @@ def test_grok_preserve_original_gate_flushes_pending_context(
     assert response is gate
     assert isinstance(response, HookResponse)
     assert response.decision == "deny"
-    assert response.reason == f"briefing\n\nturn context\n\n{gate_kind} gate"
-    assert (
-        variables.get_variables(session_id)["grok_pending_delivery"]["envelope_id"]
-        == f"{gate_kind}-envelope"
-    )
+    # Grok clips a deny reason and drops its additionalContext, so the pending text
+    # stays queued for the next allowed call.
+    assert response.reason == f"{gate_kind} gate"
+    stored = variables.get_variables(session_id)
+    assert stored.get("grok_pending_delivery") is None
+    assert [component["text"] for component in stored["grok_pending_briefing"]] == ["briefing"]
+    assert [component["text"] for component in stored["grok_pending_turn_context"]] == [
+        "turn context"
+    ]
 
 
 def _pin_hook_machine(db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> str:

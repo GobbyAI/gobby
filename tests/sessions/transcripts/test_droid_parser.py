@@ -183,6 +183,47 @@ def test_context_occupancy_comes_from_the_last_call_not_cumulative_usage(tmp_pat
     assert last_assistant.context_used_tokens == 1126 + 10 + 45056
 
 
+def _token_usage(input_tokens: int, output_tokens: int, cache_read_tokens: int) -> dict[str, int]:
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "thinkingTokens": 0,
+        "cacheCreationTokens": 0,
+        "cacheReadTokens": cache_read_tokens,
+    }
+
+
+def test_compress_successor_records_only_usage_past_its_parent_totals(tmp_path: Path) -> None:
+    # Droid /compress starts a new session file whose sidecar keeps counting from the
+    # parent's cumulative tokenUsage.
+    (tmp_path / "parent-session.settings.json").write_text(
+        json.dumps({"tokenUsage": _token_usage(90000, 800, 800000)}), encoding="utf-8"
+    )
+    transcript_path = tmp_path / "child-session.jsonl"
+    transcript_path.with_suffix(".settings.json").write_text(
+        json.dumps({"tokenUsage": _token_usage(95000, 900, 850000)}), encoding="utf-8"
+    )
+    lines = _fixture_lines()
+    session_start = json.loads(lines[0])
+    session_start["parent"] = "parent-session"
+    parser = DroidTranscriptParser(transcript_path=transcript_path)
+
+    records = parser.parse_lines([json.dumps(session_start), *lines[1:]], start_index=0)
+
+    usages = [
+        record.usage
+        for record in records
+        if isinstance(record, ParsedMessage) and record.usage is not None
+    ]
+    assert len(usages) == 1
+    assert (
+        usages[0].input_tokens,
+        usages[0].output_tokens,
+        usages[0].cache_creation_tokens,
+        usages[0].cache_read_tokens,
+    ) == (5000, 100, 0, 50000)
+
+
 def test_null_sidecar_usage_is_retried_and_emits_deltas(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"
     sidecar_path = transcript_path.with_suffix(".settings.json")

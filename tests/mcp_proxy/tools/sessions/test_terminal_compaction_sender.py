@@ -42,17 +42,27 @@ class _ComposerPane:
         return "output\n> "
 
 
+class _ConfirmModalPane(_ComposerPane):
+    """Pane that redraws Droid's confirm modal over the screen once a command is submitted."""
+
+    async def snapshot(self, lines: int = 12) -> str | None:
+        if self.typed and self.keys[-1:] == ["enter"]:
+            return "Confirm /compress\nEnter to confirm, ESC to cancel"
+        return "output\n> "
+
+
 async def _send(
     pane: _ComposerPane,
     observe: Callable[[], bool | None],
     *,
     cli_source: str = "claude",
+    command: str = "/clear",
 ) -> tuple[tuple[bool, str | None, bool, dict[str, object] | None], MagicMock, MagicMock]:
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)
     result = await _send_terminal_compaction_command(
         pane,
-        "/clear",
+        command,
         "session-1",
         cli_source=cli_source,
         mark_continuation_pending=mark,
@@ -85,6 +95,20 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
     assert pane.typed == ["/clear"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("command", "enters"), [("/compress", 2), ("/clear", 1)])
+async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
+    command: str, enters: int
+) -> None:
+    pane = _ConfirmModalPane()
+
+    result, _mark, _clear = await _send(pane, lambda: True, cli_source="droid", command=command)
+
+    assert result == (True, None, True, None)
+    assert pane.keys == ["escape", *composer_clear_sequence("droid"), *["enter"] * enters]
+    assert pane.typed == [command]
 
 
 @pytest.mark.asyncio

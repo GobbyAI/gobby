@@ -151,6 +151,34 @@ def _usage_from_state(value: Any) -> TokenUsage | None:
     )
 
 
+def _sidecar_token_usage(data: Mapping[str, Any]) -> TokenUsage | None:
+    usage_raw = data.get("tokenUsage")
+    if not isinstance(usage_raw, dict):
+        return None
+    return TokenUsage(
+        input_tokens=_coerce_token_count(usage_raw.get("inputTokens")),
+        output_tokens=(
+            _coerce_token_count(usage_raw.get("outputTokens"))
+            + _coerce_token_count(usage_raw.get("thinkingTokens"))
+        ),
+        cache_creation_tokens=_coerce_token_count(usage_raw.get("cacheCreationTokens")),
+        cache_read_tokens=_coerce_token_count(usage_raw.get("cacheReadTokens")),
+    )
+
+
+def _parent_sidecar_usage(transcript_path: Path, parent_id: object) -> TokenUsage | None:
+    """Read the final cumulative usage a /compress successor inherited from its parent."""
+    if not isinstance(parent_id, str) or not parent_id.strip():
+        return None
+    sidecar_path = transcript_path.with_name(f"{parent_id.strip()}.settings.json")
+    try:
+        data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Droid parent sidecar unavailable at %s: %s", sidecar_path, exc)
+        return None
+    return _sidecar_token_usage(data) if isinstance(data, dict) else None
+
+
 def _usage_delta(current: TokenUsage, previous: TokenUsage | None) -> TokenUsage:
     if previous is None:
         return current
@@ -232,17 +260,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         if not isinstance(data, dict):
             return
 
-        usage_raw = data.get("tokenUsage")
-        if isinstance(usage_raw, dict):
-            self._sidecar_usage = TokenUsage(
-                input_tokens=_coerce_token_count(usage_raw.get("inputTokens")),
-                output_tokens=(
-                    _coerce_token_count(usage_raw.get("outputTokens"))
-                    + _coerce_token_count(usage_raw.get("thinkingTokens"))
-                ),
-                cache_creation_tokens=_coerce_token_count(usage_raw.get("cacheCreationTokens")),
-                cache_read_tokens=_coerce_token_count(usage_raw.get("cacheReadTokens")),
-            )
+        self._sidecar_usage = _sidecar_token_usage(data)
         # tokenUsage is cumulative, so it is accounting only. The prompt of the latest
         # model call is the context actually in use.
         last_call_raw = data.get("lastCallTokenUsage")
@@ -272,6 +290,11 @@ class DroidTranscriptParser(BaseTranscriptParser):
         message_id = message_id_raw if isinstance(message_id_raw, str) else None
         record_type = record.get("type")
         if record_type == "session_start":
+            # /compress carries the parent's cumulative sidecar totals into this file.
+            if self._last_emitted_usage is None and self._transcript_path is not None:
+                self._last_emitted_usage = _parent_sidecar_usage(
+                    self._transcript_path, record.get("parent")
+                )
             session_title = record.get("title")
             if isinstance(session_title, str) and session_title.strip():
                 return [

@@ -52,6 +52,12 @@ _COMPACTION_REJECTION_POLL_SECONDS = 0.1
 # When a turn_settled observer exists, poll it this long before the first interrupt.
 _TURN_SETTLE_WAIT_SECONDS = 30.0
 _TURN_SETTLE_POLL_SECONDS = 0.25
+# Droid 0.219.0 answers a submitted /compress (never /clear) with a "Confirm /compress"
+# modal that waits for Enter; poll the pane this long for it before watching for a rejection.
+_CLI_COMPACT_CONFIRM_PROMPTS: dict[tuple[str, str], str] = {
+    ("droid", "/compress"): "Confirm /compress",
+}
+_COMPACTION_CONFIRM_SETTLE_SECONDS = 5.0
 _COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
@@ -282,6 +288,40 @@ async def _wait_for_turn_to_settle(
         await asyncio.sleep(min(poll_seconds, remaining) if poll_seconds > 0 else remaining)
 
 
+async def _confirm_compaction_prompt(
+    pane: PaneIO,
+    before_command: str | None,
+    command: str,
+    cli_source: str | None,
+    session_id: str,
+    *,
+    window_seconds: float,
+    poll_seconds: float = _COMPACTION_REJECTION_POLL_SECONDS,
+) -> SendResult:
+    """Press Enter on the CLI's compaction confirm modal once it appears in the pane."""
+    prompt = _CLI_COMPACT_CONFIRM_PROMPTS.get((cli_source or "", command))
+    if prompt is None or before_command is None or prompt in before_command:
+        return True, None
+    elapsed = 0.0
+    while True:
+        # The modal redraws the TUI rather than appending output, so match the screen.
+        snapshot = await _capture_pane_snapshot(pane)
+        if snapshot is not None and prompt in snapshot:
+            return await _send_pane_key(
+                pane, "enter", session_id, action="confirming compaction command"
+            )
+        if elapsed >= window_seconds:
+            logger.warning(
+                "Session %s never showed %r after its compaction command",
+                session_id,
+                prompt,
+            )
+            return True, None
+        delay = min(poll_seconds, window_seconds - elapsed)
+        await asyncio.sleep(delay)
+        elapsed += delay
+
+
 async def _wait_for_compaction_rejection(
     pane: PaneIO,
     before_command: str | None,
@@ -355,6 +395,9 @@ async def _send_terminal_compaction_command(
     interrupt_key = _compact_interrupt_key(cli_source)
     interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
     rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds
+    confirm_seconds = (
+        _COMPACTION_CONFIRM_SETTLE_SECONDS if settle_seconds is None else settle_seconds
+    )
     settle_wait_seconds, settle_poll_seconds = _turn_settle_wait_budget(settle_seconds)
     if observe_interrupt is not None:
         continuation_pending = bool(mark_continuation_pending())
@@ -433,6 +476,15 @@ async def _send_terminal_compaction_command(
             )
 
         ok, reason = await _submit_command(pane, command, session_id)
+        if ok:
+            ok, reason = await _confirm_compaction_prompt(
+                pane,
+                before_command,
+                command,
+                cli_source,
+                session_id,
+                window_seconds=confirm_seconds,
+            )
         if not ok:
             if continuation_pending:
                 clear_continuation_pending()

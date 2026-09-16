@@ -159,9 +159,11 @@ class ProcessorUsageMixin:
             # Turn-boundary usage sums every model call in the turn: it is accounting,
             # never the current context size. Occupancy the message reports itself wins
             # over an estimate from its usage (Droid attaches a cumulative delta to both).
+            # Droid usage always spans every call since the last read, so it never estimates.
             if (
                 msg.content_type != TURN_BOUNDARY_CONTENT_TYPE
                 and msg.context_used_tokens is None
+                and source != "droid"
                 and not (source == "grok" and occupancy_known)
             ):
                 latest_context_snapshot = self._snapshot_from_token_usage(

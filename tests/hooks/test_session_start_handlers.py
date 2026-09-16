@@ -569,7 +569,7 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_run_id = None
         updated_session.title = "Useful synthesized title"
         updated_session.handoff_markdown = None
-        updated_session.terminal_context = {"tmux_pane": "%77", "parent_pid": 123}
+        updated_session.terminal_context = {"tmux_pane": "%77"}
 
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_storage"].update.return_value = mock_session
@@ -584,7 +584,7 @@ class TestSessionStartPreCreatedSession:
             session_id="sess-pre-123",
             data={
                 "transcript_path": "/path/to/transcript.jsonl",
-                "terminal_context": {"tmux_pane": "%77", "parent_pid": 123},
+                "terminal_context": {"tmux_pane": "%77"},
             },
         )
 
@@ -602,7 +602,7 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
         mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
             "sess-pre-123",
-            {"tmux_pane": "%77", "parent_pid": 123},
+            {"tmux_pane": "%77"},
         )
         mock_schedule.assert_called_once()
         assert response.metadata.get("terminal_tmux_pane") == "%77"
@@ -631,7 +631,6 @@ class TestSessionStartPreCreatedSession:
         updated_session.handoff_markdown = None
         updated_session.terminal_context = {
             "tmux_pane": "%77",
-            "parent_pid": 123,
             "cwd": "/work/repos/gobby",
         }
 
@@ -648,7 +647,7 @@ class TestSessionStartPreCreatedSession:
             session_id="sess-pre-123",
             data={
                 "cwd": "/work/repos/gobby",
-                "terminal_context": {"tmux_pane": "%77", "parent_pid": 123},
+                "terminal_context": {"tmux_pane": "%77"},
             },
         )
 
@@ -669,7 +668,7 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("terminal_tmux_pane") == "%77"
         mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
             "sess-pre-123",
-            {"tmux_pane": "%77", "parent_pid": 123, "cwd": "/work/repos/gobby"},
+            {"tmux_pane": "%77", "cwd": "/work/repos/gobby"},
         )
         mock_schedule.assert_called_once_with(
             updated_session,

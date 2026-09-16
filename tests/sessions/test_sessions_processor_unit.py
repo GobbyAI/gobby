@@ -2737,10 +2737,22 @@ class TestModelExtraction:
         assert [snapshot.context_used_tokens for snapshot in snapshots] == [151_699]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("context_used_tokens", "expected_occupancy"),
+        [(46_182, [46_182]), (None, [])],
+        ids=["reported", "usage-only"],
+    )
     async def test_reported_occupancy_outranks_the_same_messages_usage(
-        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self,
+        mock_db: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        context_used_tokens: int | None,
+        expected_occupancy: list[int],
     ) -> None:
-        """Droid puts a cumulative usage delta beside last-call occupancy; occupancy wins."""
+        """Droid puts a cumulative usage delta beside last-call occupancy; occupancy wins.
+
+        The delta spans every model call since the last read, so alone it is never occupancy.
+        """
         store = MagicMock()
         store.get_session_totals.return_value = {
             "input_tokens": 0,
@@ -2782,12 +2794,12 @@ class TestModelExtraction:
             ),
             model="glm-5.3-flash",
             message_id="droid-0",
-            context_used_tokens=46_182,
+            context_used_tokens=context_used_tokens,
         )
 
         await processor._persist_usage_events("session-1", [message])
 
-        assert [snapshot.context_used_tokens for snapshot in snapshots] == [46_182]
+        assert [snapshot.context_used_tokens for snapshot in snapshots] == expected_occupancy
 
     @pytest.mark.asyncio
     async def test_grok_occupancy_keeps_compact_epoch_max(

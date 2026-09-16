@@ -246,7 +246,8 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     )
 
 
-@pytest.mark.parametrize("event_type", list(NON_MATERIALIZING_EVENTS))
+# Sorted: set order follows the per-process hash seed, and xdist workers must collect alike.
+@pytest.mark.parametrize("event_type", sorted(NON_MATERIALIZING_EVENTS))
 def test_passive_hooks_do_not_materialize_idle_session(event_type: HookEventType) -> None:
     session_manager = MagicMock()
     session_manager.get_session_id.return_value = None
