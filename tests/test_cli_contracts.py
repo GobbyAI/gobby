@@ -61,7 +61,7 @@ def _allowed_gateway_flags(contract: dict[str, Any], command_name: str) -> set[s
 
 
 def _observed_flags(argv: list[str]) -> set[str]:
-    return {part for part in argv if part.startswith("--")}
+    return {part.partition("=")[0] for part in argv if part.startswith("--")}
 
 
 def _json_keys(contract: dict[str, Any], command_name: str) -> set[str]:
@@ -157,13 +157,14 @@ async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
         assert argv[0] == "gcode"
         expected_parts = cli_name.split()
         assert argv[1 : 1 + len(expected_parts)] == expected_parts
-        assert _observed_flags(argv) <= _allowed_gateway_flags(contract, cli_name)
-        assert "--format" in argv
+        flags = _observed_flags(argv)
+        assert flags <= _allowed_gateway_flags(contract, cli_name)
+        assert "--format" in flags
         if cli_name == "graph clear":
-            assert "--project-id" in argv
-            assert "--project" not in argv
+            assert "--project-id" in flags
+            assert "--project" not in flags
         else:
-            assert "--project" in argv
+            assert "--project" in flags
 
 
 @pytest.mark.unit

@@ -6101,16 +6101,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/routes/test_code_index_routes.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 302,
-      "message": "Argument \"gcode_gateway\" to \"CodeIndexContext\" has incompatible type \"SimpleNamespace\"; expected \"GcodeGateway | None\"",
-      "occurrences": 1,
-      "path": "tests/servers/routes/test_code_index_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/routes/test_communications_routes.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 23,

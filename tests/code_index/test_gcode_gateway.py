@@ -115,8 +115,7 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
             "/tmp/gcode",
             "graph",
             "sync-file",
-            "--file",
-            "src/app.py",
+            "--file=src/app.py",
             "--project",
             str(tmp_path),
             "--allow-missing-indexed-file",
@@ -162,7 +161,7 @@ async def test_gateway_forwards_sync_file_timeouts(
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(stdout=b'{"status": "ok"}'),
-        FakeProcess(stdout=b'{"success": true, "file": "src/app.py"}'),
+        FakeProcess(stdout=b'{"success": true, "file": "-app.py"}'),
     ]
     calls = _patch_subprocess(monkeypatch, processes)
     timeouts: list[float | None] = []
@@ -174,10 +173,11 @@ async def test_gateway_forwards_sync_file_timeouts(
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
     gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=7.0)
 
-    assert await gateway.graph_sync_file(tmp_path, "src/app.py", timeout=31.0) == {"status": "ok"}
-    assert await gateway.vector_sync_file(tmp_path, "src/app.py", timeout=32.0) == {
+    # A repository file may be named like an option; it must still sync.
+    assert await gateway.graph_sync_file(tmp_path, "-app.py", timeout=31.0) == {"status": "ok"}
+    assert await gateway.vector_sync_file(tmp_path, "-app.py", timeout=32.0) == {
         "success": True,
-        "file": "src/app.py",
+        "file": "-app.py",
     }
 
     assert timeouts == [7.0, 31.0, 32.0]
@@ -186,8 +186,7 @@ async def test_gateway_forwards_sync_file_timeouts(
             "/tmp/gcode",
             "graph",
             "sync-file",
-            "--file",
-            "src/app.py",
+            "--file=-app.py",
             "--project",
             str(tmp_path),
             "--allow-missing-indexed-file",
@@ -198,8 +197,7 @@ async def test_gateway_forwards_sync_file_timeouts(
             "/tmp/gcode",
             "vector",
             "sync-file",
-            "--file",
-            "src/app.py",
+            "--file=-app.py",
             "--project",
             str(tmp_path),
             "--allow-missing-indexed-file",
@@ -229,8 +227,7 @@ async def test_gateway_builds_clear_and_rebuild_args(
             "/tmp/gcode",
             "graph",
             "clear",
-            "--project-id",
-            "proj-1",
+            "--project-id=proj-1",
             "--format",
             "json",
         ),
@@ -246,18 +243,24 @@ async def test_gateway_builds_clear_and_rebuild_args(
     ]
 
 
-async def test_gateway_rejects_option_like_project_id_on_clear(
+async def test_gateway_passes_option_like_project_id_as_a_value_on_clear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _patch_subprocess(monkeypatch, [])
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"success": true}'),
+        FakeProcess(stdout=b'{"success": true}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
 
-    with pytest.raises(GcodeInputValidationError, match="value must not start with '-'"):
-        await gateway.graph_clear("--help")
-    with pytest.raises(GcodeInputValidationError, match="value must not start with '-'"):
-        await gateway.vector_clear(project_id="--help")
+    await gateway.graph_clear("--help")
+    await gateway.vector_clear(project_id="--help")
 
-    assert calls == []
+    assert calls[1:] == [
+        ("/tmp/gcode", "graph", "clear", "--project-id=--help", "--format", "json"),
+        ("/tmp/gcode", "vector", "clear", "--project-id=--help", "--format", "json"),
+    ]
 
 
 async def test_gateway_builds_incremental_index_args(
@@ -273,7 +276,7 @@ async def test_gateway_builds_incremental_index_args(
 
     result = await gateway.incremental_index(
         tmp_path,
-        ["src/app.py", "docs/readme.md"],
+        ["src/app.py", "-l"],
         timeout=11,
     )
 
@@ -283,9 +286,8 @@ async def test_gateway_builds_incremental_index_args(
         "index",
         "--project",
         str(tmp_path),
-        "--files",
-        "src/app.py",
-        "docs/readme.md",
+        "--files=src/app.py",
+        "--files=-l",
         "--quiet",
         "--skip-if-locked",
         "--format",
@@ -341,8 +343,7 @@ async def test_gateway_vector_clear_by_project_id_can_drop_collection(
         "/tmp/gcode",
         "vector",
         "clear",
-        "--project-id",
-        "11111111-1111-1111-1111-111111111111",
+        "--project-id=11111111-1111-1111-1111-111111111111",
         "--drop-collection",
         "--format",
         "json",
@@ -401,8 +402,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "/tmp/gcode",
             "vector",
             "sync-file",
-            "--file",
-            "src/app.py",
+            "--file=src/app.py",
             "--project",
             str(tmp_path),
             "--allow-missing-indexed-file",
@@ -465,8 +465,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
         (
             "/tmp/gcode",
             "invalidate",
-            "--project-id",
-            "project-1",
+            "--project-id=project-1",
             "--force",
         ),
     ]
@@ -488,10 +487,11 @@ async def test_gateway_builds_graph_read_args(
     calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
 
-    await gateway.graph_file(tmp_path, "src/app.py")
-    await gateway.graph_neighbors(tmp_path, "sym-1", limit=7)
-    await gateway.graph_blast_radius(tmp_path, symbol_id="sym-1", depth=2, limit=9)
-    await gateway.graph_blast_radius(tmp_path, file_path="src/app.py", depth=4, limit=11)
+    # Option values that start with '-' stay attached to their option.
+    await gateway.graph_file(tmp_path, "-app.py")
+    await gateway.graph_neighbors(tmp_path, "-sym-1", limit=7)
+    await gateway.graph_blast_radius(tmp_path, symbol_id="-sym-1", depth=2, limit=9)
+    await gateway.graph_blast_radius(tmp_path, file_path="-app.py", depth=4, limit=11)
     await gateway.symbol_path(tmp_path, "from-symbol", "to-symbol", 8)
 
     assert calls[1:] == [
@@ -499,8 +499,7 @@ async def test_gateway_builds_graph_read_args(
             "/tmp/gcode",
             "graph",
             "file",
-            "--file",
-            "src/app.py",
+            "--file=-app.py",
             "--project",
             str(tmp_path),
             "--format",
@@ -510,8 +509,7 @@ async def test_gateway_builds_graph_read_args(
             "/tmp/gcode",
             "graph",
             "neighbors",
-            "--symbol-id",
-            "sym-1",
+            "--symbol-id=-sym-1",
             "--project",
             str(tmp_path),
             "--limit",
@@ -525,8 +523,7 @@ async def test_gateway_builds_graph_read_args(
             "blast-radius",
             "--project",
             str(tmp_path),
-            "--symbol-id",
-            "sym-1",
+            "--symbol-id=-sym-1",
             "--depth",
             "2",
             "--limit",
@@ -540,8 +537,7 @@ async def test_gateway_builds_graph_read_args(
             "blast-radius",
             "--project",
             str(tmp_path),
-            "--file",
-            "src/app.py",
+            "--file=-app.py",
             "--depth",
             "4",
             "--limit",
@@ -567,7 +563,6 @@ async def test_gateway_builds_graph_read_args(
 @pytest.mark.parametrize(
     ("invalid_value", "expected_reason"),
     [
-        ("-src/app.py", "value must not start with '-'"),
         ("/tmp/app.py", "value must not be an absolute path"),
         ("src/../app.py", "value must not contain '..' segments"),
     ],
@@ -597,7 +592,6 @@ async def test_gateway_rejects_invalid_file_paths_before_subprocess(
 @pytest.mark.parametrize(
     ("invalid_value", "expected_reason"),
     [
-        ("-sym-1", "value must not start with '-'"),
         ("/sym-1", "value must not be an absolute path"),
         ("symbols/../sym-1", "value must not contain '..' segments"),
     ],
@@ -618,6 +612,22 @@ async def test_gateway_rejects_invalid_symbol_ids_before_subprocess(
             await gateway.graph_neighbors(tmp_path, invalid_value)
         else:
             await gateway.graph_blast_radius(tmp_path, symbol_id=invalid_value)
+
+    assert calls == []
+
+
+async def test_gateway_rejects_option_like_path_queries_before_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = _patch_subprocess(monkeypatch, [])
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    # `gcode path` takes positional queries, which cannot be attached to an option.
+    with pytest.raises(GcodeInputValidationError, match="symbol_a: value must not start with '-'"):
+        await gateway.symbol_path(tmp_path, "--help", "to-symbol", 8)
+    with pytest.raises(GcodeInputValidationError, match="symbol_b: value must not start with '-'"):
+        await gateway.symbol_path(tmp_path, "from-symbol", "-x", 8)
 
     assert calls == []
 

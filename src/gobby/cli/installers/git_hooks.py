@@ -29,7 +29,7 @@ if [ -n "$CHANGED_FILES" ]; then
     GCODE="$HOME/.gobby/bin/gcode"
     if [ -x "$GCODE" ]; then
         (
-            echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1
+            echo "$CHANGED_FILES" | sed 's/^/--files=/' | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1
         ) &
     fi
 fi

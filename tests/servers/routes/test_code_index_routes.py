@@ -17,6 +17,7 @@ from gobby.code_index.context import (
 )
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
+    GcodeGateway,
     GcodeInputValidationError,
     GcodeProjectNotFoundError,
     GcodeUnavailableError,
@@ -133,18 +134,18 @@ def test_graph_route_returns_400_for_invalid_gcode_input(
 ) -> None:
     mock_server.services.code_indexer.graph_file.side_effect = GcodeInputValidationError(
         "file_path",
-        "-src/app.py",
-        "value must not start with '-'",
+        "src/../app.py",
+        "value must not contain '..' segments",
     )
 
     response = client.get(
-        "/api/code-index/graph/file/-src/app.py",
+        "/api/code-index/graph/file/src/%2E%2E/app.py",
         params={"project_id": PROJECT_ID},
     )
 
     assert response.status_code == 400
     assert response.json() == {
-        "detail": "Invalid file_path: value must not start with '-'",
+        "detail": "Invalid file_path: value must not contain '..' segments",
     }
 
 
@@ -290,9 +291,8 @@ def test_invalidate_keeps_shared_projections() -> None:
         "projects": 1,
     }
     storage.clear_projection_cleanup_pending.return_value = False
-    gcode_gateway = SimpleNamespace(
-        vector_clear=AsyncMock(return_value={"success": False, "error": "down"})
-    )
+    gcode_gateway = MagicMock(spec=GcodeGateway)
+    gcode_gateway.vector_clear = AsyncMock(return_value={"success": False, "error": "down"})
     code_indexer = CodeIndexContext(
         storage=storage,
         gcode_gateway=gcode_gateway,

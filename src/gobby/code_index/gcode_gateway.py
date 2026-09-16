@@ -307,8 +307,8 @@ class GcodeInputValidationError(GcodeGatewayError):
 
 
 def _validate_user_gcode_value(parameter: str, value: str) -> str:
-    if value.startswith("-"):
-        raise GcodeInputValidationError(parameter, value, "value must not start with '-'")
+    # A value may start with '-' (a repository file can be named that way), so callers
+    # attach it to its option (``--file=<value>``) where gcode cannot read it as an option.
     if PurePath(value).is_absolute() or PureWindowsPath(value).is_absolute():
         raise GcodeInputValidationError(parameter, value, "value must not be an absolute path")
     if ".." in PurePath(value).parts or ".." in PureWindowsPath(value).parts:
@@ -425,8 +425,7 @@ class GcodeGateway:
         args = [
             "graph",
             "sync-file",
-            "--file",
-            file_path,
+            f"--file={file_path}",
             "--project",
             str(project_root),
         ]
@@ -456,8 +455,7 @@ class GcodeGateway:
             [
                 "graph",
                 "file",
-                "--file",
-                file_path,
+                f"--file={file_path}",
                 "--project",
                 str(project_root),
             ]
@@ -475,8 +473,7 @@ class GcodeGateway:
             [
                 "graph",
                 "neighbors",
-                "--symbol-id",
-                symbol_id,
+                f"--symbol-id={symbol_id}",
                 "--project",
                 str(project_root),
                 "--limit",
@@ -498,12 +495,12 @@ class GcodeGateway:
             raise ValueError("Provide exactly one of symbol_id or file_path")
         if symbol_id is not None:
             symbol_id = _validate_user_gcode_value("symbol_id", symbol_id)
-            args.extend(["--symbol-id", symbol_id])
+            args.append(f"--symbol-id={symbol_id}")
         else:
             if file_path is None:
                 raise ValueError("file_path must be provided when symbol_id is None")
             file_path = _validate_user_gcode_value("file_path", file_path)
-            args.extend(["--file", file_path])
+            args.append(f"--file={file_path}")
         args.extend(["--depth", str(depth), "--limit", str(limit)])
         return await self._run_json(args)
 
@@ -514,6 +511,11 @@ class GcodeGateway:
         symbol_b: str,
         max_depth: int,
     ) -> dict[str, Any]:
+        # Positional queries have no option to attach to, and _run_json appends --format
+        # after them, so a leading '-' would reach gcode as an option.
+        for parameter, value in (("symbol_a", symbol_a), ("symbol_b", symbol_b)):
+            if value.startswith("-"):
+                raise GcodeInputValidationError(parameter, value, "value must not start with '-'")
         symbol_a = _validate_user_gcode_value("symbol_a", symbol_a)
         symbol_b = _validate_user_gcode_value("symbol_b", symbol_b)
         if max_depth < 1:
@@ -534,7 +536,7 @@ class GcodeGateway:
         self, project_id: str, *, env: Mapping[str, str] | None = None
     ) -> dict[str, Any]:
         project_id = _validate_user_gcode_value("project_id", project_id)
-        return await self._run_json(["graph", "clear", "--project-id", project_id], env=env)
+        return await self._run_json(["graph", "clear", f"--project-id={project_id}"], env=env)
 
     async def graph_rebuild(self, project_root: Path) -> dict[str, Any]:
         return await self._run_json(
@@ -554,8 +556,7 @@ class GcodeGateway:
         args = [
             "vector",
             "sync-file",
-            "--file",
-            file_path,
+            f"--file={file_path}",
             "--project",
             str(project_root),
         ]
@@ -578,7 +579,7 @@ class GcodeGateway:
         """Clear a project's code-symbol vectors; ``drop_collection`` deletes the collection."""
         if project_id is not None:
             project_id = _validate_user_gcode_value("project_id", project_id)
-            args = ["vector", "clear", "--project-id", project_id]
+            args = ["vector", "clear", f"--project-id={project_id}"]
         elif project_root is not None:
             args = ["vector", "clear", "--project", str(project_root)]
         else:
@@ -632,8 +633,7 @@ class GcodeGateway:
                 "index",
                 "--project",
                 str(project_root),
-                "--files",
-                *files,
+                *(f"--files={file}" for file in files),
                 "--quiet",
                 "--skip-if-locked",
                 "--format",
@@ -712,7 +712,7 @@ class GcodeGateway:
         project_id = _validate_user_gcode_value("project_id", project_id)
         binary = await self._ensure_version()
         return await self._run_command_result(
-            [binary, "invalidate", "--project-id", project_id, "--force"],
+            [binary, "invalidate", f"--project-id={project_id}", "--force"],
             env=env,
             timeout=timeout,
         )

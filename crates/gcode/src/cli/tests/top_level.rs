@@ -19,6 +19,24 @@ fn test_parse_index_require_cpp_semantics() {
 }
 
 #[test]
+fn test_parse_index_attached_files_keep_dash_leading_paths() {
+    // The daemon and git hooks attach each path (`--files=<path>`) so one starting with '-'
+    // stays a value.
+    let cli = Cli::try_parse_from(["gcode", "index", "--files=-l", "--files=src/lib.rs"])
+        .expect("index parses");
+
+    match cli.command {
+        Command::Index { files, .. } => {
+            assert_eq!(
+                files,
+                Some(vec!["-l".to_string(), "src/lib.rs".to_string()])
+            );
+        }
+        _ => panic!("expected index command"),
+    }
+}
+
+#[test]
 fn test_parse_repair() {
     let cli = Cli::try_parse_from(["gcode", "repair", "--format", "json"]).expect("repair parses");
     assert!(matches!(cli.command, Command::Repair));
