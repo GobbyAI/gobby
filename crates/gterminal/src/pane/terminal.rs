@@ -401,6 +401,10 @@ impl PaneTerminal {
         self.ghostty.visible_ansi()
     }
 
+    pub fn recent_unwrapped_text(&self, lines: usize) -> String {
+        self.ghostty.recent_unwrapped_text(lines)
+    }
+
     pub fn recent_unwrapped_ansi(&self, lines: usize) -> String {
         self.ghostty.recent_unwrapped_ansi(lines)
     }

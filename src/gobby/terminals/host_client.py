@@ -26,6 +26,10 @@ MAX_WRITE_BATCH_TOTAL_DELAY_MS = 5_000
 # Host returns these before recording operation_seq in the per-connection ledger.
 _UNCONSUMED_SEQ_ERRORS = frozenset({"operation_gap", "operation_seq_required", "host_draining"})
 
+# Snapshot representations the host implements. ``text`` is plain unwrapped
+# history; ``ansi`` keeps the styling escapes. Positional readers need ``text``.
+SnapshotMode = Literal["text", "ansi"]
+
 
 class HostEpochChangedError(RuntimeError):
     """Welcome/ping epoch did not match the locator the caller still holds."""
@@ -559,11 +563,11 @@ class HostClient:
         self,
         host_terminal_id: str,
         *,
-        mode: str = "text",
+        mode: SnapshotMode = "text",
         max_bytes: int = 262144,
         max_lines: int = 500,
     ) -> dict[str, Any]:
-        return await self._roundtrip(
+        payload = await self._roundtrip(
             {
                 "method": "snapshot",
                 "host_terminal_id": host_terminal_id,
@@ -572,6 +576,16 @@ class HostClient:
                 "max_lines": max_lines,
             }
         )
+        echoed = payload.get("mode")
+        if echoed != mode:
+            # A host that does not echo the mode it honored cannot be trusted to
+            # have returned this representation, and plain-text readers break on
+            # escape bytes. Refuse instead of handing back the wrong bytes.
+            raise HostCommandError(
+                "snapshot_mode_mismatch",
+                detail=f"requested mode {mode!r}, host answered {echoed!r}",
+            )
+        return payload
 
     async def reserve_observer(self, terminal_id: str, reserve_key: str) -> dict[str, Any]:
         return await self._roundtrip(

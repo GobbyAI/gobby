@@ -16,7 +16,7 @@ use super::helpers::{err, native_entitlements, push_terminal_ansi, s};
 use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
 use crate::protocol::{
-    validate_dimensions, RenderEncoding, ServerMessage, SNAPSHOT_DEFAULT_MAX_BYTES,
+    validate_dimensions, RenderEncoding, ServerMessage, SnapshotMode, SNAPSHOT_DEFAULT_MAX_BYTES,
     SNAPSHOT_DEFAULT_MAX_LINES,
 };
 
@@ -56,6 +56,68 @@ pub(crate) fn trim_to_char_boundary(text: &str, max_bytes: usize) -> String {
         start += 1;
     }
     text[start..].to_string()
+}
+
+/// Refusal for a `mode` the snapshot verb does not implement. It names every
+/// accepted value so a caller never has to guess after a typo.
+fn invalid_snapshot_mode() -> Value {
+    json!({
+        "ok": false,
+        "error": "invalid_mode",
+        "valid_modes": SnapshotMode::VALID,
+    })
+}
+
+/// `mode` selects which representation a snapshot returns. Omitting it means
+/// plain text; anything else is refused rather than answered with the
+/// representation the caller did not ask for.
+fn snapshot_mode(extra: &Map<String, Value>) -> Result<SnapshotMode, Value> {
+    match extra.get("mode") {
+        None => Ok(SnapshotMode::Text),
+        Some(Value::String(value)) => {
+            SnapshotMode::from_wire(value).ok_or_else(invalid_snapshot_mode)
+        }
+        Some(_) => Err(invalid_snapshot_mode()),
+    }
+}
+
+/// A capped snapshot body. Every counter describes the representation that was
+/// selected, because the caps run after that choice.
+struct SnapshotBody {
+    text: String,
+    truncated: bool,
+    dropped_bytes: u64,
+    total_bytes: u64,
+}
+
+/// The one snapshot truncation policy: keep the last `max_lines` lines, then
+/// trim that tail to `max_bytes` on a UTF-8 boundary.
+fn truncate_snapshot(text: &str, max_lines: usize, max_bytes: usize) -> SnapshotBody {
+    let total_bytes = text.len() as u64;
+    let mut truncated = false;
+    let mut dropped_bytes = 0u64;
+    let mut lines: Vec<&str> = text.lines().collect();
+    if lines.len() > max_lines {
+        dropped_bytes += lines[..lines.len() - max_lines]
+            .iter()
+            .map(|line| line.len() as u64 + 1)
+            .sum::<u64>();
+        lines = lines[lines.len() - max_lines..].to_vec();
+        truncated = true;
+    }
+    let mut joined = lines.join("\n");
+    if joined.len() > max_bytes {
+        let before = joined.len();
+        joined = trim_to_char_boundary(&joined, max_bytes);
+        dropped_bytes += (before - joined.len()) as u64;
+        truncated = true;
+    }
+    SnapshotBody {
+        text: joined,
+        truncated,
+        dropped_bytes,
+        total_bytes,
+    }
 }
 
 #[cfg(feature = "vt-engine")]
@@ -471,6 +533,10 @@ impl HostState {
     }
 
     pub async fn snapshot(&self, extra: &Map<String, Value>) -> Value {
+        let mode = match snapshot_mode(extra) {
+            Ok(mode) => mode,
+            Err(refusal) => return refusal,
+        };
         let host_terminal_id = s(extra, "host_terminal_id");
         let max_bytes = extra
             .get("max_bytes")
@@ -491,43 +557,23 @@ impl HostState {
             return err("not_native");
         }
         #[cfg(feature = "vt-engine")]
-        let text = if let Some(child) = slot.child.as_ref() {
-            let history = child.runtime.snapshot_history().unwrap_or_default();
-            if history.is_empty() {
-                child.runtime.visible_text()
-            } else {
-                history
-            }
-        } else {
-            String::new()
+        let text = match slot.child.as_ref() {
+            Some(child) => child
+                .runtime
+                .snapshot_history(mode)
+                .unwrap_or_else(|| child.runtime.visible_snapshot(mode)),
+            None => String::new(),
         };
         #[cfg(not(feature = "vt-engine"))]
         let text = String::new();
-        let total_bytes = text.len() as u64;
-        let mut truncated = false;
-        let mut dropped_bytes = 0u64;
-        let mut lines: Vec<&str> = text.lines().collect();
-        if lines.len() > max_lines {
-            dropped_bytes += lines[..lines.len() - max_lines]
-                .iter()
-                .map(|line| line.len() as u64 + 1)
-                .sum::<u64>();
-            lines = lines[lines.len() - max_lines..].to_vec();
-            truncated = true;
-        }
-        let mut joined = lines.join("\n");
-        if joined.len() > max_bytes {
-            let before = joined.len();
-            joined = trim_to_char_boundary(&joined, max_bytes);
-            dropped_bytes += (before - joined.len()) as u64;
-            truncated = true;
-        }
+        let body = truncate_snapshot(&text, max_lines, max_bytes);
         json!({
             "ok": true,
-            "text": joined,
-            "truncated": truncated,
-            "dropped_bytes": dropped_bytes,
-            "total_bytes": total_bytes,
+            "mode": mode.as_wire(),
+            "text": body.text,
+            "truncated": body.truncated,
+            "dropped_bytes": body.dropped_bytes,
+            "total_bytes": body.total_bytes,
         })
     }
 

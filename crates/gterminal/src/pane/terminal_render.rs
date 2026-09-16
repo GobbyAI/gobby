@@ -541,7 +541,6 @@ fn ghostty_recent_text_snapshot(
     Ok(finish_recent_snapshot(core, text, lines, false))
 }
 
-#[cfg(test)]
 fn ghostty_recent_text_unwrapped_snapshot(
     core: &GhosttyPaneCore,
     lines: usize,
@@ -608,7 +607,6 @@ fn ghostty_recent_text_for_terminal(
     Ok(recent_text_from_rows(&rows, lines))
 }
 
-#[cfg(test)]
 fn ghostty_recent_text_unwrapped_for_terminal(
     terminal: &crate::ghostty::Terminal,
     lines: usize,
