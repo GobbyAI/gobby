@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 #[cfg(unix)]
 mod unix;
 
@@ -10,7 +8,6 @@ pub(crate) use unix::*;
 mod windows {
     use std::io::{Read, Write};
     use std::sync::{mpsc as std_mpsc, Arc, Mutex};
-    use std::time::Duration;
 
     use bytes::Bytes;
     use portable_pty::{MasterPty, PtySize};
@@ -245,9 +242,6 @@ mod windows {
             })
         }
     }
-
-    #[allow(dead_code)]
-    fn _assert_duration_send(_: Duration) {}
 }
 
 #[cfg(windows)]

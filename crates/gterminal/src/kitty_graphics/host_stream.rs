@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 fn placement_signature(
     clipped: ClippedPlacement,
     z: i32,

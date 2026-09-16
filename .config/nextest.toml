@@ -31,5 +31,19 @@ filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(control_protocol) | binary(frame_protocol) | binary(embed))'
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env))'
 test-group = 'gterm-pty'
+
+[[profile.default.overrides]]
+filter = 'package(gobby-client) & test(late_control_reply_cannot_settle_a_newer_request)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+test-group = 'gterm-pty'
+
+[[profile.default.overrides]]
+filter = 'package(gobby-client) & binary(teardown)'
+test-group = 'gterm-pty'
+
+[[profile.default.overrides]]
+filter = 'package(gobby-client) & binary(frame_source_live)'
+test-group = 'gterm-pty'
+slow-timeout = { period = "120s", terminate-after = 3 }

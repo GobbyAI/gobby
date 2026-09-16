@@ -7,24 +7,6 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    pub fn kitty_image_placements_with_data_filter<F>(
-        &self,
-        needs_data: F,
-    ) -> Vec<crate::ghostty::KittyImagePlacement>
-    where
-        F: FnMut(crate::ghostty::KittyImageDescriptor) -> bool,
-    {
-        self.core
-            .lock()
-            .ok()
-            .and_then(|core| {
-                core.terminal
-                    .kitty_image_placements_with_data_filter(needs_data)
-                    .ok()
-            })
-            .unwrap_or_default()
-    }
-
     pub fn render_to_buffer(
         &self,
         buf: &mut ratatui::buffer::Buffer,
@@ -559,6 +541,7 @@ fn ghostty_recent_text_snapshot(
     Ok(finish_recent_snapshot(core, text, lines, false))
 }
 
+#[cfg(test)]
 fn ghostty_recent_text_unwrapped_snapshot(
     core: &GhosttyPaneCore,
     lines: usize,
@@ -625,6 +608,7 @@ fn ghostty_recent_text_for_terminal(
     Ok(recent_text_from_rows(&rows, lines))
 }
 
+#[cfg(test)]
 fn ghostty_recent_text_unwrapped_for_terminal(
     terminal: &crate::ghostty::Terminal,
     lines: usize,

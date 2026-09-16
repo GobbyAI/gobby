@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 
 use super::backpressure::PushResult;
-use super::helpers::{err, native_entitlements, push_terminal_ansi, s, truncate_title};
+#[cfg(feature = "vt-engine")]
+use super::helpers::truncate_title;
+use super::helpers::{err, native_entitlements, push_terminal_ansi, s};
 #[cfg(feature = "vt-engine")]
 use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
@@ -22,6 +24,15 @@ use crate::protocol::{
 pub(crate) enum KillGroupError {
     InvalidPgid,
     Io(io::Error),
+}
+
+impl std::fmt::Display for KillGroupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPgid => write!(f, "invalid process group id"),
+            Self::Io(err) => write!(f, "killpg failed: {err}"),
+        }
+    }
 }
 
 pub(crate) fn kill_group(pgid: i32, signal: i32) -> Result<(), KillGroupError> {
@@ -117,7 +128,9 @@ fn remove_terminal_slot(
         inner.reservations.remove(&slot.reservation_id);
         remove_slot_attachments(inner, &slot);
         if let Some(signal) = kill_signal {
-            let _ = kill_group(slot.pgid, signal);
+            if let Err(err) = kill_group(slot.pgid, signal) {
+                tracing::debug!(%err, pgid = slot.pgid, "kill_group failed");
+            }
         }
     }
 }
@@ -162,7 +175,9 @@ impl HostState {
                 .collect()
         };
         for pgid in &targets {
-            let _ = kill_group(*pgid, libc::SIGHUP);
+            if let Err(err) = kill_group(*pgid, libc::SIGHUP) {
+                tracing::debug!(%err, pgid = *pgid, "kill_group SIGHUP failed");
+            }
         }
 
         let deadline = Instant::now() + grace;
@@ -174,7 +189,9 @@ impl HostState {
             let now = Instant::now();
             if now >= deadline {
                 for pgid in survivors {
-                    let _ = kill_group(pgid, libc::SIGKILL);
+                    if let Err(err) = kill_group(pgid, libc::SIGKILL) {
+                        tracing::debug!(%err, pgid, "kill_group SIGKILL failed");
+                    }
                 }
                 return;
             }
@@ -411,11 +428,15 @@ impl HostState {
             inner.by_host_id.remove(&host_terminal_id);
             inner.reservations.remove(&slot.reservation_id);
             remove_slot_attachments(&mut inner, &slot);
-            let _ = kill_group(slot.pgid, libc::SIGTERM);
+            if let Err(err) = kill_group(slot.pgid, libc::SIGTERM) {
+                tracing::debug!(%err, pgid = slot.pgid, "kill_group SIGTERM failed");
+            }
             let pgid = slot.pgid;
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(grace_ms)).await;
-                let _ = kill_group(pgid, libc::SIGKILL);
+                if let Err(err) = kill_group(pgid, libc::SIGKILL) {
+                    tracing::debug!(%err, pgid, "kill_group SIGKILL failed");
+                }
             });
         }
         json!({"ok": true, "killed": true})
@@ -547,7 +568,7 @@ impl HostState {
     pub async fn broadcast_frames(self: &Arc<Self>) {
         let mut inner = self.inner.lock().await;
         let cap = self.config.delta_queue_bytes as usize;
-        let lag = self.config.lag_timeout();
+        let lag = self.lag_timeout();
         let mut lagged = Vec::new();
         let ids: Vec<u64> = inner.attachments.keys().copied().collect();
         for id in ids {
@@ -555,6 +576,11 @@ impl HostState {
                 let Some(att) = inner.attachments.get(&id) else {
                     continue;
                 };
+                tracing::trace!(
+                    attachment_id = att.id,
+                    reservation_id = att.reservation_id.as_deref(),
+                    "broadcast attachment"
+                );
                 (
                     att.host_terminal_id.clone(),
                     att.rows,
@@ -578,6 +604,14 @@ impl HostState {
                 let Some(slot) = inner.terminals.get_mut(&identity) else {
                     continue;
                 };
+                tracing::trace!(
+                    written_bytes = slot.written_bytes,
+                    dropped_bytes = slot.dropped_bytes,
+                    total_bytes = slot.total_bytes,
+                    truncated = slot.truncated,
+                    observer_generation = slot.observer_generation,
+                    "broadcast slot counters"
+                );
                 let Some(child) = slot.child.as_mut() else {
                     continue;
                 };

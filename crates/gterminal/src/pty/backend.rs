@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 #[cfg(unix)]
 mod unix;
 

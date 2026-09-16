@@ -1,3 +1,4 @@
+#[cfg(test)]
 pub(crate) fn frame_with_drawn_cursor(mut frame: FrameData) -> FrameData {
     if let Some(cursor) = frame.cursor.as_ref().filter(|cursor| cursor.visible) {
         let (x, y) = clamp_cursor_position(&frame, cursor.x, cursor.y);
@@ -230,8 +231,8 @@ fn build_sgr(fg: u32, bg: u32, modifier: u16) -> String {
 // Cell comparison
 // ---------------------------------------------------------------------------
 
-/// Checks if two cells are visually identical.
 #[cfg(test)]
+/// Checks if two cells are visually identical.
 fn cells_equal(a: &CellData, b: &CellData) -> bool {
     a.symbol == b.symbol
         && a.fg == b.fg
@@ -245,8 +246,8 @@ fn cells_equal(a: &CellData, b: &CellData) -> bool {
 // Blitting
 // ---------------------------------------------------------------------------
 
-/// Blits a frame to a writer, diffing against the previous frame.
 #[cfg(test)]
+/// Blits a frame to a writer, diffing against the previous frame.
 fn blit_frame_to(writer: impl Write, frame: &FrameData, prev: Option<&FrameData>) {
     let mut last_visible_cursor = None;
     let mut last_cursor_shape = 0;
@@ -302,6 +303,8 @@ fn blit_frame_to_with_cursor_memory_and_policy(
     );
 }
 
+// reason: blit needs the previous frame, cursor memory, and clear policy as distinct args.
+#[allow(clippy::too_many_arguments)]
 fn blit_frame_to_with_cursor_memory_and_clear_policy(
     mut writer: impl Write,
     frame: &FrameData,
@@ -686,4 +689,3 @@ fn write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameD
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-

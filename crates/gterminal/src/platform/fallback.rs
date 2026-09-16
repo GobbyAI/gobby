@@ -6,14 +6,12 @@ use super::{ClipboardImage, ForegroundJob, Signal};
 /// Unsupported platform stub.
 pub fn raise_server_nofile_limit() {}
 
-pub(crate) fn should_draw_host_cursor_by_default() -> bool {
-    false
-}
-
+#[cfg(test)]
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
     vec!["/bin/sh".into(), flag.into(), command.into()]
 }
 
+#[cfg(test)]
 pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::process::Command {
     let argv = raw_command_argv(command, "-lc");
     let mut command = std::process::Command::new(&argv[0]);
@@ -21,16 +19,19 @@ pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::pr
     command
 }
 
+#[cfg(test)]
 pub(crate) fn pane_custom_command_pty_builder_platform(
     command: &str,
 ) -> portable_pty::CommandBuilder {
     portable_pty::CommandBuilder::from_argv(raw_command_argv(command, "-c"))
 }
 
+#[cfg(test)]
 pub(crate) fn interactive_shell_command(_argv: &[String], _shell_name: &str) -> Option<String> {
     None
 }
 
+#[cfg(test)]
 /// Unsupported platform stub.
 pub(crate) fn scrollback_editor_argv(_path: &std::path::Path) -> std::io::Result<Vec<String>> {
     Err(std::io::Error::new(
@@ -45,10 +46,6 @@ pub fn detach_server_daemon_command(_command: &mut Command) {}
 /// Unsupported platform stub.
 pub fn current_process_is_detached_server_daemon() -> bool {
     false
-}
-
-pub(crate) fn available_pane_shell(_child_pid: u32) -> Option<String> {
-    None
 }
 
 /// Unsupported platform stub.
@@ -93,8 +90,7 @@ pub fn open_url(_url: &str) -> std::io::Result<()> {
 }
 
 /// Unsupported platform stub.
-// Windows does not wire clipboard-image bridging into semantic input yet.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(not(windows))]
 pub fn read_clipboard_image() -> Option<ClipboardImage> {
     None
 }

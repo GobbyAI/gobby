@@ -161,6 +161,7 @@ fn drag_then_finish() {
     assert!(copied);
 }
 
+#[cfg(feature = "vt-engine")]
 #[test]
 fn drag_uses_buffer_rows_when_scrolled() {
     let mut sel = Selection::anchor(

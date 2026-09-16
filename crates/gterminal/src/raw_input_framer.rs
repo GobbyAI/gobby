@@ -34,11 +34,6 @@ impl RawInputFramer {
         self.byte_framer.has_pending_incomplete_sgr_mouse_sequence()
     }
 
-    #[cfg(any(windows, test))]
-    pub(crate) fn has_pending_bracketed_paste(&self) -> bool {
-        self.byte_framer.has_pending_bracketed_paste()
-    }
-
     pub(crate) fn flush_timeout(&mut self) -> Vec<RawInputEvent> {
         Self::events_from_chunks(self.byte_framer.flush_timeout())
     }
@@ -76,7 +71,7 @@ pub(crate) struct RawInputByteFramer {
 }
 
 pub(super) const HOST_COLOR_QUERY_REPLIES: u16 = 258;
-#[cfg(any(unix, test))]
+#[cfg(test)]
 pub(super) const HOST_CELL_SIZE_QUERY_REPLIES: u16 = 1;
 pub(super) const MAX_ORPHANED_SGR_MOUSE_TAIL_BYTES: usize = 32;
 
@@ -108,7 +103,7 @@ impl RawInputByteFramer {
 
     /// Same hold window as `host_color_query_sent`, for the XTWINOPS cell size
     /// reply. Only the Unix client sends this query.
-    #[cfg(any(unix, test))]
+    #[cfg(test)]
     pub(crate) fn host_cell_size_query_sent(&mut self) {
         self.host_cell_size_replies_awaited = HOST_CELL_SIZE_QUERY_REPLIES;
         self.held_pending_host_reply_esc = false;
@@ -126,19 +121,8 @@ impl RawInputByteFramer {
         !self.buffer.is_empty()
     }
 
-    #[cfg(any(not(windows), test))]
-    pub(crate) fn has_pending_lone_escape(&self) -> bool {
-        self.buffer.as_slice() == [ESC]
-    }
-
     pub(crate) fn has_pending_incomplete_sgr_mouse_sequence(&self) -> bool {
         starts_with_incomplete_sgr_mouse_sequence(&self.buffer)
-    }
-
-    #[cfg(any(windows, test))]
-    pub(crate) fn has_pending_bracketed_paste(&self) -> bool {
-        self.buffer.starts_with(BRACKETED_PASTE_START)
-            && find_subsequence(&self.buffer, BRACKETED_PASTE_END).is_none()
     }
 
     pub(crate) fn flush_timeout(&mut self) -> Vec<Vec<u8>> {
@@ -372,10 +356,13 @@ impl RawInputByteFramer {
                 RawInputEvent::HostDefaultColor { .. } | RawInputEvent::HostPaletteColors { .. }
             ) {
                 self.host_color_replies_awaited = self.host_color_replies_awaited.saturating_sub(1);
-            } else if matches!(event, RawInputEvent::HostCellSizeReport { .. }) {
+            }
+            #[cfg(any(unix, test))]
+            if matches!(event, RawInputEvent::HostCellSizeReport { .. }) {
                 self.host_cell_size_replies_awaited =
                     self.host_cell_size_replies_awaited.saturating_sub(1);
-            } else if self.host_color_scheme_change_tracking
+            }
+            if self.host_color_scheme_change_tracking
                 && matches!(event, RawInputEvent::HostColorSchemeChanged(_))
             {
                 self.host_color_query_sent();

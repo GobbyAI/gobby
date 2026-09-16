@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 #[derive(Debug, Default)]
-pub(super) struct XtgettcapQueryTracker {
+pub(crate) struct XtgettcapQueryTracker {
     state: XtgettcapTrackerState,
     body: Vec<u8>,
     pending: Vec<XtgettcapResponse>,

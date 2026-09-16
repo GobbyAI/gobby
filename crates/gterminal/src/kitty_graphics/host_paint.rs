@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 pub(crate) fn paint_local_pane_graphics(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -332,7 +330,6 @@ impl HostGraphicsCache {
         self.images.is_empty() && self.placements.is_empty()
     }
 
-    #[cfg(test)]
     pub(crate) fn test_mark_non_empty(&mut self) {
         self.images.insert(
             HOST_IMAGE_ID_BASE,
@@ -806,4 +803,3 @@ fn image_signature_from_descriptor(
         data_fingerprint: descriptor.data_fingerprint,
     }
 }
-

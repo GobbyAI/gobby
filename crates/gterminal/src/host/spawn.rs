@@ -13,7 +13,9 @@ use serde::Deserialize;
 use tokio::io::unix::AsyncFd;
 
 use super::gate::{errno_name, GATE_FD, PTY_FD, STATUS_FD};
-use crate::pane::{ChildExitWatch, PaneRuntime};
+#[cfg(debug_assertions)]
+use crate::pane::ChildExitWatch;
+use crate::pane::PaneRuntime;
 use crate::terminal_theme::TerminalTheme;
 
 const MIN_INHERITED_FD: RawFd = 10;
@@ -114,6 +116,7 @@ impl PreparedCommit {
 
 impl Drop for PreparedChild {
     fn drop(&mut self) {
+        tracing::debug!(pid = self.pid, "dropping prepared child");
         self.gate_writer.take();
         self.status_reader.take();
     }

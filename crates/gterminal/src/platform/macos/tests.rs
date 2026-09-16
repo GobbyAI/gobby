@@ -49,7 +49,7 @@ fn procargs2_argv_excludes_environment_entries() {
         ],
     );
 
-    let argv = procargs2_argv(&buf).expect("expected argv");
+    let argv = super::macos_process::procargs2_argv(&buf).expect("expected argv");
     assert_eq!(argv, vec!["node", "/Users/can/.local/bin/pi"]);
     assert_eq!(argv.join(" "), "node /Users/can/.local/bin/pi");
     assert!(!argv.join(" ").contains("codex.system"));

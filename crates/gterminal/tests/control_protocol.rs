@@ -6,8 +6,8 @@ mod embed_support;
 mod host_support;
 
 use host_support::{
-    connect, recv_json, send_json, send_json_without_id, spawn_host, wait_exit, wait_socket,
-    wait_until, write_token, CONTROL_SOCKET,
+    connect, recv_json, send_json, send_json_without_id, spawn_host, temp_socket_dir, wait_exit,
+    wait_socket, wait_until, write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 
 #[test]
 fn hello_required_before_any_verb() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-hello-required";
     write_token(dir.path(), token);
     let mut child = spawn_host(dir.path());
@@ -135,7 +135,7 @@ fn hello_required_before_any_verb() {
 
 #[test]
 fn oversize_control_line_is_refused_before_parse() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-overflow";
     write_token(dir.path(), token);
     let mut child = spawn_host(dir.path());
@@ -313,7 +313,7 @@ fn recv_response_with_id(
 
 #[test]
 fn requests_require_unique_ids() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-request-ids";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -384,7 +384,7 @@ fn requests_require_unique_ids() {
 
 #[test]
 fn child_exit_emits_terminal_exited_on_event_stream() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-native-exit-event";
     write_token(dir.path(), token);
     let (mut child, mut requests) = authed(dir.path(), token);
@@ -483,7 +483,7 @@ fn child_exit_emits_terminal_exited_on_event_stream() {
 
 #[test]
 fn commit_wait_does_not_block_other_requests() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-concurrent-commit";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -683,7 +683,7 @@ fn tmux_pane_death_emits_no_control_event() {
 
 #[test]
 fn control_surface_round_trip() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-surface";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -863,7 +863,7 @@ fn control_surface_round_trip() {
 
 #[test]
 fn snapshot_truncates_on_char_boundaries() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-snapshot-utf8";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -968,7 +968,7 @@ fn snapshot_truncates_on_char_boundaries() {
 
 #[test]
 fn ping_carries_host_pid() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-pid";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -986,7 +986,7 @@ fn ping_carries_host_pid() {
 
 #[test]
 fn operation_seq_ledger_is_total() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-ledger";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1031,7 +1031,7 @@ fn operation_seq_ledger_is_total() {
 
 #[test]
 fn write_batch_enforces_target_and_operation_limits() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-batch-limits";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1086,7 +1086,7 @@ fn write_batch_enforces_target_and_operation_limits() {
 
 #[test]
 fn spawn_identity_is_unique_across_connections() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-unique";
     write_token(dir.path(), token);
     let (mut child, mut a) = authed(dir.path(), token);
@@ -1133,7 +1133,7 @@ fn spawn_identity_is_unique_across_connections() {
 
 #[test]
 fn host_config_ranges_reject_and_admit_maximum() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-cfg";
     write_token(dir.path(), token);
     let mut bad = host_support::spawn_host_with_args(dir.path(), &["--max-attachments-total", "3"]);
@@ -1173,7 +1173,7 @@ fn host_config_ranges_reject_and_admit_maximum() {
 
 #[test]
 fn list_recovers_every_lifecycle_field() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-list";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1236,7 +1236,7 @@ fn list_recovers_every_lifecycle_field() {
 
 #[test]
 fn spawn_selects_named_reservation() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-named";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
