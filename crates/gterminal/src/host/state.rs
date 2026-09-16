@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(feature = "vt-engine")]
+use std::time::Duration;
+use std::time::Instant;
 
 use serde_json::{json, Map, Value};
 use tokio::sync::{watch, Mutex};
@@ -36,6 +38,7 @@ pub(crate) enum CommitState {
 #[derive(Clone, Debug)]
 pub(crate) enum ObserverBind {
     None,
+    #[cfg(feature = "vt-engine")]
     Reserved {
         reservation_id: String,
         generation: u64,
@@ -82,15 +85,20 @@ pub(crate) struct TerminalSlot {
     pub(crate) commit_deadline: Option<Instant>,
     #[cfg(feature = "vt-engine")]
     pub(crate) child: Option<PreparedChild>,
+    #[cfg(feature = "vt-engine")]
     pub(crate) written_bytes: u64,
+    #[cfg(feature = "vt-engine")]
     pub(crate) dropped_bytes: u64,
+    #[cfg(feature = "vt-engine")]
     pub(crate) total_bytes: u64,
+    #[cfg(feature = "vt-engine")]
     pub(crate) truncated: bool,
     pub(crate) user_attachments: HashSet<u64>,
     pub(crate) locator: Option<crate::protocol::PaneLocator>,
     pub(crate) tmux_history_bytes: u64,
     pub(crate) history: Option<crate::protocol::ServerMessage>,
     pub(crate) last_frame: Option<crate::protocol::FrameData>,
+    #[cfg(feature = "vt-engine")]
     pub(crate) observer_generation: u64,
     pub(crate) consecutive_failures: u32,
 }
@@ -247,7 +255,7 @@ impl HostState {
             .get("cwd")
             .and_then(Value::as_str)
             .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir());
+            .unwrap_or_else(std::env::temp_dir);
         let env = extra
             .get("env")
             .and_then(Value::as_object)
@@ -300,7 +308,7 @@ impl HostState {
         #[cfg(not(feature = "vt-engine"))]
         {
             let _ = (conn_id, deadline_ms, argv, cwd, env);
-            return err("not_implemented");
+            err("not_implemented")
         }
         #[cfg(feature = "vt-engine")]
         {

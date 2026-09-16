@@ -12,6 +12,9 @@ the rebuild/reinstall new-inode requirement) live in `AGENTS.md`.
 cargo build -p gobby-code                 # gcode CLI
 cargo build --release -p <crate>          # one release artifact; install it via a new inode (AGENTS.md)
 uv run gobby cutover                      # build/install the release binary set, pin, restart, smoke
+                                          # refuses uncommitted schema inputs (--allow-dirty overrides)
+                                          # and proves the candidate gdaemon with `gdaemon schema plan`
+                                          # before promoting; nothing is promoted or stopped on refusal
 
 # Lint & format — match repo config; never relax lints to pass
 cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-daemon, gobby-hooks
@@ -37,14 +40,12 @@ GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60
 ```
 
 `gobby-terminal` builds a vendored Zig library (libghostty-vt) whenever the
-`vt-engine` feature is on, which the `gterm` binary requires. Zig 0.15's bundled
-libcxx does not compile against the macOS 27 SDK that Command Line Tools ships
-(`use of undeclared identifier 'INFINITY'`), so point the build at Xcode's older
-SDK instead:
+`vt-engine` feature is on, which the `gterm` binary requires. That build needs
+Zig 0.16 on PATH and compiles against whatever macOS SDK Command Line Tools
+ships, including 27; no `DEVELOPER_DIR` or Xcode selection is involved.
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  cargo build --release -p gobby-terminal --features vt-engine --bin gterm
+cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 ```
 
 Builds land in one shared directory per project,

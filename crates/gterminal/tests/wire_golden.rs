@@ -2,8 +2,8 @@
 
 use gobby_terminal::protocol::{
     write_message, CellData, ClientMessage, CursorState, FrameData, PaneLocator, RenderEncoding,
-    ServerMessage, TerminalFrame, TmuxClientIdentity, MAX_CELLS, MAX_COLS, MAX_FRAME_SIZE,
-    MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION, WORST_CELL_BYTES,
+    ServerMessage, SnapshotMode, TerminalFrame, TmuxClientIdentity, MAX_CELLS, MAX_COLS,
+    MAX_FRAME_SIZE, MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION, WORST_CELL_BYTES,
 };
 use std::fs;
 use std::io::Cursor;
@@ -210,7 +210,18 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     );
     write_json(
         "control_snapshot.json",
-        serde_json::json!({"id":"snapshot-1","method":"snapshot","host_terminal_id":"ht-1","mode":"ansi","max_bytes":262144,"max_lines":500}),
+        serde_json::json!({"id":"snapshot-1","method":"snapshot","host_terminal_id":"ht-1",
+            "mode":SnapshotMode::Ansi.as_wire(),"max_bytes":262144,"max_lines":500}),
+    );
+    write_json(
+        "control_snapshot_text.json",
+        serde_json::json!({"id":"snapshot-2","method":"snapshot","host_terminal_id":"ht-1",
+            "mode":SnapshotMode::Text.as_wire(),"max_bytes":262144,"max_lines":500}),
+    );
+    write_json(
+        "control_snapshot_result.json",
+        serde_json::json!({"id":"snapshot-2","ok":true,"mode":SnapshotMode::Text.as_wire(),
+            "text":"one\ntwo","truncated":true,"dropped_bytes":4,"total_bytes":12}),
     );
     write_json(
         "control_write.json",

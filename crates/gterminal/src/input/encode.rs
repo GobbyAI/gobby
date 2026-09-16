@@ -10,7 +10,6 @@ const KITTY_FLAG_REPORT_ALTERNATE_KEYS: u16 = 0b0000_0100;
 const KITTY_FLAG_REPORT_ASSOCIATED_TEXT: u16 = 0b0001_0000;
 
 /// Encode a key event for a PTY child using the pane's negotiated keyboard protocol.
-#[allow(dead_code)] // exercised in input unit tests; production uses TerminalRuntime helpers
 pub fn encode_key(key: KeyEvent, protocol: KeyboardProtocol) -> Vec<u8> {
     encode_terminal_key(key.into(), protocol)
 }
@@ -59,7 +58,6 @@ pub fn encode_terminal_key(key: TerminalKey, protocol: KeyboardProtocol) -> Vec<
     encode_legacy(key)
 }
 
-#[allow(dead_code)] // exercised in input unit tests; production uses TerminalRuntime helpers
 pub fn encode_cursor_key(code: KeyCode, application_cursor: bool) -> Vec<u8> {
     match (code, application_cursor) {
         (KeyCode::Up, true) => b"\x1bOA".to_vec(),
@@ -74,7 +72,6 @@ pub fn encode_cursor_key(code: KeyCode, application_cursor: bool) -> Vec<u8> {
     }
 }
 
-#[allow(dead_code)] // exercised in input unit tests; pane runtime uses backend helpers
 pub fn encode_mouse_scroll(
     kind: MouseEventKind,
     column: u16,
@@ -92,7 +89,6 @@ pub fn encode_mouse_scroll(
     encode_mouse_cb(button, false, column, row, modifiers, encoding)
 }
 
-#[allow(dead_code)] // exercised in input unit tests; pane runtime uses backend helpers
 pub fn encode_mouse_button(
     kind: MouseEventKind,
     column: u16,
@@ -115,7 +111,6 @@ pub fn encode_mouse_button(
     encode_mouse_cb(button, release, column, row, modifiers, encoding)
 }
 
-#[allow(dead_code)] // only reached through mouse encoding helpers above
 fn encode_mouse_cb(
     base_button: u16,
     release: bool,
@@ -167,7 +162,6 @@ fn encode_mouse_cb(
     }
 }
 
-#[allow(dead_code)] // only reached through mouse encoding helpers above
 fn push_mouse_codepoint(bytes: &mut Vec<u8>, value: u32) -> Option<()> {
     let ch = char::from_u32(value)?;
     let mut buf = [0u8; 4];

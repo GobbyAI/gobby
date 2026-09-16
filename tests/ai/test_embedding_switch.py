@@ -35,7 +35,6 @@ class TestCollectionNameResolver:
         resolver = CollectionNameResolver()
         assert resolver.active_alias("memories") == "memories"
         assert resolver.active_alias("tool_embeddings") == "tool_embeddings"
-        assert resolver.active_alias("gobby_github_issues") == "gobby_github_issues"
 
     def test_physical_name_includes_run_id(self) -> None:
         resolver = CollectionNameResolver()
@@ -68,8 +67,8 @@ class TestCollectionNameResolver:
         aliases = resolver.all_active_aliases()
         assert set(aliases) == set(EMBEDDING_COLLECTION_KINDS)
 
-    def test_default_kinds_include_github_issues(self) -> None:
-        assert "gobby_github_issues" in EMBEDDING_COLLECTION_KINDS
+    def test_default_kinds_are_memories_and_tools(self) -> None:
+        assert EMBEDDING_COLLECTION_KINDS == ("memories", "tool_embeddings")
 
     def test_default_kinds_exclude_skills(self) -> None:
         assert "skills" not in EMBEDDING_COLLECTION_KINDS
@@ -234,10 +233,10 @@ class TestSwitchStateMachine:
         assert "memories" in names
         assert names["memories"] == "memories@4096-abc"
         assert "tool_embeddings" in names
-        assert "gobby_github_issues" in names
+        assert set(names) == {"memories", "tool_embeddings"}
 
     def test_active_alias_names(self) -> None:
         names = active_alias_names()
         assert "memories" in names
         assert names["memories"] == "memories"
-        assert "gobby_github_issues" in names
+        assert set(names) == {"memories", "tool_embeddings"}

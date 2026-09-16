@@ -80,22 +80,36 @@ class FakeVectorStore:
     def __init__(self) -> None:
         self.deletes: list[tuple[dict[str, str], str]] = []
         self.id_deletes: list[tuple[list[str], str]] = []
+        self.collection_deletes: list[str] = []
+        self.alias_deletes: list[str] = []
+        self.aliases = {"memories": "memories@old"}
+        self.collections = [
+            collection.name for collection in FakeVectorClient().get_collections().collections
+        ]
 
     async def _ensure_initialized(self) -> FakeVectorClient:
         return FakeVectorClient()
 
     async def get_aliases(self) -> dict[str, str]:
-        return {"memories": "memories@old"}
+        return dict(self.aliases)
 
     async def list_collection_names(self) -> list[str]:
-        response = FakeVectorClient().get_collections()
-        return [str(collection.name) for collection in response.collections]
+        return list(self.collections)
 
     async def delete(self, *, filters: dict[str, str], collection_name: str) -> None:
         self.deletes.append((filters, collection_name))
 
     async def delete_many(self, ids: list[str], *, collection_name: str) -> None:
         self.id_deletes.append((ids, collection_name))
+
+    async def delete_alias(self, alias_name: str) -> None:
+        self.alias_deletes.append(alias_name)
+        self.aliases.pop(alias_name, None)
+
+    async def delete_collection(self, collection_name: str) -> None:
+        self.collection_deletes.append(collection_name)
+        if collection_name in self.collections:
+            self.collections.remove(collection_name)
 
 
 @pytest.mark.asyncio
@@ -109,15 +123,15 @@ async def test_vector_cleanup_covers_active_and_staged_physical_collections() ->
         "memories@old",
         "memories@staged",
         "tool_embeddings@staged",
-        "gobby_github_issues@staged",
     }
     assert {name for _ids, name in vector_store.id_deletes} == {
         "memories@old",
         "memories@staged",
         "tool_embeddings@staged",
-        "gobby_github_issues@staged",
     }
     assert all(filters == {"project_id": "project-1"} for filters, _ in vector_store.deletes)
+    assert vector_store.collection_deletes == ["gobby_github_issues@staged"]
+    assert "gobby_github_issues@staged" not in vector_store.collections
 
 
 @pytest.mark.asyncio

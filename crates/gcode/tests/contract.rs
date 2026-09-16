@@ -256,6 +256,7 @@ fn evidence_command_contract_is_complete() {
         "continuation",
         "evidence_id",
         "excerpt_hash",
+        "numbered_excerpt",
         "record_hash",
     ] {
         assert!(keys.contains(&required.to_string()), "missing {required}");

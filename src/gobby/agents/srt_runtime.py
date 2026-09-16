@@ -16,6 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
+# TODO(#22407): workaround for an upstream Droid defect (factory-execute-supervisor
+# SIGKILLs every Execute command when its `ps` probe cannot run).
+# ON REMOVAL: delete this import outright -- nothing replaces it.
+from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_path_env
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox_policy import (
     SRT_SETTINGS_RELATIVE_PATH,
@@ -574,6 +578,15 @@ async def prepare_sandbox_launch(
         # bwrap masks denied temp roots before executing SRT's seccomp helper.
         # Re-expose the pinned runtime when isolated GOBBY_HOME lives under one.
         paths.read_paths.append(str(srt_install_root().resolve()))
+    # TODO(#22407): workaround for an upstream Droid defect. Seatbelt denies exec of
+    # setuid /bin/ps, so Droid's supervisor reads its failed probe as owner death and
+    # SIGKILLs its own process group, killing every Execute command.
+    # ON REMOVAL: delete this whole block -- nothing replaces it.
+    ps_shim_dir: Path | None = None
+    if config.backend == "srt" and provider == "droid":
+        ps_shim_dir = await asyncio.to_thread(droid_ps_shim_dir)
+        if ps_shim_dir is not None:
+            paths.read_paths.append(str(ps_shim_dir.resolve()))
     assert_sensitive_path_contract(paths.read_paths, paths.write_paths)
     if config.backend == "provider-native":
         assert resolver is not None
@@ -624,7 +637,14 @@ async def prepare_sandbox_launch(
         policy_path=str(policy_path),
         violation_path=str(violation_path),
         managed_bootstrap_path=effective_env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
-        provider_env={**run_environment, "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir())},
+        # TODO(#22407): workaround for an upstream Droid defect.
+        # ON REMOVAL: restore this exact line and delete the expanded form below.
+        # provider_env={**run_environment, "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir())},
+        provider_env={
+            **run_environment,
+            "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir()),
+            **ps_shim_path_env(ps_shim_dir, effective_env),
+        },
         provider_executable=provider_executable,
         node_path=str(installation.node),
         runner_path=str(installation.runner),

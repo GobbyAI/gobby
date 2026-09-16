@@ -995,38 +995,6 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks-ops",
-      "tool": "import_github_issues",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/task_github.py",
-        "symbol": "import_github_issues"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
-      "tool": "link_task_to_github_issue",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/task_github.py",
-        "symbol": "link_task_to_github_issue"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks-ops",
       "tool": "reindex_tasks",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
       "implementation": {
@@ -1354,19 +1322,6 @@
       "implementation": {
         "path": "src/gobby/cli/tasks/commits.py",
         "symbol": "diff_cmd"
-      },
-      "verification": [
-        "public-cli-inventory"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby tasks import github",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
-      "implementation": {
-        "path": "src/gobby/cli/tasks/main.py",
-        "symbol": "import_github"
       },
       "verification": [
         "public-cli-inventory"

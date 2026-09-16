@@ -9,8 +9,6 @@ type ProfilePayload = {
   skip_stages: string[];
   isolation: BuildProfile["isolation"];
   unattended: boolean;
-  delivery_mode: BuildProfile["delivery_mode"];
-  delivery_target_repo: string | null;
   enabled: boolean;
   source?: ProfileSource;
   project_id: string | null;
@@ -69,8 +67,6 @@ function profilePayload(
     skip_stages: profile.skip_stages,
     isolation: profile.isolation,
     unattended: profile.unattended,
-    delivery_mode: profile.delivery_mode,
-    delivery_target_repo: profile.delivery_target_repo || null,
     enabled: profile.enabled,
     project_id: profile.project_id,
     tags: profile.tags ?? [],

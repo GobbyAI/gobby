@@ -12,12 +12,12 @@ from gobby.tasks.close_checklist import (
     first_failed_gate,
 )
 from gobby.tasks.command_equivalence import scope_difference
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
-    merge_transcript_evidence,
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)

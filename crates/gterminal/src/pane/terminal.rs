@@ -1,5 +1,6 @@
-use std::borrow::Cow;
+#[cfg(test)]
 use std::collections::hash_map::DefaultHasher;
+#[cfg(test)]
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -28,11 +29,10 @@ use super::{
     kitty_keyboard::KittyKeyboardTracker,
     osc::{
         maybe_filter_primary_screen_scrollback_clear, parse_reported_cwd,
-        restore_host_terminal_theme_if_needed, write_host_terminal_theme_selective,
-        AgentOscStateTracker, DefaultColorEvent, DefaultColorEventTracker, DefaultColorOscTracker,
-        DefaultColorQuery, DefaultColorTrackedEvent, OscDebugTracker,
+        write_host_terminal_theme_selective, AgentOscStateTracker, DefaultColorEvent,
+        DefaultColorEventTracker, DefaultColorOscTracker, DefaultColorQuery,
+        DefaultColorTrackedEvent, OscDebugTracker,
     },
-    xtgettcap::{XtgettcapQueryTracker, XtgettcapResponse},
 };
 
 const DEFAULT_DETECTION_ROWS: usize = 24;
@@ -45,12 +45,14 @@ const MODE_MOUSE_ANY_MOTION: u16 = 1003;
 
 pub use crate::layout::ScrollMetrics;
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TerminalTextPoint {
     pub row: u32,
     pub col: u16,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TerminalTextMatch {
     pub start: TerminalTextPoint,
@@ -60,6 +62,7 @@ pub(crate) struct TerminalTextMatch {
     pub scan_screen: crate::ghostty::ActiveScreen,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerminalWordMotion {
     NextStart,
@@ -67,6 +70,7 @@ pub(crate) enum TerminalWordMotion {
     NextEnd,
 }
 
+#[cfg(test)]
 const COPY_MODE_WORD_SEPARATORS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +83,7 @@ pub struct TerminalCursorState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TerminalDirtyPatch {
+pub struct TerminalDirtyPatch {
     pub rows: Vec<(u16, Vec<CellData>)>,
 }
 
@@ -169,7 +173,6 @@ pub(crate) struct GhosttyPaneCore {
     pub child_default_background_changed: bool,
     pub osc_debug_tracker: OscDebugTracker,
     pub agent_osc_state: AgentOscStateTracker,
-    pub xtgettcap_query_tracker: XtgettcapQueryTracker,
     decscusr_tracker: DecscusrTracker,
     cursor_settle_state: CursorPositionSettleState,
     windows_powershell_prompt_cwd_reporting: bool,
@@ -226,6 +229,7 @@ impl PaneTerminal {
         self.ghostty.scroll_metrics()
     }
 
+    #[cfg(test)]
     pub(crate) fn search_text_matches(
         &self,
         query: &str,
@@ -237,6 +241,7 @@ impl PaneTerminal {
         buffer.search(query, case_sensitive, active_screen)
     }
 
+    #[cfg(test)]
     pub(crate) fn text_match_is_current(&self, text_match: TerminalTextMatch) -> bool {
         self.text_matches_are_current(&[text_match])
             .first()
@@ -244,6 +249,7 @@ impl PaneTerminal {
             .unwrap_or(false)
     }
 
+    #[cfg(test)]
     pub(crate) fn text_matches_are_current(&self, text_matches: &[TerminalTextMatch]) -> Vec<bool> {
         if text_matches.is_empty() {
             return Vec::new();
@@ -291,6 +297,7 @@ impl PaneTerminal {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn word_motion_target(
         &self,
         row: u32,
@@ -350,6 +357,7 @@ impl PaneTerminal {
         }
     }
 
+    #[cfg(test)]
     fn retained_text_buffer(&self) -> Option<(RetainedTextBuffer, crate::ghostty::ActiveScreen)> {
         let (cols, rows, active_screen) = {
             let core = self.ghostty.core.lock().ok()?;
@@ -367,16 +375,6 @@ impl PaneTerminal {
 
     pub fn wheel_routing(&self) -> Option<crate::pane::WheelRouting> {
         self.ghostty.wheel_routing()
-    }
-
-    pub(crate) fn screen_text_snapshot(
-        &self,
-    ) -> Option<(
-        crate::ghostty::ActiveScreen,
-        u16,
-        Vec<crate::ghostty::ScreenTextRow>,
-    )> {
-        self.ghostty.screen_text_snapshot()
     }
 
     pub fn cursor_state(&self) -> Option<TerminalCursorState> {
@@ -401,32 +399,12 @@ impl PaneTerminal {
         self.ghostty.visible_ansi()
     }
 
-    pub fn viewport_bottom_text(&self) -> String {
-        self.ghostty.viewport_bottom_text()
-    }
-
-    pub fn recent_text(&self, lines: usize) -> String {
-        self.ghostty.recent_text(lines)
-    }
-
-    pub(crate) fn recent_text_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
-        self.ghostty.recent_text_snapshot(lines)
-    }
-
-    pub(crate) fn recent_ansi_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
-        self.ghostty.recent_ansi_snapshot(lines)
-    }
-
-    pub(crate) fn recent_unwrapped_text_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
-        self.ghostty.recent_unwrapped_text_snapshot(lines)
+    pub fn recent_unwrapped_text(&self, lines: usize) -> String {
+        self.ghostty.recent_unwrapped_text(lines)
     }
 
     pub fn recent_unwrapped_ansi(&self, lines: usize) -> String {
         self.ghostty.recent_unwrapped_ansi(lines)
-    }
-
-    pub(crate) fn recent_unwrapped_ansi_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
-        self.ghostty.recent_unwrapped_ansi_snapshot(lines)
     }
 
     pub fn extract_selection(&self, selection: &crate::selection::Selection) -> Option<String> {
@@ -457,17 +435,6 @@ impl PaneTerminal {
         self.ghostty.visible_hyperlinks(area)
     }
 
-    pub fn kitty_image_placements_with_data_filter<F>(
-        &self,
-        needs_data: F,
-    ) -> Vec<crate::ghostty::KittyImagePlacement>
-    where
-        F: FnMut(crate::ghostty::KittyImageDescriptor) -> bool,
-    {
-        self.ghostty
-            .kitty_image_placements_with_data_filter(needs_data)
-    }
-
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         self.ghostty.apply_host_terminal_theme(theme);
     }
@@ -477,15 +444,6 @@ impl PaneTerminal {
         appearance: Option<crate::terminal_theme::HostAppearance>,
     ) -> Option<Bytes> {
         self.ghostty.apply_host_terminal_appearance(appearance)
-    }
-
-    pub fn has_transient_default_color_override(&self) -> bool {
-        self.ghostty.has_transient_default_color_override()
-    }
-
-    pub fn maybe_restore_host_terminal_theme(&self, pane_id: PaneId, shell_pid: u32) -> bool {
-        self.ghostty
-            .maybe_restore_host_terminal_theme(pane_id, shell_pid)
     }
 
     pub fn terminal_title(&self) -> Option<String> {
@@ -500,22 +458,11 @@ impl PaneTerminal {
         self.ghostty.osc_progress()
     }
 
-    pub fn clear_osc_state(&self) {
-        self.ghostty.clear_osc_state()
-    }
-
     pub fn keyboard_protocol(
         &self,
         fallback: crate::input::KeyboardProtocol,
     ) -> crate::input::KeyboardProtocol {
         self.ghostty.keyboard_protocol().unwrap_or(fallback)
-    }
-
-    #[cfg(unix)]
-    pub fn kitty_keyboard_state_ansi(&self) -> Option<String> {
-        self.ghostty
-            .kitty_keyboard_state_ansi()
-            .filter(|ansi| !ansi.is_empty())
     }
 
     pub fn encode_terminal_key(
@@ -560,6 +507,7 @@ impl PaneTerminal {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TextClass {
     Whitespace,
@@ -567,6 +515,7 @@ enum TextClass {
     Word,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct TextAtom {
     point: Option<TerminalTextPoint>,
@@ -574,6 +523,7 @@ struct TextAtom {
     class: TextClass,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct TextSpan {
     byte_start: usize,
@@ -582,12 +532,14 @@ struct TextSpan {
     end: TerminalTextPoint,
 }
 
+#[cfg(test)]
 #[derive(Debug, Default)]
 struct LogicalTextLine {
     text: String,
     spans: Vec<TextSpan>,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct RetainedTextBuffer {
     cols: u16,
@@ -595,8 +547,8 @@ struct RetainedTextBuffer {
     atoms: Vec<TextAtom>,
 }
 
+#[cfg(test)]
 impl RetainedTextBuffer {
-    #[cfg(test)]
     fn new(cols: u16, rows: Vec<crate::ghostty::ScreenTextRow>) -> Self {
         Self::build(cols, rows, 0, true, true)
     }
@@ -884,6 +836,7 @@ impl RetainedTextBuffer {
     }
 }
 
+#[cfg(test)]
 fn terminal_cell_text(graphemes: &[u32]) -> String {
     if graphemes.is_empty()
         || graphemes.first().copied() == Some(crate::ghostty::KITTY_UNICODE_PLACEHOLDER)
@@ -896,6 +849,7 @@ fn terminal_cell_text(graphemes: &[u32]) -> String {
         .collect()
 }
 
+#[cfg(test)]
 fn text_class(text: &str) -> TextClass {
     let Some(ch) = text.chars().next() else {
         return TextClass::Whitespace;
@@ -909,6 +863,7 @@ fn text_class(text: &str) -> TextClass {
     }
 }
 
+#[cfg(test)]
 fn text_fingerprint(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);

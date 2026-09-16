@@ -1529,7 +1529,6 @@ def _project_row(project_id: str, repo_path: Path | None) -> dict[str, Any]:
         "id": project_id,
         "name": project_id,
         "repo_path": str(repo_path) if repo_path is not None else None,
-        "github_url": None,
         "created_at": datetime(2025, 1, 1, tzinfo=UTC),
         "updated_at": datetime(2025, 1, 1, tzinfo=UTC),
     }

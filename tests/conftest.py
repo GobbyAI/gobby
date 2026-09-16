@@ -529,7 +529,6 @@ def isolated_checkout_factory(tmp_path: Path) -> "IsolatedCheckoutFactory":
         db: "HubDatabase",
         name: str,
         *,
-        github_url: str | None = None,
         root: "str | Path | None" = None,
     ) -> "IsolatedCheckoutProject":
         nonlocal counter
@@ -541,7 +540,6 @@ def isolated_checkout_factory(tmp_path: Path) -> "IsolatedCheckoutFactory":
             db,
             checkout_root,
             name=name,
-            github_url=github_url,
             machine_id=require_machine_id(),
         )
 
@@ -563,7 +561,6 @@ def sample_git_project(
     project = project_manager.update(
         sample_project["id"],
         repo_path=str(repo_path),
-        github_url="https://github.com/test/test-project",
     )
     assert project is not None
     # Project rows no longer carry repo_path; expose the fixture's checkout root so

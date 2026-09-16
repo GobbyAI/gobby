@@ -1,0 +1,14 @@
+# gitleaks configuration for Gobby.
+#
+# The pre-commit `gitleaks` hook declares `pass_filenames: false` and scans the
+# staged diff itself, so pre-commit's `exclude:` cannot narrow it. Scan scope
+# belongs here.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored upstream sources are not ours to edit"
+paths = [
+  '''^crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/''',
+]

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from gobby.storage.delivery import upsert_merged_campaign_in_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
@@ -296,13 +295,7 @@ def _complete_terminal_delivery_stage_for_close(
     if not _is_terminal_delivery_stage(row):
         return
 
-    completion_commit_sha = _completion_commit_sha_for_stage(
-        conn,
-        task_id,
-        row["stage_name"],
-        commit_sha,
-    )
-    cursor = conn.execute(
+    conn.execute(
         """
         UPDATE task_stage_states
            SET state = 'done',
@@ -319,46 +312,16 @@ def _complete_terminal_delivery_stage_for_close(
             now,
             completed_by_session_id,
             "session" if completed_by_session_id else "system",
-            completion_commit_sha,
+            commit_sha,
             now,
             task_id,
             row["stage_name"],
         ),
     )
-    if cursor.rowcount > 0 and row["stage_name"] == "merge":
-        upsert_merged_campaign_in_transaction(
-            conn,
-            task_id,
-            merge_sha=completion_commit_sha,
-        )
 
 
 def _is_terminal_delivery_stage(row: Any) -> bool:
     return bool(row["is_terminal"]) and row["category"] == "delivery"
-
-
-def _completion_commit_sha_for_stage(
-    conn: Transaction,
-    task_id: str,
-    stage_name: str,
-    fallback_commit_sha: str | None,
-) -> str | None:
-    if stage_name != "merge":
-        return fallback_commit_sha
-    row = conn.execute(
-        """
-        SELECT merge_sha
-          FROM task_delivery_campaigns
-         WHERE task_id = %s
-           AND state = 'merged'
-           AND merge_sha IS NOT NULL
-           AND merge_sha != ''
-        """,
-        (task_id,),
-    ).fetchone()
-    if row is None:
-        return fallback_commit_sha
-    return row["merge_sha"] or fallback_commit_sha
 
 
 def _cascade_close_descendants(

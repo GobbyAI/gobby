@@ -88,7 +88,7 @@ variables:
     description: Default unlocked_tools to empty list
   is_subagent:
     value: false
-    description: "True while a native Claude Code, Codex, or Grok subagent is active (toggled by SUBAGENT_START/STOP hooks)"
+    description: "True while a native Claude Code, Codex, or Grok subagent is active. Claude/Codex toggle it on SUBAGENT_START/STOP. Grok fires one SubagentStart per batch of children, so child hooks that share the parent's live process (pane, parent_pid, parent_create_time) bind to that session and re-derive is_subagent. Parent BEFORE_AGENT still resets the counter; process-bound child BEFORE_AGENT does not."
   loaded_skills:
     value: []
     description: "Skill names the agent has fetched with gobby-skills:get_skill this session"

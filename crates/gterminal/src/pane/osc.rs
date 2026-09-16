@@ -1,10 +1,13 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
+#[cfg(test)]
 use tracing::info;
 
+#[cfg(test)]
 use crate::layout::PaneId;
 
+#[cfg(test)]
 use super::terminal::GhosttyPaneCore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +42,7 @@ pub(super) struct DefaultColorTrackedEvent {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct DefaultColorOscTracker {
+pub(crate) struct DefaultColorOscTracker {
     state: DefaultColorOscTrackerState,
     body: Vec<u8>,
 }
@@ -150,7 +153,7 @@ fn is_default_color_set_osc(body: &[u8]) -> bool {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct DefaultColorEventTracker {
+pub(crate) struct DefaultColorEventTracker {
     state: DefaultColorOscTrackerState,
     body: Vec<u8>,
     pending: Vec<DefaultColorTrackedEvent>,
@@ -456,7 +459,7 @@ const AGENT_OSC_MAX_CHARS: usize = 256;
 /// - `latest_progress` — last OSC 9 payload (the part after `9;`), stored
 ///   as-is after sanitization. E.g. `"4;3;"` or `"4;0;"`.
 #[derive(Debug, Default)]
-pub(super) struct AgentOscStateTracker {
+pub(crate) struct AgentOscStateTracker {
     collector: OscStreamCollector,
     latest_title: Option<String>,
     terminal_title: Option<String>,
@@ -494,6 +497,7 @@ impl AgentOscStateTracker {
         self.terminal_title.as_deref()
     }
 
+    #[cfg(test)]
     #[cfg(unix)]
     pub(super) fn seed_terminal_title(&mut self, title: Option<String>) {
         self.terminal_title = title;
@@ -501,17 +505,16 @@ impl AgentOscStateTracker {
 
     /// Returns the latest retained OSC title, or `""` if none has been seen or
     /// the last title was an empty clear.
-    #[allow(dead_code)] // used by terminal.rs; full call chain wired in Stage C
     pub(super) fn latest_title(&self) -> &str {
         self.latest_title.as_deref().unwrap_or("")
     }
 
     /// Returns the latest retained OSC 9 progress payload, or `""` if none.
-    #[allow(dead_code)] // used by terminal.rs; full call chain wired in Stage C
     pub(super) fn latest_progress(&self) -> &str {
         self.latest_progress.as_deref().unwrap_or("")
     }
 
+    #[cfg(test)]
     /// Drops the retained title and progress so a new foreground agent cannot
     /// inherit OSC evidence emitted by a previous process. The in-flight parse
     /// state is kept: a sequence spanning the agent change finalizes normally
@@ -542,7 +545,7 @@ fn sanitize_agent_osc_string(payload: &[u8], max_chars: usize) -> String {
 /// debugging agent title/status behavior. This is intentionally passive:
 /// nothing here affects terminal rendering or detection state.
 #[derive(Debug)]
-pub(super) struct OscDebugTracker {
+pub(crate) struct OscDebugTracker {
     enabled: bool,
     collector: OscStreamCollector,
     pending: Vec<OscDebugEvent>,
@@ -682,11 +685,13 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn contains_scrollback_clear_sequence(bytes: &[u8]) -> bool {
     bytes.windows(4).any(|window| window == b"\x1b[3J")
         || bytes.windows(5).any(|window| window == b"\x1b[?3J")
 }
 
+#[cfg(test)]
 fn strip_scrollback_clear_sequences<'a>(bytes: &'a [u8]) -> Cow<'a, [u8]> {
     if !contains_scrollback_clear_sequence(bytes) {
         return Cow::Borrowed(bytes);
@@ -719,10 +724,12 @@ pub(super) fn maybe_filter_primary_screen_scrollback_clear<'a>(
     Cow::Borrowed(bytes)
 }
 
+#[cfg(test)]
 pub(super) fn should_restore_host_terminal_theme(alternate_screen: bool) -> bool {
     !alternate_screen
 }
 
+#[cfg(test)]
 pub(super) fn write_host_terminal_theme(
     terminal: &mut crate::ghostty::Terminal,
     theme: crate::terminal_theme::TerminalTheme,
@@ -765,6 +772,7 @@ fn write_host_default_color(
     terminal.write(sequence.as_bytes());
 }
 
+#[cfg(test)]
 pub(super) fn restore_host_terminal_theme_if_needed(
     core: &mut GhosttyPaneCore,
     pane_id: PaneId,

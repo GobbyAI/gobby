@@ -9,7 +9,6 @@ Tools included:
 - Expansion: start/get/latest/resume/cancel/validate run, QA result, QA coverage, plan validation
 - Affected files (4): set, get, find_overlaps, wire_from_run
 - Artifacts (5): set/get artifact pointers and append idempotent description sections
-- GitHub (2): import_github_issues, link_task_to_github_issue
 - Reindex (1): reindex_tasks
 - Build (1): build_task
 """
@@ -19,11 +18,9 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.build import create_build_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.task_github import create_github_registry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._delivery import create_delivery_registry
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
@@ -90,7 +87,7 @@ def create_task_ops_registry(
 
     registry = _TaskOpsToolRegistry(
         name="gobby-tasks-ops",
-        description="Task operations - expansion, affected files, GitHub, reindex",
+        description="Task operations - expansion, affected files, reindex",
     )
 
     # Merge expansion tools
@@ -107,12 +104,6 @@ def create_task_ops_registry(
 
     # Merge stage-registry configuration tools
     registry.merge_from(create_stage_registry_ops_registry(ctx))
-
-    # Merge PR/merge delivery-state tools
-    registry.merge_from(create_delivery_registry(ctx))
-
-    # Merge GitHub integration tools (2 tools)
-    registry.merge_from(create_github_registry(ctx))
 
     # Merge reindex tool (1 tool)
     registry.merge_from(create_reindex_registry(ctx))

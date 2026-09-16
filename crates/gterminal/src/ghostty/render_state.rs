@@ -83,8 +83,15 @@ impl RenderState {
             size: mem::size_of::<ffi::GhosttyRenderStateColors>(),
             ..Default::default()
         };
+        // SAFETY: the out pointer is a live GhosttyRenderStateColors with its
+        // size field set, the output type DATA_COLORS documents.
         unsafe {
-            ffi::ghostty_render_state_colors_get(self.raw, &mut colors).into_result()?;
+            ffi::ghostty_render_state_get(
+                self.raw,
+                ffi::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_COLORS,
+                (&mut colors as *mut ffi::GhosttyRenderStateColors).cast(),
+            )
+            .into_result()?;
         }
         Ok(RenderColors {
             background: colors.background.into(),
@@ -172,7 +179,7 @@ impl KeyEvent {
         unsafe { ffi::ghostty_key_event_set_action(self.raw, action) }
     }
 
-    pub fn set_key(&mut self, key: u32) {
+    pub fn set_key(&mut self, key: ffi::GhosttyKey) {
         unsafe { ffi::ghostty_key_event_set_key(self.raw, key) }
     }
 
@@ -386,6 +393,8 @@ pub struct RowIter<'a> {
 }
 
 impl<'a> RowIter<'a> {
+    // reason: FFI cursor advance returns bool rather than Option; not std Iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         // SAFETY: iterator handle is valid while self is alive.
         unsafe { ffi::ghostty_render_state_row_iterator_next(self.iterator.raw) }
@@ -546,6 +555,8 @@ impl Default for CellBasicData {
 }
 
 impl<'a> RowCellIter<'a> {
+    // reason: FFI cursor advance returns bool rather than Option; not std Iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         // SAFETY: cells handle is valid while self is alive.
         unsafe { ffi::ghostty_render_state_row_cells_next(self.cells.raw) }
@@ -835,4 +846,3 @@ impl<'a> RowCellIter<'a> {
         Ok(())
     }
 }
-

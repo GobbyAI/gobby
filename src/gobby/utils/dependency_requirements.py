@@ -55,16 +55,16 @@ class SrtRelease:
 
 SRT_RELEASE = SrtRelease(
     package="@anthropic-ai/sandbox-runtime",
-    version="0.0.66",
+    version="0.0.76",
     tarball_url=(
-        "https://registry.npmjs.org/@anthropic-ai/sandbox-runtime/-/sandbox-runtime-0.0.66.tgz"
+        "https://registry.npmjs.org/@anthropic-ai/sandbox-runtime/-/sandbox-runtime-0.0.76.tgz"
     ),
-    tarball_sha256="10088a88db2d734d3a7ccf57d83e0b781ab08669361b45947637e3fd51d7c4ee",
+    tarball_sha256="8696ddc02f4ec0b7c7ce300d3a4bf61be85e7af9c67157895158401044cdccdd",
     npm_integrity=(
-        "sha512-OE7QiGZJXe7ZshP47U2vk2z9FGSyiSN4ca9krVrE28LS2Qj0AHRWZz+"
-        "gAce6FzG3gx/4OjNFwIhDuHXnI0WWwA=="
+        "sha512-wIC++TvCopRPJcX/v/PCp/SjYOWk/cAVq+VF9v6E3WwkriFP9uu2wvPJ2E+"
+        "wMrNa3i3h3ew9zTpHcmyGLBKo0w=="
     ),
-    lockfile_sha256="aa0e24fece2864c9a561db55ac5d528af202b17107675be89c1bce65c289ee3f",
+    lockfile_sha256="10a6bb1ee25325c9a3558d212b30d74370c140c50da9fdd698eae618f3839831",
     runner_sha256="5cf51d83ad99e670ca2bd2141411dd1f7e645ea444e0b8508296fb4580afa078",
 )
 

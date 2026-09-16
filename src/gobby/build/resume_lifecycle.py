@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.lifecycle_state import current_stage_name, record_build_event
 from gobby.build.options import BuildOptions, retry_attempt_cap
 from gobby.build.results import BuildResult
@@ -81,12 +80,6 @@ async def resume_existing_lifecycle(
         resume_skip_stages,
     )
     apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
-    await record_build_delivery_campaign(
-        db,
-        project_id=project_id,
-        task_id=task.id,
-        opts=resume_opts,
-    )
     _validate_task_ref_isolation_artifacts(task_manager, task, resume_opts.isolation)
     existing_target_branch = task_manager.artifacts.get_artifacts(task.id).target_branch
     task_manager.artifacts.set_artifacts_atomic(

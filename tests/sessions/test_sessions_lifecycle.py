@@ -1655,6 +1655,90 @@ class TestProcessSessionTranscriptParsers:
         assert snapshot.context_usage_ratio == pytest.approx(104960 / 258400)
 
     @pytest.mark.asyncio
+    async def test_grok_turn_completed_does_not_become_occupancy(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """Batch Grok occupancy is the compact-epoch max totalTokens, never turn usage."""
+        transcript_path = tmp_path / "grok-session.jsonl"
+
+        def update_line(update: dict[str, object], meta: dict[str, object]) -> str:
+            params = {"sessionId": "grok-session", "update": update, "_meta": meta}
+            return json.dumps({"method": "session/update", "params": params, "timestamp": 1})
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    update_line(
+                        {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "use_tool"},
+                        {"totalTokens": 322_811, "totalContextTokens": 500_000},
+                    ),
+                    update_line(
+                        {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": "call-1",
+                            "status": "completed",
+                        },
+                        {"totalTokens": 142_169, "totalContextTokens": 500_000},
+                    ),
+                    update_line(
+                        {
+                            "sessionUpdate": "turn_completed",
+                            "prompt_id": "prompt-1",
+                            "usage": {
+                                "inputTokens": 2_477_977,
+                                "outputTokens": 6_438,
+                                "cachedReadTokens": 2_344_576,
+                                "cacheCreationTokens": 0,
+                                "modelCalls": 18,
+                            },
+                        },
+                        {"eventId": "turn-1", "totalContextTokens": 500_000},
+                    ),
+                    update_line(
+                        {
+                            "sessionUpdate": "hook_execution",
+                            "hookName": "PostToolUse",
+                            "status": "success",
+                        },
+                        {"eventId": "hook-1", "totalContextTokens": 500_000},
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        session = MagicMock()
+        session.source = "grok"
+        session.transcript_path = str(transcript_path)
+        session.project_id = "project-id"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+
+        zero_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = [
+            dict(zero_totals),
+            dict(zero_totals),
+        ]
+        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        events = manager.token_event_store.record_batch.call_args.args[0]
+        assert [event.metadata for event in events] == [{"content_type": "turn_completed"}]
+        manager.session_manager.update_context_usage.assert_called_once()
+        snapshot = manager.session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.context_used_tokens == 322_811
+        assert snapshot.confidence == "reported"
+
+    @pytest.mark.asyncio
     async def test_session_not_found_returns_early(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:

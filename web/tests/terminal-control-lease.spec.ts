@@ -138,9 +138,9 @@ async function installApiMocks(page: Page, theme: "dark" | "light") {
               machine_id: "machine-1",
               root_path: "/tmp/terminal-lease",
             },
-            github_url: null,
-            github_repo: null,
-            linear_team_id: null,
+
+
+
             approval_rules: [],
             created_at: "2026-09-11T00:00:00Z",
             updated_at: "2026-09-11T00:00:00Z",

@@ -56,8 +56,8 @@ const CLAIMED_TASK_BASE = {
   complexity_score: null,
   is_expanded: false,
   expansion_status: "not_expanded",
-  github_pr_number: null,
-  github_repo: null,
+
+
   allow_automation: false,
   yolo: false,
   isolation: "worktree",

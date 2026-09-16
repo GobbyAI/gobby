@@ -18,6 +18,7 @@ from gobby.config.embedding_keys import (
 )
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.secrets import SecretStore
 from gobby.utils import deps
 from gobby.utils.dependency_requirements import DependencyReport, DependencyStatus
@@ -276,6 +277,113 @@ def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         assert result["qwen"] is True
         assert result["droid"] is True
         assert result["agy"] is True
+
+
+def test_coding_cli_hook_drift_reports_template_events_without_gobby_owned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_AGY_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
+    grok_hooks = tmp_path / ".grok" / "hooks" / "gobby.json"
+    grok_hooks.parent.mkdir(parents=True)
+    grok_hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "ghook --gobby-owned --cli=grok --type=session_start",
+                                }
+                            ]
+                        }
+                    ],
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "echo not-owned",
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+    )
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        drift = deps.get_coding_cli_hook_drift()
+
+    assert "claude" not in drift
+    assert "codex" not in drift
+    assert "qwen" not in drift
+    assert "droid" not in drift
+    assert "agy" not in drift
+    missing = drift["grok"]
+    assert "SessionStart" not in missing
+    assert "Stop" in missing
+    assert "StopCancelled" in missing
+    assert "PendingInteraction" in missing
+    assert "InteractionResolved" in missing
+
+
+def test_init_services_logs_one_warning_per_stale_cli(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.runner_init import services as services_mod
+
+    for name in (
+        "_init_llm_service",
+        "_init_memory_stack",
+        "_init_code_indexer",
+        "_init_mcp_stack",
+        "_init_memory_backup",
+        "_init_message_processor",
+        "_init_task_validator",
+        "_init_project_context",
+    ):
+        monkeypatch.setattr(services_mod, name, lambda runner: None)
+    monkeypatch.setattr(
+        "gobby.utils.deps.get_coding_cli_hook_drift",
+        lambda: {"grok": ["StopCancelled"], "claude": ["Setup"]},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.runner_init.services"):
+        services_mod.init_services(MagicMock())
+
+    messages = [record.getMessage() for record in caplog.records]
+    grok_warnings = [
+        message for message in messages if "Coding CLI grok hooks are stale" in message
+    ]
+    claude_warnings = [
+        message for message in messages if "Coding CLI claude hooks are stale" in message
+    ]
+    assert len(grok_warnings) == 1
+    assert "StopCancelled" in grok_warnings[0]
+    assert len(claude_warnings) == 1
+    assert "Setup" in claude_warnings[0]
+
+
+def test_coding_cli_status_shows_stale_hook_events() -> None:
+    result = format_status_message(
+        running=True,
+        deps_info={
+            "coding_clis": {
+                "grok": "1.0.30",
+                "hooks": {"grok": True},
+                "hook_drift": {
+                    "grok": ["StopCancelled", "PendingInteraction", "InteractionResolved"]
+                },
+            }
+        },
+    )
+    grok_line = next(line for line in result.splitlines() if "Grok CLI:" in line)
+    assert "stale hook events: StopCancelled, PendingInteraction, InteractionResolved" in grok_line
 
 
 def test_check_hooks_in_file(tmp_path: Path) -> None:
@@ -819,7 +927,14 @@ def test_check_config_mismatches_ignores_non_string_chat_candidates() -> None:
     assert issues == []
 
 
-def test_collect_all_deps() -> None:
+@pytest.mark.parametrize(("grant", "include_srt"), [(None, True), ("/run/grant.json", False)])
+def test_collect_all_deps(
+    monkeypatch: pytest.MonkeyPatch, grant: str | None, include_srt: bool
+) -> None:
+    if grant is None:
+        monkeypatch.delenv(MANAGED_EXECUTION_BOOTSTRAP_ENV, raising=False)
+    else:
+        monkeypatch.setenv(MANAGED_EXECUTION_BOOTSTRAP_ENV, grant)
     healthy = DependencyStatus(
         state="healthy",
         installed_version="9",
@@ -848,7 +963,7 @@ def test_collect_all_deps() -> None:
                 optional={},
                 services={"docker_running": True},
             ),
-        ),
+        ) as collect_report,
         patch("gobby.utils.deps.get_tailscale_info", return_value={}),
         patch("gobby.utils.deps.get_configured_embedding_provider", return_value="lmstudio"),
         patch("gobby.utils.deps.get_ollama_info", return_value={}),
@@ -865,6 +980,8 @@ def test_collect_all_deps() -> None:
         assert res["services"]["docker_running"] is True
         assert res["dependencies"]["required"]["git"]["state"] == "healthy"
         assert res["integrations"]["embeddings_provider"] == "lmstudio"
+    # Sandboxed status cannot read tools/srt; the daemon verified SRT before launch.
+    assert collect_report.call_args.kwargs["include_srt"] is include_srt
 
 
 @pytest.mark.parametrize(

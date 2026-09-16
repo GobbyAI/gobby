@@ -82,8 +82,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A spawned run whose provider reads nothing from its terminal (Grok ``--single``):
-# typed commands never arrive and the interrupt key is a plain SIGINT (#22364).
+# A spawned run whose provider reads nothing from its terminal -- Grok ``--single``
+# (#22364) and ``droid exec`` (#22402): typed commands never arrive, so the pane keeps
+# them unconsumed. For Grok the interrupt key is also a plain SIGINT that kills the run.
 _HEADLESS_AGENT_RUN_ERROR_CODE = "headless_agent_run"
 _HEADLESS_AGENT_RUN_GUIDANCE = (
     "Do not call set_handoff again in this run. Continue the task with the remaining "

@@ -35,51 +35,6 @@ fn cargo_build(args: &[&str], extra_env: &[(&str, OsString)]) -> (i32, String) {
     (code, text)
 }
 
-fn zig_global_cache_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("ZIG_GLOBAL_CACHE_DIR") {
-        return PathBuf::from(dir);
-    }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .join(".cache/zig")
-}
-
-fn seed_temp_zig_global_cache(temp_global: &Path, source: &Path) -> Result<(), String> {
-    let packages = source.join("p");
-    if !packages.is_dir() {
-        return Err(format!(
-            "global Zig cache lacks package directory {}",
-            packages.display()
-        ));
-    }
-    fs::create_dir_all(temp_global).map_err(|err| err.to_string())?;
-    let dest = temp_global.join("p");
-    std::os::unix::fs::symlink(&packages, &dest).map_err(|err| {
-        format!(
-            "symlink {} -> {}: {err}",
-            packages.display(),
-            dest.display()
-        )
-    })?;
-    Ok(())
-}
-
-fn zig_missing_package(stderr: &str) -> Option<String> {
-    let lowered = stderr.to_ascii_lowercase();
-    if !(lowered.contains("403")
-        || lowered.contains("unable to fetch")
-        || lowered.contains("unable to connect"))
-    {
-        return None;
-    }
-    stderr
-        .lines()
-        .map(str::trim)
-        .find(|line| line.contains("http") || line.contains("error:") || line.contains("403"))
-        .map(str::to_string)
-}
-
 #[test]
 #[cfg(unix)]
 fn build_env_uses_private_target_dir() {
@@ -129,8 +84,8 @@ fn missing_zig_reports_requirement() {
     );
     assert_ne!(code, 0, "vt-engine build must fail without zig:\n{text}");
     assert!(
-        text.contains("Zig 0.15") || text.contains("0.15"),
-        "missing zig must name Zig 0.15:\n{text}"
+        text.contains("Zig 0.16"),
+        "missing zig must name Zig 0.16:\n{text}"
     );
 }
 
@@ -173,23 +128,9 @@ fn darwin_nonsimd_archive_links_every_member() {
     let vendor = workspace_root().join("crates/gterminal/vendor/libghostty-vt");
     let prefix = temp.path().join("install");
     let cache = temp.path().join("cache");
-    let global_source = zig_global_cache_dir();
-    let temp_global = temp.path().join("global-cache");
-    if let Err(reason) = seed_temp_zig_global_cache(&temp_global, &global_source) {
-        eprintln!("SKIP: darwin_nonsimd_archive_links_every_member: {reason}");
-        return;
-    }
-    let uucode = temp_global
-        .join("p")
-        .join("uucode-0.2.0-ZZjBPqZVVABQepOqZHR7vV_NcaN-wats0IB6o-Exj6m9");
-    if !uucode.exists() {
-        eprintln!(
-            "SKIP: darwin_nonsimd_archive_links_every_member: global Zig cache lacks package uucode-0.2.0-ZZjBPqZVVABQepOqZHR7vV_NcaN-wats0IB6o-Exj6m9"
-        );
-        return;
-    }
     let version = fs::read_to_string(vendor.join("VERSION")).expect("vendor version");
-    let output = Command::new(std::env::var_os("ZIG").unwrap_or_else(|| "zig".into()))
+    let mut command = Command::new(std::env::var_os("ZIG").unwrap_or_else(|| "zig".into()));
+    command
         .current_dir(&vendor)
         .args([
             "build",
@@ -203,22 +144,16 @@ fn darwin_nonsimd_archive_links_every_member() {
         .arg("--prefix")
         .arg(&prefix)
         .arg("--cache-dir")
-        .arg(&cache)
-        .arg("--global-cache-dir")
-        .arg(&temp_global)
-        .env("ZIG_GLOBAL_CACHE_DIR", &temp_global)
-        .output()
-        .expect("build non-SIMD archive with Zig");
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if let Some(missing) = zig_missing_package(&stderr) {
-            eprintln!(
-                "SKIP: darwin_nonsimd_archive_links_every_member: global Zig cache lacks package: {missing}"
-            );
-            return;
-        }
-        panic!("non-SIMD Zig build failed:\n{stderr}");
+        .arg(&cache);
+    if let Some(system_dir) = std::env::var_os("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR") {
+        command.arg("--system").arg(system_dir);
     }
+    let output = command.output().expect("build non-SIMD archive with Zig");
+    assert!(
+        output.status.success(),
+        "non-SIMD Zig build failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let archive = prefix.join("lib/libghostty-vt.a");
     let members = Command::new("ar")
         .arg("t")

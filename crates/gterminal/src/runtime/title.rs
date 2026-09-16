@@ -1,5 +1,7 @@
+#[cfg(test)]
 const CLAUDE_ACTIVITY_GLYPHS: &str = "·✢✳✶✻✽";
 
+#[cfg(test)]
 pub(crate) fn stripped_terminal_title(title: &str) -> Option<String> {
     let title = title.trim();
     if title.is_empty() {

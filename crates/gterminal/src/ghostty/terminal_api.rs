@@ -1,14 +1,9 @@
 impl Terminal {
     pub fn new(cols: u16, rows: u16, max_scrollback: usize) -> Result<Self, Error> {
         let mut raw = ptr::null_mut();
-        let options = ffi::GhosttyTerminalOptions {
-            cols,
-            rows,
-            max_scrollback,
-        };
-        // SAFETY: valid out pointer and options, null allocator means default allocator.
+        // SAFETY: valid out pointer, null allocator means default allocator.
         unsafe {
-            ffi::ghostty_terminal_new(ptr::null(), &mut raw, options).into_result()?;
+            ffi::ghostty_terminal_new(ptr::null(), &mut raw, cols, rows).into_result()?;
         }
 
         let mut terminal = Self {
@@ -26,6 +21,13 @@ impl Terminal {
         };
         let userdata = (&mut *terminal.callback_state as *mut TerminalCallbackState).cast();
         let glyph_protocol = false;
+        // Gobby renders cells directly, so grapheme clustering (DEC mode 2027)
+        // must survive RIS. MODE_DEFAULT sets both the current value and the
+        // value a full reset restores.
+        let grapheme_default = ffi::GhosttyTerminalModeConfig {
+            mode: MODE_GRAPHEME_CLUSTER,
+            value: true,
+        };
         unsafe {
             ffi::ghostty_terminal_set(
                 terminal.raw,
@@ -61,6 +63,20 @@ impl Terminal {
                 terminal.raw,
                 ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL,
                 (&glyph_protocol as *const bool).cast(),
+            )
+            .into_result()?;
+            // `max_scrollback` is a byte budget: every caller passes
+            // `scrollback_limit_bytes`, and zero disables scrollback.
+            ffi::ghostty_terminal_set(
+                terminal.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
+                (&max_scrollback as *const usize).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                terminal.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
+                (&grapheme_default as *const ffi::GhosttyTerminalModeConfig).cast(),
             )
             .into_result()?;
         }
@@ -122,6 +138,17 @@ impl Terminal {
         install_png_decoder_once();
         let storage_limit = KITTY_IMAGE_STORAGE_LIMIT_BYTES;
         let enable_medium = true;
+        // The temporary-file medium is now scoped to one directory instead of
+        // being a plain on/off switch. Kitty clients write their
+        // `tty-graphics-protocol` files under the process temporary directory,
+        // which the pane's child inherits, so that is the directory to allow.
+        // libghostty-vt copies the bytes during the call.
+        let temp_dir = std::env::temp_dir();
+        let temp_dir_bytes = temp_dir.as_os_str().as_encoded_bytes();
+        let temp_dir_string = ffi::GhosttyString {
+            ptr: temp_dir_bytes.as_ptr(),
+            len: temp_dir_bytes.len(),
+        };
         unsafe {
             ffi::ghostty_terminal_set(
                 self.raw,
@@ -138,7 +165,7 @@ impl Terminal {
             ffi::ghostty_terminal_set(
                 self.raw,
                 ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-                (&enable_medium as *const bool).cast(),
+                (&temp_dir_string as *const ffi::GhosttyString).cast(),
             )
             .into_result()?;
             ffi::ghostty_terminal_set(
@@ -192,13 +219,32 @@ impl Terminal {
     }
 
     pub fn mode_get(&self, mode: u16) -> Result<bool, Error> {
-        let mut out = false;
-        unsafe { ffi::ghostty_terminal_mode_get(self.raw, mode, &mut out).into_result()? };
-        Ok(out)
+        let mut config = ffi::GhosttyTerminalModeConfig { mode, value: false };
+        // SAFETY: the out pointer is a live GhosttyTerminalModeConfig, the
+        // output type DATA_MODE documents.
+        unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MODE,
+                (&mut config as *mut ffi::GhosttyTerminalModeConfig).cast(),
+            )
+            .into_result()?;
+        }
+        Ok(config.value)
     }
 
     pub fn mode_set(&mut self, mode: u16, value: bool) -> Result<(), Error> {
-        unsafe { ffi::ghostty_terminal_mode_set(self.raw, mode, value).into_result() }
+        let config = ffi::GhosttyTerminalModeConfig { mode, value };
+        // SAFETY: the value pointer is a live GhosttyTerminalModeConfig, the
+        // input type OPT_MODE documents.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE,
+                (&config as *const ffi::GhosttyTerminalModeConfig).cast(),
+            )
+            .into_result()
+        }
     }
 
     pub fn kitty_keyboard_flags(&self) -> Result<u8, Error> {

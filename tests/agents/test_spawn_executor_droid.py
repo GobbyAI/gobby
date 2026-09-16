@@ -160,8 +160,6 @@ class TestExecuteSpawnDroid:
         assert spawn_kwargs["command"] == [
             "droid",
             "exec",
-            "--input-format",
-            "stream-json",
             "--cwd",
             "/tmp/wt",
             "--model",
@@ -260,8 +258,6 @@ def test_droid_worktree_spawn_fires_pre_tool_use_against_gobby_daemon(
         [
             "droid",
             "exec",
-            "--input-format",
-            "stream-json",
             "--cwd",
             str(worktree_path),
             "--auto",

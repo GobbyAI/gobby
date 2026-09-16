@@ -76,8 +76,6 @@ export interface GobbyTaskDetail extends GobbyTask {
   complexity_score: number | null;
   is_expanded: boolean;
   expansion_status: string;
-  github_pr_number: number | null;
-  github_repo: string | null;
   allow_automation?: boolean | null;
   yolo?: boolean | null;
   isolation?: string | null;

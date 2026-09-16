@@ -260,21 +260,6 @@ fn ghostty_cell_style(
     style.add_modifier(modifiers)
 }
 
-#[derive(Debug)]
-enum OrderedPtyResponseEvent {
-    DefaultColor(DefaultColorTrackedEvent),
-    Xtgettcap(XtgettcapResponse),
-}
-
-impl OrderedPtyResponseEvent {
-    fn end_offset(&self) -> usize {
-        match self {
-            Self::DefaultColor(event) => event.end_offset,
-            Self::Xtgettcap(response) => response.end_offset,
-        }
-    }
-}
-
 fn remove_last_matching_libghostty_color_reply(
     responses: &mut Vec<Bytes>,
     event: DefaultColorEvent,
@@ -507,6 +492,7 @@ fn contains_kitty_graphics_sequence(bytes: &[u8]) -> bool {
     bytes.windows(3).any(|window| window == b"\x1b_G")
 }
 
+#[cfg(test)]
 fn should_probe_host_terminal_theme_restore(core: &GhosttyPaneCore) -> bool {
     if core.transient_default_color_owner_pgid.is_none() || core.host_terminal_theme.is_empty() {
         return false;
@@ -518,4 +504,3 @@ fn should_probe_host_terminal_theme_restore(core: &GhosttyPaneCore) -> bool {
         .map(|screen| screen == crate::ghostty::ActiveScreen::Alternate)
         .unwrap_or(false)
 }
-

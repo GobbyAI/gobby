@@ -198,6 +198,7 @@
         "byte_start",
         "byte_end",
         "excerpt",
+        "numbered_excerpt",
         "relation",
         "from",
         "to",

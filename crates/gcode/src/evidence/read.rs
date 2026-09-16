@@ -9,18 +9,17 @@ use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 
 pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Result<QueryResult> {
     validate_selector(selector)?;
+    let mut warnings = Vec::new();
     let items = match selector {
         ReadSelector::Range {
             path,
             start_line,
             end_line,
-        } => vec![EvidenceItem::Source(source_for_lines(
-            library,
-            path,
-            *start_line,
-            *end_line,
-            None,
-        )?)],
+        } => {
+            let (source, warning) = source_for_range(library, path, *start_line, *end_line)?;
+            warnings.extend(warning);
+            vec![EvidenceItem::Source(source)]
+        }
         ReadSelector::Symbol {
             path,
             qualified_name,
@@ -67,7 +66,7 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
         }
         .to_string(),
         hybrid: None,
-        warnings: Vec::<EvidenceWarning>::new(),
+        warnings,
         result_limit,
         graph_depth: None,
     })
@@ -194,6 +193,64 @@ pub(super) fn source_for_lines(
             ),
         });
     }
+    slice_lines(
+        library,
+        path,
+        &bytes,
+        &starts,
+        start_line,
+        end_line,
+        qualified_name,
+    )
+}
+
+/// A caller-chosen range may overrun the file the way `sed -n` does: its end stops
+/// at the last line with a warning. Index-derived ranges use `source_for_lines`,
+/// where overrunning the file means the facts are stale.
+fn source_for_range(
+    library: &EvidenceLibrary,
+    path: &str,
+    start_line: usize,
+    end_line: usize,
+) -> Result<(SourceEvidence, Option<EvidenceWarning>)> {
+    let bytes = library.read_file(path)?;
+    let starts = line_starts(&bytes);
+    let line_count = starts.len();
+    if start_line > line_count {
+        return Err(EvidenceError::InvalidSelector {
+            detail: format!(
+                "requested lines {start_line}..{end_line}, but {path} has {line_count} line(s)"
+            ),
+        });
+    }
+    let warning = (end_line > line_count).then(|| EvidenceWarning {
+        code: "range_clamped_to_end_of_file".to_string(),
+        message: format!(
+            "requested lines {start_line}..{end_line}; file ends at line {line_count}"
+        ),
+        path: Some(path.to_string()),
+    });
+    let source = slice_lines(
+        library,
+        path,
+        &bytes,
+        &starts,
+        start_line,
+        end_line.min(line_count),
+        None,
+    )?;
+    Ok((source, warning))
+}
+
+fn slice_lines(
+    library: &EvidenceLibrary,
+    path: &str,
+    bytes: &[u8],
+    starts: &[usize],
+    start_line: usize,
+    end_line: usize,
+    qualified_name: Option<String>,
+) -> Result<SourceEvidence> {
     let byte_start = starts[start_line - 1];
     let byte_end = starts.get(end_line).copied().unwrap_or(bytes.len());
     let excerpt = std::str::from_utf8(&bytes[byte_start..byte_end]).map_err(|_| {
@@ -261,8 +318,19 @@ fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<Sou
         line_end,
         byte_start,
         byte_end,
+        numbered_excerpt: numbered_excerpt(excerpt, line_start),
         excerpt: excerpt.to_string(),
     })
+}
+
+/// `excerpt` stays byte-exact for hash checks, so line numbers live in this copy:
+/// readers cite a line without counting escaped newlines.
+pub(super) fn numbered_excerpt(excerpt: &str, line_start: usize) -> String {
+    excerpt
+        .split_inclusive('\n')
+        .zip(line_start..)
+        .map(|(line, number)| format!("{number}| {line}"))
+        .collect()
 }
 
 fn commit_items(library: &EvidenceLibrary, commit_oid: &str) -> Result<Vec<EvidenceItem>> {

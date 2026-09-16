@@ -16,10 +16,16 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # The vendored trees under `crates/gterminal/vendor/` and their patches
+      # are excluded from the rewriting hooks: the trees must stay
+      # byte-identical to the upstream dist archives, and trailing whitespace
+      # in `vendor/patches/*.patch` context lines is part of the diff. The
+      # hand-maintained `*.patches.md` and `*.vendor.json` stay in scope.
       - id: trailing-whitespace
-        exclude: ^\.gobby/
+        exclude: ^(?:\.gobby/|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/)
       - id: end-of-file-fixer
-        exclude: ^(?:\.gobby/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
+        exclude: >-
+          ^(?:\.gobby/|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
       - id: check-yaml
         args: [--unsafe]  # Allow custom tags
       - id: check-json
@@ -37,6 +43,9 @@ repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0
     hooks:
+      # This hook passes no filenames and scans the staged diff itself, so an
+      # `exclude:` here has no effect; the scan allowlist lives in
+      # `.gitleaks.toml`.
       - id: gitleaks
 
   # ==========================================================================

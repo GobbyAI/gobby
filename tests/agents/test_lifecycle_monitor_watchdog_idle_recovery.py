@@ -372,6 +372,7 @@ def _make_idle_monitor_run(
     max_reprompt_attempts: int = 2,
     task_id: str | None = None,
     completion_registry: CompletionEventRegistry | None = None,
+    made_gobby_mcp_call: bool = True,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
     config = TmuxConfig(
         idle_check_enabled=True,
@@ -405,6 +406,12 @@ def _make_idle_monitor_run(
         transcript_path=str(transcript_path) if transcript_path is not None else None,
     )
     updated_at = (datetime.now(UTC) - timedelta(seconds=session_age_seconds)).isoformat()
+    if made_gobby_mcp_call:
+        # A child whose Gobby MCP never connected fails fast when unbound. Seed
+        # before backdating: writing variables refreshes the session's activity.
+        SessionVariableManager(temp_db).set_variable(
+            child.id, "mcp_calls", {"gobby-agents": ["send_message"]}
+        )
     temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (updated_at, child.id))
     run = _make_terminal_run(
         agent_run_manager,

@@ -24,7 +24,6 @@ _PROFILE_ERROR_RE = re.compile(
     r"malformed build profiles\b|"
     r"bundled build profiles\b|"
     r"build profile name\b|"
-    r"delivery_target_repo\b|"
     r"source must be installed or project\b|"
     r"installed build profiles must be global\b"
     r")",
@@ -63,10 +62,6 @@ def _build_payload(
         "dry_run": opts.dry_run,
         "profile": opts.profile,
     }
-    if opts.delivery_mode_explicit:
-        payload["delivery_mode"] = opts.delivery_mode
-    if opts.delivery_target_repo_explicit:
-        payload["delivery_target_repo"] = opts.delivery_target_repo
     if opts.coordinator_session_ref:
         payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
@@ -87,10 +82,6 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
     }
     if opts.profile != "default":
         payload["profile"] = opts.profile
-    if opts.delivery_mode_explicit:
-        payload["delivery_mode"] = opts.delivery_mode
-    if opts.delivery_target_repo_explicit:
-        payload["delivery_target_repo"] = opts.delivery_target_repo
     if opts.pr is not None:
         payload["pr"] = opts.pr
     if opts.target_branch is not None:

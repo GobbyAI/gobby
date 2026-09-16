@@ -2925,6 +2925,147 @@ async def test_capability_neutral_tools_pass_step_allowlist(
 
 
 @pytest.mark.asyncio
+async def test_grok_output_poll_is_capability_neutral(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """Grok's background-output poll carries no capability and passes any step.
+
+    The Grok CLI exposes ``get_command_or_subagent_output`` as a read-only poll
+    for a backgrounded call. A spawned run that reached for it inside an
+    MCP-only step collected identical ``step-native-tool-allowlist`` denials
+    until the run was killed at the third one.
+    """
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    event = _make_event(data={"tool_name": "get_command_or_subagent_output"})
+
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_non_neutral_grok_native_tool_still_denied(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """Neutrality covers one poll tool, not a Grok-wide native exemption."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    event = _make_event(data={"tool_name": "read_file"})
+
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "Tool 'read_file' is not allowed in the 'claim' step." in response.reason
+
+
+def _send_message_event(arguments: dict[str, Any] | None = None) -> HookEvent:
+    tool_input: dict[str, Any] = {
+        "server_name": "gobby-agents",
+        "tool_name": "send_message",
+    }
+    if arguments is not None:
+        tool_input["arguments"] = arguments
+    return _make_event(
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": tool_input,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_message_parent_passes_step_allowlist(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    response = await engine.evaluate(
+        _send_message_event({"target": "parent", "content": "status"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_send_message_omitted_target_passes_step_allowlist(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    response = await engine.evaluate(
+        _send_message_event({"content": "status"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_send_message_session_target_denied_by_step_allowlist(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    response = await engine.evaluate(
+        _send_message_event({"target": "session", "target_id": SESSION_ID, "content": "status"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "gobby-agents:send_message" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_send_message_parent_blocked_mcp_tools_still_blocks(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    workflow = {
+        "name": "test-parent-send-block",
+        "version": "2.0",
+        "enabled": False,
+        "steps": [
+            {
+                "name": "work",
+                "allowed_mcp_tools": "all",
+                "blocked_mcp_tools": ["gobby-agents:send_message"],
+            }
+        ],
+    }
+    _setup_step_workflow(
+        db,
+        manager,
+        instance_mgr,
+        current_step="work",
+        workflow_data=workflow,
+    )
+    response = await engine.evaluate(
+        _send_message_event({"target": "parent", "content": "status"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "blocked" in response.reason.lower()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("allowed", [["gobby-agents:end_agent_run"], ["gobby-agents:*"], "all"])
 async def test_end_agent_run_in_exit_step_clears_early_exit_flag(
     db: "HubDatabase",

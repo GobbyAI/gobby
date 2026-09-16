@@ -1,38 +1,17 @@
-# External issue integrations
+# External MCP integrations
 
-Load for GitHub/Linear setup, issue import or synchronization. Discover the
-configured external MCP server and its live tools; GitHub task import instead
-uses locally authenticated `gh`. Confirm the project, repository/team/project
-binding and requested direction before changing local or remote records.
+Load when connecting GitHub or Linear as MCP servers. Gobby does not import,
+sync, or store GitHub/Linear issue identity on projects or tasks.
 
-1. Inspect operator `gobby github status --json`, `gobby linear status --json`,
-   or `/api/projects/{project_id}/integrations/status` for configuration,
-   connector readiness, counts, retry timing and recent errors.
-2. Agent GitHub operations live on `gobby-tasks-ops`: fetch schemas for
-   `import_github_issues`, `link_task_to_github_issue`, and
-   `close_linked_github_issue`. Import deduplicates; linking changes local
-   linkage; closing comments/labels/closes the external issue and requires the
-   authorized merge workflow. PR delivery belongs to source-control.
-   MCP re-import refreshes local title/body, labels and validation criteria;
-   unlike CLI import it does not reconcile remote open/closed state.
-3. Operator GitHub `link` supplies a repository default; `setup` controls sync,
-   triage and webhooks independently. Import/sync/PR CLI paths use the configured
-   GitHub MCP integration. Linking alone does not enable automatic triage.
-4. Operator Linear `setup --bootstrap` creates/reuses a project and enables
-   daemon synchronization. `--project` selects Gobby; `--project-id` selects
-   Linear. Team-only linking does not establish project-scoped synchronization.
-5. Linear import requires project scope unless explicitly `--allow-team-wide`.
-   `sync-all` pulls then pushes; `--forward` creates/pushes active local work
-   without pulling closed history. These can write external issues. Read result
-   errors and counts before rerunning; do not infer success from CLI exit alone.
-   Pull errors/deferred work suppress the push and preserve the sync cursor.
+1. Discover the configured server with `gobby-mcp` / `gobby mcp-proxy
+   list-servers` and lease each tool schema before calling it.
+2. Instantiate the bundled `github` or `linear` template when the operator
+   wants those servers. Templates are not live config; inspect the installed
+   row.
+3. Call the server's own tools for issues, pull requests, and comments.
+   Gobby has no first-party GitHub or Linear issue/PR tools.
+4. Repair credentials and MCP connection state before retrying. An unavailable
+   connector is not evidence that Gobby still owns the workflow.
 
-Use task MCP lifecycle, not operator integration CLI, for agent task mutations.
-Do not manually rewrite task storage to resolve sync state. Preserve linkage
-and deduplication keys. Repair credentials, repository access or binding before
-retrying; inspect reconciliation status for backoff. Do not disable or expand
-scope merely to make a command succeed. For webhook recovery load `webhooks.md`.
-
-See [setup and synchronization](../../../../../../../../docs/guides/integrations.md),
-[triage recovery](../../../../../../../../docs/guides/github-issue-triage.md#runbook),
-and [operator commands](../../../../../../../../docs/guides/cli-commands.md#integrations-and-resource-portability).
+See [integrations](../../../../../../../../docs/guides/integrations.md) and
+[MCP tools](../../../../../../../../docs/guides/mcp-tools.md).

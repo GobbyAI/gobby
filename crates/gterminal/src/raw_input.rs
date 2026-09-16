@@ -12,14 +12,12 @@ use raw_input_framer::*;
 /// same parsing pipeline that the monolithic binary uses for stdin.
 /// Incomplete sequences at the end of the buffer are flushed as best-effort
 /// (same logic as the live input reader).
-#[allow(dead_code)]
 pub fn parse_raw_input_bytes(data: &[u8]) -> Vec<RawInputEvent> {
     // Delegate to the sync version which actually works.
     parse_raw_input_bytes_sync(data)
 }
 
 /// A raw input event paired with the byte range it consumed from the original buffer.
-#[cfg(test)]
 #[derive(Debug)]
 pub struct RawInputEventWithRange {
     /// The parsed event.
@@ -37,7 +35,6 @@ pub struct RawInputEventWithRange {
 /// Unlike `parse_raw_input_bytes_sync`, this preserves the byte offset for each
 /// event, allowing callers to write only the specific bytes for each event
 /// instead of the entire input buffer.
-#[cfg(test)]
 pub fn parse_raw_input_bytes_with_ranges(data: &[u8]) -> Vec<RawInputEventWithRange> {
     let mut buffer = data.to_vec();
     let mut events = Vec::new();
@@ -112,6 +109,7 @@ pub(crate) const GHOSTTY_COLOR_SCHEME_LIGHT_REPORT: &[u8] = b"\x1b[?997;2n";
 const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
 const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 
+#[cfg(test)]
 /// Returns whether `data` is exactly one complete bracketed-paste sequence.
 ///
 /// Client transport uses this to distinguish recoverable oversized interactive
@@ -143,8 +141,7 @@ pub enum RawInputEvent {
         colors: Vec<(u8, RgbColor)>,
     },
     HostColorSchemeChanged(HostAppearance),
-    // The dimensions are only read by the Unix client.
-    #[cfg_attr(not(any(unix, test)), allow(dead_code))]
+    #[cfg(any(unix, test))]
     HostCellSizeReport {
         width_px: u32,
         height_px: u32,
@@ -183,6 +180,7 @@ fn plausible_control_string_tail(family: ControlStringFamily, buffer: &[u8]) -> 
     }
 }
 
+#[cfg(test)]
 pub(crate) fn events_require_host_surface_redraw(
     events: &[RawInputEvent],
     redraw_on_focus_gained: bool,
@@ -193,6 +191,7 @@ pub(crate) fn events_require_host_surface_redraw(
             .any(|event| matches!(event, RawInputEvent::OuterFocusGained))
 }
 
+#[cfg(test)]
 #[cfg(any(not(windows), test))]
 pub(crate) fn events_require_host_terminal_theme_query(events: &[RawInputEvent]) -> bool {
     events
@@ -423,6 +422,7 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
             return Some((RawInputEvent::HostColorSchemeChanged(appearance), seq_len));
         }
 
+        #[cfg(any(unix, test))]
         if let Some((width_px, height_px)) = parse_host_cell_size_report(&buffer[..seq_len]) {
             return Some((
                 RawInputEvent::HostCellSizeReport {

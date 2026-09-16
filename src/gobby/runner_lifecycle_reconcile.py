@@ -30,6 +30,19 @@ logger = logging.getLogger("gobby.runner_lifecycle")
 _BOOT_MARKER = uuid.uuid4().hex
 
 
+async def _rotate_due_managed_credentials(runner: GobbyRunner) -> int:
+    """Rotate live managed principals whose bindings entered the rotation window."""
+    credential_manager = getattr(runner, "managed_credential_manager", None)
+    if credential_manager is None:
+        return 0
+    try:
+        rotated = await _run_db(runner, credential_manager.rotate_due)
+    except Exception:
+        logger.exception("Managed credential rotation failed")
+        return 0
+    return len(rotated)
+
+
 async def _reconcile_agent_runs_after_restart(
     runner: GobbyRunner,
     *,

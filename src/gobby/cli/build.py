@@ -22,7 +22,7 @@ from gobby.build import (
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.profiles import BuildProfileError
-from gobby.config.build import DeliveryMode, Isolation
+from gobby.config.build import Isolation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.uuid_validation import is_full_uuid
@@ -144,8 +144,6 @@ def _make_build_options(
     stage_cap: tuple[str, ...],
     isolation: Isolation | None,
     use_clone: bool,
-    delivery_mode: DeliveryMode | None,
-    delivery_target_repo: str | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -170,10 +168,6 @@ def _make_build_options(
         skip_stages_explicit=bool(skip_stage),
         isolation=resolved_isolation,
         isolation_explicit=isolation is not None or use_clone,
-        delivery_mode=delivery_mode or "auto",
-        delivery_mode_explicit=delivery_mode is not None,
-        delivery_target_repo=delivery_target_repo,
-        delivery_target_repo_explicit=delivery_target_repo is not None,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),
@@ -219,8 +213,6 @@ def _make_build_options(
     help="Build workspace isolation mode.",
 )
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
-@click.option("--delivery-mode", type=click.Choice(["auto", "pull_request"]))
-@click.option("--delivery-target-repo", help="Delivery target repository override.")
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
 @click.option("--target-branch", help="Target branch for the build.")
@@ -300,8 +292,6 @@ def build_command(
     stage_cap: tuple[str, ...],
     isolation: Isolation | None,
     use_clone: bool,
-    delivery_mode: DeliveryMode | None,
-    delivery_target_repo: str | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -352,8 +342,6 @@ def build_command(
         stage_cap=stage_cap,
         isolation=isolation,
         use_clone=use_clone,
-        delivery_mode=delivery_mode,
-        delivery_target_repo=delivery_target_repo,
         no_merge=no_merge,
         pr=pr,
         target_branch=target_branch,

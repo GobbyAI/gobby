@@ -24,10 +24,10 @@ function makeProject(
       machine_id: "machine-1",
       root_path: "/Users/josh/Projects/gobby",
     },
-    github_url: null,
-    github_repo: null,
-    linear_team_id: null,
-    linear_project_id: null,
+
+
+
+
     approval_rules: [],
     validation_detection: null,
     created_at: "2026-08-11T00:00:00Z",

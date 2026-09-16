@@ -46,6 +46,7 @@ const LOCAL_CLI_TOKEN_FILE: &str = "local_cli_token";
 pub async fn run() -> io::Result<()> {
     let args = HostArgs::parse();
     init_tracing(&args.log_file);
+    crate::platform::watch_terminal_resize_signal();
 
     let token = fs::read_to_string(&args.token_file)
         .map_err(|err| io::Error::new(err.kind(), format!("control token: {err}")))?
@@ -102,16 +103,11 @@ pub async fn run() -> io::Result<()> {
     let frames_task = {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
-            loop {
-                match frames_listener.accept().await {
-                    Ok((stream, _)) => {
-                        let state = Arc::clone(&state);
-                        tokio::spawn(async move {
-                            frames::handle_connection(stream, state).await;
-                        });
-                    }
-                    Err(_) => break,
-                }
+            while let Ok((stream, _)) = frames_listener.accept().await {
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    frames::handle_connection(stream, state).await;
+                });
             }
         })
     };
@@ -119,16 +115,11 @@ pub async fn run() -> io::Result<()> {
     let control_accept = {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
-            loop {
-                match control_listener.accept().await {
-                    Ok((stream, _)) => {
-                        let state = Arc::clone(&state);
-                        tokio::spawn(async move {
-                            control::handle_connection(stream, state).await;
-                        });
-                    }
-                    Err(_) => break,
-                }
+            while let Ok((stream, _)) = control_listener.accept().await {
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    control::handle_connection(stream, state).await;
+                });
             }
         })
     };
@@ -154,6 +145,7 @@ pub async fn run() -> io::Result<()> {
                     }
                     Err(_) => continue,
                 }
+                let _ = crate::platform::take_terminal_resize_signal();
                 state.expire_prepared().await;
                 state.broadcast_frames().await;
             }
@@ -180,7 +172,7 @@ pub async fn run() -> io::Result<()> {
     let _ = fs::remove_file(&frames_path);
     let _ = fs::remove_file(&args.pid_file);
     if !socket_dir_removed {
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(args.shutdown_grace_ms)).await;
     }
     Ok(())
 }
@@ -269,7 +261,7 @@ impl HostArgs {
             pid_file: socket_dir.join(PID_FILE),
             log_file,
             socket_dir,
-            shutdown_grace_ms: 10_000,
+            shutdown_grace_ms: 150,
             host_config,
         }
     }

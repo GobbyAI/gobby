@@ -40,7 +40,6 @@ from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 _COLLECTION_SOURCE_KINDS = {
     "memories": "memory",
     "tool_embeddings": "tool",
-    "gobby_github_issues": "github_issue",
 }
 
 

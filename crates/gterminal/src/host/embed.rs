@@ -23,6 +23,8 @@ pub struct AttachOutcome {
     pub rx: FrameMailbox,
 }
 
+// reason: attach takes an explicit locator/identity/geometry list rather than a bag struct.
+#[allow(clippy::too_many_arguments)]
 pub async fn attach_frame(
     state: &Arc<HostState>,
     host_terminal_id: &str,
@@ -140,15 +142,20 @@ async fn attach_tmux(
             commit_deadline: None,
             #[cfg(feature = "vt-engine")]
             child: None,
+            #[cfg(feature = "vt-engine")]
             written_bytes: 0,
+            #[cfg(feature = "vt-engine")]
             dropped_bytes: 0,
+            #[cfg(feature = "vt-engine")]
             total_bytes: 0,
+            #[cfg(feature = "vt-engine")]
             truncated: false,
             user_attachments: HashSet::new(),
             locator: Some(locator.clone()),
             tmux_history_bytes: 0,
             history: None,
             last_frame: None,
+            #[cfg(feature = "vt-engine")]
             observer_generation: 1,
             consecutive_failures: 0,
         };

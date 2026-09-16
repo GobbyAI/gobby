@@ -11,10 +11,14 @@ known data sink, when the segment process-substitutes output, when an unquoted
 delimiter leaves ``$(`` or backtick expansion live, or when the heredoc never
 terminates.
 
-``command_pattern`` must match one subject. ``command_not_pattern`` exempts the
-command when it matches the executable text as a whole, because an exemption
-such as an exported test environment can be established by an earlier
-segment (#21056).
+``command_pattern`` must match one subject. Quoted ``;``, ``&``, ``|``, ``(``,
+and backticks in that subject are not command boundaries — they are blanked
+before the pattern runs — so a lookbehind such as ``(?<=[;&|(`\\n])`` cannot
+treat ``gcode grep -E 'pytest|vitest'`` as a ``vitest`` invocation.
+``command_not_pattern`` exempts over the unblanked executable text, because an
+exemption such as an exported test environment can be established by an
+earlier segment (#21056) and a quoted path such as ``pytest 'tests/x.py'``
+must still exempt.
 """
 
 from __future__ import annotations
@@ -42,6 +46,9 @@ _LIVE_EXPANSION_RE = re.compile(r"\$\(|`")
 _OUTPUT_PROCESS_SUBSTITUTION_RE = re.compile(r">\(")
 # A newline right after one of these continues the same command list.
 _CONTINUATION_OPERATORS = frozenset({"|", "&&", "||"})
+# Lookbehind class used by bundled command-position patterns, minus newline
+# (quoted newlines stay boundaries unless ``mask_quoted`` blanks the span).
+_QUOTED_COMMAND_BOUNDARIES = frozenset(";|&(`")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,30 +69,7 @@ def mask_quoted_spans(command: str) -> str:
     (the way a multi-line commit message tripped command-position anchors,
     #20887).
     """
-    out = list(command)
-    i, n = 0, len(command)
-    while i < n:
-        ch = command[i]
-        if ch == "\\":
-            i += 2
-        elif ch == "'":
-            end = command.find("'", i + 1)
-            end = n if end == -1 else end
-            for j in range(i + 1, end):
-                out[j] = " "
-            i = end + 1
-        elif ch == '"':
-            j = i + 1
-            while j < n and command[j] != '"':
-                j += 2 if command[j] == "\\" else 1
-            span = command[i + 1 : j]
-            if "$(" not in span and "`" not in span:
-                for k in range(i + 1, j):
-                    out[k] = " "
-            i = j + 1
-        else:
-            i += 1
-    return "".join(out)
+    return _blank_quoted_chars(command, chars=None)
 
 
 def command_patterns_match(
@@ -103,10 +87,48 @@ def command_patterns_match(
         return True
     subjects = executable_command_subjects(command)
     if mask_quoted:
-        subjects = [mask_quoted_spans(subject) for subject in subjects]
-    if not any(re.search(pattern, subject) for subject in subjects):
+        pattern_subjects = [mask_quoted_spans(subject) for subject in subjects]
+        exemption_text = "\n".join(pattern_subjects)
+    else:
+        pattern_subjects = [_mask_quoted_command_boundaries(subject) for subject in subjects]
+        exemption_text = "\n".join(subjects)
+    if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False
-    return not (not_pattern and re.search(not_pattern, "\n".join(subjects)))
+    return not (not_pattern and re.search(not_pattern, exemption_text))
+
+
+def _mask_quoted_command_boundaries(command: str) -> str:
+    """Blank ``; & | (`` and backticks inside quotes so lookbehinds miss them."""
+    return _blank_quoted_chars(command, chars=_QUOTED_COMMAND_BOUNDARIES)
+
+
+def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
+    out = list(command)
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            i += 2
+        elif ch == "'":
+            end = command.find("'", i + 1)
+            end = n if end == -1 else end
+            for j in range(i + 1, end):
+                if chars is None or command[j] in chars:
+                    out[j] = " "
+            i = end + 1
+        elif ch == '"':
+            j = i + 1
+            while j < n and command[j] != '"':
+                j += 2 if command[j] == "\\" else 1
+            span = command[i + 1 : j]
+            if "$(" not in span and "`" not in span:
+                for k in range(i + 1, j):
+                    if chars is None or command[k] in chars:
+                        out[k] = " "
+            i = j + 1
+        else:
+            i += 1
+    return "".join(out)
 
 
 def executable_command_subjects(command: str) -> list[str]:

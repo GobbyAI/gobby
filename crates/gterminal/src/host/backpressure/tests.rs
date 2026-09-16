@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 use super::{
     encoded_message_bytes, enqueue_control, send_control, write_outbound, ControlClose,
-    ControlQueue, FrameMailbox, PushResult,
+    FrameMailbox, PushResult,
 };
 use crate::host::config::HostConfig;
 use crate::host::state::HostState;
@@ -241,67 +241,53 @@ async fn control_deadline_and_event_overflow() {
     );
 
     // A real event subscriber that does not drain is told event_overflow on its
-    // own socket.
-    let event_state = test_state(HostConfig {
-        control_deadline_ms: 500,
-        control_queue_entries: 4,
-        event_queue_bytes: 512,
-        ..HostConfig::default()
-    });
-    let mut subscriber = ControlPeer::connect(&event_state).await;
-    subscriber
-        .send(json!({"id": "subscribe", "method": "subscribe_events"}))
-        .await;
-    let ack = subscriber
-        .next_response()
-        .await
-        .expect("the host must answer subscribe_events");
-    assert_eq!(
-        ack["subscribed"], true,
-        "the event subscriber must be registered: {ack}"
-    );
-    // A tight burst: nothing in this loop yields, so the forwarding task never
-    // runs and the subscriber's queue is driven past event_queue_bytes.
-    for seq in 0..256_u32 {
-        event_state
-            .events
-            .emit_terminal_exited("term".into(), "host-term".into(), Some(seq))
+    // own socket. Only the `vt-engine` build has an emit path to overflow it
+    // with, so the default-feature build compiles this test without the block.
+    #[cfg(feature = "vt-engine")]
+    {
+        let event_state = test_state(HostConfig {
+            control_deadline_ms: 500,
+            control_queue_entries: 4,
+            event_queue_bytes: 512,
+            ..HostConfig::default()
+        });
+        let mut subscriber = ControlPeer::connect(&event_state).await;
+        subscriber
+            .send(json!({"id": "subscribe", "method": "subscribe_events"}))
             .await;
-    }
-    let mut saw_overflow = false;
-    for _ in 0..64 {
-        let event = timeout(Duration::from_secs(5), subscriber.next_response())
+        let ack = subscriber
+            .next_response()
             .await
-            .expect("the subscriber must be told why it stopped receiving")
-            .expect("the subscriber socket must stay open");
-        if event.get("error").and_then(Value::as_str) == Some("event_overflow") {
-            saw_overflow = true;
-            break;
+            .expect("the host must answer subscribe_events");
+        assert_eq!(
+            ack["subscribed"], true,
+            "the event subscriber must be registered: {ack}"
+        );
+        // A tight burst: nothing in this loop yields, so the forwarding task
+        // never runs and the subscriber's queue is driven past
+        // event_queue_bytes.
+        for seq in 0..256_u32 {
+            event_state
+                .events
+                .emit_terminal_exited("term".into(), "host-term".into(), Some(seq))
+                .await;
         }
+        let mut saw_overflow = false;
+        for _ in 0..64 {
+            let event = timeout(Duration::from_secs(5), subscriber.next_response())
+                .await
+                .expect("the subscriber must be told why it stopped receiving")
+                .expect("the subscriber socket must stay open");
+            if event.get("error").and_then(Value::as_str) == Some("event_overflow") {
+                saw_overflow = true;
+                break;
+            }
+        }
+        assert!(
+            saw_overflow,
+            "an event subscriber that does not drain must receive event_overflow"
+        );
     }
-    assert!(
-        saw_overflow,
-        "an event subscriber that does not drain must receive event_overflow"
-    );
-}
-
-/// `ControlQueue` has no production caller today -- the shipped control path is
-/// an `mpsc` channel drained by `write_outbound` -- so this keeps its ordering
-/// contract honest until the type is either wired up or removed.
-#[test]
-fn control_queue_pops_in_order_below_cap() {
-    let mut queue = ControlQueue::new(4, Duration::from_millis(20));
-    queue.push(json!({"id": 1, "ok": true})).expect("first");
-    queue.push(json!({"id": 2, "ok": true})).expect("second");
-    queue.push(json!({"id": 3, "ok": true})).expect("third");
-    let first = queue.pop().expect("pop first");
-    let second = queue.pop().expect("pop second");
-    let third = queue.pop().expect("pop third");
-    assert_eq!(first["id"], 1);
-    assert_eq!(second["id"], 2);
-    assert_eq!(third["id"], 3);
-    assert_ne!(first, second);
-    assert_ne!(second, third);
 }
 
 #[tokio::test]

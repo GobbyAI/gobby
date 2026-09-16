@@ -136,8 +136,9 @@ selects `all`. The manual feedback tool remains callable from every repository, 
 capture stays on the local machine; email and form delivery are outside this contract.
 The computed flag `_gobby_feedback_survey_active` is injected per event; epoch
 acknowledgment lives in `_gobby_feedback_epoch_submitted`. Only a context reset
-re-arms it — SessionStart with source `clear` or `compact`, a `resume` carrying
-`pending_context_reset`, or the equivalent Grok PostCompact closeout. Task closure
+re-arms it — SessionStart with source `clear` or `compact` (Grok PostCompact
+evaluates those same `session_start(compact)` rules), or a `resume` carrying
+`pending_context_reset`. Task closure
 is not a context boundary, so one epoch is surveyed once however many tasks it
 closes. A successful submission also records the pending closure identities in
 `_gobby_feedback_surveyed_closures`, which context resets keep. A re-armed epoch whose
@@ -186,7 +187,8 @@ the separate feedback submission. A staging failure can be retried without
 resubmitting feedback. Compact dispatch interrupts the provider, clears its composer, submits `/compact` for
 Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the same
 session row. The continuation prompt instructs the agent to call `get_handoff()`. Compact
-SessionStart/PostCompact handling resets context-epoch tracking and consumes only the
+SessionStart handling — including Grok PostCompact, which evaluates the
+`session_start(compact)` rules — resets context-epoch tracking and consumes only the
 provider compact-identity marker; it leaves the `set_handoff` marker for retrieval.
 Successful dispatch records a compact delivery receipt. If that receipt write is
 interrupted, `get_handoff()` retries it idempotently while consuming the marker.

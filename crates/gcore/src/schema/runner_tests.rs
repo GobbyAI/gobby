@@ -2078,3 +2078,164 @@ fn render_gives_each_non_public_hub_its_own_agent_auth_schema() {
     assert!(rendered.contains("search_path = gobby_test_1_2_w_abc_agent_auth, pg_temp"));
     assert!(rendered.contains("FROM gobby_test_1_2_w_abc.machines"));
 }
+
+#[test]
+fn plan_on_fresh_database_reports_everything_pending_and_writes_nothing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+
+    let report = SchemaRunner::new(&mut client, "public")?.plan()?;
+
+    assert!(report.baseline_pending, "a fresh lineage owes the baseline");
+    assert_eq!(report.database_head, 0);
+    assert_eq!(
+        report.pending_versions,
+        MIGRATIONS
+            .iter()
+            .map(|migration| migration.version)
+            .collect::<Vec<_>>()
+    );
+    let bookkeeping: bool = client
+        .query_one("SELECT to_regclass('schema_migrations') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!bookkeeping, "plan must create no schema bookkeeping");
+    Ok(())
+}
+
+#[test]
+fn plan_after_apply_is_empty() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let report = SchemaRunner::new(&mut client, "public")?.plan()?;
+
+    assert!(!report.baseline_pending);
+    assert!(
+        report.pending_versions.is_empty(),
+        "{:?}",
+        report.pending_versions
+    );
+    assert_eq!(report.database_head, report.code_head);
+    Ok(())
+}
+
+#[test]
+fn plan_rejects_corrupt_lineage_without_touching_receipts() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
+        &[&BASELINE_VERSION],
+    )?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .plan()
+        .expect_err("an unrecognized lineage must be refused");
+
+    assert!(
+        error.to_string().contains("unrecognized schema lineage"),
+        "{error}"
+    );
+    let checksum: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(checksum, "unrecognized", "plan must not repair receipts");
+    Ok(())
+}
+
+#[test]
+fn plan_rejects_newer_database() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    assert!(
+        !MIGRATIONS.is_empty(),
+        "the embedded registry must carry migrations above the baseline"
+    );
+
+    let error = SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?
+        .plan()
+        .expect_err("a database newer than the runner must be refused");
+
+    assert!(
+        error.to_string().contains("is newer than this runner"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn plan_does_not_hold_the_apply_lock() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let _report = SchemaRunner::new(&mut client, "public")?.plan()?;
+
+    // The session-level lock would live on the runner's own connection, so a
+    // fresh connection can only take it if plan never acquired it.
+    let mut probe = database.connect()?;
+    let acquired: bool = probe
+        .query_one(
+            "SELECT pg_try_advisory_lock(hashtext('postgres_migrations_apply'), 0)",
+            &[],
+        )?
+        .get(0);
+    assert!(acquired, "plan must never take the database apply lock");
+    probe.query_one(
+        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), 0)",
+        &[],
+    )?;
+    Ok(())
+}
+
+#[test]
+fn plan_reports_pending_without_verifying_identity() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+
+    // The embedded head is ahead of the database head: the ordinary state of
+    // every migration-owing restart and of every cutover.
+    let report = SchemaRunner::with_migrations_for_test(&mut client, "public", GUARDED_MIGRATIONS)?
+        .plan()?;
+
+    assert!(!report.baseline_pending, "the lineage is already baselined");
+    assert_eq!(report.pending_versions, vec![GUARDED_MIGRATION.version]);
+    assert!(
+        report.database_head < report.code_head,
+        "database v{} code v{}",
+        report.database_head,
+        report.code_head
+    );
+    Ok(())
+}

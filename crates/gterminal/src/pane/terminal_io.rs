@@ -41,7 +41,6 @@ impl GhosttyPaneTerminal {
                 child_default_background_changed: false,
                 osc_debug_tracker: OscDebugTracker::default(),
                 agent_osc_state: AgentOscStateTracker::default(),
-                xtgettcap_query_tracker: XtgettcapQueryTracker::default(),
                 decscusr_tracker: DecscusrTracker::default(),
                 cursor_settle_state: CursorPositionSettleState::default(),
                 windows_powershell_prompt_cwd_reporting: false,
@@ -115,6 +114,7 @@ impl GhosttyPaneTerminal {
         appearance.map(|appearance| Bytes::from_static(appearance.color_scheme_report()))
     }
 
+    #[cfg(test)]
     pub fn has_transient_default_color_override(&self) -> bool {
         self.core
             .lock()
@@ -122,40 +122,11 @@ impl GhosttyPaneTerminal {
             .unwrap_or(false)
     }
 
-    pub fn maybe_restore_host_terminal_theme(&self, pane_id: PaneId, shell_pid: u32) -> bool {
-        {
-            let Ok(core) = self.core.lock() else {
-                return false;
-            };
-            if !should_probe_host_terminal_theme_restore(&core) {
-                return false;
-            }
-        }
-
-        let Ok(mut core) = self.core.lock() else {
-            return false;
-        };
-
-        let alternate_screen = core
-            .terminal
-            .active_screen()
-            .map(|screen| screen == crate::ghostty::ActiveScreen::Alternate)
-            .unwrap_or(false);
-        restore_host_terminal_theme_if_needed(&mut core, pane_id, shell_pid, alternate_screen)
-    }
-
     pub fn terminal_title(&self) -> Option<String> {
         self.core
             .lock()
             .ok()
             .and_then(|core| core.agent_osc_state.terminal_title().map(str::to_string))
-    }
-
-    #[cfg(unix)]
-    pub fn seed_terminal_title(&self, title: Option<String>) {
-        if let Ok(mut core) = self.core.lock() {
-            core.agent_osc_state.seed_terminal_title(title);
-        }
     }
 
     pub fn osc_title(&self) -> String {
@@ -170,12 +141,6 @@ impl GhosttyPaneTerminal {
             .lock()
             .map(|core| core.agent_osc_state.latest_progress().to_owned())
             .unwrap_or_default()
-    }
-
-    pub fn clear_osc_state(&self) {
-        if let Ok(mut core) = self.core.lock() {
-            core.agent_osc_state.clear_retained();
-        }
     }
 
     pub fn process_pty_bytes(
@@ -233,19 +198,15 @@ impl GhosttyPaneTerminal {
         let mut terminal_responses = Vec::new();
         core.default_color_event_tracker
             .observe(filtered_bytes.as_ref());
-        core.xtgettcap_query_tracker
-            .observe(filtered_bytes.as_ref());
         core.decscusr_tracker.observe(filtered_bytes.as_ref());
         let in_progress_default_color_event = core.default_color_event_tracker.in_progress_event();
         let default_color_events = core.default_color_event_tracker.drain_pending();
-        let xtgettcap_responses = core.xtgettcap_query_tracker.drain_pending();
         let write_started = crate::render_prof::timer();
         self.write_pty_bytes_with_ordered_responses(
             &mut core,
             filtered_bytes.as_ref(),
             default_color_events,
             in_progress_default_color_event,
-            xtgettcap_responses,
             &mut terminal_responses,
         );
         let clipboard_writes = core.terminal.take_clipboard_writes();
@@ -316,48 +277,25 @@ impl GhosttyPaneTerminal {
         bytes: &[u8],
         default_color_events: Vec<DefaultColorTrackedEvent>,
         in_progress_default_color_event: Option<DefaultColorEvent>,
-        xtgettcap_responses: Vec<XtgettcapResponse>,
         terminal_responses: &mut Vec<Bytes>,
     ) {
-        let mut events = Vec::with_capacity(default_color_events.len() + xtgettcap_responses.len());
-        events.extend(
-            default_color_events
-                .into_iter()
-                .map(OrderedPtyResponseEvent::DefaultColor),
-        );
-        events.extend(
-            xtgettcap_responses
-                .into_iter()
-                .map(OrderedPtyResponseEvent::Xtgettcap),
-        );
-        events.sort_by_key(OrderedPtyResponseEvent::end_offset);
-
+        // The tracker observes one pass over `bytes`, so its events already
+        // arrive in stream order.
         let mut written = 0;
-        for event in events {
-            let end_offset = event.end_offset().min(bytes.len());
+        for event in default_color_events {
+            let end_offset = event.end_offset.min(bytes.len());
             let mut libghostty_responses = Vec::new();
             if end_offset > written {
                 core.terminal.write(&bytes[written..end_offset]);
                 libghostty_responses = self.drain_pending_pty_responses();
                 written = end_offset;
             }
-            match event {
-                OrderedPtyResponseEvent::DefaultColor(event) => {
-                    let replacement = respond_to_default_color_event(core, event.event);
-                    if replacement.is_some() {
-                        remove_last_matching_libghostty_color_reply(
-                            &mut libghostty_responses,
-                            event.event,
-                        );
-                    }
-                    terminal_responses.extend(libghostty_responses);
-                    terminal_responses.extend(replacement);
-                }
-                OrderedPtyResponseEvent::Xtgettcap(response) => {
-                    terminal_responses.extend(libghostty_responses);
-                    terminal_responses.push(response.bytes);
-                }
+            let replacement = respond_to_default_color_event(core, event.event);
+            if replacement.is_some() {
+                remove_last_matching_libghostty_color_reply(&mut libghostty_responses, event.event);
             }
+            terminal_responses.extend(libghostty_responses);
+            terminal_responses.extend(replacement);
         }
 
         if written < bytes.len() {
@@ -400,7 +338,7 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn seed_handoff_input_state(&self, input_state: InputState) {
         let Ok(mut core) = self.core.lock() else {
             return;
@@ -476,7 +414,7 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn seed_keyboard_protocol_flags(&self, flags: u16) {
         if flags == 0 {
             return;
@@ -484,7 +422,7 @@ impl GhosttyPaneTerminal {
         self.seed_keyboard_protocol_ansi(&format!("\x1b[>{flags}u"));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn seed_keyboard_protocol_ansi(&self, ansi: &str) {
         if ansi.is_empty() {
             return;
@@ -613,7 +551,7 @@ impl GhosttyPaneTerminal {
         ))
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn kitty_keyboard_state_ansi(&self) -> Option<String> {
         let core = self.core.lock().ok()?;
         core.kitty_keyboard.replay_ansi()
@@ -845,21 +783,6 @@ impl GhosttyPaneTerminal {
             .filter(|bytes| !bytes.is_empty())
     }
 
-    pub(crate) fn screen_text_snapshot(
-        &self,
-    ) -> Option<(
-        crate::ghostty::ActiveScreen,
-        u16,
-        Vec<crate::ghostty::ScreenTextRow>,
-    )> {
-        let core = self.core.lock().ok()?;
-        Some((
-            core.terminal.active_screen().ok()?,
-            core.terminal.cols().ok()?,
-            core.terminal.screen_text_rows().ok()?,
-        ))
-    }
-
     pub fn visible_text(&self) -> String {
         self.core
             .lock()
@@ -876,6 +799,7 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn viewport_bottom_text(&self) -> String {
         self.core
             .lock()
@@ -884,10 +808,12 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn recent_text(&self, lines: usize) -> String {
         self.recent_text_snapshot(lines).text
     }
 
+    #[cfg(test)]
     pub(crate) fn recent_text_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
         self.core
             .lock()
@@ -901,6 +827,7 @@ impl GhosttyPaneTerminal {
         self.recent_ansi_snapshot(lines).text
     }
 
+    #[cfg(test)]
     pub(crate) fn recent_ansi_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
         self.core
             .lock()
@@ -909,7 +836,6 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
     pub fn recent_unwrapped_text(&self, lines: usize) -> String {
         self.recent_unwrapped_text_snapshot(lines).text
     }
@@ -941,4 +867,3 @@ impl GhosttyPaneTerminal {
             .and_then(|mut core| ghostty_extract_selection(&mut core, selection).ok())
     }
 }
-

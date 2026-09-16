@@ -7,6 +7,7 @@ migration from the existing HookManager.execute() method.
 
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import (
@@ -44,6 +45,12 @@ logger = logging.getLogger(__name__)
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
 _ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
+# Claude replaces an MCP result over its token limit with a pointer to the file
+# holding the full result, <projects dir>/<session_id>/tool-results/mcp-*.txt.
+_MCP_RESULT_SAVED_NOTICE = re.compile(
+    r"\AError: result \([\d,]+ characters\) exceeds maximum allowed tokens\. "
+    r"Output has been saved to (?P<path>/.+?\.txt)\.(?:\n|\Z)"
+)
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {
@@ -67,6 +74,24 @@ def is_action_first_reason(reason: str) -> bool:
         or _GET_SKILL_RE.match(reason) is not None
         or _COMMAND_CALL_RE.match(reason) is not None
     )
+
+
+def _saved_mcp_result(text: str, session_id: object) -> str:
+    """Return the full MCP result Claude saved to disk in place of its pointer."""
+    match = _MCP_RESULT_SAVED_NOTICE.match(text)
+    if match is None or not isinstance(session_id, str) or not session_id:
+        return text
+    path = Path(match["path"])
+    if (
+        not path.name.startswith("mcp-")
+        or path.parent.name != "tool-results"
+        or path.parent.parent.name != session_id
+    ):
+        return text
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return text
 
 
 class ClaudeCodeAdapter(BaseAdapter):
@@ -227,7 +252,11 @@ class ClaudeCodeAdapter(BaseAdapter):
         from gobby.hooks.normalization import normalize_tool_fields
 
         # Copy to avoid mutating the original (shared function mutates in place)
-        normalized = normalize_tool_fields(dict(input_data))
+        data = dict(input_data)
+        tool_response = data.get("tool_response")
+        if isinstance(tool_response, str):
+            data["tool_response"] = _saved_mcp_result(tool_response, data.get("session_id"))
+        normalized = normalize_tool_fields(data)
 
         # Claude uses ``user_prompt`` on UserPromptSubmit hooks. Canonicalize to
         # ``prompt`` so turn-start rules and BEFORE_AGENT handlers see the same

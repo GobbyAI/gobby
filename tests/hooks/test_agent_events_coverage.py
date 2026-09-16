@@ -177,6 +177,60 @@ class TestHandleBeforeAgent:
                 {"subagent_count": 0, "is_subagent": False},
             )
 
+    def test_native_subagent_binding_does_not_reset_subagent_count(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={
+                "_platform_session_id": "sess-1",
+                "_native_subagent_binding": True,
+            },
+            source=SessionSource.GROK,
+        )
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
+            mock_svm = MagicMock()
+            mock_svm_cls.return_value = mock_svm
+            with patch(
+                "gobby.storage.sessions._contested_expiry.session_has_active_native_subagent",
+                return_value=True,
+            ):
+                result = handler.handle_before_agent(event)
+
+        assert result.decision == "allow"
+        mock_svm.merge_variables.assert_not_called()
+
+    def test_grok_native_subagent_binding_derives_is_subagent(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={
+                "_platform_session_id": "sess-1",
+                "_native_subagent_binding": True,
+            },
+            source=SessionSource.GROK,
+        )
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
+            mock_svm = MagicMock()
+            mock_svm_cls.return_value = mock_svm
+            with patch(
+                "gobby.storage.sessions._contested_expiry.session_has_active_native_subagent",
+                return_value=False,
+            ):
+                result = handler.handle_before_agent(event)
+
+        assert result.decision == "allow"
+        mock_svm.merge_variables.assert_not_called()
+        mock_svm.adjust_counter_and_derive_boolean.assert_called_once_with(
+            "sess-1",
+            "subagent_count",
+            1,
+            boolean_name="is_subagent",
+        )
+
     def test_clear_command_generates_summaries(self) -> None:
         handler = _TestHandler()
         handler._skill_manager = None

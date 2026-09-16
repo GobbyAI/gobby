@@ -7,7 +7,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from gobby.tasks.criterion_commands import edit_details, execution_details, first_invalidating_edit
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEvidence,
+    TranscriptValidationRun,
+)
 
 
 def excluded_validation_records(

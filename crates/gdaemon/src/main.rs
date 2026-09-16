@@ -42,6 +42,10 @@ enum SchemaCommand {
         #[arg(long)]
         destructive: bool,
     },
+    Plan {
+        #[arg(long)]
+        schema: Option<String>,
+    },
     SweepTestSchemas {
         #[arg(long, default_value_t = 1)]
         age_hours: u64,
@@ -66,6 +70,9 @@ fn main() -> Result<()> {
                     destructive,
                 },
         } => apply_schema(schema.as_deref(), destructive),
+        Command::Schema {
+            command: SchemaCommand::Plan { schema },
+        } => plan_schema(schema.as_deref()),
         Command::Schema {
             command: SchemaCommand::Verify,
         } => verify_schema(),
@@ -346,6 +353,49 @@ fn refuse_symlink_traversal(path: &Path) -> Result<()> {
             anyhow::bail!("hub backup path contains a symlink: {}", current.display());
         }
     }
+    Ok(())
+}
+
+/// Report what `schema apply` would do against this database, writing nothing.
+///
+/// Mirrors `apply_schema`'s connection handling only. It never calls
+/// `verify_database_identity` and never calls `SchemaRunner::verify`: both bail
+/// exactly when the database head differs from the embedded head, which is the
+/// normal state of every migration-owing restart and of every cutover.
+fn plan_schema(schema: Option<&str>) -> Result<()> {
+    if let Some(schema) = schema {
+        validate_schema_name(schema)?;
+    }
+    let database_url = resolve_database_url()?;
+    let mut client = connect_readwrite(&database_url).map_err(|_| {
+        anyhow::anyhow!(
+            "failed to connect to the Gobby PostgreSQL hub at {}",
+            redact_database_url(&database_url)
+        )
+    })?;
+    let schema = match schema {
+        Some(schema) => schema.to_owned(),
+        None => client
+            .query_one("SELECT current_schema()", &[])?
+            .get::<_, Option<String>>(0)
+            .context("PostgreSQL connection has no current schema")?,
+    };
+    validate_schema_name(&schema)?;
+    let report = SchemaRunner::new(&mut client, &schema)?.plan()?;
+    let versions = report
+        .pending_versions
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!(
+        "schema {schema} plan: database v{}, code v{}, baseline_pending={}, \
+         pending_migrations={} [{versions}]",
+        report.database_head,
+        report.code_head,
+        report.baseline_pending,
+        report.pending_versions.len()
+    );
     Ok(())
 }
 

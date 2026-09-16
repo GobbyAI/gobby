@@ -25,11 +25,11 @@ from gobby.config.validation_matchers import ValidationCommandMatcher
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.tasks.command_equivalence import target_covers
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
     TranscriptValidationSegment,
-    derive_transcript_evidence,
 )
 
 logger = logging.getLogger(__name__)

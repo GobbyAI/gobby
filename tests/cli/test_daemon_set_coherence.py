@@ -79,7 +79,7 @@ def test_restart_refuses_mixed_installed_binary_set_before_stop(
 ) -> None:
     _mixed_install(tmp_path, monkeypatch)
     stop = Mock(side_effect=AssertionError("stop must not run"))
-    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
     monkeypatch.setattr("gobby.cli.daemon._do_stop", stop)
 
     result = CliRunner().invoke(cli, ["restart"])

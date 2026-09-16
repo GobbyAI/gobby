@@ -482,7 +482,9 @@ def test_release_workflows_gate_stage0_and_gclient_preflight() -> None:
     gterm_yaml = (root / ".github" / "workflows" / "release-gterminal.yml").read_text()
     gclient_yaml = (root / ".github" / "workflows" / "release-gclient.yml").read_text()
     assert "mlugg/setup-zig" in gterm_yaml
-    assert "0.15.2" in gterm_yaml
+    assert "version: 0.16.0" in gterm_yaml
+    assert "mlugg/setup-zig" in rust_ci
+    assert "version: 0.16.0" in rust_ci
     assert "mlugg/setup-zig" not in gclient_yaml
     assert "cargo publish -p gobby-terminal --dry-run" in gterm_yaml
     assert "cargo publish -p gobby-client --dry-run" in gclient_yaml

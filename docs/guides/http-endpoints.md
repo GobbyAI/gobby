@@ -64,7 +64,6 @@ The complete unauthenticated HTTP surface is:
 | Exact | `/api/admin/startup-progress` | CLI startup progress probe |
 | Prefix | `/api/auth/` | Login, logout, and auth status |
 | Prefix | `/api/comms/webhooks/` | Channel-signature validation runs in the route |
-| Prefix | `/api/github/webhooks/` | GitHub HMAC validation runs in the route |
 | Prefix | `/assets/` | Production UI assets |
 | Exact | `/favicon.ico` | Production UI asset |
 | Exact | `/logo.png` | Production UI asset |
@@ -380,7 +379,6 @@ context and enforcement; the direct path is not a workflow bypass.
 | `POST` | `/api/hooks/execute` | Execute a CLI hook envelope through the adapter layer. |
 | `GET` | `/api/webhooks` | List configured hook-extension endpoints and enabled state. |
 | `POST` | `/api/webhooks/test` | Send one real outbound request to a configured endpoint (`name`, optional `event_type`). |
-| `POST` | `/api/github/webhooks/triage/{project_id}` | Receive GitHub issue triage webhook events. |
 
 ### `POST /api/hooks/execute`
 
@@ -650,12 +648,6 @@ the MCP cleanup tool's Git-deletion options.
 | `POST` | `/api/source-control/branches/checkout` | Check out a branch. |
 | `GET` | `/api/source-control/branches/{branch_name:path}/commits` | List branch commits. |
 | `GET` | `/api/source-control/diff` | Get repository diff. |
-| `GET` | `/api/source-control/prs` | List pull requests. |
-| `GET` | `/api/source-control/prs/{number}` | Get a pull request. |
-| `GET` | `/api/source-control/prs/{number}/checks` | Get PR checks. |
-| `GET` | `/api/source-control/issues` | List issues. |
-| `GET` | `/api/source-control/issues/{number}` | Get an issue. |
-| `GET` | `/api/source-control/cicd/runs` | List CI/CD runs. |
 | `GET` | `/api/source-control/worktrees` | List worktrees. |
 | `POST` | `/api/source-control/worktrees` | Create a client-owned worktree. |
 | `GET` | `/api/source-control/worktrees/stats` | Worktree statistics. |
@@ -682,9 +674,6 @@ the MCP cleanup tool's Git-deletion options.
 | `POST` | `/api/projects/{project_id}/checkouts/{machine_id}/rebind` | Rebind only this daemon's machine checkout. |
 | `DELETE` | `/api/projects/{project_id}` | Delete a project. |
 | `POST` | `/api/projects/{project_id}/purge` | Run lifecycle-safe permanent purge through the daemon service. |
-| `GET` | `/api/projects/{project_id}/github-triage` | Read GitHub triage config. |
-| `PUT` | `/api/projects/{project_id}/github-triage` | Update GitHub triage config. |
-| `GET` | `/api/projects/{project_id}/integrations/status` | Read GitHub/Linear readiness, saved configuration and reconciliation health. |
 | `GET` | `/api/config/schema` | Read config schema. |
 | `GET` | `/api/config/values` | Read config values. |
 | `PATCH` | `/api/config/values` | Validate and atomically set/unset public values with `expected_revision`. |

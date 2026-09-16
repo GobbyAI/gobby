@@ -103,6 +103,7 @@ fn build_sgr_resets_previous_modifiers_when_cell_is_plain() {
     assert_eq!(build_sgr(0x00_00_00_00, 0x00_00_00_00, 0), "\x1b[0;39;49m");
 }
 
+#[cfg(feature = "vt-engine")]
 #[test]
 fn build_sgr_preserves_curly_underline_style() {
     let modifier = crate::protocol::modifier_to_u16(

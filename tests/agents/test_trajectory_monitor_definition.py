@@ -48,7 +48,6 @@ def test_trajectory_monitor_reviews_linked_and_cumulative_branch_history() -> No
     assert "gobby-tasks:get_task_diff" in allowed
     assert "gobby-tasks:get_task_stages" in allowed
     assert "gobby-tasks-ops:get_artifacts" in allowed
-    assert "gobby-tasks-ops:get_delivery_state" in allowed
     assert "gobby-worktrees:get_worktree_by_task" in allowed
     assert "gobby-clones:get_clone_by_task" in allowed
     assert "merge-base" in status

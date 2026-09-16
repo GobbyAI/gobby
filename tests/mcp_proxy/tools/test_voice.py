@@ -119,7 +119,7 @@ class TestAddVocab:
 
     async def test_empty_terms(self) -> None:
         registry, _ = _make_registry(vocab=[])
-        result = await _call_tool(registry, "add_vocab", terms="  ,  , ")
+        result = await _call_tool(registry, "add_vocab", terms="  , ")
         assert result["success"] is False
         assert "No valid terms" in result["error"]
 

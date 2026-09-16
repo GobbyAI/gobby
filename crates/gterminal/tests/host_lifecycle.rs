@@ -5,8 +5,8 @@
 mod host_support;
 
 use host_support::{
-    connect, recv_json, send_json, socket_mode, spawn_host, wait_exit, wait_socket, wait_until,
-    write_token, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
+    connect, recv_json, send_json, socket_mode, spawn_host, temp_socket_dir, wait_exit,
+    wait_socket, wait_until, write_token, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -33,7 +33,7 @@ fn test_host(
     host_support::HostProc,
     std::os::unix::net::UnixStream,
 ) {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     write_token(dir.path(), token);
     let host = spawn_host(dir.path());
     let control = dir.path().join(CONTROL_SOCKET);
@@ -164,7 +164,7 @@ fn process_exits_within(pid: u32, timeout: Duration) -> bool {
 
 #[test]
 fn host_exits_when_socket_dir_vanishes() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     write_token(dir.path(), "control-token-socket-dir");
     let mut host = spawn_host(dir.path());
     wait_socket(&dir.path().join(CONTROL_SOCKET));
@@ -486,7 +486,7 @@ fn host_death_releases_prepared_child() {
 
 #[test]
 fn host_starts_and_serves_ping_and_list() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-lifecycle";
     write_token(dir.path(), token);
 
@@ -549,7 +549,7 @@ fn host_starts_and_serves_ping_and_list() {
 
 #[test]
 fn host_shutdown_drains_and_is_idempotent() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-drain";
     write_token(dir.path(), token);
     let mut child = spawn_host(dir.path());
@@ -647,7 +647,7 @@ fn host_survives_daemon_disconnect_and_readopts() {
 
     const LOCAL: &str = "local-token-readopt";
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-readopt";
     write_token(dir.path(), token);
     std::fs::write(dir.path().join("local_cli_token"), LOCAL).expect("local token");

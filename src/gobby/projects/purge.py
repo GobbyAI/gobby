@@ -295,13 +295,6 @@ class ProjectPurgeService:
                 "DELETE FROM memories WHERE id = ANY(%s)",
             ),
             (
-                "github_issue",
-                "SELECT id AS row_id, project_id::text || ':' || repo || ':' || "
-                "issue_number::text AS source_id FROM gh_issues_triaged "
-                "WHERE project_id = %s LIMIT %s",
-                "DELETE FROM gh_issues_triaged WHERE id = ANY(%s)",
-            ),
-            (
                 "tool",
                 "SELECT tools.id AS row_id, tools.id::text AS source_id FROM tools "
                 "JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id "

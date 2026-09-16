@@ -7,6 +7,7 @@ Each function returns None if the tool is not installed/available.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -21,6 +22,7 @@ import psycopg
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.storage.hub.managed import managed_grant_path
 from gobby.utils.dependency_requirements import collect_dependency_report
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
@@ -180,38 +182,70 @@ def get_droid_cli_version() -> str | None:
     return None
 
 
+def _coding_cli_hook_paths() -> dict[str, Path]:
+    """Return the installed hook-config path for each coding CLI."""
+    return {
+        "claude": Path.home() / ".claude" / "settings.json",
+        "grok": Path.home() / ".grok" / "hooks" / "gobby.json",
+        "agy": _agy_hooks_file(),
+        "codex": Path.home() / ".codex" / "hooks.json",
+        "qwen": Path.home() / ".qwen" / "settings.json",
+        "droid": _droid_hooks_file(),
+    }
+
+
 def get_coding_cli_hooks_status() -> dict[str, bool]:
     """Check which coding CLIs have gobby hooks installed.
 
     Returns dict mapping CLI name to whether hooks are installed.
     Detects by checking for the ``--gobby-owned`` marker in config.
     """
-    result: dict[str, bool] = {}
+    return {cli: _check_hooks_in_file(path) for cli, path in _coding_cli_hook_paths().items()}
 
-    # Claude Code: ~/.claude/settings.json
-    claude_settings = Path.home() / ".claude" / "settings.json"
-    result["claude"] = _check_hooks_in_file(claude_settings)
 
-    # Grok: ~/.grok/hooks/gobby.json
-    grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
-    result["grok"] = _check_hooks_in_file(grok_hooks)
+def _hook_event_map(payload: object) -> dict[str, Any]:
+    """Return the event-name map from a hooks template or installed config."""
+    if not isinstance(payload, dict):
+        return {}
+    hooks = payload.get("hooks", payload)
+    if not isinstance(hooks, dict):
+        return {}
+    nested = hooks.get("gobby")
+    if isinstance(nested, dict):
+        return nested
+    return hooks
 
-    # AGY: ~/.gemini/config/hooks.json
-    result["agy"] = _check_hooks_in_file(_agy_hooks_file())
 
-    # Codex: ~/.codex/hooks.json
-    codex_hooks = Path.home() / ".codex" / "hooks.json"
-    result["codex"] = _check_hooks_in_file(codex_hooks)
+def get_coding_cli_hook_drift() -> dict[str, list[str]]:
+    """Return template events whose installed entry has no ``--gobby-owned`` command.
 
-    # Qwen: ~/.qwen/settings.json
-    qwen_settings = Path.home() / ".qwen" / "settings.json"
-    result["qwen"] = _check_hooks_in_file(qwen_settings)
+    Uninstalled CLIs (missing hook config files) are skipped.
+    """
+    from gobby.cli.installers.hook_commands import config_contains_gobby_hook
+    from gobby.paths import get_install_dir
 
-    # Factory Droid: ~/.factory/hooks/hooks.json
-    droid_hooks = _droid_hooks_file()
-    result["droid"] = _check_hooks_in_file(droid_hooks)
-
-    return result
+    install_dir = get_install_dir()
+    drift: dict[str, list[str]] = {}
+    for cli, path in _coding_cli_hook_paths().items():
+        if not path.exists():
+            continue
+        template_path = install_dir / cli / "hooks-template.json"
+        if not template_path.exists():
+            continue
+        try:
+            template = json.loads(template_path.read_text())
+            installed = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        installed_events = _hook_event_map(installed)
+        missing = [
+            event
+            for event in _hook_event_map(template)
+            if not config_contains_gobby_hook(installed_events.get(event))
+        ]
+        if missing:
+            drift[cli] = missing
+    return drift
 
 
 def _agy_hooks_file() -> Path:
@@ -633,7 +667,10 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
 
     dependency_payload = collect_dependency_report(
         managed_services=managed_services,
-        include_srt=True,
+        # A managed execution cannot read tools/srt (sandbox_policy credential roots), and
+        # the daemon verified SRT fail-closed before launching it; only unsandboxed status
+        # can observe the installation.
+        include_srt=managed_grant_path() is None,
     ).to_payload()
     return {
         "gobby": {
@@ -656,6 +693,7 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "qwen": get_qwen_cli_version(),
             "agy": get_agy_cli_version(),
             "hooks": get_coding_cli_hooks_status(),
+            "hook_drift": get_coding_cli_hook_drift(),
         },
         **dependency_payload,
         "integrations": {

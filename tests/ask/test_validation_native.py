@@ -193,7 +193,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
                 **{
                     key: value
                     for key, value in source_item.items()
-                    if key not in {"item_type", "excerpt"}
+                    if key not in {"item_type", "excerpt", "numbered_excerpt"}
                 },
             }
         )

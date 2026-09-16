@@ -48,17 +48,14 @@ class TestProject:
 
     def test_to_dict(self, project_manager: LocalProjectManager) -> None:
         """Test converting Project to dictionary."""
-        project = project_manager.create(
-            name="test-project",
-            github_url="https://github.com/test/repo",
-        )
+        project = project_manager.create(name="test-project")
 
         d = project.to_dict()
         assert d["id"] == project.id
         assert d["name"] == "test-project"
         assert "repo_path" not in d
-        assert d["github_url"] == "https://github.com/test/repo"
-        assert d["linear_project_id"] is None
+        assert "github_url" not in d
+        assert "linear_project_id" not in d
         assert "created_at" in d
         assert "updated_at" in d
 
@@ -68,15 +65,12 @@ class TestLocalProjectManager:
 
     def test_create_project(self, project_manager: LocalProjectManager) -> None:
         """Test creating a new project."""
-        project = project_manager.create(
-            name="my-project",
-            github_url="https://github.com/user/repo",
-        )
+        project = project_manager.create(name="my-project")
 
         assert project.id is not None
         assert project.name == "my-project"
         assert not hasattr(project, "repo_path")
-        assert project.github_url == "https://github.com/user/repo"
+        assert not hasattr(project, "github_url")
 
     def test_create_project_minimal(self, project_manager: LocalProjectManager) -> None:
         """Test creating a project with only required fields."""
@@ -85,7 +79,7 @@ class TestLocalProjectManager:
         assert project.id is not None
         assert project.name == "minimal-project"
         assert not hasattr(project, "repo_path")
-        assert project.github_url is None
+        assert not hasattr(project, "github_url")
 
     def test_create_duplicate_name_raises(self, project_manager: LocalProjectManager) -> None:
         """Test that creating a project with duplicate name raises error."""
@@ -227,29 +221,6 @@ class TestLocalProjectManager:
         assert updated is not None
         assert updated.name == "updated"
         assert not hasattr(updated, "repo_path")
-
-    def test_update_linear_project_id(self, project_manager: LocalProjectManager) -> None:
-        """Test updating the Linear project binding."""
-        created = project_manager.create(name="linear-bound")
-
-        updated = project_manager.update(created.id, linear_project_id="lin-proj")
-
-        assert updated is not None
-        assert updated.linear_project_id == "lin-proj"
-
-    def test_update_partial(self, project_manager: LocalProjectManager) -> None:
-        """Test updating only some fields."""
-        created = project_manager.create(name="partial")
-
-        updated = project_manager.update(
-            created.id,
-            github_url="https://github.com/new/url",
-        )
-
-        assert updated is not None
-        assert updated.name == "partial"  # unchanged
-        assert not hasattr(updated, "repo_path")
-        assert updated.github_url == "https://github.com/new/url"
 
     def test_update_nonexistent(self, project_manager: LocalProjectManager) -> None:
         """Test updating nonexistent project returns None."""

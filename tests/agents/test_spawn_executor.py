@@ -2367,13 +2367,18 @@ class TestExecuteSpawnErrorPaths:
 
         assert result.success is True
         assert int(_spawn_kwargs(request)["env"]["MCP_CONNECT_TIMEOUT_MS"]) >= 30000
+        assert int(_spawn_kwargs(request)["env"]["MCP_TIMEOUT"]) >= 120000
 
     @pytest.mark.asyncio
-    async def test_claude_terminal_without_mcp_config_keeps_the_default_connect_deadline(
+    async def test_claude_terminal_without_mcp_config_still_raises_the_server_connect_deadline(
         self,
         tmp_path: Path,
     ) -> None:
-        """No workspace MCP config means nothing to wait for, so nothing is overridden."""
+        """Without a workspace MCP config the first-turn wait keeps its default.
+
+        The Gobby server still loads from user-scope Claude config, so the server
+        connect deadline is raised either way.
+        """
         request = SpawnRequest(
             prompt="Test",
             cwd=str(tmp_path),
@@ -2401,6 +2406,7 @@ class TestExecuteSpawnErrorPaths:
 
         assert result.success is True
         assert "MCP_CONNECT_TIMEOUT_MS" not in _spawn_kwargs(request)["env"]
+        assert int(_spawn_kwargs(request)["env"]["MCP_TIMEOUT"]) >= 120000
 
     @pytest.mark.asyncio
     async def test_claude_terminal_disallows_native_delegation_tools(self) -> None:

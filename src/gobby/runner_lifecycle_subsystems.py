@@ -20,6 +20,7 @@ from gobby.runner_lifecycle_agents import (
 from gobby.runner_lifecycle_reconcile import (
     _reclassify_reconciliation_pending_runs,
     _reconcile_agent_runs_after_restart,
+    _rotate_due_managed_credentials,
 )
 from gobby.runner_lifecycle_startup import StartupTracker
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
@@ -36,9 +37,13 @@ _PIPELINE_EXECUTION_PAGE_SIZE = 100
 
 
 async def _reconcile_agent_lifecycle_state(runner: GobbyRunner) -> int:
+    # Rotation goes first so a failing step below cannot starve it: a binding left
+    # past its hour is revoked at the next restart, and its live run can never
+    # handshake again.
+    rotated = await _rotate_due_managed_credentials(runner)
     reclassified = await _reclassify_reconciliation_pending_runs(runner)
     close_reviews = await _reconcile_task_close_reviews(runner)
-    return reclassified + close_reviews
+    return rotated + reclassified + close_reviews
 
 
 async def _run_db(

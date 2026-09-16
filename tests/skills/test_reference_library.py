@@ -169,8 +169,6 @@ async def test_reference_contract_3_2_2(
                 skip_stages=["qa"],
                 workspace_backend="clone",
                 unattended=True,
-                delivery_mode="auto",
-                delivery_target_repo="owner/repo",
                 no_merge=False,
                 pr="123",
                 stage=["pr:max_review_rounds=2"],
@@ -214,10 +212,6 @@ async def test_reference_contract_3_2_2(
         assert build_opts.isolation_explicit is True
         assert build_opts.unattended is True
         assert build_opts.unattended_explicit is True
-        assert build_opts.delivery_mode == "auto"
-        assert build_opts.delivery_mode_explicit is True
-        assert build_opts.delivery_target_repo == "owner/repo"
-        assert build_opts.delivery_target_repo_explicit is True
         assert str(build_opts.clones_dir) == "/tmp"
         assert str(build_opts.cwd) == "/tmp"
         assert build_opts.no_merge is False

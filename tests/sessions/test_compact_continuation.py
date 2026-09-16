@@ -797,6 +797,9 @@ def test_reload_directive_normalized() -> None:
     prompt = build_handoff_continue_prompt()
 
     assert "get_handoff()" in prompt
+    assert "set_handoff" in prompt
+    assert "cancelled" in prompt
+    assert "context pressure" in prompt
     assert "injected context" not in prompt
     assert "\n" not in prompt
     assert "tier" not in prompt

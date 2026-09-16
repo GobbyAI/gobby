@@ -73,9 +73,7 @@ def project(
     isolated_checkout_factory: IsolatedCheckoutFactory, project_manager: LocalProjectManager
 ) -> Project:
     """Create a test project."""
-    return isolated_checkout_factory(
-        project_manager.db, "test-project", github_url="https://github.com/test/test-project"
-    ).project
+    return isolated_checkout_factory(project_manager.db, "test-project").project
 
 
 @pytest.fixture

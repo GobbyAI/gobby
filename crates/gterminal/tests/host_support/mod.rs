@@ -69,6 +69,16 @@ pub fn gterm_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_gterm"))
 }
 
+/// macOS `sockaddr_un.sun_path` is 104 bytes. Sandbox `TMPDIR` is already long,
+/// so the default `tempfile` prefix does not leave enough room for `gterm-control.sock`.
+pub fn temp_socket_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("g")
+        .rand_bytes(4)
+        .tempdir()
+        .expect("socket tempdir")
+}
+
 pub fn write_token(dir: &Path, token: &str) {
     let path = dir.join(TOKEN_FILE);
     std::fs::write(&path, token).expect("write control token");
@@ -85,13 +95,58 @@ pub fn spawn_host(socket_dir: &Path) -> HostProc {
     spawn_host_with_args(socket_dir, &[])
 }
 
+/// Copy `gterm` onto a private inode. Sibling tests (`build_env`,
+/// `frame_source_live`) invoke Cargo against the shared target dir and can
+/// replace `CARGO_BIN_EXE_gterm` while a host is starting; macOS kills a
+/// process that execs an in-place-overwritten signed binary.
+fn private_gterm(socket_dir: &Path) -> PathBuf {
+    let src = gterm_bin();
+    let dst = socket_dir.join("gterm");
+    // Stage under a private name and rename over `gterm` so every spawn execs a
+    // new inode. `std::fs::copy` onto an existing path truncates and rewrites
+    // the inode a previous host in this directory already executed, and macOS
+    // kills the next exec of an in-place-overwritten signed binary with SIGKILL.
+    let staged = socket_dir.join(".gterm.staged");
+    let mut last_err = None;
+    for _ in 0..20 {
+        match std::fs::copy(&src, &staged) {
+            Ok(_) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = std::fs::metadata(&staged)
+                        .expect("gterm copy metadata")
+                        .permissions();
+                    perms.set_mode(0o755);
+                    std::fs::set_permissions(&staged, perms).expect("gterm copy mode");
+                }
+                std::fs::rename(&staged, &dst).expect("rename staged gterm copy");
+                return dst;
+            }
+            Err(err) => {
+                last_err = Some(err);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    panic!(
+        "copy gterm from {} to {}: {:?}",
+        src.display(),
+        dst.display(),
+        last_err
+    );
+}
+
 pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
     let log_path = socket_dir.join("gterm.log");
     let token_path = socket_dir.join("local_cli_token");
     if !token_path.exists() {
         std::fs::write(&token_path, "local-token").expect("write local token");
     }
-    let mut cmd = Command::new(gterm_bin());
+    let stderr_path = socket_dir.join("gterm.stderr");
+    let stderr_file = std::fs::File::create(&stderr_path).ok();
+    let binary = private_gterm(socket_dir);
+    let mut cmd = Command::new(&binary);
     cmd.arg("host")
         .arg("--socket-dir")
         .arg(socket_dir)
@@ -100,7 +155,10 @@ pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
         .env("GTERM_TEST_HELPER", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stderr(match stderr_file {
+            Some(file) => Stdio::from(file),
+            None => Stdio::piped(),
+        });
     let child = cmd.spawn().expect("spawn gterm host");
     HostProc {
         child,
@@ -132,14 +190,24 @@ pub fn rpc(stream: &mut UnixStream, method: &str, extra: serde_json::Value) -> V
 }
 
 pub fn wait_socket(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("timed out waiting for {}", path.display());
+    let dir = path.parent().unwrap_or(path);
+    let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
+    let stderr = std::fs::read_to_string(dir.join("gterm.stderr")).unwrap_or_default();
+    let pid = std::fs::read_to_string(dir.join(PID_FILE)).unwrap_or_default();
+    panic!(
+        "timed out waiting for {}; path_len={}; exists={}; pid={pid:?}; \
+         log={log:?}; stderr={stderr:?}",
+        path.display(),
+        path.as_os_str().len(),
+        path.exists(),
+    );
 }
 
 /// Poll `ready` until it reports true, panicking after five seconds.

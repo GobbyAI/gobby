@@ -116,9 +116,12 @@ def _load_droid_hooks_template(
     """Load and rewrite the bundled Droid hooks template.
 
     The template stores hooks under a ``hooks`` wrapper (consistent with other
-    CLI templates and :func:`rewrite_hook_template_commands`).  Droid 0.159.1
-    expects ``hooks.json`` to use hook event names as top-level keys (flat
-    format, no wrapper), so the wrapper is unwrapped here before returning.
+    CLI templates and :func:`rewrite_hook_template_commands`).  Droid expects
+    ``hooks.json`` to use hook event names as top-level keys (flat format, no
+    wrapper), so the wrapper is unwrapped here before returning.
+
+    Established on 0.159.1 and re-confirmed live on 0.219.0, where a flat
+    project-local ``.factory/hooks.json`` fired hooks normally (#22402).
     """
     template_path = get_install_dir() / "droid" / "hooks-template.json"
     if not template_path.exists():

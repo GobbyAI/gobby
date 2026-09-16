@@ -10,7 +10,6 @@ from unittest.mock import patch
 import pytest
 
 from gobby.failure_categories import FailureCategory
-from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -456,7 +455,7 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
     assert err.review_policy == "required"
 
 
-def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
+def test_close_task_completes_in_progress_merge_row_with_close_sha(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -468,13 +467,6 @@ def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
     set_stage_state(temp_db, task.id, "development", "done")
     set_stage_state(temp_db, task.id, "pr", "done")
     set_stage_state(temp_db, task.id, "merge", "in_progress", work_attempt_count=1)
-    TaskDeliveryStateManager(temp_db).record_campaign(
-        task.id,
-        state="merged",
-        merge_sha="delivery-merge-sha",
-        merge_report_ref="merge-report.md",
-        last_error="",
-    )
 
     manager = LocalTaskManager(temp_db)
     closed = manager.close_task(
@@ -486,12 +478,12 @@ def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
     row = stage_row(temp_db, task.id, "merge")
     assert row["state"] == "done"
     assert row["completed_at"] is not None
-    assert row["completed_commit_sha"] == "delivery-merge-sha"
+    assert row["completed_commit_sha"] == "repair-commit-sha"
     assert manager.stage_states.current_stage(task.id) is None
     assert closed.closed_commit_sha == "repair-commit-sha"
 
 
-def test_close_task_completes_merge_and_records_campaign_from_close_sha(
+def test_close_task_completes_merge_from_close_sha(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -511,17 +503,13 @@ def test_close_task_completes_merge_and_records_campaign_from_close_sha(
         closed_commit_sha="close-merge-sha",
     )
 
-    campaign = TaskDeliveryStateManager(temp_db).get_state(task.id)["campaign"]
     count_row = temp_db.fetchone(
         "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
         (task.id,),
     )
     assert stage_row(temp_db, task.id, "merge")["completed_commit_sha"] == "close-merge-sha"
-    assert campaign["state"] == "merged"
-    assert campaign["merge_sha"] == "close-merge-sha"
-    assert campaign["last_error"] == ""
     assert count_row is not None
-    assert count_row["campaign_count"] == 1
+    assert count_row["campaign_count"] == 0
 
 
 def _closed_leaf_for_epic_failure(temp_db, sample_project, parent_id: str, title: str):

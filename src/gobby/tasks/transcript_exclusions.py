@@ -9,12 +9,12 @@ from gobby.config.validation_detection import ValidationDetectionConfig
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.storage.session_models import Session
 from gobby.tasks.transcript_evidence import (
-    TranscriptValidationRun,
     _coerce_datetime,
     _derive_transcript_evidence_sync,
     _load_snapshot,
     _store_snapshot,
 )
+from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_evidence_pool import run_in_transcript_evidence_pool
 
 

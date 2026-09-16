@@ -21,11 +21,11 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_names_test,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, is_test_convention_path
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
-    merge_transcript_evidence,
 )
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 

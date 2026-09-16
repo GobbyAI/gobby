@@ -45,6 +45,7 @@ _TEST_LITERAL_VALUE = "01234567" + "89abcdef"
             False,
         ),
         ({"path": "tests/fixture.py", "excerpt": "token = 'fixture-value'"}, False),
+        ({"path": "tests/fixture.py", "numbered_excerpt": "1| token = fixture_value"}, False),
         ({"query": "token = runtime_token_reference"}, False),
         ({"query": "postgresql://worker:request-secret@127.0.0.1/db"}, True),
         ({"error": "postgresql://worker:runtime-secret@127.0.0.1/db"}, True),
@@ -118,6 +119,7 @@ if query == 'token = runtime_token_reference':
         'byte_start': 0,
         'byte_end': len(excerpt.encode()),
         'excerpt': excerpt,
+        'numbered_excerpt': f'1| source = {Path.home()}/example.py\\n2| token = runtime_token_reference',
     }
     response['bounds']['serialized_item_bytes'] = len(
         json.dumps(response['items'][0], separators=(',', ':')).encode()
@@ -356,6 +358,9 @@ async def test_durable_scoped_evidence_admission(
     expected_excerpt = f"source = {Path.home()}/example.py\ntoken = runtime_token_reference"
     assert source_item["path"] == "src/runtime.py"
     assert source_item["excerpt"] == expected_excerpt
+    assert source_item["numbered_excerpt"] == (
+        f"1| source = {Path.home()}/example.py\n2| token = runtime_token_reference"
+    )
     assert source_item["excerpt_hash"] == hashlib.sha256(expected_excerpt.encode()).hexdigest()
 
     terminal_partial = await admission.query(

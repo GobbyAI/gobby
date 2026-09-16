@@ -201,7 +201,6 @@ def _managed_journal() -> SwitchJournal:
         physical_names={
             "memories": "memories@4096-run",
             "tool_embeddings": "tool_embeddings@4096-run",
-            "gobby_github_issues": "gobby_github_issues@4096-run",
         },
         caught_up_watermark=7,
     )

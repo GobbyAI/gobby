@@ -104,8 +104,8 @@ unavailable and includes this rollback setting.
 
 ## Managed SRT Installation
 
-`gobby install` installs `@anthropic-ai/sandbox-runtime` 0.0.66 under
-`~/.gobby/tools/srt/0.0.66` (or the configured `GOBBY_HOME`). Gobby verifies:
+`gobby install` installs `@anthropic-ai/sandbox-runtime` 0.0.76 under
+`~/.gobby/tools/srt/0.0.76` (or the configured `GOBBY_HOME`). Gobby verifies:
 
 - the fixed npm tarball URL and SHA-256 checksum;
 - npm's published integrity value;
@@ -232,7 +232,7 @@ The SRT policy is a strict allowlist. It contains:
 - Git-forge or package-registry domains only when their separate capability is
   enabled.
 
-SRT 0.0.66 expresses loopback policy by host, not by destination port. Gobby
+SRT 0.0.76 expresses loopback policy by host, not by destination port. Gobby
 records the configured daemon and WebSocket ports in its canonical policy, but
 the rendered SRT grant permits the two loopback hosts. Do not treat this release
 as exact loopback-port isolation.

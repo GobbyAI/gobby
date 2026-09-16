@@ -10,33 +10,26 @@ binaries on purpose: the Ghostty VT engine sits behind `gobby-terminal`'s
 
 ## Build
 
-Zig 0.15 is a **build-time** dependency only for `vt-engine` (the `gterm`
+Zig 0.16.0 is a **build-time** dependency only for `vt-engine` (the `gterm`
 binary and its CI jobs). `gobby-client` never invokes Zig.
 
 ```bash
-# Host (requires zig 0.15 on PATH)
+# Host (requires zig 0.16.0 on PATH)
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 
 # Workspace client (Zig-free)
 cargo build --release -p gobby-client
 ```
 
-On macOS, Zig 0.15.2's libc++ build is incompatible with the macOS 27 SDK
-(`INFINITY` is undeclared in `__random/clamp_to_integral.h`). Select an installed
-Xcode with the macOS 26.5 SDK for this toolchain, for example:
+On macOS the build uses whatever SDK Command Line Tools ships; the macOS 27 SDK
+is the validated one. No `DEVELOPER_DIR` or Xcode selection is needed — Zig
+0.16.0 compiles its bundled libc++ against that SDK. Keep SIMD enabled for
+normal builds; libghostty-vt bundles its own simdutf, so nothing links a system
+copy. The optional non-SIMD Darwin archive uses the same member-preserving
+normalization as the SIMD archive; its focused build/link regression is:
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk macosx --show-sdk-version
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo build --release -p gobby-terminal --features vt-engine --bin gterm
-```
-
-Verify that the first command reports `26.5`. `SDKROOT` does not override Zig's
-`xcrun --sdk macosx` lookup. Keep SIMD enabled for normal builds. The optional
-non-SIMD Darwin archive uses the same member-preserving normalization as the
-SIMD archive; its focused build/link regression is:
-
-```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
 ```
 
 End users receive prebuilt GitHub release assets. The installer local-workspace
@@ -46,21 +39,30 @@ Gobby-hosted GitHub assets. `gclient`'s local build is ordinary cargo.
 
 ### Rebuild and reinstall
 
-A crate change is live only after rebuild **and** reinstall via a new inode.
-macOS kills processes that exec an in-place-overwritten signed binary:
+A crate change is live only after rebuild **and** reinstall:
 
 ```bash
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 cargo build --release -p gobby-client
-mkdir -p ~/.gobby/bin
-cp target/release/gterm ~/.gobby/bin/.gterm.new
-mv -f ~/.gobby/bin/.gterm.new ~/.gobby/bin/gterm
-cp target/release/gclient ~/.gobby/bin/.gclient.new
-mv -f ~/.gobby/bin/.gclient.new ~/.gobby/bin/gclient
-chmod 755 ~/.gobby/bin/gterm ~/.gobby/bin/gclient
 ```
 
-`install -m 755` over an existing path is not sufficient on macOS.
+Never copy a built artifact into `~/.gobby/bin` by hand. `cp`/`mv`/`install`
+skip the ad-hoc code signature and the identity stamp, and the next daemon
+start is refused with `mixed installed binary set`. Promotion is owned by
+`stage_and_promote_binary_file`
+(`src/gobby/install/bin_freshness_promotion.py`), which stages the bytes, signs
+them, and atomically replaces the destination through a new inode — macOS kills
+processes that exec an in-place-overwritten signed binary. `gterm` and
+`gclient` each promote through that function individually.
+
+`gcode`, `gdaemon`, and `ghook` are a coherent set and promote together through
+`promote_workspace_binary_set` (`src/gobby/install/bin_set_coherence.py`), which
+writes `~/.gobby/bin/.gdaemon-schema-identity.json` when it promotes the
+complete set. `gterm` and `gclient` are not set members, so a `gobby-core`
+change means rebuilding them alongside the set and promoting them separately.
+
+Because promotion re-signs the binary, read `sha256` from `~/.gobby/bin/` to
+verify an install, never from `target/release/`.
 
 ## Protocol contracts
 
@@ -165,31 +167,43 @@ escapes), and Linux/WSL directory-write and socket-restriction evidence.
 
 ## Guard set G (foundation history)
 
-The original landing epic used this set, run from the `0.5.0-test`
-root with `DATABASE_URL` pointed at the isolated test hub
+The original landing epic used this set. Run each group as the command
+below from the repository root, with `DATABASE_URL` pointed at the
+isolated test hub
 (`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
-`GOBBY_TEST_PROTECT=1`:
+`GOBBY_TEST_PROTECT=1`. Group 2 also needs `GOBBY_POSTGRES_TEST_DSN`
+exported. The runner prints SHA-256 provenance for the installed
+`gterm`, `gcode`, `gdaemon`, and `ghook` binaries under `~/.gobby/bin`
+(never `target/`). Groups 2 and 3 wrap their commands in a before/after
+`gterm host` process guard that always runs the after-check, even when
+the wrapped command fails. Ownership comes from isolated run roots and
+`--socket-dir` paths, the same policy as
+`tests/terminals/conftest.py::_assert_no_leaked_hosts`. Session-owned
+leaks exit nonzero and print PID and socket evidence; cleanup does not
+erase a recorded leak. Unrelated hosts, including the daemon host under
+`~/.gobby`, are preserved.
 
-1. `uv run pytest tests/test_runner_lifecycle_restart_replay.py tests/agents/test_resume_executor.py tests/agents/test_spawn_executor.py tests/agents/test_tmux.py tests/agents/test_lifecycle_monitor.py tests/agents/test_capture_consumers.py tests/config/test_runtime_config_contract.py tests/config/test_terminal_config.py tests/cli/test_install_setup_gterm.py tests/gterminal/test_vendor_layer.py tests/mcp_proxy/tools/sessions/test_terminal.py tests/mcp_proxy/tools/sessions/test_terminal_clear.py tests/servers/test_tmux_mixin.py tests/servers/test_admin_health.py tests/install/test_version_pins.py tests/install/test_distribution.py tests/tasks/test_validation_evidence.py`
-2. `uv run pytest tests/terminals tests/storage/test_terminals.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_rename.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_native_web_proxy.py tests/servers/test_attention_respond.py tests/mcp_proxy/test_sessions_terminal_tools.py` (DB-backed; run with `GOBBY_POSTGRES_TEST_DSN` exported)
-3. `cargo build -p gobby-terminal --release --features vt-engine && cargo clippy -p gobby-terminal -p gobby-client --all-targets --features vt-engine -- -D warnings && cargo nextest run -p gobby-terminal -p gobby-client --features vt-engine`
-4. `cargo nextest run -p gobby-core -p gobby-daemon` (schema identity and grant pins)
-5. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
-6. `cd web && npx --no-install vitest run hooks/ activitySessionVisibility.test.ts`
-   The directory-segment and unique-basename substrings deliberately select
-   `src/hooks` plus `src/components/activity/__tests__/activitySessionVisibility.test.ts`.
-   Bare `hooks` also selects two hook-named tests outside `src/hooks`, while adding
-   slash-terminated filters for both original directories widens the run to the
-   whole web suite under Vitest 4.
-7. Host leak check: the set of `gterm host` PIDs after groups 2–3 equals the set
-   before, and no surviving `gterm host` references a state directory the run
-   created. For group 2 this is deterministic: the session fixture
-   `_assert_no_leaked_hosts` in `tests/terminals/conftest.py` fails the run when a
-   host under the run's temp roots survives or when a durable host (state directory
-   outside every temp root, such as the daemon's `~/.gobby` host) that existed
-   before the session is gone after it, so a green group 2 is the group 7 evidence
-   for that group. Group 3 has no such fixture; compare `ps -Ao pid,lstart,comm`
-   snapshots around it by hand.
+1. `uv run python -m gobby.guard_set_g 1`
+2. `uv run python -m gobby.guard_set_g 2`
+3. `uv run python -m gobby.guard_set_g 3`
+   Clippy and nextest for `gobby-terminal` use `--features vt-engine`
+   and fail when a required gated target (`embed`, `host_lifecycle`,
+   `control_protocol`, `frame_protocol`, `frame_producer`) is missing,
+   skipped, or executes zero tests. `gobby-client` is clippy'd and
+   tested separately with its default feature set.
+4. `uv run python -m gobby.guard_set_g 4`
+5. `uv run python -m gobby.guard_set_g 5`
+6. `uv run python -m gobby.guard_set_g 6`
+   The Vitest directory-segment and unique-basename substrings
+   deliberately select `src/hooks` plus
+   `src/components/activity/__tests__/activitySessionVisibility.test.ts`.
+   Bare `hooks` also selects two hook-named tests outside `src/hooks`,
+   while adding slash-terminated filters for both original directories
+   widens the run to the whole web suite under Vitest 4.
+7. `uv run python -m gobby.guard_set_g 7`
+   Scans live `gterm host` processes, prints PID/socket evidence, and
+   fails on surviving session-owned hosts. Group 2 still also has the
+   session fixture `_assert_no_leaked_hosts`.
 
 The following records historical carve-outs, which ended when their owners
 closed; they are not present-day exemptions. From 1.1
@@ -267,10 +281,10 @@ below when executing them.
 4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
 5. `cd web && npx vitest run src/hooks src/components/activity`
 6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
-   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
-   (`cp` to a dotfile, `mv -f` over the name, per this guide's § "Rebuild and
-   reinstall"). macOS kills processes that exec an in-place-overwritten signed binary,
-   so overwriting the installed path directly is not an option.
+   against `gclient` and `gterm` rebuilt from the tree and promoted through
+   `stage_and_promote_binary_file` (per this guide's § "Rebuild and reinstall").
+   macOS kills processes that exec an in-place-overwritten signed binary, so
+   overwriting the installed path directly is not an option.
 7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
    set before.
 
@@ -320,8 +334,8 @@ and 1055 tests. Run group 6 from the repository root again.
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 ```
 
-Rebuild `gclient` as in group 1, then use the dotfile `cp` and `mv -f` sequence
-under *Rebuild and reinstall* for both binaries. The `gterm` binary requires
+Rebuild `gclient` as in group 1, then promote both binaries through
+`stage_and_promote_binary_file` as under *Rebuild and reinstall*. The `gterm` binary requires
 `vt-engine`: bare `cargo build --release -p gobby-terminal` builds the library,
 prints `Finished`, and exits 0 without building the binary, leaving any stale
 `gterm` in place. Regression coverage:

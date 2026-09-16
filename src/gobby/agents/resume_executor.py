@@ -19,6 +19,8 @@ from gobby.agents.codex_oss import (
 from gobby.agents.constants import (
     MCP_CONNECT_TIMEOUT_MS,
     MCP_CONNECT_TIMEOUT_MS_VALUE,
+    MCP_TIMEOUT,
+    MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.external_write_grants import GRANT_KEY, revalidate_write_grant
 from gobby.agents.local_model import (
@@ -514,6 +516,7 @@ async def resume_agent_run(
     )
     launch_updates: dict[str, Any] = {}
     if provider == "claude":
+        env[MCP_TIMEOUT] = MCP_TIMEOUT_VALUE
         claude_mcp_path = _metadata_str(resume_metadata, "mcp_path")
         strict_mcp = bool(resume_metadata.get("strict_mcp"))
         if not claude_mcp_path:

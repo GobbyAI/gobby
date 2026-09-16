@@ -22,12 +22,10 @@ from .embeddings import embeddings
 from .extensions import hooks, webhooks
 from .feedback import feedback
 from .files import files
-from .github import github
 from .hub_backup.cli import hub_backup
 from .hub_maintenance import hub_maintenance
 from .init import init
 from .install import install
-from .linear import linear
 from .mcp import mcp_server
 from .mcp_proxy import mcp_proxy
 from .memory import memory
@@ -124,8 +122,6 @@ cli.add_command(rules)
 cli.add_command(variables)
 cli.add_command(merge)
 cli.add_command(pipelines)
-cli.add_command(github)
-cli.add_command(linear)
 cli.add_command(clones)
 cli.add_command(cron)
 cli.add_command(cutover)

@@ -18,48 +18,6 @@ pub enum ControlClose {
     Disconnected,
 }
 
-struct ControlEntry {
-    value: Value,
-    queued_at: Instant,
-}
-
-pub struct ControlQueue {
-    cap: usize,
-    deadline: Duration,
-    entries: VecDeque<ControlEntry>,
-}
-
-impl ControlQueue {
-    pub fn new(cap: usize, deadline: Duration) -> Self {
-        Self {
-            cap,
-            deadline,
-            entries: VecDeque::new(),
-        }
-    }
-
-    pub fn push(&mut self, value: Value) -> Result<(), ControlClose> {
-        if self.entries.len() >= self.cap {
-            return Err(ControlClose::Overflow);
-        }
-        self.entries.push_back(ControlEntry {
-            value,
-            queued_at: Instant::now(),
-        });
-        Ok(())
-    }
-
-    pub fn pop(&mut self) -> Option<Value> {
-        self.entries.pop_front().map(|entry| entry.value)
-    }
-
-    pub fn deadline_exceeded(&self) -> bool {
-        self.entries
-            .front()
-            .is_some_and(|entry| entry.queued_at.elapsed() >= self.deadline)
-    }
-}
-
 pub async fn write_outbound<W: AsyncWrite + Unpin>(
     mut writer: W,
     mut rx: mpsc::Receiver<Value>,
@@ -130,6 +88,12 @@ struct FrameShared {
 #[derive(Clone)]
 pub struct FrameMailbox {
     shared: Arc<FrameShared>,
+}
+
+impl Default for FrameMailbox {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FrameMailbox {

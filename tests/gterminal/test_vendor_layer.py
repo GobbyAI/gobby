@@ -41,7 +41,7 @@ ZIG_TARGET_MAP = {
     "aarch64-pc-windows-msvc": "aarch64-windows-msvc",
 }
 
-REQUIRED_ZIG = "0.15"
+REQUIRED_ZIG = "0.16"
 VENDOR_BUILD_ENABLED = os.environ.get("GOBBY_RUN_VENDOR_BUILD") == "1"
 requires_vendor_build = pytest.mark.skipif(
     not VENDOR_BUILD_ENABLED,
@@ -206,7 +206,7 @@ def test_workspace_patch_serves_vendored_portable_pty() -> None:
 
 def test_vendor_json_pins_ghostty_commit() -> None:
     meta = json.loads(VENDOR_JSON.read_text(encoding="utf-8"))
-    assert meta["source_commit"].startswith("c5a21edf")
+    assert meta["source_commit"] == "7aab0a0392369613472bd5dcfd66bef58e78c3ec"
     assert "dist_archive" in meta
     assert "extracted_dir" in meta
     assert (VENDOR / "libghostty-vt" / "build.zig").is_file()
@@ -235,7 +235,7 @@ def test_vendor_patches_are_applied_to_copied_trees() -> None:
     for patch in patches:
         relative = patch.relative_to(GTERMINAL)
         checked = subprocess.run(
-            ["git", "apply", "--check", "--reverse", str(relative)],
+            ["git", "apply", "--check", "--reverse", "-v", str(relative)],
             cwd=GTERMINAL,
             capture_output=True,
             text=True,
@@ -244,6 +244,25 @@ def test_vendor_patches_are_applied_to_copied_trees() -> None:
         assert checked.returncode == 0, (
             f"{relative} is not applied to the vendored tree:\n{checked.stdout}\n{checked.stderr}"
         )
+        # `git apply` from a subdirectory silently skips (exit 0) any patch whose
+        # paths do not start with that prefix, so a patch written with
+        # `vendor/...` instead of `crates/gterminal/vendor/...` would pass this
+        # check without ever being applied. Require a real per-file check.
+        progress = checked.stdout + checked.stderr
+        assert "Skipped patch" not in progress, (
+            f"{relative} uses paths git apply skips from {GTERMINAL}; "
+            f"rewrite them repository-root-relative:\n{progress}"
+        )
+        checked_files = [
+            line.removeprefix("Checking patch ").removesuffix("...")
+            for line in progress.splitlines()
+            if line.startswith("Checking patch ")
+        ]
+        assert checked_files, f"{relative} checked no files:\n{progress}"
+        for name in checked_files:
+            assert (REPO_ROOT / name).is_file(), (
+                f"{relative} targets {name}, which is not in the vendored tree"
+            )
 
 
 def test_zig_cases_skip_without_opt_in() -> None:
@@ -275,7 +294,7 @@ def test_zig_cases_skip_without_opt_in() -> None:
 @requires_vendor_build
 def test_helper_builds_vendored_libghostty_vt() -> None:
     zig = os.environ.get("ZIG") or shutil.which("zig")
-    assert zig, "Zig 0.15 is required to build the vendored VT tree (set ZIG or PATH)"
+    assert zig, f"Zig {REQUIRED_ZIG} is required to build the vendored VT tree (set ZIG or PATH)"
     result = _run_helper(extra_env={"ZIG": zig}, timeout=600)
     assert result.returncode == 0, result.stderr + result.stdout
     lib_dir = VENDOR / "libghostty-vt" / "zig-out" / "lib"

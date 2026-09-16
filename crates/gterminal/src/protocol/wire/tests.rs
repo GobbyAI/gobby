@@ -598,3 +598,15 @@ impl Read for ChunkedReader {
         Ok(to_read)
     }
 }
+
+#[test]
+fn snapshot_mode_wire_values_round_trip() {
+    for value in SnapshotMode::VALID {
+        let mode = SnapshotMode::from_wire(value).expect("advertised mode parses");
+        assert_eq!(mode.as_wire(), value);
+    }
+    assert_eq!(SnapshotMode::default(), SnapshotMode::Text);
+    assert_eq!(SnapshotMode::VALID, ["text", "ansi"]);
+    assert!(SnapshotMode::from_wire("ANSI").is_none());
+    assert!(SnapshotMode::from_wire("").is_none());
+}

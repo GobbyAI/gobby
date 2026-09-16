@@ -674,8 +674,6 @@ class TestWriteProjectJson:
         _write_project_json(cwd, "proj-123", "my-project", "2024-06-15T12:00:00Z")
         update_project_json_fields(
             cwd,
-            linear_team_id="team-1",
-            linear_project_id="lin-proj",
             parent_project_id="parent-id",
             parent_project_path="/machine/local/path",
             hooks={"mode": "default"},
@@ -991,20 +989,6 @@ class TestInitializeProject:
         result = initialize_project(tmp_path, db=temp_db)
         assert result.verification is None
         assert result.already_existed is False
-
-    def test_github_url_is_stored(
-        self,
-        tmp_path: Path,
-        temp_db: HubDatabase,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        _pin_machine(temp_db, monkeypatch)
-        result = initialize_project(
-            tmp_path, github_url="https://github.com/custom/repo", db=temp_db
-        )
-        project = LocalProjectManager(temp_db).get(result.project_id)
-        assert project is not None
-        assert project.github_url == "https://github.com/custom/repo"
 
     def test_uses_cwd_when_none(
         self,

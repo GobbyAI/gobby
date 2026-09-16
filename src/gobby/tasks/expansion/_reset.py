@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.tasks import Task
 
@@ -193,9 +192,6 @@ def _validate_reset_targets(self: Any, target_ids: set[str]) -> None:
             )
         ):
             problems.append(f"{ref} has isolation artifacts")
-        delivery = TaskDeliveryStateManager(self.db).get_state(task.id)
-        if delivery["campaign"] is not None or delivery["units"]:
-            problems.append(f"{ref} has delivery state")
         if _has_progressed_stage_state(self, task.id):
             problems.append(f"{ref} has progressed stage state")
         for child in children_by_parent.get(task.id, []):

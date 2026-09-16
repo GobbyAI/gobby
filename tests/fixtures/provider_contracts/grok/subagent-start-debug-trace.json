@@ -1,0 +1,31 @@
+{
+  "capture_type": "grok-debug-file",
+  "grok_version": "1.0.30 (04b7ffed98c6)",
+  "captured_at": "2026-09-15T17:51:55Z",
+  "command": "grok --debug --debug-file <FILE> --always-approve --no-alt-screen --no-plan --disable-web-search --reasoning-effort low --max-turns 8 --output-format json --leader-socket <FILE> --cwd <PROBE_CWD> --prompt-file <FILE>",
+  "tty": "script(1) PTY; no tmux pane",
+  "parent_session_id": "parent-SESSION",
+  "child_session_id": "child-SESSION",
+  "observations": {
+    "spawn_tool": "spawn_subagent",
+    "subagent_type": "general-purpose",
+    "subagent_start_dispatched": true,
+    "subagent_start_hook": "global/gobby:subagent_start[0].hooks[0]",
+    "subagent_start_elapsed_ms": 12,
+    "subagent_stop_dispatched": true,
+    "child_user_prompt_submit_dispatched": true,
+    "acp_blocking_events": ["pre_tool_use", "stop", "subagent_stop"],
+    "acp_blocking_events_omit_subagent_start": true,
+    "gobby_hooks_log_subagent_start_row": false,
+    "inherited_tty_binding": "not applicable in this capture (no tmux pane); interactive tmux bind is in subagent-start-drop-summary.json"
+  },
+  "sanitized_lines": [
+    "ACP initialize x.ai/hooks.blockingEvents=[\"pre_tool_use\",\"stop\",\"subagent_stop\"]",
+    "startup hints session_id=parent-SESSION is_subagent=false parent_session_id=None",
+    "Model requesting tool: name='spawn_subagent'",
+    "hook completed hook_name=global/gobby:subagent_start[0].hooks[0] elapsed_ms=12 session_id=parent-SESSION",
+    "subagent.handle_request subagent_id=child-SESSION parent_session_id=parent-SESSION subagent_type=general-purpose",
+    "hook completed hook_name=global/gobby:user_prompt_submit[0].hooks[0] session_id=child-SESSION",
+    "stop hook completed hook_name=global/gobby:subagent_stop[0].hooks[0] session_id=child-SESSION"
+  ]
+}

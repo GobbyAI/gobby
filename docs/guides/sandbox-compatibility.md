@@ -5,7 +5,7 @@ Operator configuration is documented in [sandboxing.md](./sandboxing.md).
 
 ## Current Contract
 
-- Managed terminal agents default to the pinned SRT 0.0.66 backend.
+- Managed terminal agents default to the pinned SRT 0.0.76 backend.
 - Web chat defaults to `backend="srt"` with bounded provider, loopback, Git, and
   package-registry network access; `provider-native` is an explicit override.
 - Backend selection is explicit and never downgrades on failure.
@@ -143,8 +143,9 @@ boundary:
 4. Verify Ruff and mypy are clean and the packaged wheel contains
    `agents/srt_runner.mjs` and `install/srt-package-lock.json`.
 
-SRT 0.0.66 cannot restrict loopback by destination port. A future pin must keep
-that limitation documented or add a test proving exact port enforcement before
-claiming it.
+SRT 0.0.76 cannot restrict loopback by destination port: `allowLocalBinding`
+still renders `localhost:*`, and the `:port` domain suffix added in 0.0.68 filters
+only proxied egress. A future pin must keep that limitation documented or add a
+test proving exact port enforcement before claiming it.
 
 _Last verified: 2026-09-12_

@@ -50,11 +50,6 @@ impl PaneRuntime {
             .write_terminal_response(|| self.terminal.apply_host_terminal_appearance(appearance));
     }
 
-    pub(crate) fn current_size(&self) -> (u16, u16) {
-        let (rows, cols, _, _) = self.current_size.get();
-        (rows, cols)
-    }
-
     pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
         let rows = rows.max(2);
         let cols = cols.max(4);
@@ -143,6 +138,15 @@ impl PaneRuntime {
         self.terminal.visible_ansi()
     }
 
+    /// Visible-screen text in the requested representation. This answers a
+    /// snapshot whose history read came back empty.
+    pub fn visible_snapshot(&self, mode: crate::protocol::SnapshotMode) -> String {
+        match mode {
+            crate::protocol::SnapshotMode::Text => self.visible_text(),
+            crate::protocol::SnapshotMode::Ansi => self.visible_ansi(),
+        }
+    }
+
     pub fn terminal_title(&self) -> Option<String> {
         self.terminal.terminal_title()
     }
@@ -155,9 +159,14 @@ impl PaneRuntime {
         self.terminal.osc_progress()
     }
 
-    pub fn snapshot_history(&self) -> Option<String> {
-        let ansi = self.terminal.recent_unwrapped_ansi(usize::MAX);
-        (!ansi.trim().is_empty()).then_some(ansi)
+    /// Unwrapped scrollback-and-viewport history in the requested
+    /// representation, or `None` when it holds no content to return.
+    pub fn snapshot_history(&self, mode: crate::protocol::SnapshotMode) -> Option<String> {
+        let history = match mode {
+            crate::protocol::SnapshotMode::Text => self.terminal.recent_unwrapped_text(usize::MAX),
+            crate::protocol::SnapshotMode::Ansi => self.terminal.recent_unwrapped_ansi(usize::MAX),
+        };
+        (!history.trim().is_empty()).then_some(history)
     }
 
     pub fn extract_selection(&self, selection: &crate::selection::Selection) -> Option<String> {
@@ -303,7 +312,7 @@ impl PaneRuntime {
         true
     }
 
-    pub fn wheel_routing(&self) -> Option<super::WheelRouting> {
+    pub(crate) fn wheel_routing(&self) -> Option<super::WheelRouting> {
         self.terminal.wheel_routing()
     }
 
@@ -474,5 +483,65 @@ mod frame_modes_tests {
             write(disable);
             assert_eq!(pane.frame_data(4, 2).modes, PaneModes::default());
         }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_representation_tests {
+    use super::{Bytes, PaneRuntime};
+    use crate::protocol::SnapshotMode;
+    use tokio::sync::mpsc;
+
+    fn pane_with(bytes: &[u8]) -> (PaneRuntime, mpsc::Receiver<Bytes>) {
+        let (pane, rx) = PaneRuntime::test_with_channel(20, 3);
+        pane.terminal
+            .ghostty
+            .core
+            .lock()
+            .unwrap()
+            .terminal
+            .write(bytes);
+        (pane, rx)
+    }
+
+    #[test]
+    fn history_and_visible_reads_follow_the_requested_mode() {
+        let (pane, _rx) = pane_with(b"\x1b[31mRED\x1b[0m plain");
+
+        let text = pane
+            .snapshot_history(SnapshotMode::Text)
+            .expect("text history");
+        assert!(text.contains("RED"), "{text:?}");
+        assert!(text.contains("plain"), "{text:?}");
+        assert!(!text.contains('\x1b'), "{text:?}");
+
+        let ansi = pane
+            .snapshot_history(SnapshotMode::Ansi)
+            .expect("ansi history");
+        assert!(ansi.contains("RED"), "{ansi:?}");
+        assert!(ansi.contains("\x1b["), "{ansi:?}");
+
+        let visible_text = pane.visible_snapshot(SnapshotMode::Text);
+        assert!(visible_text.contains("RED"), "{visible_text:?}");
+        assert!(!visible_text.contains('\x1b'), "{visible_text:?}");
+        let visible_ansi = pane.visible_snapshot(SnapshotMode::Ansi);
+        assert!(visible_ansi.contains("\x1b["), "{visible_ansi:?}");
+    }
+
+    #[test]
+    fn empty_text_history_leaves_the_visible_screen_to_answer_in_the_same_mode() {
+        let (pane, _rx) = pane_with(b"\x1b[41m   \x1b[0m");
+
+        assert!(pane.snapshot_history(SnapshotMode::Text).is_none());
+        let ansi = pane
+            .snapshot_history(SnapshotMode::Ansi)
+            .expect("styling keeps ansi history non-empty");
+        assert!(ansi.contains("\x1b["), "{ansi:?}");
+
+        let fallback = pane.visible_snapshot(SnapshotMode::Text);
+        assert!(!fallback.contains('\x1b'), "{fallback:?}");
+        assert!(fallback.trim().is_empty(), "{fallback:?}");
+        let fallback_ansi = pane.visible_snapshot(SnapshotMode::Ansi);
+        assert!(fallback_ansi.contains("\x1b["), "{fallback_ansi:?}");
     }
 }

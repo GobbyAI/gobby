@@ -9,7 +9,6 @@ mod shell;
 mod shutdown;
 mod state;
 mod terminal;
-mod xtgettcap;
 
 pub use self::runtime::ChildExit;
 pub use self::runtime::ChildExitWatch;
@@ -26,7 +25,7 @@ pub(crate) enum WheelRouting {
     MouseReport,
     AlternateScroll,
 }
-pub(crate) use self::terminal::{
-    GhosttyPaneTerminal, PaneTerminal, TerminalDirtyPatch, TerminalReadSnapshot, TerminalTextMatch,
-    TerminalTextPoint, TerminalWordMotion,
-};
+#[cfg(test)]
+pub(crate) use self::terminal::GhosttyPaneTerminal;
+#[cfg(test)]
+pub(crate) use self::terminal::TerminalReadSnapshot;

@@ -1,17 +1,20 @@
-"""Grok compact handoff: headless spawned runs are never typed into; TUI turns are
-interrupted only while live.
+"""Compact handoff: headless spawned runs are never typed into; TUI turns are
+interrupted only after the live turn fails to settle.
 
-A spawned Grok worker runs ``grok --single`` (headless): it reads nothing from its
-terminal and its first Ctrl+C is a plain SIGINT that kills the run (#22364). The
+A spawned Grok worker runs ``grok --single`` and a spawned Droid worker runs
+``droid exec``; both are headless, reading nothing from their terminal, and Grok's
+first Ctrl+C is a plain SIGINT that kills the run (#22364, #22402). The
 staging tool refuses such runs outright. A Grok TUI session whose ``events.jsonl``
-shows its last turn ended is compacted without an interrupt; a live turn is still
-interrupted with Ctrl+C and confirmed from that file before ``/compact`` is typed.
+shows its last turn ended is compacted without an interrupt. A live turn is polled
+until it settles or the wait expires; only a timeout interrupts with Ctrl+C before
+``/compact`` is typed. Codex uses the same settle-then-submit path on its rollout.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +38,8 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 ATTEMPT_ID = "a" * 32
 _DRAIN = composer_clear_sequence("grok")
 _DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
+_TMUX = "gobby.mcp_proxy.tools.sessions._terminal_tmux"
+_SETTLE_WAIT = 0.3
 
 
 class _TestRegistry(InternalToolRegistry):
@@ -44,21 +49,32 @@ class _TestRegistry(InternalToolRegistry):
 
 
 class _GrokTurnPane:
-    """Grok pane fake: Ctrl+C appends a cancelled turn_ended to events.jsonl."""
+    """Pane fake: Ctrl+C appends the CLI's interrupt record to the events file."""
 
     backend = "native"
     target = "term-grok"
 
-    def __init__(self, events_path: Path) -> None:
+    def __init__(
+        self,
+        events_path: Path,
+        interrupt_record: dict[str, Any] | None = None,
+    ) -> None:
         self.keys: list[str] = []
         self.typed: list[str] = []
+        self.first_ctrl_c_at: float | None = None
         self._events_path = events_path
+        self._interrupt_record = interrupt_record or {
+            "type": "turn_ended",
+            "outcome": "cancelled",
+        }
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
         if key == "ctrl_c":
+            if self.first_ctrl_c_at is None:
+                self.first_ctrl_c_at = time.monotonic()
             with self._events_path.open("ab") as stream:
-                stream.write(json.dumps({"type": "turn_ended", "outcome": "cancelled"}).encode())
+                stream.write(json.dumps(self._interrupt_record).encode())
                 stream.write(b"\n")
         return True, None
 
@@ -78,8 +94,32 @@ def _grok_events(tmp_path: Path, *records: dict[str, Any]) -> tuple[Path, Path]:
     return transcript, events
 
 
-async def _deliver(pane: _GrokTurnPane, transcript: Path) -> dict[str, Any]:
-    session = SimpleNamespace(id=SESSION_ID, source="grok", transcript_path=str(transcript))
+def _codex_rollout(tmp_path: Path, *payload_types: str) -> Path:
+    transcript = tmp_path / "rollout.jsonl"
+    records = [{"type": "event_msg", "payload": {"type": payload}} for payload in payload_types]
+    transcript.write_bytes(b"".join(json.dumps(record).encode() + b"\n" for record in records))
+    return transcript
+
+
+def _patch_settle_wait(monkeypatch: pytest.MonkeyPatch, wait: float = _SETTLE_WAIT) -> float:
+    monkeypatch.setattr(f"{_TMUX}._TURN_SETTLE_WAIT_SECONDS", wait)
+    monkeypatch.setattr(f"{_TMUX}._TURN_SETTLE_POLL_SECONDS", 0.05)
+    return wait
+
+
+async def _append_jsonl_later(path: Path, record: dict[str, Any], delay: float) -> None:
+    await asyncio.sleep(delay)
+    with path.open("ab") as stream:
+        stream.write(json.dumps(record).encode() + b"\n")
+
+
+async def _deliver(
+    pane: _GrokTurnPane,
+    transcript: Path,
+    *,
+    source: str = "grok",
+) -> dict[str, Any]:
+    session = SimpleNamespace(id=SESSION_ID, source=source, transcript_path=str(transcript))
     session_manager = MagicMock()
     session_manager.get.return_value = session
     with (
@@ -88,6 +128,10 @@ async def _deliver(pane: _GrokTurnPane, transcript: Path) -> dict[str, Any]:
         patch(f"{_DELIVERY}.clear_handoff_compact_continuation_pending", return_value=True),
         patch(f"{_DELIVERY}.clear_queued_context"),
         patch(f"{_DELIVERY}.record_handoff_delivery", return_value=True),
+        patch(
+            f"{_DELIVERY}.schedule_codex_handoff_compact_continuation_readiness",
+            return_value=True,
+        ),
     ):
         return await deliver_staged_compact_handoff(
             SESSION_ID,
@@ -118,12 +162,44 @@ async def test_settled_grok_turn_is_compacted_without_an_interrupt_key(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_live_grok_turn_is_interrupted_and_confirmed_before_compact(tmp_path: Path) -> None:
+async def test_live_grok_turn_that_settles_is_compacted_without_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wait = _patch_settle_wait(monkeypatch)
     transcript, events = _grok_events(tmp_path, {"type": "turn_started", "turn_number": 4})
     pane = _GrokTurnPane(events)
+    settler = asyncio.create_task(
+        _append_jsonl_later(
+            events,
+            {"type": "turn_ended", "outcome": "completed"},
+            min(0.08, wait / 3),
+        )
+    )
+
+    result = await _deliver(pane, transcript)
+    await settler
+
+    assert result["compacted"] is True
+    assert result["interrupted"] is False
+    assert result["command"] == "/compact"
+    assert pane.keys == [*_DRAIN, "enter"]
+    assert "ctrl_c" not in pane.keys
+    assert pane.typed == ["/compact"]
+
+
+@pytest.mark.asyncio
+async def test_live_grok_turn_is_interrupted_and_confirmed_before_compact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wait = _patch_settle_wait(monkeypatch)
+    transcript, events = _grok_events(tmp_path, {"type": "turn_started", "turn_number": 4})
+    pane = _GrokTurnPane(events)
+    started = time.monotonic()
 
     result = await _deliver(pane, transcript)
 
+    assert pane.first_ctrl_c_at is not None
+    assert pane.first_ctrl_c_at - started >= wait
     assert result["compacted"] is True
     assert result["interrupted"] is True
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
@@ -131,11 +207,63 @@ async def test_live_grok_turn_is_interrupted_and_confirmed_before_compact(tmp_pa
     assert pane.typed == ["/compact"]
 
 
+@pytest.mark.asyncio
+async def test_grok_mcp_tool_call_completed_without_turn_ended_waits_then_interrupts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wait = _patch_settle_wait(monkeypatch)
+    transcript, events = _grok_events(
+        tmp_path,
+        {"type": "turn_started", "turn_number": 4},
+        {"type": "mcp_tool_call_completed", "success": True},
+    )
+    pane = _GrokTurnPane(events)
+    started = time.monotonic()
+
+    result = await _deliver(pane, transcript)
+
+    assert pane.first_ctrl_c_at is not None
+    assert pane.first_ctrl_c_at - started >= wait
+    assert result["compacted"] is True
+    assert result["interrupted"] is True
+    assert pane.keys[0] == "ctrl_c"
+    assert pane.typed == ["/compact"]
+
+
+@pytest.mark.asyncio
+async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wait = _patch_settle_wait(monkeypatch)
+    transcript = _codex_rollout(tmp_path, "task_started")
+    pane = _GrokTurnPane(
+        transcript,
+        interrupt_record={"type": "event_msg", "payload": {"type": "turn_aborted"}},
+    )
+    settler = asyncio.create_task(
+        _append_jsonl_later(
+            transcript,
+            {"type": "event_msg", "payload": {"type": "task_complete"}},
+            min(0.08, wait / 3),
+        )
+    )
+
+    result = await _deliver(pane, transcript, source="codex")
+    await settler
+
+    assert result["compacted"] is True
+    assert result["interrupted"] is False
+    assert result["command"] == "/compact"
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
+    assert "ctrl_c" not in pane.keys
+    assert pane.typed == ["/compact"]
+
+
 @pytest.mark.parametrize(
     ("provider", "headless"),
-    [("grok", True), ("claude", False), ("codex", False), ("droid", False), ("qwen", False)],
+    [("grok", True), ("droid", True), ("claude", False), ("codex", False), ("qwen", False)],
 )
-def test_only_grok_spawns_headless(provider: str, headless: bool) -> None:
+def test_only_headless_clis_declare_headless_spawn(provider: str, headless: bool) -> None:
     assert provider_capabilities(provider).headless_spawn is headless
 
 
@@ -167,9 +295,10 @@ def _set_handoff_tool(
     return set_handoff, session_manager
 
 
-def test_set_handoff_refuses_to_stage_delivery_for_a_headless_grok_run() -> None:
+@pytest.mark.parametrize("provider", ["grok", "droid"])
+def test_set_handoff_refuses_to_stage_delivery_for_a_headless_run(provider: str) -> None:
     agent_run_manager = MagicMock()
-    agent_run_manager.get_by_session.return_value = SimpleNamespace(id="run-1", provider="grok")
+    agent_run_manager.get_by_session.return_value = SimpleNamespace(id="run-1", provider=provider)
     set_handoff, _session_manager = _set_handoff_tool(agent_run_manager)
 
     with (

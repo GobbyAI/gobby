@@ -1237,6 +1237,12 @@ class TestRestartCommand:
         with patch("gobby.cli.daemon.admit_service_start", return_value=None) as admit:
             yield admit
 
+    @pytest.fixture(autouse=True)
+    def skip_start_preflight(self) -> Generator[MagicMock]:
+        """The preflight execs the real installed gdaemon; these tests are not about it."""
+        with patch("gobby.cli.daemon.restart_start_refusal", return_value=None) as preflight:
+            yield preflight
+
     def test_restart_help(self, runner: CliRunner) -> None:
         """Test restart --help displays help text."""
         removed_option = "--no-" + "ui"
@@ -1569,7 +1575,6 @@ class TestRestartCommand:
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
-            patch("gobby.cli.daemon._schema_restart_refusal", return_value=None),
         ):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -1652,7 +1657,6 @@ class TestRestartCommand:
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
-            patch("gobby.cli.daemon._schema_restart_refusal", return_value=None),
         ):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -2513,7 +2517,7 @@ def test_restart_refuses_linked_worktree_before_stopping(monkeypatch: pytest.Mon
     """`gobby restart` refuses before stopping the running daemon (#21031)."""
     refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
     do_stop = MagicMock(return_value=True)
-    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: refusal)
+    monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: refusal)
     monkeypatch.setattr("gobby.cli.daemon._do_stop", do_stop)
 
     result = CliRunner().invoke(cli, ["restart"])

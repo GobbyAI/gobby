@@ -288,7 +288,7 @@ async def submit_close_review(
         return authenticated
     assert review is not None and review.agent_run_id is not None
     run_id = review.agent_run_id
-    claimed = store.claim_finalizing(review.id, run_id)
+    claimed = store.claim_finalizing(review.id, run_id, verdict=verdict)
     if claimed is None:
         current = store.get(review.id)
         if current is not None and current.terminal and current.result_payload is not None:

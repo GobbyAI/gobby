@@ -141,6 +141,24 @@ def test_grok_unix_second_timestamp_is_not_replaced_with_now() -> None:
     assert parsed.timestamp == datetime.fromtimestamp(1_784_250_127, UTC)
 
 
+def test_grok_model_id_becomes_parsed_message_model() -> None:
+    record = _record(
+        {
+            "sessionUpdate": "user_message_chunk",
+            "content": {"type": "text", "text": "hello"},
+        }
+    )
+    params = record["params"]
+    assert isinstance(params, dict)
+    params["_meta"] = {"modelId": "grok-4.6"}
+    messages = _parsed_messages(
+        GrokTranscriptParser(session_id="grok-session"),
+        [json.dumps(record)],
+    )
+    assert len(messages) == 1
+    assert messages[0].model == "grok-4.6"
+
+
 def test_grok_unix_millisecond_timestamp_is_scaled() -> None:
     parser = GrokTranscriptParser(session_id="grok-session")
     record = _turn_completed_record()

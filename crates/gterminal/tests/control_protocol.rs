@@ -6,8 +6,8 @@ mod embed_support;
 mod host_support;
 
 use host_support::{
-    connect, recv_json, send_json, send_json_without_id, spawn_host, wait_exit, wait_socket,
-    wait_until, write_token, CONTROL_SOCKET,
+    connect, recv_json, send_json, send_json_without_id, spawn_host, temp_socket_dir, wait_exit,
+    wait_socket, wait_until, write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 
 #[test]
 fn hello_required_before_any_verb() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-hello-required";
     write_token(dir.path(), token);
     let mut child = spawn_host(dir.path());
@@ -135,7 +135,7 @@ fn hello_required_before_any_verb() {
 
 #[test]
 fn oversize_control_line_is_refused_before_parse() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-overflow";
     write_token(dir.path(), token);
     let mut child = spawn_host(dir.path());
@@ -313,7 +313,7 @@ fn recv_response_with_id(
 
 #[test]
 fn requests_require_unique_ids() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-request-ids";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -384,7 +384,7 @@ fn requests_require_unique_ids() {
 
 #[test]
 fn child_exit_emits_terminal_exited_on_event_stream() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-native-exit-event";
     write_token(dir.path(), token);
     let (mut child, mut requests) = authed(dir.path(), token);
@@ -483,7 +483,7 @@ fn child_exit_emits_terminal_exited_on_event_stream() {
 
 #[test]
 fn commit_wait_does_not_block_other_requests() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-concurrent-commit";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -683,7 +683,7 @@ fn tmux_pane_death_emits_no_control_event() {
 
 #[test]
 fn control_surface_round_trip() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-surface";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -863,7 +863,7 @@ fn control_surface_round_trip() {
 
 #[test]
 fn snapshot_truncates_on_char_boundaries() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-snapshot-utf8";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -947,6 +947,20 @@ fn snapshot_truncates_on_char_boundaries() {
         "{snapshot}"
     );
     assert!(text.len() <= max_bytes, "{snapshot}");
+    assert_eq!(
+        snapshot["mode"], "text",
+        "an omitted mode stays plain text: {snapshot}"
+    );
+    let styled = snapshot_request(
+        &mut stream,
+        &host_terminal_id,
+        Some(json!("ansi")),
+        max_bytes as u64,
+        50,
+    );
+    assert_eq!(styled["mode"], "ansi", "{styled}");
+    let styled_text = styled["text"].as_str().expect("snapshot text");
+    assert!(styled_text.len() <= max_bytes, "{styled}");
 
     send_json(
         &mut stream,
@@ -968,7 +982,7 @@ fn snapshot_truncates_on_char_boundaries() {
 
 #[test]
 fn ping_carries_host_pid() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-pid";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -986,7 +1000,7 @@ fn ping_carries_host_pid() {
 
 #[test]
 fn operation_seq_ledger_is_total() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-ledger";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1031,7 +1045,7 @@ fn operation_seq_ledger_is_total() {
 
 #[test]
 fn write_batch_enforces_target_and_operation_limits() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-batch-limits";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1086,7 +1100,7 @@ fn write_batch_enforces_target_and_operation_limits() {
 
 #[test]
 fn spawn_identity_is_unique_across_connections() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-unique";
     write_token(dir.path(), token);
     let (mut child, mut a) = authed(dir.path(), token);
@@ -1133,7 +1147,7 @@ fn spawn_identity_is_unique_across_connections() {
 
 #[test]
 fn host_config_ranges_reject_and_admit_maximum() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-cfg";
     write_token(dir.path(), token);
     let mut bad = host_support::spawn_host_with_args(dir.path(), &["--max-attachments-total", "3"]);
@@ -1173,7 +1187,7 @@ fn host_config_ranges_reject_and_admit_maximum() {
 
 #[test]
 fn list_recovers_every_lifecycle_field() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-list";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1236,7 +1250,7 @@ fn list_recovers_every_lifecycle_field() {
 
 #[test]
 fn spawn_selects_named_reservation() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     let token = "control-token-named";
     write_token(dir.path(), token);
     let (mut child, mut stream) = authed(dir.path(), token);
@@ -1259,4 +1273,265 @@ fn spawn_selects_named_reservation() {
     );
     let _ = recv_json(&mut stream);
     let _ = wait_exit(&mut child, Duration::from_secs(5));
+}
+
+/// Send one `snapshot` request. `mode` is inserted only when the caller passes
+/// it, so an omitted-mode case cannot be repaired by this helper.
+fn snapshot_request(
+    stream: &mut std::os::unix::net::UnixStream,
+    host_terminal_id: &str,
+    mode: Option<serde_json::Value>,
+    max_bytes: u64,
+    max_lines: u64,
+) -> serde_json::Value {
+    let mut request = json!({
+        "method": "snapshot",
+        "host_terminal_id": host_terminal_id,
+        "max_bytes": max_bytes,
+        "max_lines": max_lines,
+    });
+    if let Some(mode) = mode {
+        request
+            .as_object_mut()
+            .expect("snapshot request object")
+            .insert("mode".into(), mode);
+    }
+    send_json(stream, &request);
+    recv_json(stream)
+}
+
+/// Reserve, spawn, and commit one native terminal running `script` under `sh`.
+fn spawn_for_snapshot(
+    stream: &mut std::os::unix::net::UnixStream,
+    name: &str,
+    script: &str,
+) -> String {
+    send_json(
+        stream,
+        &json!({
+            "method": "reserve_observer",
+            "terminal_id": name,
+            "reserve_key": format!("rk-{name}"),
+        }),
+    );
+    let reserved = recv_json(stream);
+    let reservation_id = reserved["reservation_id"]
+        .as_str()
+        .expect("reservation id")
+        .to_string();
+    let prepared = seq_spawn(
+        stream,
+        1,
+        json!({
+            "terminal_id": name,
+            "spawn_key": format!("sk-{name}"),
+            "reservation_id": reservation_id,
+            "reserve_key": format!("rk-{name}"),
+            "argv": ["/bin/sh", "-c", script],
+            "cwd": "/",
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 8000,
+        }),
+    );
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    let host_terminal_id = prepared["host_terminal_id"]
+        .as_str()
+        .expect("host terminal id")
+        .to_string();
+    send_json(
+        stream,
+        &json!({
+            "method": "spawn_commit",
+            "terminal_id": name,
+            "spawn_key": format!("sk-{name}"),
+        }),
+    );
+    assert_eq!(recv_json(stream)["ok"], true);
+    host_terminal_id
+}
+
+fn shutdown_after_snapshot(
+    stream: &mut std::os::unix::net::UnixStream,
+    child: &mut host_support::HostProc,
+    host_terminal_id: &str,
+) {
+    send_json(
+        stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": 20,
+        }),
+    );
+    let _ = recv_json(stream);
+    send_json(stream, &json!({"method": "host_shutdown", "grace_ms": 20}));
+    let _ = recv_json(stream);
+    let _ = wait_exit(child, Duration::from_secs(5));
+}
+
+#[test]
+fn snapshot_mode_selects_the_returned_representation() {
+    let dir = temp_socket_dir();
+    let token = "control-token-snapshot-mode";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+    let host_terminal_id = spawn_for_snapshot(
+        &mut stream,
+        "term-mode",
+        "printf '\\033[31mRED\\033[0m\\nsecond\\n'; exec sleep 30",
+    );
+
+    let mut defaulted = None;
+    wait_until("snapshot output with an omitted mode", || {
+        let snapshot = snapshot_request(&mut stream, &host_terminal_id, None, 1024 * 1024, 50);
+        if snapshot["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("second"))
+        {
+            defaulted = Some(snapshot);
+            true
+        } else {
+            false
+        }
+    });
+    let defaulted = defaulted.expect("omitted-mode snapshot");
+    assert_eq!(defaulted["ok"], true, "{defaulted}");
+    assert_eq!(defaulted["mode"], "text", "{defaulted}");
+    let defaulted_text = defaulted["text"].as_str().expect("snapshot text");
+    assert!(defaulted_text.contains("RED"), "{defaulted}");
+    assert!(!defaulted_text.contains('\x1b'), "{defaulted}");
+
+    let plain = snapshot_request(
+        &mut stream,
+        &host_terminal_id,
+        Some(json!("text")),
+        1024 * 1024,
+        50,
+    );
+    assert_eq!(plain["mode"], "text", "{plain}");
+    let plain_text = plain["text"].as_str().expect("snapshot text");
+    assert!(plain_text.contains("RED"), "{plain}");
+    assert!(plain_text.contains("second"), "{plain}");
+    assert!(!plain_text.contains('\x1b'), "{plain}");
+    assert_eq!(plain["total_bytes"], plain_text.len() as u64, "{plain}");
+
+    let styled = snapshot_request(
+        &mut stream,
+        &host_terminal_id,
+        Some(json!("ansi")),
+        1024 * 1024,
+        50,
+    );
+    assert_eq!(styled["mode"], "ansi", "{styled}");
+    let styled_text = styled["text"].as_str().expect("snapshot text");
+    assert!(styled_text.contains("RED"), "{styled}");
+    assert!(styled_text.contains('\x1b'), "{styled}");
+    assert!(
+        styled["total_bytes"].as_u64().expect("total bytes")
+            > plain["total_bytes"].as_u64().expect("total bytes"),
+        "ansi carries the escapes the plain representation drops: {styled}"
+    );
+
+    for mode in [
+        json!("ANSI"),
+        json!("plain"),
+        json!(""),
+        serde_json::Value::Null,
+        json!(1),
+        json!(["ansi"]),
+        json!({"mode": "ansi"}),
+    ] {
+        let refused = snapshot_request(
+            &mut stream,
+            &host_terminal_id,
+            Some(mode.clone()),
+            1024 * 1024,
+            50,
+        );
+        assert_eq!(refused["ok"], false, "{mode} -> {refused}");
+        assert_eq!(refused["error"], "invalid_mode", "{mode} -> {refused}");
+        assert_eq!(
+            refused["valid_modes"],
+            json!(["text", "ansi"]),
+            "{mode} -> {refused}"
+        );
+        assert!(refused["text"].is_null(), "{mode} -> {refused}");
+    }
+
+    let one_line = snapshot_request(
+        &mut stream,
+        &host_terminal_id,
+        Some(json!("text")),
+        1024 * 1024,
+        1,
+    );
+    assert_eq!(one_line["mode"], "text", "{one_line}");
+    let one_line_text = one_line["text"].as_str().expect("snapshot text");
+    assert_eq!(one_line_text.lines().count(), 1, "{one_line}");
+    assert_eq!(one_line["truncated"], true, "{one_line}");
+    assert!(
+        one_line["dropped_bytes"].as_u64().expect("dropped bytes") > 0,
+        "{one_line}"
+    );
+    assert_eq!(
+        one_line["total_bytes"], plain["total_bytes"],
+        "line caps do not change the representation's size: {one_line}"
+    );
+
+    let few_bytes = snapshot_request(&mut stream, &host_terminal_id, Some(json!("ansi")), 4, 50);
+    assert_eq!(few_bytes["mode"], "ansi", "{few_bytes}");
+    let few_bytes_text = few_bytes["text"].as_str().expect("snapshot text");
+    assert!(few_bytes_text.len() <= 4, "{few_bytes}");
+    assert_eq!(few_bytes["truncated"], true, "{few_bytes}");
+    assert_eq!(
+        few_bytes["total_bytes"], styled["total_bytes"],
+        "byte caps do not change the representation's size: {few_bytes}"
+    );
+
+    shutdown_after_snapshot(&mut stream, &mut child, &host_terminal_id);
+}
+
+#[test]
+fn snapshot_text_mode_answers_plainly_when_history_holds_only_styling() {
+    let dir = temp_socket_dir();
+    let token = "control-token-snapshot-fallback";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+    // Styled blank cells: the plain history trims to nothing, so the visible
+    // screen answers the text-mode snapshot and must stay escape-free.
+    let host_terminal_id = spawn_for_snapshot(
+        &mut stream,
+        "term-blank",
+        "printf '\\033[41m   \\033[0m'; exec sleep 30",
+    );
+
+    wait_until("styled blank output", || {
+        let styled = snapshot_request(
+            &mut stream,
+            &host_terminal_id,
+            Some(json!("ansi")),
+            1024 * 1024,
+            50,
+        );
+        styled["text"]
+            .as_str()
+            .is_some_and(|text| text.contains('\x1b'))
+    });
+
+    let plain = snapshot_request(
+        &mut stream,
+        &host_terminal_id,
+        Some(json!("text")),
+        1024 * 1024,
+        50,
+    );
+    assert_eq!(plain["ok"], true, "{plain}");
+    assert_eq!(plain["mode"], "text", "{plain}");
+    let plain_text = plain["text"].as_str().expect("snapshot text");
+    assert!(!plain_text.contains('\x1b'), "{plain}");
+    assert!(plain_text.trim().is_empty(), "{plain}");
+
+    shutdown_after_snapshot(&mut stream, &mut child, &host_terminal_id);
 }

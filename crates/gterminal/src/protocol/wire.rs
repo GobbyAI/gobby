@@ -55,6 +55,38 @@ pub const MIN_LAG_TIMEOUT_MS: u32 = 1;
 pub const MAX_LAG_TIMEOUT_MS: u32 = 60_000;
 pub const SNAPSHOT_DEFAULT_MAX_BYTES: usize = 256 * 1024;
 pub const SNAPSHOT_DEFAULT_MAX_LINES: usize = 500;
+
+/// Representation a control `snapshot` returns. `Text` is plain unwrapped
+/// history, `Ansi` is the same history with its styling escapes intact.
+/// Positional readers must ask for `Text`; escape bytes are not columns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SnapshotMode {
+    #[default]
+    Text,
+    Ansi,
+}
+
+impl SnapshotMode {
+    /// Every accepted wire value, in the order a refusal names them.
+    pub const VALID: [&'static str; 2] = ["text", "ansi"];
+
+    /// Parse a requested mode; `None` means the value is not a supported mode.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "text" => Some(Self::Text),
+            "ansi" => Some(Self::Ansi),
+            _ => None,
+        }
+    }
+
+    /// The wire value a response echoes back to the caller.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Ansi => "ansi",
+        }
+    }
+}
 pub const EVENT_QUEUE_ENTRIES: usize = 256;
 pub const EVENT_QUEUE_BYTES: usize = 256 * 1024;
 pub const MIN_EVENT_QUEUE_BYTES: u32 = 1;

@@ -6,13 +6,7 @@
       ],
       "values": {
         "deleted_at": null,
-        "github_repo": null,
-        "github_url": null,
         "id": "00000000-0000-0000-0000-000000000000",
-        "linear_project_id": null,
-        "linear_sync_enabled": false,
-        "linear_synced_at": null,
-        "linear_team_id": null,
         "name": "_orphaned"
       }
     },
@@ -22,13 +16,7 @@
       ],
       "values": {
         "deleted_at": null,
-        "github_repo": null,
-        "github_url": null,
         "id": "00000000-0000-0000-0000-000000000001",
-        "linear_project_id": null,
-        "linear_sync_enabled": false,
-        "linear_synced_at": null,
-        "linear_team_id": null,
         "name": "_migrated"
       }
     },
@@ -38,13 +26,7 @@
       ],
       "values": {
         "deleted_at": null,
-        "github_repo": null,
-        "github_url": null,
         "id": "00000000-0000-0000-0000-000000000002",
-        "linear_project_id": null,
-        "linear_sync_enabled": false,
-        "linear_synced_at": null,
-        "linear_team_id": null,
         "name": "_global"
       }
     },
@@ -54,18 +36,12 @@
       ],
       "values": {
         "deleted_at": null,
-        "github_repo": null,
-        "github_url": null,
         "id": "00000000-0000-0000-0000-000000060887",
-        "linear_project_id": null,
-        "linear_sync_enabled": false,
-        "linear_synced_at": null,
-        "linear_team_id": null,
         "name": "_personal"
       }
     }
   ],
-"sessions": [],
+  "sessions": [],
   "task_stages_registry": [
     {
       "key": [

@@ -297,9 +297,7 @@ class TestServerManagementServiceImport:
                 "gobby.storage.hub.protocol.HubDatabase",
             ),
         ):
-            result = await service.import_server(
-                github_url="https://github.com/test/repo",
-            )
+            result = await service.import_server()
 
         assert result["success"] is True
         mock_importer.import_from_github.assert_called_once_with("https://github.com/test/repo")
@@ -381,7 +379,6 @@ class TestServerManagementServiceImport:
         ):
             await service.import_server(
                 from_project="source",
-                github_url="https://github.com/test/repo",
                 query="test query",
             )
 

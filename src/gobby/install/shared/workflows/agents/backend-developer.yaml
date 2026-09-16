@@ -260,7 +260,7 @@ step_workflow:
           tool: send_message
           when: >-
             tool_input.get('message_type') == 'task_blocker'
-            and tool_input.get('target') == 'parent'
+            and tool_input.get('target', 'parent') == 'parent'
             and (tool_input.get('metadata') or {}).get('task_id') is not None
             and (tool_input.get('metadata') or {}).get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
           action: set_variable

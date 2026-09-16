@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from gobby.memory.collection_names import CollectionNameResolver
+from gobby.memory.collection_names import (
+    CollectionNameResolver,
+    delete_retired_embedding_collections,
+)
 from gobby.memory.vectorstore import VectorStore
 
 
@@ -29,6 +32,7 @@ class ProjectVectorCleaner:
                     memory_ids,
                     collection_name=collection_name,
                 )
+        await delete_retired_embedding_collections(self._vector_store)
 
     async def _managed_physical_collections(self) -> list[str]:
         physical_names = set(await self._vector_store.list_collection_names())
