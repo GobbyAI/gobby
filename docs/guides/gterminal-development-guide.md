@@ -10,33 +10,26 @@ binaries on purpose: the Ghostty VT engine sits behind `gobby-terminal`'s
 
 ## Build
 
-Zig 0.15 is a **build-time** dependency only for `vt-engine` (the `gterm`
+Zig 0.16.0 is a **build-time** dependency only for `vt-engine` (the `gterm`
 binary and its CI jobs). `gobby-client` never invokes Zig.
 
 ```bash
-# Host (requires zig 0.15 on PATH)
+# Host (requires zig 0.16.0 on PATH)
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 
 # Workspace client (Zig-free)
 cargo build --release -p gobby-client
 ```
 
-On macOS, Zig 0.15.2's libc++ build is incompatible with the macOS 27 SDK
-(`INFINITY` is undeclared in `__random/clamp_to_integral.h`). Select an installed
-Xcode with the macOS 26.5 SDK for this toolchain, for example:
+On macOS the build uses whatever SDK Command Line Tools ships; the macOS 27 SDK
+is the validated one. No `DEVELOPER_DIR` or Xcode selection is needed — Zig
+0.16.0 compiles its bundled libc++ against that SDK. Keep SIMD enabled for
+normal builds; libghostty-vt bundles its own simdutf, so nothing links a system
+copy. The optional non-SIMD Darwin archive uses the same member-preserving
+normalization as the SIMD archive; its focused build/link regression is:
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk macosx --show-sdk-version
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo build --release -p gobby-terminal --features vt-engine --bin gterm
-```
-
-Verify that the first command reports `26.5`. `SDKROOT` does not override Zig's
-`xcrun --sdk macosx` lookup. Keep SIMD enabled for normal builds. The optional
-non-SIMD Darwin archive uses the same member-preserving normalization as the
-SIMD archive; its focused build/link regression is:
-
-```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
 ```
 
 End users receive prebuilt GitHub release assets. The installer local-workspace
@@ -46,21 +39,30 @@ Gobby-hosted GitHub assets. `gclient`'s local build is ordinary cargo.
 
 ### Rebuild and reinstall
 
-A crate change is live only after rebuild **and** reinstall via a new inode.
-macOS kills processes that exec an in-place-overwritten signed binary:
+A crate change is live only after rebuild **and** reinstall:
 
 ```bash
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 cargo build --release -p gobby-client
-mkdir -p ~/.gobby/bin
-cp target/release/gterm ~/.gobby/bin/.gterm.new
-mv -f ~/.gobby/bin/.gterm.new ~/.gobby/bin/gterm
-cp target/release/gclient ~/.gobby/bin/.gclient.new
-mv -f ~/.gobby/bin/.gclient.new ~/.gobby/bin/gclient
-chmod 755 ~/.gobby/bin/gterm ~/.gobby/bin/gclient
 ```
 
-`install -m 755` over an existing path is not sufficient on macOS.
+Never copy a built artifact into `~/.gobby/bin` by hand. `cp`/`mv`/`install`
+skip the ad-hoc code signature and the identity stamp, and the next daemon
+start is refused with `mixed installed binary set`. Promotion is owned by
+`stage_and_promote_binary_file`
+(`src/gobby/install/bin_freshness_promotion.py`), which stages the bytes, signs
+them, and atomically replaces the destination through a new inode — macOS kills
+processes that exec an in-place-overwritten signed binary. `gterm` and
+`gclient` each promote through that function individually.
+
+`gcode`, `gdaemon`, and `ghook` are a coherent set and promote together through
+`promote_workspace_binary_set` (`src/gobby/install/bin_set_coherence.py`), which
+writes `~/.gobby/bin/.gdaemon-schema-identity.json` when it promotes the
+complete set. `gterm` and `gclient` are not set members, so a `gobby-core`
+change means rebuilding them alongside the set and promoting them separately.
+
+Because promotion re-signs the binary, read `sha256` from `~/.gobby/bin/` to
+verify an install, never from `target/release/`.
 
 ## Protocol contracts
 
