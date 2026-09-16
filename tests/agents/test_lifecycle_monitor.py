@@ -1333,8 +1333,35 @@ async def test_nonfatal_progress_stagnation_action_is_not_deferred(
         handled = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    assert runtime.snapshot_calls == []
+    # The only capture is the composer probe guarding the Enter, not a grace read.
+    assert runtime.snapshot_calls == [COMPOSER_PROBE_LINES]
     assert runtime.write_log == [("key", "enter")]
+
+
+@pytest.mark.parametrize("layer", ["progress_stagnation", "tool_loop"])
+async def test_stuck_enter_leaves_an_operator_draft_unsubmitted(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    layer: str,
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+        suggested_action="change_approach",
+        layer=layer,
+    )
+
+    with _pane_text(monitor, "────────────\n❯ Reply ACK\n────────────\n") as runtime:
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    assert runtime.snapshot_calls == [COMPOSER_PROBE_LINES]
+    assert runtime.write_log == []
+    stored = agent_run_manager.get(run.id)
+    assert stored is not None
+    assert stored.status == "running"
 
 
 async def test_xhigh_draft_grace_uses_scaled_idle_window(

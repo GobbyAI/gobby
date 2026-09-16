@@ -1083,6 +1083,48 @@ class TestPeriodicAgentTerminalEnter:
         assert runtime.write_log == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("provider", "draft_pane", "empty_pane"),
+        [
+            (
+                "claude",
+                "────────────\n❯ Reply ACK\n────────────\n",
+                "────────────\n❯\n────────────\n",
+            ),
+            (
+                "codex",
+                "────────────\n❯ Reply ACK\n────────────\n",
+                "────────────\n❯\n────────────\n",
+            ),
+            (
+                "droid",
+                "╭───────────╮\n│ > Reply ACK │\n╰───────────╯\n",
+                "╭──────╮\n│ >    │\n╰──────╯\n",
+            ),
+        ],
+        ids=["claude", "codex", "droid"],
+    )
+    async def test_periodic_enter_leaves_an_operator_draft_unsubmitted(
+        self, provider: str, draft_pane: str, empty_pane: str
+    ) -> None:
+        """Enter on a drafted composer submits the operator's text as a prompt."""
+        mock_run_mgr = MagicMock()
+        monitor = self._monitor(mock_run_mgr, interval=30)
+        runtime = _runtime_of(monitor)
+        mock_run_mgr.list_active_for_machine.return_value = [self._run(provider=provider)]
+        monitor._terminal_prompt_monitor._monotonic = lambda: 100.0
+        runtime.snapshot_text = draft_pane
+
+        held = await monitor.check_periodic_enters()
+        runtime.snapshot_text = empty_pane
+        after_draft_cleared = await monitor.check_periodic_enters()
+
+        # A held Enter does not start the interval, so the next pass reaches
+        # the terminal as soon as the operator clears the composer.
+        assert (held, after_draft_cleared) == (0, 1)
+        assert runtime.write_log == [("key", "enter")]
+
+    @pytest.mark.asyncio
     async def test_periodic_enter_can_be_disabled(self) -> None:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, enabled=False)

@@ -1849,6 +1849,8 @@ class TestExecuteSpawnSandbox:
         assert "env" in call_kwargs
         assert "SEATBELT_PROFILE" in call_kwargs["env"]
         assert call_kwargs["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+        # A suggestion renders in the composer like typed text and reads as a draft.
+        assert call_kwargs["env"]["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
         assert Path(call_kwargs["env"][UV_CACHE_DIR]).is_relative_to(
             Path(
                 next(
