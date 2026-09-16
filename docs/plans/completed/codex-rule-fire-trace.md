@@ -293,7 +293,7 @@ If `require-task-close` **BLOCKS** (task still claimed), and the agent tries `As
 
 | Variable | Set By | Checked By |
 |---|---|---|
-| `task_claimed` | `track-task-claim` observer | `require-task-before-edit`, `require-task-close`, `block-native-task-tools-unclaimed` |
+| `task_claimed` | `track-task-claim` observer | `require-task-before-edit`, `require-task-close`, `block-native-task-tracker-unclaimed` |
 | `task_has_commits` | Commit detector observer | `require-commit-before-status`, `strip-skip-validation-with-commit` |
 | `code_index_loaded` | `block-and-teach-code-index` | `block-and-teach-code-index` |
 | `context7_loaded` | `block-and-teach-context7` | `block-and-teach-context7` |
