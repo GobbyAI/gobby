@@ -15,10 +15,10 @@ from gobby.config.validation_detection import default_validation_detection_confi
 from gobby.sessions.transcripts.base import RawLine
 from gobby.tasks import transcript_evidence
 from gobby.tasks.transcript_evidence import (
-    TranscriptEvidence,
     clear_evidence_snapshots,
     derive_transcript_evidence,
 )
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from tests.tasks.test_transcript_evidence import (
     BASE_TIME,
     LOCAL_MACHINE_ID,

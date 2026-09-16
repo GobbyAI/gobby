@@ -6,13 +6,12 @@ functions using create_http_server() with mocked services.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -23,7 +22,6 @@ import gobby.servers.routes.source_control as sc_module
 from gobby.clones.git import CloneGitManager
 from gobby.servers.routes.source_control import (
     _get_cached,
-    _parse_github_repo,
     _set_cached,
     create_source_control_router,
 )
@@ -45,9 +43,6 @@ from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
     patch_local_machine_id,
 )
-
-if TYPE_CHECKING:
-    from gobby.mcp_proxy.models import MCPServerConfig
 
 # Inspect the runtime return contract without treating a None-returning call as a value.
 _validate_git_ref: Callable[[str, str], object] = _validate_git_ref_impl
@@ -100,6 +95,19 @@ def client(mock_server: MagicMock) -> TestClient:
     return TestClient(app)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/source-control/prs",
+        "/api/source-control/issues",
+        "/api/source-control/cicd/runs",
+    ],
+)
+def test_github_mcp_routes_are_unregistered(client: TestClient, path: str) -> None:
+    response = client.get(path)
+    assert response.status_code == 404
+
+
 @pytest.mark.asyncio
 async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -119,7 +127,7 @@ async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
         await release.wait()
         return GitTimeout("timeout", ("git", *args), 0.01)
 
-    monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: ("/tmp/repo", None))
+    monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: "/tmp/repo")
     monkeypatch.setattr("gobby.servers.routes.source_control_git.daemon_git.run", timeout_git)
     async with AsyncClient(transport=ASGITransport(app=client.app), base_url="http://test") as http:
         request = asyncio.create_task(http.get("/api/source-control/status"))
@@ -267,31 +275,6 @@ class TestCache:
 
 
 # ---------------------------------------------------------------------------
-# Helper: _parse_github_repo
-# ---------------------------------------------------------------------------
-
-
-class TestParseGithubRepo:
-    def test_valid_owner_repo(self) -> None:
-        result = _parse_github_repo("octocat/hello-world")
-        assert result == ("octocat", "hello-world")
-
-    def test_none_input(self) -> None:
-        assert _parse_github_repo(None) is None
-
-    def test_empty_string(self) -> None:
-        assert _parse_github_repo("") is None
-
-    def test_no_slash(self) -> None:
-        assert _parse_github_repo("just-a-name") is None
-
-    def test_multiple_slashes(self) -> None:
-        """Split on first slash only."""
-        result = _parse_github_repo("org/repo/extra")
-        assert result == ("org", "repo/extra")
-
-
-# ---------------------------------------------------------------------------
 # Helper: _resolve_project
 # ---------------------------------------------------------------------------
 
@@ -302,7 +285,6 @@ class TestResolveProject:
     ) -> None:
         mock_project = MagicMock()
         mock_project.id = "proj-123"
-        mock_project.github_repo = "owner/repo"
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = mock_project
@@ -321,10 +303,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, "proj-123")
+            repo_path = _resolve_project(mock_server, "proj-123")
 
         assert repo_path == "/tmp/repo"
-        assert github_repo == "owner/repo"
 
     def test_resolve_without_project_id_falls_back(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -332,7 +313,6 @@ class TestResolveProject:
         mock_proj = MagicMock()
         mock_proj.id = "proj-fallback"
         mock_proj.name = "my-project"
-        mock_proj.github_repo = "org/fallback"
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [mock_proj]
@@ -351,10 +331,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, None)
+            repo_path = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/fallback"
-        assert github_repo == "org/fallback"
 
     def test_resolve_skips_hidden_projects(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -366,7 +345,6 @@ class TestResolveProject:
         real = MagicMock()
         real.id = "real"
         real.name = "real-project"
-        real.github_repo = None
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [orphaned, real]
@@ -387,19 +365,17 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, None)
+            repo_path = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/real"
-        assert github_repo is None
 
     def test_resolve_returns_none_none_on_failure(self, mock_server: MagicMock) -> None:
         mock_server.session_manager = None
 
         from gobby.servers.routes.source_control import _resolve_project
 
-        repo_path, github_repo = _resolve_project(mock_server, "proj-123")
+        repo_path = _resolve_project(mock_server, "proj-123")
         assert repo_path is None
-        assert github_repo is None
 
     def test_resolve_fallback_skips_checkout_free_sentinels(
         self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -413,7 +389,6 @@ class TestResolveProject:
         real = MagicMock()
         real.id = "real"
         real.name = "real-project"
-        real.github_repo = "org/real"
 
         mock_pm = MagicMock()
         mock_pm.list.return_value = [global_project, personal, real]
@@ -439,9 +414,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, None)
+            repo_path = _resolve_project(mock_server, None)
 
-        assert (repo_path, github_repo) == ("/tmp/real", "org/real")
+        assert repo_path == "/tmp/real"
         assert resolved == ["real"]
 
     def test_resolve_explicit_sentinel_is_empty_not_conflict(
@@ -450,7 +425,6 @@ class TestResolveProject:
         personal = MagicMock()
         personal.id = PERSONAL_PROJECT_ID
         personal.name = "_personal"
-        personal.github_repo = None
 
         mock_pm = MagicMock()
         mock_pm.get.return_value = personal
@@ -466,10 +440,9 @@ class TestResolveProject:
         ):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, github_repo = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
+            repo_path = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
 
         assert repo_path is None
-        assert github_repo is None
 
     def test_status_for_sentinel_project_is_empty_200(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -477,12 +450,9 @@ class TestResolveProject:
         personal = MagicMock()
         personal.id = PERSONAL_PROJECT_ID
         personal.name = "_personal"
-        personal.github_repo = None
         mock_pm = MagicMock()
         mock_pm.get.return_value = personal
         mock_pm.db = MagicMock()
-        monkeypatch.setattr(sc_module, "_get_github", lambda _server, _project_id: None)
-
         with patch(
             "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
         ):
@@ -492,8 +462,6 @@ class TestResolveProject:
 
         assert response.status_code == 200
         assert response.json() == {
-            "github_available": False,
-            "github_repo": None,
             "current_branch": None,
             "branch_count": 0,
             "worktree_count": 0,
@@ -530,205 +498,6 @@ class TestGetProjectManager:
 
 
 # ---------------------------------------------------------------------------
-# Helper: _get_github / _call_github_mcp
-# ---------------------------------------------------------------------------
-
-PROJECT_ID = "11111111-1111-4111-8111-111111111111"
-PROJECT_SERVER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-
-
-def _github_config(*, project_id: str, server_id: str) -> MCPServerConfig:
-    from gobby.mcp_proxy.models import MCPServerConfig
-
-    return MCPServerConfig(
-        name="github",
-        project_id=project_id,
-        url="https://github-mcp.example.test",
-        id=server_id,
-        enabled=True,
-    )
-
-
-def _github_manager(*, project_id: str, server_id: str) -> MagicMock:
-    """Manager mock exposing one resolvable github config."""
-    manager = MagicMock()
-    manager.server_configs = [_github_config(project_id=project_id, server_id=server_id)]
-    return manager
-
-
-class TestGetGithub:
-    def test_returns_none_when_no_mcp_manager(self, mock_server: MagicMock) -> None:
-        mock_server.services.mcp_manager = None
-
-        from gobby.servers.routes.source_control import _get_github
-
-        assert _get_github(mock_server, PROJECT_ID) is None
-
-    def test_returns_github_integration_scoped_to_project(self, mock_server: MagicMock) -> None:
-        mock_server.services.mcp_manager = MagicMock()
-
-        with patch("gobby.servers.routes.source_control_github.GitHubIntegration") as mock_cls:
-            mock_cls.return_value = MagicMock()
-
-            from gobby.servers.routes.source_control import _get_github
-
-            result = _get_github(mock_server, PROJECT_ID)
-            assert result is not None
-            assert mock_cls.call_args.kwargs["project_id"] == PROJECT_ID
-
-    def test_scopes_to_global_when_no_project(self, mock_server: MagicMock) -> None:
-        from gobby.storage.projects import GLOBAL_PROJECT_ID
-
-        mock_server.services.mcp_manager = MagicMock()
-
-        with patch("gobby.servers.routes.source_control_github.GitHubIntegration") as mock_cls:
-            mock_cls.return_value = MagicMock()
-
-            from gobby.servers.routes.source_control import _get_github
-
-            _get_github(mock_server, None)
-            assert mock_cls.call_args.kwargs["project_id"] == GLOBAL_PROJECT_ID
-
-
-class TestCallGithubMcp:
-    @pytest.mark.asyncio
-    async def test_raises_503_when_no_mcp_manager(self, mock_server: MagicMock) -> None:
-        mock_server.services.mcp_manager = None
-
-        from gobby.servers.routes.source_control import _call_github_mcp
-
-        with pytest.raises(HTTPException) as exc_info:
-            await _call_github_mcp(mock_server, None, "some_tool", {})
-        assert exc_info.value.status_code == 503
-
-    @pytest.mark.asyncio
-    async def test_parses_json_text_content(self, mock_server: MagicMock) -> None:
-        mock_item = MagicMock()
-        mock_item.text = '{"key": "value"}'
-
-        mock_result = MagicMock()
-        mock_result.content = [mock_item]
-
-        mock_session = AsyncMock()
-        mock_session.call_tool.return_value = mock_result
-
-        from gobby.storage.projects import GLOBAL_PROJECT_ID
-
-        manager = _github_manager(project_id=GLOBAL_PROJECT_ID, server_id="gh-global")
-        manager.get_client_session = AsyncMock(return_value=mock_session)
-        mock_server.services.mcp_manager = manager
-
-        from gobby.servers.routes.source_control import _call_github_mcp
-
-        result = await _call_github_mcp(mock_server, None, "test_tool", {"arg": "val"})
-        assert result == {"key": "value"}
-        assert mock_session.call_tool.await_args.args == ("test_tool", {"arg": "val"})
-        assert manager.get_client_session.await_args.args == ("gh-global",)
-
-    @pytest.mark.asyncio
-    async def test_returns_plain_text_on_json_decode_error(self, mock_server: MagicMock) -> None:
-        mock_item = MagicMock()
-        mock_item.text = "plain text response"
-
-        mock_result = MagicMock()
-        mock_result.content = [mock_item]
-
-        mock_session = AsyncMock()
-        mock_session.call_tool.return_value = mock_result
-
-        from gobby.storage.projects import GLOBAL_PROJECT_ID
-
-        manager = _github_manager(project_id=GLOBAL_PROJECT_ID, server_id="gh-global")
-        manager.get_client_session = AsyncMock(return_value=mock_session)
-        mock_server.services.mcp_manager = manager
-
-        from gobby.servers.routes.source_control import _call_github_mcp
-
-        result = await _call_github_mcp(mock_server, None, "test_tool", {})
-        assert result == "plain text response"
-        assert mock_session.call_tool.await_args.args == ("test_tool", {})
-
-    @pytest.mark.asyncio
-    async def test_raises_502_on_exception(self, mock_server: MagicMock) -> None:
-        from gobby.storage.projects import GLOBAL_PROJECT_ID
-
-        manager = _github_manager(project_id=GLOBAL_PROJECT_ID, server_id="gh-global")
-        manager.get_client_session = AsyncMock(side_effect=RuntimeError("Connection failed"))
-        mock_server.services.mcp_manager = manager
-
-        from gobby.servers.routes.source_control import _call_github_mcp
-
-        with pytest.raises(HTTPException) as exc_info:
-            await _call_github_mcp(mock_server, None, "test_tool", {})
-        assert exc_info.value.status_code == 502
-
-    @pytest.mark.asyncio
-    async def test_raises_404_when_no_github_in_scope(self, mock_server: MagicMock) -> None:
-        # Only a project-scoped instance exists; an unscoped (global) call must not
-        # dispatch by bare name.
-        manager = _github_manager(project_id=PROJECT_ID, server_id=PROJECT_SERVER_ID)
-        manager.get_client_session = AsyncMock()
-        mock_server.services.mcp_manager = manager
-
-        from gobby.servers.routes.source_control import _call_github_mcp
-
-        with pytest.raises(HTTPException) as exc_info:
-            await _call_github_mcp(mock_server, None, "test_tool", {})
-        assert exc_info.value.status_code == 404
-        detail = cast("dict[str, Any]", exc_info.value.detail)
-        assert detail["success"] is False
-        manager.get_client_session.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# Route gate: project-scoped-only github instance
-# ---------------------------------------------------------------------------
-
-
-class TestProjectScopedGithubGate:
-    """A project owning only a project-scoped github instance passes the gate."""
-
-    def _manager(self) -> Any:
-        from tests.mcp_proxy.services.test_scope_resolution_matrix import RecordingManager
-
-        return RecordingManager(
-            [_github_config(project_id=PROJECT_ID, server_id=PROJECT_SERVER_ID)]
-        )
-
-    def test_project_scoped_instance_passes_gate(
-        self, client: TestClient, mock_server: MagicMock
-    ) -> None:
-        manager = self._manager()
-        mock_server.services.mcp_manager = manager
-
-        with patch(
-            "gobby.servers.routes.source_control._resolve_project",
-            return_value=("/tmp/repo", "owner/repo"),
-        ):
-            response = client.get(f"/api/source-control/prs?project_id={PROJECT_ID}")
-
-        assert response.status_code == 200
-        assert response.json().get("github_available") is not False
-        assert manager.method_ids("get_client_session") == [PROJECT_SERVER_ID]
-
-    def test_unscoped_request_is_gated_off(
-        self, client: TestClient, mock_server: MagicMock
-    ) -> None:
-        manager = self._manager()
-        mock_server.services.mcp_manager = manager
-
-        with patch(
-            "gobby.servers.routes.source_control._resolve_project",
-            return_value=("/tmp/repo", "owner/repo"),
-        ):
-            response = client.get("/api/source-control/prs")
-
-        assert response.status_code == 200
-        assert response.json() == {"prs": [], "github_available": False}
-        assert manager.method_ids("get_client_session") == []
-
-
-# ---------------------------------------------------------------------------
 # GET /api/source-control/status
 # ---------------------------------------------------------------------------
 
@@ -738,7 +507,7 @@ class TestGetStatus:
         """When no project resolves, returns minimal status."""
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/status")
 
@@ -746,7 +515,6 @@ class TestGetStatus:
         data = response.json()
         assert data["current_branch"] is None
         assert data["branch_count"] == 0
-        assert data["github_available"] is False
 
     def test_status_with_repo_path(self, client: TestClient, mock_server: MagicMock) -> None:
         """When repo_path resolves, runs git commands to get branch info."""
@@ -761,16 +529,12 @@ class TestGetStatus:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", "owner/repo"),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
                 new_callable=AsyncMock,
                 side_effect=[branch_result, list_result, tracking_result],
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=None,
             ),
         ):
             response = client.get("/api/source-control/status")
@@ -794,10 +558,6 @@ class TestGetStatus:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, None),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
                 return_value=None,
             ),
         ):
@@ -807,25 +567,6 @@ class TestGetStatus:
         data = response.json()
         assert data["worktree_count"] == 2
         assert data["clone_count"] == 1
-
-    def test_status_github_available(self, client: TestClient, mock_server: MagicMock) -> None:
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = True
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-        ):
-            response = client.get("/api/source-control/status")
-
-        assert response.status_code == 200
-        assert response.json()["github_available"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -837,7 +578,7 @@ class TestListBranches:
     def test_branches_no_repo(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/branches")
 
@@ -866,7 +607,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -907,7 +648,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -941,7 +682,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -982,7 +723,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1013,7 +754,7 @@ class TestListBranches:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1045,7 +786,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1082,7 +823,7 @@ class TestCheckoutBranch:
     def test_checkout_no_repo_returns_400(self, client: TestClient) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.post(
                 "/api/source-control/branches/checkout",
@@ -1097,7 +838,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1123,7 +864,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1150,7 +891,7 @@ class TestCheckoutBranch:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1184,7 +925,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1205,7 +946,7 @@ class TestListBranchCommits:
     def test_commits_no_repo(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/branches/main/commits")
 
@@ -1224,7 +965,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1242,7 +983,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1263,6 +1004,29 @@ class TestListBranchCommits:
 
         assert response.status_code == 422
 
+    def test_commits_uses_git_when_github_repo_and_mcp_are_configured(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        mock_server.services.mcp_manager = MagicMock()
+        git_result = MagicMock(returncode=0, stdout="")
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value="/tmp/repo",
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                return_value=git_result,
+            ) as mock_git,
+        ):
+            response = client.get("/api/source-control/branches/main/commits")
+
+        assert response.status_code == 200
+        assert response.json() == {"commits": []}
+        mock_git.assert_awaited_once()
+        mock_server.services.mcp_manager.assert_not_called()
+
     @pytest.mark.parametrize("limit", [1, 100])
     def test_commits_accepts_boundary_limit(
         self, client: TestClient, mock_server: MagicMock, limit: int
@@ -1272,7 +1036,7 @@ class TestListBranchCommits:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1300,7 +1064,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1321,7 +1085,7 @@ class TestGetDiff:
     def test_diff_no_repo_path(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
+            return_value=None,
         ):
             response = client.get("/api/source-control/diff")
 
@@ -1339,7 +1103,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1355,7 +1119,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1377,7 +1141,7 @@ class TestGetDiff:
         with (
             patch(
                 "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.servers.routes.source_control._run_git",
@@ -1389,355 +1153,6 @@ class TestGetDiff:
 
         assert response.status_code == 200
         assert len(response.json()["patch"]) == sc_module.MAX_PATCH_BYTES
-
-
-# ---------------------------------------------------------------------------
-# GET /api/source-control/prs
-# ---------------------------------------------------------------------------
-
-
-class TestListPRs:
-    def test_prs_no_github(self, client: TestClient, mock_server: MagicMock) -> None:
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, None),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=None,
-            ),
-        ):
-            response = client.get("/api/source-control/prs")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["prs"] == []
-        assert data["github_available"] is False
-
-    def test_prs_github_available_no_repo(self, client: TestClient, mock_server: MagicMock) -> None:
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = True
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, None),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-        ):
-            response = client.get("/api/source-control/prs")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_available"] is True
-        assert "error" in data
-
-    def test_prs_with_data(self, client: TestClient, mock_server: MagicMock) -> None:
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = True
-
-        pr_data = [
-            {
-                "number": 42,
-                "title": "Add feature",
-                "state": "open",
-                "user": {"login": "alice"},
-                "head": {"ref": "feature"},
-                "base": {"ref": "main"},
-                "created_at": "2025-01-01",
-                "updated_at": "2025-01-02",
-                "draft": False,
-            }
-        ]
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                return_value=pr_data,
-            ),
-        ):
-            response = client.get("/api/source-control/prs")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_available"] is True
-        assert len(data["prs"]) == 1
-        pr = data["prs"][0]
-        assert pr["number"] == 42
-        assert pr["title"] == "Add feature"
-        assert pr["author"] == "alice"
-        assert pr["head_branch"] == "feature"
-
-    def test_prs_github_not_available(self, client: TestClient, mock_server: MagicMock) -> None:
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = False
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-        ):
-            response = client.get("/api/source-control/prs")
-
-        assert response.status_code == 200
-        assert response.json()["github_available"] is False
-
-    def test_prs_cached(self, client: TestClient, mock_server: MagicMock) -> None:
-        """Second call returns cached result."""
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = True
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                return_value=[],
-            ) as mock_mcp,
-        ):
-            first_response = client.get("/api/source-control/prs")
-            second_response = client.get("/api/source-control/prs")
-            # MCP should only be called once due to caching
-            assert mock_mcp.call_count == 1
-            assert first_response.status_code == 200
-            assert second_response.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# GET /api/source-control/prs/{number}
-# ---------------------------------------------------------------------------
-
-
-class TestGetPR:
-    def test_get_pr_no_github_repo(self, client: TestClient, mock_server: MagicMock) -> None:
-        with patch(
-            "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
-        ):
-            response = client.get("/api/source-control/prs/42")
-
-        assert response.status_code == 400
-
-    def test_get_pr_success(self, client: TestClient, mock_server: MagicMock) -> None:
-        pr_detail = {"number": 42, "title": "My PR", "body": "Details"}
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                return_value=pr_detail,
-            ),
-        ):
-            response = client.get("/api/source-control/prs/42")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["pr"]["number"] == 42
-        assert data["github_available"] is True
-
-
-# ---------------------------------------------------------------------------
-# GET /api/source-control/prs/{number}/checks
-# ---------------------------------------------------------------------------
-
-
-class TestGetPRChecks:
-    def test_checks_no_github_repo(self, client: TestClient, mock_server: MagicMock) -> None:
-        with patch(
-            "gobby.servers.routes.source_control._resolve_project",
-            return_value=(None, None),
-        ):
-            response = client.get("/api/source-control/prs/42/checks")
-
-        assert response.status_code == 400
-
-    def test_checks_success(self, client: TestClient, mock_server: MagicMock) -> None:
-        pr_data = {"head": {"sha": "abc123"}}
-        checks_data = [{"name": "CI", "status": "completed", "conclusion": "success"}]
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                side_effect=[pr_data, checks_data],
-            ),
-        ):
-            response = client.get("/api/source-control/prs/42/checks")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert len(data["checks"]) == 1
-
-    def test_checks_no_head_sha(self, client: TestClient, mock_server: MagicMock) -> None:
-        pr_data: dict[str, dict[str, str]] = {"head": {}}
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                return_value=pr_data,
-            ),
-        ):
-            response = client.get("/api/source-control/prs/42/checks")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "unknown"
-        assert data["checks"] == []
-
-    def test_checks_error(self, client: TestClient, mock_server: MagicMock) -> None:
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("API down"),
-            ),
-        ):
-            response = client.get("/api/source-control/prs/42/checks")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "error"
-        assert data["error"] == "Failed to get pull request checks"
-
-
-# ---------------------------------------------------------------------------
-# GET /api/source-control/cicd/runs
-# ---------------------------------------------------------------------------
-
-
-class TestListCICDRuns:
-    def test_cicd_no_github(self, client: TestClient, mock_server: MagicMock) -> None:
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, None),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=None,
-            ),
-        ):
-            response = client.get("/api/source-control/cicd/runs")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["runs"] == []
-        assert data["github_available"] is False
-
-    @pytest.mark.parametrize("limit", [1, 100])
-    def test_cicd_with_runs(self, client: TestClient, mock_server: MagicMock, limit: int) -> None:
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = True
-
-        workflow_data = {
-            "workflow_runs": [
-                {
-                    "id": 1,
-                    "name": "CI",
-                    "status": "completed",
-                    "conclusion": "success",
-                    "head_branch": "main",
-                    "event": "push",
-                    "created_at": "2025-01-01",
-                    "html_url": "https://github.com/owner/repo/actions/runs/1",
-                }
-            ]
-        }
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=("/tmp/repo", "owner/repo"),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-            patch(
-                "gobby.servers.routes.source_control._call_github_mcp",
-                new_callable=AsyncMock,
-                return_value=workflow_data,
-            ) as mock_call_github,
-        ):
-            response = client.get(f"/api/source-control/cicd/runs?limit={limit}")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_available"] is True
-        assert len(data["runs"]) == 1
-        assert data["runs"][0]["name"] == "CI"
-        assert data["runs"][0]["conclusion"] == "success"
-        assert mock_call_github.call_args.args[3]["per_page"] == limit
-
-    @pytest.mark.parametrize("limit", [-1, 101])
-    def test_cicd_rejects_out_of_range_limit(self, client: TestClient, limit: int) -> None:
-        response = client.get(f"/api/source-control/cicd/runs?limit={limit}")
-
-        assert response.status_code == 422
-
-    def test_cicd_no_repo_configured(self, client: TestClient, mock_server: MagicMock) -> None:
-        mock_gh = MagicMock()
-        mock_gh.is_available.return_value = True
-
-        with (
-            patch(
-                "gobby.servers.routes.source_control._resolve_project",
-                return_value=(None, None),
-            ),
-            patch(
-                "gobby.servers.routes.source_control._get_github",
-                return_value=mock_gh,
-            ),
-        ):
-            response = client.get("/api/source-control/cicd/runs")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_available"] is True
-        assert "error" in data
 
 
 # ---------------------------------------------------------------------------
@@ -1907,7 +1322,7 @@ class TestDeleteWorktree:
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
@@ -1964,7 +1379,7 @@ class TestDeleteWorktree:
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
@@ -1995,7 +1410,7 @@ class TestDeleteWorktree:
         with (
             patch(
                 "gobby.servers.routes.source_control_git._resolve_project",
-                return_value=("/tmp/repo", None),
+                return_value="/tmp/repo",
             ),
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
@@ -2214,7 +1629,7 @@ def clone_git(mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path:
     )
     monkeypatch.setattr(
         "gobby.servers.routes.source_control_git._resolve_project",
-        lambda _server, _project_id: (str(tmp_path), None),
+        lambda _server, _project_id: str(tmp_path),
     )
     return manager
 
@@ -2240,7 +1655,7 @@ class TestDeleteClone:
         monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", clones_root)
         monkeypatch.setattr(
             "gobby.servers.routes.source_control_git._resolve_project",
-            lambda _server, _project_id: (str(tmp_path), None),
+            lambda _server, _project_id: str(tmp_path),
         )
 
         first = client.delete("/api/source-control/clones/clone-1")
@@ -2378,51 +1793,6 @@ class TestSyncClone:
         mock_server.services.clone_storage.record_sync.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_github_routes_resolve_project_instance(mock_server: MagicMock) -> None:
-    from gobby.mcp_proxy.models import MCPServerConfig
-    from gobby.servers.routes.source_control_github import _call_github_mcp
-    from gobby.storage.projects import GLOBAL_PROJECT_ID
-
-    project_id = "11111111-1111-4111-8111-111111111111"
-    project_server_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-    global_server_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-    manager = MagicMock()
-    configs = [
-        MCPServerConfig(
-            name="github",
-            project_id=project_id,
-            url="https://project.example.test",
-            id=project_server_id,
-        ),
-        MCPServerConfig(
-            name="github",
-            project_id=GLOBAL_PROJECT_ID,
-            url="https://global.example.test",
-            id=global_server_id,
-        ),
-    ]
-    manager.server_configs = configs
-    manager._configs = {config.id: config for config in configs}
-    manager.get_server_config.side_effect = lambda sid: manager._configs.get(sid)
-    payload = {"ok": True, "id": project_server_id}
-    session = AsyncMock()
-    session.call_tool = AsyncMock(
-        return_value=MagicMock(content=[SimpleNamespace(text=json.dumps(payload))])
-    )
-    manager.get_client_session = AsyncMock(return_value=session)
-    mock_server.services.mcp_manager = manager
-
-    result = await _call_github_mcp(
-        mock_server, project_id, "list_issues", {"owner": "o", "repo": "r"}
-    )
-    assert result == payload
-    manager.get_client_session.assert_awaited_once_with(project_server_id)
-    session.call_tool.assert_awaited_once_with("list_issues", {"owner": "o", "repo": "r"})
-    dispatched = [call.args[0] for call in manager.get_client_session.await_args_list]
-    assert global_server_id not in dispatched
-
-
 def test_resolve_project_uses_machine_checkout(  # tdd-red window
     mock_server: MagicMock,
     temp_db: HubDatabase,
@@ -2435,10 +1805,9 @@ def test_resolve_project_uses_machine_checkout(  # tdd-red window
     mock_server.session_manager.db = temp_db
     from gobby.servers.routes.source_control import _resolve_project
 
-    repo_path, github_repo = _resolve_project(mock_server, isolated.project.id)
+    repo_path = _resolve_project(mock_server, isolated.project.id)
 
     assert repo_path == isolated.root_path
-    assert github_repo == isolated.project.github_repo
 
 
 @pytest.mark.parametrize(
@@ -2470,14 +1839,13 @@ def test_status_reports_ahead_behind(
     with (
         patch(
             "gobby.servers.routes.source_control._resolve_project",
-            return_value=("/tmp/repo", "owner/repo"),
+            return_value="/tmp/repo",
         ),
         patch(
             "gobby.servers.routes.source_control._run_git",
             new_callable=AsyncMock,
             side_effect=run_git,
         ) as mock_run_git,
-        patch("gobby.servers.routes.source_control._get_github", return_value=None),
     ):
         response = client.get(
             "/api/source-control/status", params={"project_id": f"project-{expected_ahead}"}
@@ -2487,8 +1855,6 @@ def test_status_reports_ahead_behind(
         )
 
     expected = {
-        "github_available": False,
-        "github_repo": "owner/repo",
         "current_branch": "feature/test",
         "branch_count": 3,
         "worktree_count": 0,
@@ -2554,8 +1920,8 @@ def test_create_client_worktree(
     storage.create.return_value = worktree
     mock_server.services.worktree_storage = storage
 
-    def resolve_project(_server: MagicMock, project_id: str) -> tuple[str | None, None]:
-        return (None, None) if project_id == "missing" else ("/repo", None)
+    def resolve_project(_server: MagicMock, project_id: str) -> str | None:
+        return None if project_id == "missing" else "/repo"
 
     with (
         patch(

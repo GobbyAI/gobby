@@ -110,6 +110,32 @@ def snapshot_from_window_metadata(
     )
 
 
+def grok_epoch_max_occupancy(
+    candidate: ContextUsageSnapshot,
+    *,
+    current: ContextUsageSnapshot | None,
+    stored_used_tokens: int | None = None,
+    occupancy_known: bool = False,
+) -> ContextUsageSnapshot:
+    """Keep the highest Grok totalTokens stamp in the current compact epoch."""
+    used = candidate.context_used_tokens
+    if used is None:
+        return candidate
+    epoch_max = used
+    if current is not None and current.context_used_tokens is not None:
+        epoch_max = max(epoch_max, current.context_used_tokens)
+    if occupancy_known and isinstance(stored_used_tokens, int):
+        epoch_max = max(epoch_max, stored_used_tokens)
+    if epoch_max == used:
+        return candidate
+    return ContextUsageSnapshot.from_reported_occupancy(
+        source=candidate.source,
+        context_window=candidate.context_window,
+        context_used_tokens=epoch_max,
+        model=candidate.model,
+    )
+
+
 def context_window_for_source_model(
     source: ContextUsageSource | str | None,
     model: str | None,

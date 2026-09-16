@@ -494,6 +494,11 @@ fn test_live_evidence_contract() -> anyhow::Result<()> {
         source.excerpt,
         "fn alpha() {\n    beta();\n    gamma();\n}\n"
     );
+    assert_eq!(
+        source.numbered_excerpt,
+        "3| fn alpha() {\n4|     beta();\n5|     gamma();\n6| }\n"
+    );
+    assert!(first.warnings.is_empty());
     assert_eq!(source.line_start, 3);
     assert_eq!(source.line_end, 6);
     assert_eq!(source.byte_end - source.byte_start, source.excerpt.len());
@@ -1140,4 +1145,72 @@ fn evidence_rejects_foreign_index_and_unsafe_provenance() -> anyhow::Result<()> 
         "invalid_selector"
     );
     Ok(())
+}
+
+fn range_read(start_line: usize, end_line: usize) -> EvidenceOperation {
+    EvidenceOperation::Read {
+        read: ReadSelector::Range {
+            path: "src/lib.rs".into(),
+            start_line,
+            end_line,
+        },
+    }
+}
+
+#[test]
+fn range_read_past_end_of_file_stops_at_last_line_with_warning() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let facts = FakeFacts::for_source(&binding);
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+
+    let response = library.query(request(&binding, range_read(8, 20)))?;
+    assert_eq!(response.completeness, Completeness::Complete);
+    let EvidenceItem::Source(source) = &response.items[0] else {
+        panic!("source evidence")
+    };
+    assert_eq!((source.line_start, source.line_end), (8, 9));
+    assert_eq!(source.excerpt, "fn beta() {}\nfn gamma() {}\n");
+    assert_eq!(
+        source.numbered_excerpt,
+        "8| fn beta() {}\n9| fn gamma() {}\n"
+    );
+    assert_eq!(
+        response.warnings,
+        vec![EvidenceWarning {
+            code: "range_clamped_to_end_of_file".into(),
+            message: "requested lines 8..20; file ends at line 9".into(),
+            path: Some("src/lib.rs".into()),
+        }]
+    );
+
+    let error = library
+        .query(request(&binding, range_read(10, 12)))
+        .expect_err("a range starting past the file has nothing to clamp");
+    assert_eq!(error.code(), "invalid_selector");
+    assert!(
+        error.to_string().contains("src/lib.rs has 9 line(s)"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn index_derived_ranges_past_end_of_file_stay_stale() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let facts = FakeFacts::for_source(&binding);
+    let library = EvidenceLibrary::new(temporary.path(), binding, Arc::new(facts))?;
+    let error = read::source_for_lines(&library, "src/lib.rs", 8, 20, None)
+        .expect_err("search and graph lines past the file mean stale facts");
+    assert_eq!(error.code(), "stale_range");
+    Ok(())
+}
+
+#[test]
+fn numbered_excerpt_numbers_every_line_including_an_unterminated_last_line() {
+    assert_eq!(
+        read::numbered_excerpt("fn beta() {}\nfn gamma() {}", 8),
+        "8| fn beta() {}\n9| fn gamma() {}"
+    );
+    assert_eq!(read::numbered_excerpt("\n\n", 1), "1| \n2| \n");
+    assert_eq!(read::numbered_excerpt("", 1), "");
 }

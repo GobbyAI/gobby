@@ -67,6 +67,7 @@ def _valid_case(
         "byte_start": len(b"def alpha():\n"),
         "byte_end": len(content),
         "excerpt": excerpt.decode(),
+        "numbered_excerpt": "2|     return 1\n",
     }
     request = {
         "schema_version": 1,
@@ -248,6 +249,29 @@ def test_repeated_canonical_evidence_retains_complete_invocation_provenance() ->
         pinned_blobs=blobs,
     )
     assert "conflicting_evidence_id" in conflict_report.diagnostic_codes
+
+
+def test_numbered_excerpt_must_render_the_verified_excerpt() -> None:
+    from gobby.ask.validation import _response_body, validate_claims
+
+    draft, evidence, blobs, _review = _valid_case()
+    assert "numbered_excerpt_mismatch" not in (
+        validate_claims(draft, evidence, pinned_blobs=blobs).diagnostic_codes
+    )
+    record = evidence.records[0]
+    renumbered = record.response.items[0].model_copy(
+        update={"numbered_excerpt": "1|     return 1\n"}
+    )
+    response = record.response.model_copy(update={"items": (renumbered,)})
+    tampered = record.model_copy(
+        update={"response": response, "response_hash": _json_hash(_response_body(response))}
+    )
+    report = validate_claims(
+        draft,
+        evidence.model_copy(update={"records": (tampered, *evidence.records[1:])}),
+        pinned_blobs=blobs,
+    )
+    assert "numbered_excerpt_mismatch" in report.diagnostic_codes
 
 
 def test_claim_validation_and_review_gates() -> None:
@@ -723,6 +747,7 @@ def test_live_source_freshness_follows_claim_references(tmp_path: Path, same_pat
             "path": source.path if same_path else "src/deleted.py",
             "content_hash": hashlib.sha256(old_content).hexdigest(),
             "excerpt": old_excerpt,
+            "numbered_excerpt": "2|     return 0\n",
             "excerpt_hash": hashlib.sha256(old_excerpt.encode()).hexdigest(),
         }
     )

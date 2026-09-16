@@ -10,7 +10,10 @@ Two quiet-but-alive shapes used to read as idle/stagnant:
 
 from __future__ import annotations
 
+import json
 import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -22,9 +25,11 @@ from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
+    LOCAL_MACHINE_ID,
     _fake_terminal_services,
     _make_progress_stagnation_monitor,
     _make_terminal_run,
@@ -38,6 +43,7 @@ pytestmark = pytest.mark.unit
 THINKING_PANE = "✻ Grooving… (7m 12s · still thinking with xhigh effort)\n❯ \n"
 THINKING_PANE_LATER = "✻ Grooving… (7m 42s · still thinking with xhigh effort)\n❯ \n"
 CODEX_WORKING_PANE = "• Working (4m 58s • esc to interrupt)\n\n› Ask Codex to do anything\n"
+GROK_WORKING_PANE = "Press Ctrl+c to cancel the turn\n"
 IDLE_PANE = "Ran tests… done.\n❯ \n"
 
 
@@ -63,7 +69,11 @@ async def test_registry_reports_awaiting_until_notified() -> None:
 
 @pytest.mark.parametrize(
     ("provider", "pane"),
-    [("claude", THINKING_PANE), ("codex", CODEX_WORKING_PANE)],
+    [
+        ("claude", THINKING_PANE),
+        ("codex", CODEX_WORKING_PANE),
+        ("grok", GROK_WORKING_PANE),
+    ],
 )
 def test_turn_in_flight_is_detected_above_a_visible_prompt(provider: str, pane: str) -> None:
     detector = IdleDetector(BundledDetectionRegistry(), provider)
@@ -95,12 +105,14 @@ def _idle_monitor(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     registry: CompletionEventRegistry | None = None,
+    session_manager: SessionManager | None = None,
 ) -> AgentLifecycleMonitor:
     return AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         completion_registry=registry,
+        session_manager=session_manager,
         tmux_config=TmuxConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         ),
@@ -151,6 +163,72 @@ async def test_agent_mid_turn_is_not_reprompted(
     monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
     with _pane_text(monitor, THINKING_PANE) as runtime:
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 0
+    assert runtime.write_log == []
+    assert monitor._idle_detector.get_state(run.id).first_idle_at is None
+
+
+def _write_grok_open_tool_transcript(path: Path, *, tool_started_at: datetime) -> None:
+    turn_started = tool_started_at - timedelta(hours=1)
+    records = [
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "timestamp": int(turn_started.timestamp()),
+            "params": {
+                "sessionId": "session-id",
+                "update": {
+                    "sessionUpdate": "user_message_chunk",
+                    "content": {"type": "text", "text": "continue"},
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "timestamp": int(tool_started_at.timestamp()),
+            "params": {
+                "sessionId": "session-id",
+                "update": {"sessionUpdate": "tool_call"},
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+
+async def test_open_tool_transcript_is_not_reprompted(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    session_manager: SessionManager,
+    tmp_path: Path,
+) -> None:
+    monitor = _idle_monitor(agent_run_manager, temp_db, session_manager=session_manager)
+    transcript_path = tmp_path / "grok-open-tool.jsonl"
+    tool_started_at = datetime.now(UTC) - timedelta(minutes=11)
+    _write_grok_open_tool_transcript(transcript_path, tool_started_at=tool_started_at)
+    child = session_manager.register(
+        external_id="grok-open-tool",
+        machine_id=LOCAL_MACHINE_ID,
+        source="grok",
+        project_id=sample_session["project_id"],
+        transcript_path=str(transcript_path),
+    )
+    run = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        run_id=_rid("run-open-tool"),
+        terminal_id="gobby-open-tool",
+        child_session_id=child.id,
+        provider="grok",
+    )
+    stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
+    monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
+
+    with _pane_text(monitor, IDLE_PANE) as runtime:
         handled = await monitor.check_idle_agents()
 
     assert handled == 0

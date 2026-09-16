@@ -114,6 +114,7 @@ impl GhosttyPaneTerminal {
         appearance.map(|appearance| Bytes::from_static(appearance.color_scheme_report()))
     }
 
+    #[cfg(test)]
     pub fn has_transient_default_color_override(&self) -> bool {
         self.core
             .lock()
@@ -121,40 +122,11 @@ impl GhosttyPaneTerminal {
             .unwrap_or(false)
     }
 
-    pub fn maybe_restore_host_terminal_theme(&self, pane_id: PaneId, shell_pid: u32) -> bool {
-        {
-            let Ok(core) = self.core.lock() else {
-                return false;
-            };
-            if !should_probe_host_terminal_theme_restore(&core) {
-                return false;
-            }
-        }
-
-        let Ok(mut core) = self.core.lock() else {
-            return false;
-        };
-
-        let alternate_screen = core
-            .terminal
-            .active_screen()
-            .map(|screen| screen == crate::ghostty::ActiveScreen::Alternate)
-            .unwrap_or(false);
-        restore_host_terminal_theme_if_needed(&mut core, pane_id, shell_pid, alternate_screen)
-    }
-
     pub fn terminal_title(&self) -> Option<String> {
         self.core
             .lock()
             .ok()
             .and_then(|core| core.agent_osc_state.terminal_title().map(str::to_string))
-    }
-
-    #[cfg(unix)]
-    pub fn seed_terminal_title(&self, title: Option<String>) {
-        if let Ok(mut core) = self.core.lock() {
-            core.agent_osc_state.seed_terminal_title(title);
-        }
     }
 
     pub fn osc_title(&self) -> String {
@@ -169,12 +141,6 @@ impl GhosttyPaneTerminal {
             .lock()
             .map(|core| core.agent_osc_state.latest_progress().to_owned())
             .unwrap_or_default()
-    }
-
-    pub fn clear_osc_state(&self) {
-        if let Ok(mut core) = self.core.lock() {
-            core.agent_osc_state.clear_retained();
-        }
     }
 
     pub fn process_pty_bytes(
@@ -372,7 +338,7 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn seed_handoff_input_state(&self, input_state: InputState) {
         let Ok(mut core) = self.core.lock() else {
             return;
@@ -448,7 +414,7 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn seed_keyboard_protocol_flags(&self, flags: u16) {
         if flags == 0 {
             return;
@@ -456,7 +422,7 @@ impl GhosttyPaneTerminal {
         self.seed_keyboard_protocol_ansi(&format!("\x1b[>{flags}u"));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn seed_keyboard_protocol_ansi(&self, ansi: &str) {
         if ansi.is_empty() {
             return;
@@ -585,7 +551,7 @@ impl GhosttyPaneTerminal {
         ))
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub fn kitty_keyboard_state_ansi(&self) -> Option<String> {
         let core = self.core.lock().ok()?;
         core.kitty_keyboard.replay_ansi()
@@ -817,21 +783,6 @@ impl GhosttyPaneTerminal {
             .filter(|bytes| !bytes.is_empty())
     }
 
-    pub(crate) fn screen_text_snapshot(
-        &self,
-    ) -> Option<(
-        crate::ghostty::ActiveScreen,
-        u16,
-        Vec<crate::ghostty::ScreenTextRow>,
-    )> {
-        let core = self.core.lock().ok()?;
-        Some((
-            core.terminal.active_screen().ok()?,
-            core.terminal.cols().ok()?,
-            core.terminal.screen_text_rows().ok()?,
-        ))
-    }
-
     pub fn visible_text(&self) -> String {
         self.core
             .lock()
@@ -848,6 +799,7 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn viewport_bottom_text(&self) -> String {
         self.core
             .lock()
@@ -856,10 +808,12 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn recent_text(&self, lines: usize) -> String {
         self.recent_text_snapshot(lines).text
     }
 
+    #[cfg(test)]
     pub(crate) fn recent_text_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
         self.core
             .lock()
@@ -873,6 +827,7 @@ impl GhosttyPaneTerminal {
         self.recent_ansi_snapshot(lines).text
     }
 
+    #[cfg(test)]
     pub(crate) fn recent_ansi_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
         self.core
             .lock()
@@ -881,7 +836,6 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
     pub fn recent_unwrapped_text(&self, lines: usize) -> String {
         self.recent_unwrapped_text_snapshot(lines).text
     }

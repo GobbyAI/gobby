@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{color_to_u32, modifier_to_u16, u16_to_modifier, u32_to_color};
+use super::{color_to_u32, modifier_to_u16};
+use super::{u16_to_modifier, u32_to_color};
 
 /// Render payload encoding negotiated during client handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,198 +113,6 @@ pub enum ClientKeySource {
     WindowsConsole {
         record: crate::input::WindowsKeyRecord,
     },
-}
-
-impl ClientKeyKind {
-    #[cfg(any(windows, test))]
-    pub(crate) fn from_crossterm(kind: crossterm::event::KeyEventKind) -> Self {
-        match kind {
-            crossterm::event::KeyEventKind::Press => Self::Press,
-            crossterm::event::KeyEventKind::Repeat => Self::Repeat,
-            crossterm::event::KeyEventKind::Release => Self::Release,
-        }
-    }
-
-    pub(crate) fn to_crossterm(self) -> crossterm::event::KeyEventKind {
-        match self {
-            Self::Press => crossterm::event::KeyEventKind::Press,
-            Self::Repeat => crossterm::event::KeyEventKind::Repeat,
-            Self::Release => crossterm::event::KeyEventKind::Release,
-        }
-    }
-}
-
-impl ClientKeyCode {
-    #[cfg(any(windows, test))]
-    pub(crate) fn from_crossterm(code: crossterm::event::KeyCode) -> Option<Self> {
-        use crossterm::event::KeyCode;
-        Some(match code {
-            KeyCode::Backspace => Self::Backspace,
-            KeyCode::Enter => Self::Enter,
-            KeyCode::Left => Self::Left,
-            KeyCode::Right => Self::Right,
-            KeyCode::Up => Self::Up,
-            KeyCode::Down => Self::Down,
-            KeyCode::Home => Self::Home,
-            KeyCode::End => Self::End,
-            KeyCode::PageUp => Self::PageUp,
-            KeyCode::PageDown => Self::PageDown,
-            KeyCode::Tab => Self::Tab,
-            KeyCode::BackTab => Self::BackTab,
-            KeyCode::Delete => Self::Delete,
-            KeyCode::Insert => Self::Insert,
-            KeyCode::Esc => Self::Esc,
-            KeyCode::Char(ch) => Self::Char(ch),
-            KeyCode::F(n) => Self::F(n),
-            KeyCode::Null => Self::Null,
-            _ => return None,
-        })
-    }
-
-    pub(crate) fn to_crossterm(&self) -> crossterm::event::KeyCode {
-        use crossterm::event::KeyCode;
-        match self {
-            Self::Backspace => KeyCode::Backspace,
-            Self::Enter => KeyCode::Enter,
-            Self::Left => KeyCode::Left,
-            Self::Right => KeyCode::Right,
-            Self::Up => KeyCode::Up,
-            Self::Down => KeyCode::Down,
-            Self::Home => KeyCode::Home,
-            Self::End => KeyCode::End,
-            Self::PageUp => KeyCode::PageUp,
-            Self::PageDown => KeyCode::PageDown,
-            Self::Tab => KeyCode::Tab,
-            Self::BackTab => KeyCode::BackTab,
-            Self::Delete => KeyCode::Delete,
-            Self::Insert => KeyCode::Insert,
-            Self::Esc => KeyCode::Esc,
-            Self::Char(ch) => KeyCode::Char(*ch),
-            Self::F(n) => KeyCode::F(*n),
-            Self::Null => KeyCode::Null,
-        }
-    }
-}
-
-impl ClientMouseButton {
-    #[cfg(any(windows, test))]
-    pub(crate) fn from_crossterm(button: crossterm::event::MouseButton) -> Self {
-        match button {
-            crossterm::event::MouseButton::Left => Self::Left,
-            crossterm::event::MouseButton::Right => Self::Right,
-            crossterm::event::MouseButton::Middle => Self::Middle,
-        }
-    }
-
-    pub(crate) fn to_crossterm(self) -> crossterm::event::MouseButton {
-        match self {
-            Self::Left => crossterm::event::MouseButton::Left,
-            Self::Right => crossterm::event::MouseButton::Right,
-            Self::Middle => crossterm::event::MouseButton::Middle,
-        }
-    }
-}
-
-impl ClientMouseKind {
-    #[cfg(any(windows, test))]
-    pub(crate) fn from_crossterm(kind: crossterm::event::MouseEventKind) -> Option<Self> {
-        use crossterm::event::MouseEventKind;
-        Some(match kind {
-            MouseEventKind::Down(button) => Self::Down(ClientMouseButton::from_crossterm(button)),
-            MouseEventKind::Up(button) => Self::Up(ClientMouseButton::from_crossterm(button)),
-            MouseEventKind::Drag(button) => Self::Drag(ClientMouseButton::from_crossterm(button)),
-            MouseEventKind::Moved => Self::Moved,
-            MouseEventKind::ScrollUp => Self::ScrollUp,
-            MouseEventKind::ScrollDown => Self::ScrollDown,
-            MouseEventKind::ScrollLeft => Self::ScrollLeft,
-            MouseEventKind::ScrollRight => Self::ScrollRight,
-        })
-    }
-
-    pub(crate) fn to_crossterm(self) -> crossterm::event::MouseEventKind {
-        use crossterm::event::MouseEventKind;
-        match self {
-            Self::Down(button) => MouseEventKind::Down(button.to_crossterm()),
-            Self::Up(button) => MouseEventKind::Up(button.to_crossterm()),
-            Self::Drag(button) => MouseEventKind::Drag(button.to_crossterm()),
-            Self::Moved => MouseEventKind::Moved,
-            Self::ScrollUp => MouseEventKind::ScrollUp,
-            Self::ScrollDown => MouseEventKind::ScrollDown,
-            Self::ScrollLeft => MouseEventKind::ScrollLeft,
-            Self::ScrollRight => MouseEventKind::ScrollRight,
-        }
-    }
-}
-
-impl ClientInputEvent {
-    #[cfg(any(windows, test))]
-    pub(crate) fn from_crossterm(event: crossterm::event::Event) -> Option<Self> {
-        match event {
-            crossterm::event::Event::Key(key) => Some(Self::Key {
-                code: ClientKeyCode::from_crossterm(key.code)?,
-                modifiers: key.modifiers.bits(),
-                kind: ClientKeyKind::from_crossterm(key.kind),
-                repeat_count: 1,
-                generated_text: None,
-                source: ClientKeySource::Synthesized,
-            }),
-            crossterm::event::Event::Mouse(mouse) => Some(Self::Mouse {
-                kind: ClientMouseKind::from_crossterm(mouse.kind)?,
-                column: mouse.column,
-                row: mouse.row,
-                modifiers: mouse.modifiers.bits(),
-            }),
-            crossterm::event::Event::Paste(text) => Some(Self::Paste { text }),
-            crossterm::event::Event::FocusGained => Some(Self::FocusGained),
-            crossterm::event::Event::FocusLost => Some(Self::FocusLost),
-            crossterm::event::Event::Resize(_, _) => None,
-        }
-    }
-
-    pub(crate) fn to_raw_input_event(&self) -> crate::raw_input::RawInputEvent {
-        match self {
-            Self::Key {
-                code,
-                modifiers,
-                kind,
-                repeat_count,
-                generated_text,
-                source,
-            } => {
-                let mut key = crate::input::TerminalKey::new(
-                    code.to_crossterm(),
-                    crossterm::event::KeyModifiers::from_bits_truncate(*modifiers),
-                )
-                .with_generated_text(generated_text.clone());
-                key = match source {
-                    ClientKeySource::Synthesized => key,
-                    ClientKeySource::Vt { bytes } => key.with_vt_bytes(bytes.clone()),
-                    ClientKeySource::WindowsConsole { record } => key.with_windows_record(*record),
-                };
-                key = key
-                    .with_repeat_count(*repeat_count)
-                    .with_kind(kind.to_crossterm());
-                crate::raw_input::RawInputEvent::Key(key)
-            }
-            Self::TextCommit(text) => {
-                crate::raw_input::RawInputEvent::Text(crate::input::TextCommit::new(text.clone()))
-            }
-            Self::Mouse {
-                kind,
-                column,
-                row,
-                modifiers,
-            } => crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
-                kind: kind.to_crossterm(),
-                column: *column,
-                row: *row,
-                modifiers: crossterm::event::KeyModifiers::from_bits_truncate(*modifiers),
-            }),
-            Self::Paste { text } => crate::raw_input::RawInputEvent::Paste(text.clone()),
-            Self::FocusGained => crate::raw_input::RawInputEvent::OuterFocusGained,
-            Self::FocusLost => crate::raw_input::RawInputEvent::OuterFocusLost,
-        }
-    }
 }
 
 /// Client-reported tmux identity used to refuse recursive self-view.
@@ -554,7 +363,6 @@ impl FrameData {
     /// This converts ratatui's internal cell representation into the
     /// wire-protocol cell format. The conversion is lossless for all
     /// commonly used cell attributes.
-    #[cfg(test)]
     pub fn from_ratatui_buffer(
         buffer: &ratatui::buffer::Buffer,
         cursor: Option<CursorState>,
@@ -613,7 +421,6 @@ impl FrameData {
     /// Reconstructs a ratatui `Buffer` from this frame data.
     ///
     /// Returns `None` if the cells vector length doesn't match `width * height`.
-    #[cfg(test)]
     pub fn to_ratatui_buffer(&self) -> Option<ratatui::buffer::Buffer> {
         let expected = (self.width as usize) * (self.height as usize);
         if self.cells.len() != expected {
@@ -632,6 +439,7 @@ impl FrameData {
                 cell.fg = u32_to_color(cell_data.fg);
                 cell.bg = u32_to_color(cell_data.bg);
                 cell.modifier = u16_to_modifier(cell_data.modifier);
+                // reason: ratatui Cell::skip is the current buffer-skip flag on this version.
                 #[allow(deprecated)]
                 {
                     cell.skip = cell_data.skip;

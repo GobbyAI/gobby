@@ -17,11 +17,9 @@ from fastapi.testclient import TestClient
 
 from gobby.projects.purge import PurgeOutcome
 from gobby.servers.routes import projects as projects_routes
-from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.github_issue_sync import GitHubRepositoryReadinessError
 from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutProject,
     insert_isolated_machine,
@@ -90,10 +88,7 @@ class TestProjectRoutes:
     @pytest.fixture
     def real_project(self, project_manager: LocalProjectManager) -> dict:
         """Create a real project in the database."""
-        proj = project_manager.create(
-            name="my-project",
-            github_url="https://github.com/test/my-project",
-        )
+        proj = project_manager.create(name="my-project")
         return proj.to_dict()
 
     @pytest.fixture
@@ -379,33 +374,6 @@ class TestProjectRoutes:
         assert data["name"] == "new-name"
         assert data["display_name"] == "new-name"
 
-    def test_update_project_github_url(self, client: TestClient, real_project: dict) -> None:
-        """Update project github_url."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"github_url": "https://github.com/test/updated"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_url"] == "https://github.com/test/updated"
-
-    def test_update_project_clears_explicit_null_and_preserves_unset_fields(
-        self, client: TestClient, real_project: dict
-    ) -> None:
-        """Explicit null clears a field while omitted fields remain unchanged."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"github_url": None},
-        )
-        assert response.status_code == 200
-        assert response.json()["github_url"] is None
-
-        response = client.get(f"/api/projects/{real_project['id']}")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_url"] is None
-        assert data["name"] == "my-project"
-
     def test_update_project_ignores_repo_path(self, client: TestClient, real_project: dict) -> None:
         """repo_path is not a project JSON field and cannot be updated here."""
         with TestClient(client.app, raise_server_exceptions=False) as http:
@@ -418,178 +386,13 @@ class TestProjectRoutes:
         assert "repo_path" not in data
         assert data["checkout"] is None
 
-    def test_update_project_github_repo(self, client: TestClient, real_project: dict) -> None:
-        """Update project github_repo field."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"github_repo": "owner/repo"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["github_repo"] == "owner/repo"
-
-    def test_update_project_linear_team_id(self, client: TestClient, real_project: dict) -> None:
-        """Update project linear_team_id field."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"linear_team_id": "TEAM-123"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["linear_team_id"] == "TEAM-123"
-
-    def test_update_project_linear_project_id(self, client: TestClient, real_project: dict) -> None:
-        """Update project linear_project_id field."""
-        response = client.put(
-            f"/api/projects/{real_project['id']}",
-            json={"linear_project_id": "LIN-PROJ"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["linear_project_id"] == "LIN-PROJ"
-
-    def test_enable_linear_sync_requires_complete_binding(
-        self, client: TestClient, real_project: dict
-    ) -> None:
-        response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={"linear_sync_enabled": True},
-        )
-
-        assert response.status_code == 400
-        assert "linear_team_id and linear_project_id" in response.json()["detail"]
-
-    def test_enable_linear_sync_with_binding(self, client: TestClient, real_project: dict) -> None:
-        response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={
-                "linear_team_id": "team-1",
-                "linear_project_id": "linear-project-1",
-                "linear_sync_enabled": True,
-            },
-        )
-
-        assert response.status_code == 200
-        assert response.json()["linear_sync_enabled"] is True
-
-    @pytest.mark.parametrize("binding_field", ["linear_team_id", "linear_project_id"])
-    def test_update_project_rejects_clearing_effective_linear_binding(
-        self,
-        client: TestClient,
-        real_project: dict[str, Any],
-        binding_field: str,
-    ) -> None:
-        enable_response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={
-                "linear_team_id": "team-1",
-                "linear_project_id": "linear-project-1",
-                "linear_sync_enabled": True,
-            },
-        )
-        assert enable_response.status_code == 200
-
-        response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={binding_field: None},
-        )
-
-        assert response.status_code == 400
-        assert "linear_team_id and linear_project_id" in response.json()["detail"]
-
-    def test_integrations_status_reports_live_counts_before_first_run(
+    def test_integrations_status_is_not_registered(
         self,
         client: TestClient,
         real_project: dict,
-        session_manager: SessionManager,
     ) -> None:
-        task_manager = LocalTaskManager(session_manager.db)
-        task_manager.create_task(
-            project_id=real_project["id"],
-            title="Pending",
-            validation_criteria="Test task completion is observable.",
-        )
-        task_manager.create_task(
-            project_id=real_project["id"],
-            title="Linked",
-            linear_issue_id="linear-1",
-            github_repo="test/my-project",
-            github_issue_number=1,
-            validation_criteria="Test task completion is observable.",
-        )
-
         response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
-
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["linear"]["state"] == "pending"
-        assert payload["linear"]["linked_count"] == 1
-        assert payload["linear"]["pending_count"] == 1
-        assert payload["linear"]["last_outbound_success_at"] is None
-        assert payload["github"]["linked_count"] == 1
-        assert payload["github"]["pending_count"] == 0
-        assert payload["github"]["last_outbound_success_at"] is None
-        assert payload["github"]["readiness_error"] == "GitHub connector is unavailable"
-
-    def test_integrations_status_normalizes_provider_payloads_and_repository_fallback(
-        self,
-        client: TestClient,
-        real_project: dict[str, Any],
-        session_manager: SessionManager,
-    ) -> None:
-        update_response = client.patch(
-            f"/api/projects/{real_project['id']}",
-            json={"github_repo": "test/my-project"},
-        )
-        assert update_response.status_code == 200
-
-        status_store = ExternalIssueSyncStatusStore(session_manager.db)
-        for provider in ("linear", "github"):
-            status_store.upsert(
-                project_id=real_project["id"],
-                provider=provider,
-                state="healthy",
-                linked_count=0,
-                pending_count=0,
-            )
-
-        response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
-
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["github"]["repositories"] == ["test/my-project"]
-        for provider in ("linear", "github"):
-            assert "project_id" not in payload[provider]
-            assert "provider" not in payload[provider]
-            assert "last_outbound_success_at" in payload[provider]
-
-    def test_integrations_status_awaits_origin_repository_fallback(
-        self,
-        session_manager: SessionManager,
-        project_manager: LocalProjectManager,
-    ) -> None:
-        project = project_manager.create(
-            name=_unique_name("origin-only"),
-            github_url=None,
-        )
-        server = create_http_server(
-            session_manager=session_manager,
-            database=session_manager.db,
-            mcp_manager=MagicMock(),
-        )
-        repositories_for = AsyncMock(return_value=("owner/from-origin",))
-        check_access = AsyncMock(
-            side_effect=GitHubRepositoryReadinessError("connector unavailable")
-        )
-
-        with patch.object(projects_routes, "GitHubIssueSyncService") as service_type:
-            service_type.return_value.repositories_for = repositories_for
-            service_type.return_value.check_access = check_access
-            response = TestClient(server.app).get(f"/api/projects/{project.id}/integrations/status")
-
-        assert response.status_code == 200
-        assert response.json()["github"]["repositories"] == ["owner/from-origin"]
-        repositories_for.assert_awaited_once()
+        assert response.status_code == 404
 
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""
@@ -765,10 +568,9 @@ class TestProjectRoutes:
         self, client: TestClient, personal_project: dict
     ) -> None:
         """Updating _personal project keeps display_name as Personal if name stays."""
-        # Update something other than name
         response = client.put(
             f"/api/projects/{personal_project['id']}",
-            json={"github_url": "https://github.com/test/personal"},
+            json={},
         )
         assert response.status_code == 200
         data = response.json()
@@ -1016,7 +818,7 @@ class TestProjectCheckoutHttp:
         )
 
         assert response.status_code == 200
-        assert response.json()["github_url"] == "https://github.com/owner/from-origin.git"
+        assert "github_url" not in response.json()
 
     def test_project_json_has_calling_checkout_not_repo_path(
         self,

@@ -1,0 +1,88 @@
+# Operator-managed observability stack for a local Gobby daemon.
+# Gobby does not start or supervise these containers.
+#
+# Required host paths (never copied into this repository):
+#   ${HOME}/.gobby/local_cli_token  bearer credential, mounted read-only
+#   ${HOME}/.gobby/logs             daemon log surfaces, read-only, logs profile
+#   ${HOME}/.gobby/otelcol          collector checkpoints, logs profile;
+#                                   `mkdir -p` it before the first logs run
+#
+# Prometheus does not interpolate environment variables in its own config, so
+# edit the target port in prometheus.yml when the daemon's `http.port` in
+# ${HOME}/.gobby/bootstrap.yaml is not the 60887 default.
+
+name: gobby-observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-2GB}
+      - --web.enable-lifecycle
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${HOME}/.gobby/local_cli_token:/etc/prometheus/secrets/gobby_token:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      # Loopback-only stack: anonymous viewers read the dashboard without a
+      # credential in this file. Editing still requires the built-in admin
+      # login, which Grafana forces you to re-password on first sign-in.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+      GF_LOG_LEVEL: warn
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  loki:
+    profiles: ["logs"]
+    image: grafana/loki:3.7.3
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+
+  otel-collector:
+    profiles: ["logs"]
+    image: otel/opentelemetry-collector-contrib:0.156.0
+    restart: unless-stopped
+    depends_on:
+      - loki
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+    environment:
+      GOBBY_LOG_DIR: /var/log/gobby
+      GOBBY_OTEL_STORAGE_DIR: /var/lib/otelcol/gobby
+      GOBBY_OTLP_ENDPOINT: http://loki:3100/otlp
+    volumes:
+      - ../otel-collector/gobby-logs.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ${HOME}/.gobby/logs:/var/log/gobby:ro
+      # Host directory, not a named volume: the contrib image runs as uid 10001
+      # and an empty named volume on a path the image does not ship arrives
+      # root-owned, so file_storage could not write its checkpoints. This is the
+      # same host path the collector reference configuration already documents.
+      - ${HOME}/.gobby/otelcol:/var/lib/otelcol/gobby
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:

@@ -9,8 +9,8 @@ use gobby_terminal::protocol::{
     MAX_FRAME_SIZE, PROTOCOL_VERSION, WORST_CELL_BYTES,
 };
 use host_support::{
-    connect, recv_json, send_json, spawn_host, wait_exit, wait_socket, write_token, CONTROL_SOCKET,
-    FRAMES_SOCKET,
+    connect, recv_json, send_json, spawn_host, temp_socket_dir, wait_exit, wait_socket,
+    write_token, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use serde_json::json;
 use std::io::Write;
@@ -45,7 +45,7 @@ fn read_msg(stream: &mut UnixStream) -> ServerMessage {
 }
 
 fn start_host(token: &str) -> (tempfile::TempDir, host_support::HostProc) {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = temp_socket_dir();
     write_token(dir.path(), token);
     std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();
     let child = spawn_host(dir.path());

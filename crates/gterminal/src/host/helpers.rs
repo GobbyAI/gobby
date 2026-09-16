@@ -18,6 +18,7 @@ pub(crate) fn list_rows(inner: &Inner) -> Vec<Value> {
         .map(|slot| {
             let (observer_bind, reservation_id, reserve_generation) = match &slot.observer_bind {
                 ObserverBind::None => ("none", None, None),
+                #[cfg(feature = "vt-engine")]
                 ObserverBind::Reserved {
                     reservation_id,
                     generation,

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.lifecycle_state import (
     current_stage_name,
     initialize_stage_manifest,
@@ -54,7 +53,6 @@ async def build_plan_file(
         target_branch=target_branch,
         plan_enhancement_rounds=opts.plan_enhancement_rounds,
     )
-    await record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = initialize_stage_manifest(task_manager, task, opts, skip_stages, "plan_file")
     seed_plan_file_stage_state(task_manager, task.id, opts)
     initial_lifecycle = current_stage_name(task_manager, task.id, specs)

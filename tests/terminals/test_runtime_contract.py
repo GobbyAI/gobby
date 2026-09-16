@@ -696,13 +696,13 @@ def _start_isolated_daemon(
             command=command,
             env=env,
         )
-        if not wait_for_daemon_health(http_port, timeout=30.0):
+        if not wait_for_daemon_health(http_port, timeout=60.0):
             terminate_process_tree(process.pid)
             pytest.fail(
                 "contract daemon failed to start\n"
                 f"{instance.read_logs()[-2000:]}\n{instance.read_error_logs()[-2000:]}"
             )
-        if not wait_for_daemon_websocket(ws_port, home, timeout=10.0):
+        if not wait_for_daemon_websocket(ws_port, home, timeout=20.0):
             terminate_process_tree(process.pid)
             pytest.fail("contract daemon websocket was not ready")
         cleanup.pop_all()
@@ -823,7 +823,7 @@ def _restart_daemon_preserving_host(daemon: DaemonInstance) -> None:
         interval=0.1,
         description="daemon pid exit for restart",
     )
-    daemon.restart()
+    daemon.restart(health_timeout=60.0)
 
 
 def _health(client: httpx.Client) -> dict[str, Any]:

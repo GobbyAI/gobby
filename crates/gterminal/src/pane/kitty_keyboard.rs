@@ -126,6 +126,7 @@ impl KittyKeyboardTracker {
         }
     }
 
+    #[cfg(test)]
     #[cfg(unix)]
     pub(crate) fn replay_ansi(&self) -> Option<String> {
         if self.stack.is_empty() {

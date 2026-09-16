@@ -118,10 +118,10 @@ function makeProjectsHookState() {
         name: "_personal",
         display_name: "_personal",
         checkout: null,
-        github_url: null,
-        github_repo: null,
-        linear_team_id: null,
-        linear_project_id: null,
+
+
+
+
         approval_rules: [],
         validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
@@ -138,10 +138,10 @@ function makeProjectsHookState() {
           machine_id: "machine-1",
           root_path: "/tmp/gobby",
         },
-        github_url: null,
-        github_repo: null,
-        linear_team_id: null,
-        linear_project_id: null,
+
+
+
+
         approval_rules: [],
         validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
@@ -155,10 +155,10 @@ function makeProjectsHookState() {
         name: "_orphaned",
         display_name: "_orphaned",
         checkout: null,
-        github_url: null,
-        github_repo: null,
-        linear_team_id: null,
-        linear_project_id: null,
+
+
+
+
         approval_rules: [],
         validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",

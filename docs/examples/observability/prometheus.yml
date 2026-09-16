@@ -1,0 +1,29 @@
+# Prometheus scrape configuration for a local Gobby daemon.
+# The bearer credential is read from a read-only mount of
+# ${HOME}/.gobby/local_cli_token; it is never stored in this file.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    stack: gobby-observability
+
+scrape_configs:
+  - job_name: gobby-daemon
+    scheme: http
+    metrics_path: /api/admin/metrics
+    scrape_interval: 15s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/gobby_token
+    static_configs:
+      - targets:
+          - "host.docker.internal:60887"
+        labels:
+          instance: gobby-daemon
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - "localhost:9090"

@@ -17,7 +17,7 @@ from gobby.build import (
 )
 from gobby.build.options import resolve_build_isolation
 from gobby.build.service import BuildOptions, build
-from gobby.config.build import DeliveryMode, Isolation, StageCapOverride
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.session_context import get_current_session_id
 
@@ -79,8 +79,6 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         workspace_backend: WorkspaceBackend | None = None,
         clone: bool = False,
         unattended: bool | None = None,
-        delivery_mode: DeliveryMode | None = None,
-        delivery_target_repo: str | None = None,
         no_merge: bool = False,
         pr: str | None = None,
         stage: list[str] | None = None,
@@ -118,10 +116,6 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             isolation_explicit=resolved_isolation.explicit,
             unattended=unattended if unattended is not None else False,
             unattended_explicit=unattended is not None,
-            delivery_mode=delivery_mode or "auto",
-            delivery_mode_explicit=delivery_mode is not None,
-            delivery_target_repo=delivery_target_repo,
-            delivery_target_repo_explicit=delivery_target_repo is not None,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),
@@ -284,8 +278,6 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "clone": {"type": "boolean", "default": False},
                 "unattended": {"type": "boolean"},
-                "delivery_mode": {"type": "string", "enum": ["auto", "pull_request"]},
-                "delivery_target_repo": {"type": "string"},
                 "no_merge": {"type": "boolean", "default": False},
                 "pr": {"type": "string"},
                 "stage": {

@@ -285,6 +285,23 @@ Grok uses lowercase snake-case native hook names and camelCase payload fields.
 | `interaction_resolved` | `notification` | wait-resolution evidence |
 | `stop_cancelled` | `stop` or `interrupt` | disposition-dependent |
 
+Grok registers `SubagentStart` and `SubagentStop` in `hooks-template.json`.
+Grok 1.0.30 dispatches `subagent_start` non-blocking with the parent's
+`sessionId` (ACP `blockingEvents` lists only `pre_tool_use`, `stop`, and
+`subagent_stop`); Gobby resolves it to the parent and increments the counter
+without a hooks-log row. Older builds sent the child `sessionId`. One start can
+cover a batch of parallel children, so after the first `subagent_stop` the
+counter can read zero while children still run. Child hooks carry their own
+`sessionId` but run inside the parent's process: same tmux pane, `parent_pid`,
+and `parent_create_time`. Gobby binds a Grok hook whose session is unknown to
+the live pane owner only when `terminal_process_contexts_match` proves that
+shared process, then derives `is_subagent` / `subagent_count` from the bind; a
+different process in the same pane registers as a new session. A parent
+`user_prompt_submit` still resets the counter; a process-bound child
+`user_prompt_submit` does not. Evidence:
+`tests/fixtures/provider_contracts/grok/subagent-start-debug-trace.json` and
+`tests/fixtures/provider_contracts/grok/subagent-start-drop-summary.json`.
+
 For `stop_cancelled`, `stop_reason: user_interrupt` together with
 `cancelled_by: user` becomes `interrupt`; other cancellations carry the
 `ended_non_user` disposition. These lifecycle fields distinguish interruption
@@ -303,6 +320,15 @@ and provider waits from a completed user turn.
 | `PreCompact` | `pre_compact` | `pre_compact` |
 | `SessionStart` | `session_start` | `session_start` |
 | `SessionEnd` | `session_end` | `session_end` |
+
+Droid declares all nine events, and the table above is the translation contract used
+whenever one arrives. Only five were observed firing in non-interactive `droid exec`
+runs on 0.219.0: `PreToolUse`, `PostToolUse`, `Stop`, `SessionStart`, and `SessionEnd`.
+`UserPromptSubmit`, `Notification`, `SubagentStop`, and `PreCompact` never fired, so a
+spawned Droid agent never reaches `turn_start` and cannot be given context through
+`UserPromptSubmit.additionalContext` -- `SessionStart` is its only context hook. This
+was measured in `droid exec` only; it is not a claim about interactive Droid sessions
+(#22402).
 
 ## Common Payload Fields
 
@@ -439,18 +465,43 @@ normally the installed ghook does that work.
 
 ### Droid
 
+Captured live from Droid `0.219.0` in a non-interactive `droid exec` run. Every event
+carries `session_id`, `cwd`, `transcript_path`, and `permission_mode` (`auto-high` under
+`--auto high`, `off` at session start):
+
 ```json
 {
   "source": "droid",
-  "hook_type": "UserPromptSubmit",
+  "hook_type": "PreToolUse",
   "input_data": {
-    "hook_event_name": "UserPromptSubmit",
-    "session_id": "droid-session-123",
+    "hook_event_name": "PreToolUse",
+    "session_id": "ac313540-534b-48a7-96fb-06e72acdda33",
     "cwd": "/path/to/project",
-    "user_prompt": "Refresh the hook schema guide"
+    "transcript_path": "/path/to/.factory/sessions/<project>/<session>.jsonl",
+    "permission_mode": "auto-high",
+    "tool_name": "Execute",
+    "tool_input": {
+      "command": "echo gobby-probe-ok",
+      "riskLevel": "low",
+      "riskLevelReason": "This echo command only prints a fixed string and has no side effects.",
+      "summary": "Echo gobby probe marker"
+    }
   }
 }
 ```
+
+Fields beyond that common set, by event:
+
+| Event | Additional fields |
+| --- | --- |
+| `PreToolUse` | `tool_name`, `tool_input` (`Execute`: `command`, `riskLevel`, `riskLevelReason`, `summary`) |
+| `PostToolUse` | `tool_name`, `tool_input`, `tool_response` |
+| `Stop` | `elapsed_time` (ms), `message_id`, `stop_hook_active`, `tool_execution_count` |
+| `SessionStart` | `source` (e.g. `startup`), `CLAUDE_ENV_FILE` |
+| `SessionEnd` | `message_id`, `message_count`, `reason`, `session_duration_ms` |
+
+Droid also exports `CLAUDE_*`, `DROID_*`, and `FACTORY_*` project-directory variables into
+the hook process environment, including `CLAUDE_ENV_FILE` and `CLAUDE_PROJECT_DIR`.
 
 ### Grok
 

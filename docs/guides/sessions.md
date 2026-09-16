@@ -520,9 +520,10 @@ laptop slept mid-compact), the restart revives the same row; if the row is
 missing entirely, the start degrades to a normal `startup` registration with a
 structured warning in the daemon log.
 
-Claude and Codex emit `SessionStart(source=compact)` after compact. Grok reports
-the same context loss through `post_compact`. Both paths reset context-epoch tracking
-and preserve the pending `set_handoff` marker for explicit retrieval.
+Claude and Codex emit `SessionStart(source=compact)` after compact. Grok never
+emits that event; Grok `PostCompact` evaluates the `session_start(compact)` rules
+instead. Both paths reset context-epoch tracking and preserve the pending
+`set_handoff` marker for explicit retrieval.
 
 ### Event-Driven Waits
 

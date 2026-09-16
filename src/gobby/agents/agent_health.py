@@ -412,7 +412,7 @@ class AgentHealthMonitor:
                     else await self._terminal_services.snapshot(run, 8)
                 )
                 if snapshot is None:
-                    logger.warning(
+                    logger.debug(
                         "Skipping provider stall check for run %s: missing terminal", run.id
                     )
                     continue

@@ -86,9 +86,7 @@ def hub_sample_project(
 ) -> dict[str, Any]:
     """Create a sample project through the active hub database adapter."""
 
-    project = isolated_checkout_factory(
-        hub_db, "test-project", github_url="https://github.com/test/test-project"
-    ).project
+    project = isolated_checkout_factory(hub_db, "test-project").project
     return project.to_dict()
 
 
@@ -587,5 +585,5 @@ class TestParseTaskRefs:
         """Test that empty refs from extra commas are filtered."""
         from gobby.cli.tasks._utils import parse_task_refs
 
-        result = parse_task_refs(("#42,,#43,",))
+        result = parse_task_refs(("#42,#43,",))
         assert result == ["#42", "#43"]

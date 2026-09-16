@@ -138,6 +138,12 @@ gobby restart [--verbose] [--docker] [--terminals] [--wait | --force]
 `gobby stop`: without `--terminals` the restarted daemon adopts the surviving
 `gterm host`, and attached `gclient` sessions reconnect to the same terminals.
 
+Before stopping anything, the command proves the start half will succeed: the
+linked-worktree guard, the installed binary set, the schema identity, and a
+read-only `gdaemon schema plan` against the hub. On refusal it prints the reason
+and leaves the running daemon alone, because a stop that cannot start again has
+no way back.
+
 ### `gobby status`
 
 Show daemon status, runtime information, and configured ports.
@@ -177,16 +183,12 @@ See [Token Ledger Audit](observability.md#token-ledger-audit).
 Create project metadata for the current or target directory.
 
 ```bash
-gobby init [--name NAME] [--github-url URL] [--linear-setup | --no-linear-setup] [-C PATH]
+gobby init [--name NAME] [-C PATH]
 ```
 
 | Option | Purpose |
 | --- | --- |
 | `--name NAME` | Set the project name. |
-| `--github-url URL` | Set the GitHub repository URL. |
-| `--linear-setup`, `--no-linear-setup` | Control guided Linear setup after initialization. |
-| `--linear-team-id ID` | Set the Linear team used by guided setup. |
-| `--linear-project-id ID` | Attach an existing Linear project during guided setup. |
 | `-C`, `--path PATH` | Initialize a specific directory. |
 
 ### `gobby install` And `gobby uninstall`
@@ -323,7 +325,7 @@ Build and activate one coherent set of the three schema-aware Rust binaries from
 a Gobby source checkout:
 
 ```bash
-gobby cutover [--path PATH]
+gobby cutover [--path PATH] [--allow-dirty]
 ```
 
 The command runs one locked release build for `gcode`, `gdaemon`, and `ghook`,
@@ -335,6 +337,18 @@ after all three binaries promote. Before restart, cutover verifies that the exac
 fails closed with the three-binary rebuild remedy. Promotion failures name the
 members already promoted and those still unpromoted. Cutover does not claim to
 restore binaries after a partial promotion.
+
+The command refuses before it builds when the schema inputs carry uncommitted
+changes — `crates/gcore/assets/schema`, `crates/gcore/src/schema`, and
+`src/gobby/storage/schema_expected_identity.json` — because a build that embeds
+another session's in-flight migration ships a daemon whose schema apply cannot
+succeed. `--allow-dirty` skips that gate and nothing else; routine non-schema
+dirt elsewhere in the checkout never blocks it.
+
+After the build and before promotion, the freshly built candidate `gdaemon` must
+prove itself: its embedded schema identity must match the checkout pin, and its
+read-only `gdaemon schema plan` must succeed against the hub. On refusal nothing
+is promoted and nothing is stopped.
 
 ### `gobby auth`
 
@@ -888,29 +902,10 @@ for scheduling and reject ordinary toggle/delete. See [cron scheduler](./cron-sc
 
 ## Integrations And Resource Portability
 
-```bash
-gobby github status [--project REF] [--all] [--json]
-gobby github setup [--repo OWNER/REPO] [--sync | --no-sync] [--triage | --no-triage]
-gobby github link OWNER/REPO
-gobby github unlink
-gobby github import [OWNER/REPO] [--labels LABELS] [--state open|closed|all] [--json]
-gobby github sync TASK
-gobby github pr TASK --head BRANCH [--base main] [--draft] [--json]
-
-gobby linear teams [--json]
-gobby linear status [--project REF] [--all] [--json]
-gobby linear setup --bootstrap [--team-id TEAM] [--project-id LINEAR_PROJECT]
-gobby linear link TEAM_ID
-gobby linear unlink
-gobby linear import [TEAM_ID] [--state STATE] [--labels LABELS] [--allow-team-wide] [--json]
-gobby linear sync TASK
-gobby linear sync-all [TEAM_ID] [--forward] [--json]
-gobby linear create TASK [--team TEAM_ID] [--json]
-```
-
-These are operator integration procedures. See [Integrations](./integrations.md)
-for setup options, sync scope and recovery. Agents use the registered task MCP
-tools for lifecycle mutations. Quote task references in a shell (`'#123'`).
+Gobby does not ship `gobby github` or `gobby linear`. Instantiate the bundled
+`github` and `linear` MCP templates, then call those servers through the
+generic proxy. See [Integrations](./integrations.md) and
+[MCP tools](./mcp-tools.md#templates-and-instances).
 
 ## `gobby hooks` and `gobby webhooks`
 
@@ -940,7 +935,6 @@ to the calling machine.
 | `gobby projects list [--all] [--json]` | List non-deleted projects; default hides underscore-prefixed names. `--all` includes system names, not deleted rows. JSON includes this machine's checkout or null. |
 | `gobby projects show PROJECT [--json]` | Inspect one identity and its local checkout. |
 | `gobby projects rename PROJECT NEW_NAME` | Change shared project name. |
-| `gobby projects update PROJECT` | Set `--github-url`, `--github-repo`, `--linear-team-id`, or `--linear-project-id`; does not rebind a checkout. |
 | `gobby projects rebind PROJECT [PATH]` | Validate and rebind this machine's checkout; PATH defaults to cwd. Requires a matching project marker. Deleted projects stay deleted; use a UUID or marker to resolve ambiguous deleted names. |
 | `gobby projects repair [--fix]` | Inspect checkout drift from cwd; `--fix` registers a missing checkout with a valid marker/root. A changed root needs explicit rebind. |
 | `gobby projects refresh-verification [PROJECT]` | Preview verification-command changes to the selected checkout's `.gobby/project.json`. `--fix` writes; `--ai auto\|on\|off`, `--profile`, repeatable `--candidate`, and `--json` control synthesis/output. |

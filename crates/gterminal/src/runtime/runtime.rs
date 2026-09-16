@@ -6,7 +6,7 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use crate::pane::{PaneRuntime, PaneShellConfig, TerminalDirtyPatchOutcome};
-use crate::protocol::FrameData;
+use crate::protocol::{FrameData, SnapshotMode};
 use crate::terminal_theme::{HostAppearance, TerminalTheme};
 
 pub struct TerminalRuntime(PaneRuntime);
@@ -57,8 +57,8 @@ impl TerminalRuntime {
         self.0.scroll_reset();
     }
 
-    pub fn snapshot_history(&self) -> Option<String> {
-        self.0.snapshot_history()
+    pub fn snapshot_history(&self, mode: SnapshotMode) -> Option<String> {
+        self.0.snapshot_history(mode)
     }
 
     pub fn visible_text(&self) -> String {

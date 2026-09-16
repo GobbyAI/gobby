@@ -13,7 +13,6 @@ from collections.abc import Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -37,9 +36,15 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
+    TranscriptEvidence,
+    TranscriptEvidenceUnavailable,
+    TranscriptValidationRun,
+    TranscriptValidationSegment,
+)
 from gobby.tasks.transcript_evidence_pool import run_in_transcript_evidence_pool
 from gobby.tasks.transcript_outcomes import (
-    EvidenceOutcome,
     classify_validation_command_equivalence,
 )
 from gobby.tasks.transcript_outcomes import (
@@ -47,6 +52,9 @@ from gobby.tasks.transcript_outcomes import (
 )
 from gobby.tasks.transcript_outcomes import (
     extract_output as _extract_output,
+)
+from gobby.tasks.transcript_outcomes import (
+    is_unexecuted_tool_result as _is_unexecuted_tool_result,
 )
 from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
@@ -102,118 +110,6 @@ _EDIT_TOOLS = {
 }
 
 
-@dataclass(frozen=True)
-class TranscriptValidationSegment:
-    """One classified validation segment of a shell command."""
-
-    #: Normalized argv text with wrappers and env assignments stripped.
-    command: str
-    categories: tuple[str, ...]
-    segment_index: int = field(default=0, compare=False)
-
-
-@dataclass(frozen=True)
-class TranscriptValidationRun:
-    """One shell outcome, with empty categories for review-only commands."""
-
-    session_id: str
-    source: str
-    command: str
-    categories: tuple[str, ...]
-    matcher_id: str
-    label: str
-    outcome: EvidenceOutcome
-    started_at: datetime
-    completed_at: datetime
-    order: int
-    exit_code: int | None = None
-    unknown_reason: str | None = None
-    output: str | None = None
-    output_truncated: bool = False
-    #: Every validation segment of ``command`` in order, each with its own
-    #: categories; ``categories`` above is their union. Empty only for runs
-    #: built without classification.
-    validation_segments: tuple[TranscriptValidationSegment, ...] = ()
-    core_command: str | None = field(init=False)
-    wrapped: bool = field(init=False)
-    wrapper_reason: str | None = field(init=False)
-
-    def __post_init__(self) -> None:
-        equivalence = classify_validation_command_equivalence(self.command)
-        object.__setattr__(self, "core_command", equivalence.core_command)
-        object.__setattr__(self, "wrapped", equivalence.wrapped)
-        object.__setattr__(self, "wrapper_reason", equivalence.wrapper_reason)
-
-
-@dataclass(frozen=True)
-class TranscriptEdit:
-    """One task-attributed edit observed in a transcript."""
-
-    session_id: str
-    source: str
-    path: str
-    timestamp: datetime
-    order: int
-    tool_name: str
-
-
-@dataclass(frozen=True)
-class TranscriptEvidence:
-    """Validation runs and task edits derived from one or more sessions."""
-
-    validation_runs: tuple[TranscriptValidationRun, ...] = ()
-    command_runs: tuple[TranscriptValidationRun, ...] = ()
-    edits: tuple[TranscriptEdit, ...] = ()
-    attempted_paths: tuple[str, ...] = ()
-    sessions: tuple[str, ...] = ()
-    degraded_capabilities: tuple[str, ...] = ()
-    # Observations outside the task link window never enter credit-bearing collections.
-    excluded_runs: tuple[TranscriptValidationRun, ...] = ()
-
-    def summary(self) -> dict[str, Any]:
-        """Return bounded deterministic facts for checklist diagnostics."""
-        outcome_counts = {"success": 0, "failure": 0, "unknown": 0}
-        category_successes: dict[str, int] = {}
-        for run in self.validation_runs:
-            outcome_counts[run.outcome] += 1
-            if run.outcome == "success":
-                for category in run.categories:
-                    category_successes[category] = category_successes.get(category, 0) + 1
-        return {
-            "sessions": list(self.sessions),
-            "validation_run_count": len(self.validation_runs),
-            "command_run_count": len(self.command_runs),
-            "outcomes": outcome_counts,
-            "successful_categories": category_successes,
-            "task_edit_count": len(self.edits),
-            "latest_task_edit_at": (
-                max(edit.timestamp for edit in self.edits).isoformat() if self.edits else None
-            ),
-            "degraded_capabilities": list(self.degraded_capabilities),
-        }
-
-
-class TranscriptEvidenceUnavailable(RuntimeError):
-    """Raised when no readable transcript exists for a required session."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        source: str,
-        attempted_paths: Iterable[str],
-    ) -> None:
-        super().__init__(message)
-        self.source = source
-        self.attempted_paths = tuple(dict.fromkeys(attempted_paths))
-        self.retry_after = 5
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        """Preserve required keyword arguments across the evidence process pool."""
-        constructor = partial(type(self), source=self.source, attempted_paths=self.attempted_paths)
-        return constructor, self.args, self.__dict__
-
-
 @dataclass
 class _PendingTool:
     name: str
@@ -234,6 +130,7 @@ class _DerivationState:
     edits: list[TranscriptEdit] = field(default_factory=list)
     degraded: list[str] = field(default_factory=list)
     order: int = 0
+    latest_record_at: datetime | None = None
 
     def next_order(self) -> int:
         self.order += 1
@@ -295,6 +192,7 @@ class _EvidenceSnapshot:
     edits: tuple[TranscriptEdit, ...]
     degraded: tuple[str, ...]
     parsed_from_offset: int = 0
+    latest_record_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -523,6 +421,14 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
                 item for evidence in evidence_sets for item in evidence.degraded_capabilities
             )
         ),
+        latest_record_at=max(
+            (
+                evidence.latest_record_at
+                for evidence in evidence_sets
+                if evidence.latest_record_at is not None
+            ),
+            default=None,
+        ),
     )
 
 
@@ -625,14 +531,17 @@ def _derive_transcript_path_evidence(
         state.edits = list(resume.edits)
         state.degraded = list(resume.degraded)
         state.order = resume.order
+        state.latest_record_at = resume.latest_record_at
 
     for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
         for outcome in event.codex_exec_outcomes:
             _consume_codex_outcome(state, outcome)
         for record in event.records:
             if isinstance(record, ParsedMessage):
+                _observe_record_time(state, record.timestamp)
                 _consume_message(state, record)
             elif isinstance(record, ParsedToolEvent):
+                _observe_record_time(state, record.timestamp)
                 _consume_tool_event(state, record)
 
     snapshot = None
@@ -650,6 +559,7 @@ def _derive_transcript_path_evidence(
             edits=tuple(state.edits),
             degraded=tuple(state.degraded),
             parsed_from_offset=resume.watermark if resume is not None else 0,
+            latest_record_at=state.latest_record_at,
         )
     logger.debug(
         "Derived close transcript evidence",
@@ -670,6 +580,7 @@ def _derive_transcript_path_evidence(
             attempted_paths=tuple(attempted_paths),
             sessions=(session.id,),
             degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
+            latest_record_at=state.latest_record_at,
         ),
         snapshot,
     )
@@ -786,6 +697,8 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     matches = classify_validation_segments(outcome.command, state.detection_config)
     if not outcome.command.strip():
         return
+    if _is_unexecuted_tool_result(outcome.result):
+        return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
     output, output_truncated = _extract_output(outcome.result)
@@ -863,6 +776,8 @@ def _validation_segments(
                 command=match.normalized_command,
                 categories=match.categories,
                 segment_index=match.segment_index,
+                languages=match.languages,
+                bounded_inputs=match.bounded_inputs,
             )
             for match in matches
         )
@@ -888,6 +803,8 @@ def _record_validation_run(
     command = _extract_command(pending.arguments)
     matches = classify_validation_segments(command, state.detection_config)
     if not command.strip():
+        return
+    if _is_unexecuted_tool_result(result):
         return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
@@ -954,6 +871,13 @@ def _record_edit(
         )
 
 
+def _observe_record_time(state: _DerivationState, timestamp: datetime) -> None:
+    """Track the newest parsed record so close can recognize a lagging transcript."""
+    stamp = _as_utc(timestamp)
+    if state.latest_record_at is None or stamp > state.latest_record_at:
+        state.latest_record_at = stamp
+
+
 def _inside_window(timestamp: datetime, window_start: datetime | None) -> bool:
     return window_start is None or timestamp >= window_start
 
@@ -974,10 +898,6 @@ def _as_utc(value: datetime) -> datetime:
 
 
 __all__ = [
-    "TranscriptEdit",
-    "TranscriptEvidence",
-    "TranscriptEvidenceUnavailable",
-    "TranscriptValidationRun",
     "clear_evidence_snapshots",
     "derive_transcript_evidence",
     "merge_transcript_evidence",

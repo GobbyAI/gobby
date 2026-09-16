@@ -492,6 +492,7 @@ fn contains_kitty_graphics_sequence(bytes: &[u8]) -> bool {
     bytes.windows(3).any(|window| window == b"\x1b_G")
 }
 
+#[cfg(test)]
 fn should_probe_host_terminal_theme_restore(core: &GhosttyPaneCore) -> bool {
     if core.transient_default_color_owner_pgid.is_none() || core.host_terminal_theme.is_empty() {
         return false;

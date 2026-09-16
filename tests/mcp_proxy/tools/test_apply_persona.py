@@ -719,3 +719,51 @@ class TestApplyPersonaImpl:
         merged_changes = call_args[0][1]
         assert merged_changes["assigned_task_id"] == "#42"
         assert "session_task" not in merged_changes
+
+    async def test_unresolvable_task_id_refuses_instead_of_dropping_the_binding(
+        self, db: HubDatabase
+    ) -> None:
+        """A bad task_id fails loudly; a persona missing assigned_task_id is never applied."""
+        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+        from gobby.storage.tasks import TaskNotFoundError
+
+        mock_task_manager = MagicMock()
+
+        with (
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent_with_row",
+                return_value=(
+                    make_agent_definition(
+                        prompts={
+                            "persona": "Interactive guidance.",
+                            "agent": "Run the assigned task.",
+                        },
+                        name="test",
+                        surfaces=["persona"],
+                    ),
+                    MagicMock(step_workflow_id=None),
+                ),
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
+                side_effect=TaskNotFoundError("Task #999 not found"),
+            ),
+        ):
+            result = await apply_persona_impl(
+                agent="test",
+                db=db,
+                session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+                task_id="#999",
+                task_manager=mock_task_manager,
+            )
+
+        assert result["success"] is False
+        assert "#999" in result["error"]
+        mock_merge.assert_not_called()

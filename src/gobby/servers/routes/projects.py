@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from gobby.config.validation_detection import (
     ValidationDetectionConfig,
@@ -21,8 +21,6 @@ from gobby.servers.tool_approvals import (
     load_project_approval_rules,
     save_project_approval_rules,
 )
-from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
-from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
     CheckoutNotFoundError,
@@ -48,19 +46,13 @@ from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
-from gobby.sync.github_issue_sync import (
-    GitHubIssueSyncService,
-    GitHubRepositoryReadinessError,
-)
-from gobby.sync.linear import LinearSyncService
 from gobby.utils.checkout_root import (
     InvalidCheckoutRootError,
     MarkerMismatchError,
     validate_checkout_root,
 )
-from gobby.utils.git import get_github_url_async
 from gobby.utils.machine_id import get_machine_id
-from gobby.utils.project_init import initialize_project_from_resolved_metadata
+from gobby.utils.project_init import initialize_project
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -74,24 +66,8 @@ class ProjectUpdate(BaseModel):
     """Request body for updating a project."""
 
     name: str | None = None
-    github_url: str | None = None
-    github_repo: str | None = None
-    linear_team_id: str | None = None
-    linear_project_id: str | None = None
-    linear_sync_enabled: bool | None = None
     approval_rules: list[str] | None = None
     validation_detection: dict[str, Any] | None = None
-
-
-class GitHubTriageConfigUpdate(BaseModel):
-    """Request body for project GitHub triage config."""
-
-    sync_enabled: bool = False
-    triage_enabled: bool = False
-    webhook_enabled: bool = False
-    repositories: list[str] = Field(default_factory=list)
-    reconcile_interval_seconds: int = 3600
-    webhook_secret_ref: str | None = None
 
 
 class CheckoutRootBody(BaseModel):
@@ -311,7 +287,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         """Initialize a local directory and return its project payload."""
         pm = _get_project_manager(server)
         project_path = Path(body.path)
-        github_url = await get_github_url_async(project_path)
 
         def apply_init() -> tuple[Project, bool]:
             try:
@@ -320,9 +295,8 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     checkout.project_id
                     for checkout in LocalProjectCheckoutManager(pm.db).list_for_machine(machine_id)
                 }
-                result = initialize_project_from_resolved_metadata(
+                result = initialize_project(
                     cwd=project_path,
-                    github_url=github_url,
                     db=pm.db,
                 )
                 project = pm.get(result.project_id)
@@ -455,18 +429,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         approval_rules = fields.pop("approval_rules", None)
         validation_detection = fields.pop("validation_detection", None)
 
-        effective_linear_sync_enabled = fields.get(
-            "linear_sync_enabled", project.linear_sync_enabled
-        )
-        if effective_linear_sync_enabled:
-            team_id = fields.get("linear_team_id", project.linear_team_id)
-            linear_project_id = fields.get("linear_project_id", project.linear_project_id)
-            if not team_id or not linear_project_id:
-                raise HTTPException(
-                    400,
-                    "Linear sync requires both linear_team_id and linear_project_id",
-                )
-
         if validation_detection is not None:
             try:
                 validation_detection = ValidationDetectionConfig.model_validate(
@@ -518,209 +480,6 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         updated = await server.run_db(apply_update)
 
         return cast(dict[str, Any], await server.run_db(_project_to_response, server, updated))
-
-    @router.get("/{project_id}/github-triage")
-    async def get_github_triage_config(project_id: str) -> dict[str, Any]:
-        """Get GitHub issue triage configuration for a project."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or project.deleted_at:
-            raise HTTPException(404, "Project not found")
-        store = GitHubTriageStore(server.services.database)
-        config = await server.run_db(
-            store.get_config,
-            project_id,
-            fallback_repo=project.github_repo,
-        )
-        return cast(dict[str, Any], config.to_dict())
-
-    @router.put("/{project_id}/github-triage")
-    async def update_github_triage_config(
-        project_id: str,
-        body: GitHubTriageConfigUpdate,
-    ) -> dict[str, Any]:
-        """Update GitHub issue triage configuration for a project."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or project.deleted_at:
-            raise HTTPException(404, "Project not found")
-
-        store = GitHubTriageStore(server.services.database)
-        current = await server.run_db(
-            store.get_config, project_id, fallback_repo=project.github_repo
-        )
-        values = body.model_dump(exclude_unset=True)
-        interval = values.get("reconcile_interval_seconds")
-        if interval is None:
-            interval = current.reconcile_interval_seconds
-        if interval is not None and interval <= 0:
-            raise HTTPException(400, "reconcile_interval_seconds must be greater than 0")
-
-        candidate = GitHubTriageConfig(
-            project_id=project_id,
-            sync_enabled=(
-                current.sync_enabled
-                if values.get("sync_enabled") is None
-                else values["sync_enabled"]
-            ),
-            triage_enabled=(
-                current.triage_enabled
-                if values.get("triage_enabled") is None
-                else values["triage_enabled"]
-            ),
-            webhook_enabled=(
-                current.webhook_enabled
-                if values.get("webhook_enabled") is None
-                else values["webhook_enabled"]
-            ),
-            repositories=tuple(
-                current.repositories
-                if values.get("repositories") is None
-                else values["repositories"]
-            ),
-            reconcile_interval_seconds=interval,
-            webhook_secret_ref=(
-                values["webhook_secret_ref"]
-                if "webhook_secret_ref" in values
-                else current.webhook_secret_ref
-            ),
-        )
-        if candidate.sync_enabled or candidate.triage_enabled:
-            if server.services.mcp_manager is None:
-                raise HTTPException(400, "GitHub connector is unavailable")
-            readiness = GitHubIssueSyncService(
-                db=server.services.database,
-                mcp_manager=server.services.mcp_manager,
-                task_manager=server.services.task_manager,
-                project_manager=pm,
-            )
-            try:
-                await readiness.check_access(project, candidate)
-            except GitHubRepositoryReadinessError as exc:
-                raise HTTPException(400, str(exc)) from exc
-
-        updated = await server.run_db(store.upsert_config, candidate)
-        return cast(dict[str, Any], updated.to_dict())
-
-    @router.get("/{project_id}/integrations/status")
-    async def get_integrations_status(project_id: str) -> dict[str, Any]:
-        """Return configuration, readiness, and reconciliation health."""
-        pm = _get_project_manager(server)
-        project = await server.run_db(pm.get, project_id)
-        if not project or project.deleted_at:
-            raise HTTPException(404, "Project not found")
-
-        status_store = ExternalIssueSyncStatusStore(server.services.database)
-        linear_status = await server.run_db(status_store.get, project_id, "linear")
-        github_status = await server.run_db(status_store.get, project_id, "github")
-        linear_counts = await server.run_db(status_store.counts, project_id, "linear")
-        github_counts = await server.run_db(status_store.counts, project_id, "github")
-        github_store = GitHubTriageStore(server.services.database)
-        github_config = await server.run_db(
-            github_store.get_config,
-            project_id,
-            fallback_repo=project.github_repo,
-        )
-
-        linear_service = None
-        if server.services.mcp_manager is not None:
-            linear_service = LinearSyncService(
-                mcp_manager=server.services.mcp_manager,
-                task_manager=server.services.task_manager,
-                project_id=project_id,
-                linear_team_id=project.linear_team_id,
-                linear_project_id=project.linear_project_id,
-                project_manager=pm,
-            )
-        linear_ready = bool(
-            project.linear_team_id
-            and project.linear_project_id
-            and linear_service
-            and linear_service.is_available()
-        )
-        linear_error = None
-        if not linear_ready:
-            linear_error = (
-                "Linear team and project binding are required"
-                if not project.linear_team_id or not project.linear_project_id
-                else (
-                    linear_service.get_unavailable_reason()
-                    if linear_service
-                    else "Linear connector is unavailable"
-                )
-            )
-
-        github_ready = False
-        github_error = None
-        repositories: tuple[str, ...] = ()
-        if server.services.mcp_manager is None:
-            github_error = "GitHub connector is unavailable"
-        else:
-            github_service = GitHubIssueSyncService(
-                db=server.services.database,
-                mcp_manager=server.services.mcp_manager,
-                task_manager=server.services.task_manager,
-                project_manager=pm,
-            )
-            try:
-                repositories = await github_service.repositories_for(project, github_config)
-            except ValueError:
-                repositories = ()
-            try:
-                repositories = await github_service.check_access(project, github_config)
-                github_ready = True
-            except GitHubRepositoryReadinessError as exc:
-                github_error = str(exc)
-
-        def status_payload(status: Any, counts: tuple[int, int]) -> dict[str, Any]:
-            if status:
-                payload = cast(dict[str, Any], status.to_dict())
-                payload.pop("project_id", None)
-                payload.pop("provider", None)
-                payload["linked_count"] = counts[0]
-                payload["pending_count"] = counts[1]
-                return payload
-            return {
-                "state": "pending",
-                "linked_count": counts[0],
-                "pending_count": counts[1],
-                "consecutive_failures": 0,
-                "last_attempt_at": None,
-                "last_success_at": None,
-                "last_outbound_success_at": None,
-                "retry_at": None,
-                "last_statistics": {},
-                "last_error": None,
-            }
-
-        github_config_payload = github_config.to_dict()
-        github_config_payload.pop("project_id", None)
-
-        return cast(
-            dict[str, Any],
-            jsonable_encoder(
-                {
-                    "project_id": project_id,
-                    "linear": {
-                        "enabled": project.linear_sync_enabled,
-                        "ready": linear_ready,
-                        "binding": {
-                            "team_id": project.linear_team_id,
-                            "project_id": project.linear_project_id,
-                        },
-                        "readiness_error": linear_error,
-                        **status_payload(linear_status, linear_counts),
-                    },
-                    "github": {
-                        **github_config_payload,
-                        "ready": github_ready,
-                        "repositories": list(repositories or github_config.repositories),
-                        "readiness_error": github_error,
-                        **status_payload(github_status, github_counts),
-                    },
-                }
-            ),
-        )
 
     @router.delete("/{project_id}")
     async def delete_project(project_id: str) -> dict[str, str]:

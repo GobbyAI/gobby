@@ -15,14 +15,18 @@ Capture procedure:
 
 1. Record `grok version`, `grok --help`, `grok agent --help`, `grok models`,
    and scrubbed `grok inspect --json` summaries.
-2. Summarize `~/.grok/models_cache.json` without committing tokens or etags.
-3. Run ACP with `grok agent --no-leader --always-approve stdio`.
-4. Send `initialize`, `authenticate`, `session/new`, `session/prompt`,
+2. For native subagent dispatch, run a throwaway parent with
+   `grok --debug --debug-file <path> --prompt-file <prompt>` that calls
+   `spawn_subagent`, then sanitize hook-dispatch lines into
+   `subagent-start-debug-trace.json`. Do not commit the raw debug file.
+3. Summarize `~/.grok/models_cache.json` without committing tokens or etags.
+4. Run ACP with `grok agent --no-leader --always-approve stdio`.
+5. Send `initialize`, `authenticate`, `session/new`, `session/prompt`,
    `session/load`, and a second `session/prompt`.
-5. Install temporary hook file
+6. Install temporary hook file
    `~/.grok/hooks/gobby-contract-probe-15038.json`, capture stdin/env payloads,
    then remove it.
-6. Map `sessionId` to
+7. Map `sessionId` to
    `~/.grok/sessions/<encoded-cwd>/<session-id>/{summary.json,updates.jsonl,chat_history.jsonl}`.
 
 Do not commit raw `chat_history.jsonl`; it includes full system prompts.

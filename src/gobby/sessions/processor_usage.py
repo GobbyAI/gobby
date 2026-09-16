@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import psycopg
 
 from gobby.llm.context_windows import reconcile_model_context, reconcile_observed_model
-from gobby.sessions.context_usage import normalize_context_usage_source
+from gobby.sessions.context_usage import grok_epoch_max_occupancy, normalize_context_usage_source
 from gobby.sessions.message_stats import TURN_BOUNDARY_CONTENT_TYPE
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
 from gobby.sessions.transcripts.base import ParsedMessage
@@ -111,6 +111,13 @@ class ProcessorUsageMixin:
                         model=last_model,
                     )
                     if occupancy_snapshot.context_used_tokens is not None:
+                        if source == "grok":
+                            occupancy_snapshot = grok_epoch_max_occupancy(
+                                occupancy_snapshot,
+                                current=latest_context_snapshot,
+                                stored_used_tokens=getattr(session, "context_used_tokens", None),
+                                occupancy_known=occupancy_known,
+                            )
                         latest_context_snapshot = occupancy_snapshot
                         occupancy_known = True
             if not self._usage_has_tokens(msg) or msg.usage is None:
@@ -151,7 +158,9 @@ class ProcessorUsageMixin:
             latest_event_at = event_at
             # Turn-boundary usage sums every model call in the turn: it is accounting,
             # never the current context size.
-            if msg.content_type != TURN_BOUNDARY_CONTENT_TYPE:
+            if msg.content_type != TURN_BOUNDARY_CONTENT_TYPE and not (
+                source == "grok" and occupancy_known
+            ):
                 latest_context_snapshot = self._snapshot_from_token_usage(
                     source=source,
                     context_window=event_context_window,

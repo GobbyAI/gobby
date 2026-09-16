@@ -196,8 +196,14 @@ class InternalToolRegistry:
                 annotation = resolved_hints.get(param_name, param.annotation)
                 param_type = _get_json_schema_type(annotation)
                 prop: dict[str, Any] = {"type": param_type}
-                if get_origin(annotation) is Literal:
-                    prop["enum"] = list(get_args(annotation))
+                literal_annotation = annotation
+                origin = get_origin(annotation)
+                if origin is Union or origin is types.UnionType:
+                    non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
+                    if len(non_none) == 1:
+                        literal_annotation = non_none[0]
+                if get_origin(literal_annotation) is Literal:
+                    prop["enum"] = list(get_args(literal_annotation))
                 if param.default is not inspect.Parameter.empty and param.default is not None:
                     try:
                         json.dumps(param.default)

@@ -7,7 +7,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from gobby.tasks.criterion_commands import edit_details, execution_details, first_invalidating_edit
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEvidence,
+    TranscriptValidationRun,
+)
 
 
 def excluded_validation_records(
@@ -16,7 +19,6 @@ def excluded_validation_records(
     audit_paths: tuple[str, ...] = ("tests/",),
 ) -> list[dict[str, Any]]:
     """Describe exclusions without adding observations to credit-bearing evidence."""
-    last_edit = max((edit.order for edit in evidence.edits), default=None)
     records: list[dict[str, Any]] = []
     for prelink, runs in (
         (False, (*evidence.validation_runs, *evidence.command_runs)),
@@ -34,12 +36,10 @@ def excluded_validation_records(
             if prelink:
                 code, reason = "pre-link", "Observed before the task/session link window"
                 remedy = f"Link this session to the task, then rerun; prior runs remain uncredited. {rerun}"
-            elif last_edit is not None and run.order <= last_edit:
+            elif (edit := first_invalidating_edit(evidence, run)) is not None:
                 code, reason = "stale", "Invalidated by a later task edit"
-                edit = first_invalidating_edit(evidence.edits, run.order)
-                if edit is not None:
-                    record["invalidating_edit"] = edit_details(edit)
-                    reason += f" to {edit.path} at {edit.timestamp.isoformat()}"
+                record["invalidating_edit"] = edit_details(edit)
+                reason += f" to {edit.path} at {edit.timestamp.isoformat()}"
                 remedy = rerun
             elif run.wrapped:
                 code, reason = (

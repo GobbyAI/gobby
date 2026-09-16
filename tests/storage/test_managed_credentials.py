@@ -672,6 +672,126 @@ def test_restart_reconcile_revokes_expired_role_with_a_live_connection(
         restarted_daemon.close()
 
 
+def test_live_run_rotated_in_its_window_survives_restart_and_re_handshakes(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """A long-lived run's re-handshake after a restart rotates instead of failing (#22399).
+
+    Left unrotated, the binding outlived its hour, restart reconcile revoked it, and
+    the run's next handshake reached issue: 'managed principal binding already exists'.
+    """
+    from gobby.runner_init.servers import issue_grant_postgres
+    from gobby.runtime_grants.schema import GrantPrincipal
+
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    runtime_root = tmp_path / "managed"
+    first_daemon = _manager(fixture, runtime_root)
+    try:
+        first_daemon.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '46 minutes', "
+                "expires_at = NOW() + INTERVAL '10 minutes' "
+                "WHERE managed_execution_id = %s",
+                (execution_id,),
+            )
+        rotated = next(
+            credential
+            for credential in first_daemon.rotate_due()
+            if credential.managed_execution_id == execution_id
+        )
+    finally:
+        first_daemon.close()
+
+    restarted_daemon = _manager(fixture, runtime_root)
+    store = _secret_store(fixture)
+    try:
+        restarted_daemon.reconcile()
+        assert (
+            restarted_daemon.get_live_binding_generation(execution_id)
+            == rotated.credential_generation
+        )
+
+        direct = issue_grant_postgres(
+            GrantPrincipal(
+                kind="agent_run",
+                machine_id=str(fixture.machine_id),
+                project_id=str(fixture.project_id),
+                execution_id=str(execution_id),
+                session_id=str(fixture.session_id),
+            ),
+            credentials=restarted_daemon,
+            deployment_token="agent-runs-ignore-this",
+            secrets=store,
+            managed_bootstrap_dsn=str,
+        )
+
+        assert direct.credential_generation == rotated.credential_generation + 1
+    finally:
+        restarted_daemon.revoke(execution_id, reason="test-cleanup")
+        restarted_daemon.close()
+        store.db.close()
+
+
+def test_rotation_sweep_continues_past_a_principal_that_fails_to_rotate(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    # The sweep visits principals in execution-id order, so the failing one goes first.
+    failing_execution_id, healthy_execution_id = sorted((uuid4(), uuid4()))
+    try:
+        issued = {
+            execution_id: manager.issue(
+                managed_execution_id=execution_id,
+                owner_kind="agent_run",
+                session_id=fixture.session_id,
+                agent_run_id=fixture.agent_run_id,
+                expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+            for execution_id in (failing_execution_id, healthy_execution_id)
+        }
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '46 minutes', "
+                "expires_at = NOW() + INTERVAL '10 minutes' "
+                "WHERE managed_execution_id = ANY(%s)",
+                ([failing_execution_id, healthy_execution_id],),
+            )
+        materialize = manager._materialize_bootstrap
+
+        def fail_for_first_principal(**kwargs: Any) -> Path:
+            if kwargs["managed_execution_id"] == failing_execution_id:
+                raise OSError("synthetic bootstrap failure")
+            return materialize(**kwargs)
+
+        monkeypatch.setattr(manager, "_materialize_bootstrap", fail_for_first_principal)
+
+        rotated = manager.rotate_due()
+
+        assert [credential.managed_execution_id for credential in rotated] == [healthy_execution_id]
+        assert (
+            manager.get_live_binding_generation(failing_execution_id)
+            == issued[failing_execution_id].credential_generation
+        )
+    finally:
+        manager.revoke(failing_execution_id, reason="test-cleanup")
+        manager.revoke(healthy_execution_id, reason="test-cleanup")
+        manager.close()
+
+
 def test_other_daemon_waits_for_expired_lease_then_recovers_terminal_and_orphan_roles(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
@@ -1728,6 +1848,20 @@ def test_issue_tool_request_accepts_registered_overlay_without_primary(  # tdd-r
             admin.execute(
                 "DELETE FROM public.worktrees WHERE project_id = %s",
                 (fixture.project_id,),
+            )
+            admin.execute(
+                """
+                INSERT INTO public.project_checkouts
+                    (machine_id, project_id, root_path)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (machine_id, project_id) DO UPDATE
+                SET root_path = EXCLUDED.root_path
+                """,
+                (
+                    fixture.machine_id,
+                    fixture.project_id,
+                    f"/tmp/checkout-{fixture.machine_id}",
+                ),
             )
         manager.close()
 

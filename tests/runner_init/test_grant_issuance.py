@@ -248,6 +248,52 @@ def test_managed_refresh_rotates_live_binding(
 
 @pytest.mark.integration
 @pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+def test_managed_refresh_rotates_expired_binding(
+    kind: ManagedKind,
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = _execution_id(kind, fixture)
+    runtime_root = tmp_path / f"{kind}-expired"
+    manager = _manager(fixture, runtime_root)
+    try:
+        predecessor_generation = _issue_initial_binding(manager, fixture, kind, execution_id)
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '1 hour', "
+                "expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE managed_execution_id = %s",
+                (execution_id,),
+            )
+        grant = _handshake(fixture, manager).issue_for_agent(
+            _claims(kind, fixture, execution_id),
+            machine_id=str(fixture.machine_id),
+            project_id=str(fixture.project_id),
+        )
+
+        postgres = grant.capabilities.postgres
+        assert isinstance(postgres, PostgresDirect)
+        assert postgres.credential_generation > predecessor_generation
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            bindings = admin.execute(
+                f"SELECT credential_generation, revoked_at IS NOT NULL "
+                f"FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        assert bindings == [
+            (predecessor_generation, True),
+            (postgres.credential_generation, False),
+        ]
+    finally:
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
 def test_managed_issue_without_binding_unchanged(
     kind: ManagedKind,
     authorization_fixture: AuthorizationFixture,
@@ -283,29 +329,17 @@ def test_managed_issue_without_binding_unchanged(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("state", ["revoked", "expired"])
 def test_managed_refresh_rejects_dead_binding(
-    state: str,
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
 ) -> None:
     fixture = authorization_fixture
     execution_id = fixture.agent_run_id
-    runtime_root = tmp_path / state
+    runtime_root = tmp_path / "revoked"
     manager = _manager(fixture, runtime_root)
     try:
         generation = _issue_initial_binding(manager, fixture, "agent_run", execution_id)
-        if state == "revoked":
-            manager.revoke(execution_id, generation=generation, reason="test-seed")
-        else:
-            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
-                admin.execute(
-                    f"UPDATE {AUTH_SCHEMA}.principal_bindings "
-                    "SET issued_at = NOW() - INTERVAL '1 hour', "
-                    "expires_at = NOW() - INTERVAL '1 second' "
-                    "WHERE managed_execution_id = %s",
-                    (execution_id,),
-                )
+        manager.revoke(execution_id, generation=generation, reason="test-seed")
         bootstrap_path = runtime_root / str(execution_id) / "bootstrap.json"
         bootstrap_before = bootstrap_path.read_bytes() if bootstrap_path.exists() else None
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:

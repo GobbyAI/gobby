@@ -20,7 +20,7 @@ from gobby.tasks.criterion_commands import (
     expand_successful_and_segments,
     first_invalidating_edit,
 )
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
 )
@@ -218,7 +218,8 @@ def _evaluate_validation_commands(
 
     Unknown outcomes and wrapped successes are diagnostic only. Failed command
     sequences retain conservative per-segment failure attribution. A task-attributed
-    edit makes every earlier run stale. Among credited fresh runs, the latest
+    edit makes every earlier run stale unless ``first_invalidating_edit`` shows the
+    run's bounded inputs cannot read the edited file. Among credited fresh runs, the latest
     definitive outcome for each validation category wins, so a later clean run cures
     an earlier failure in the same category. ``latest_runs`` records the latest
     definitive run for each distinct core command so the criteria reviewer can treat
@@ -283,11 +284,7 @@ def _evaluate_validation_commands(
         }
         for run_category, run in sorted(unresolved.items())
     ]
-    criterion_commands = criterion_command_records(
-        validation_criteria,
-        evidence,
-        last_edit_order=details["last_task_edit_order"],
-    )
+    criterion_commands = criterion_command_records(validation_criteria, evidence)
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     details = {
         **details,
@@ -558,11 +555,11 @@ def _uncovered_test_paths(
 
 
 def _fresh_runs(evidence: TranscriptEvidence) -> list[TranscriptValidationRun]:
-    runs = [*evidence.validation_runs, *evidence.command_runs]
-    if not evidence.edits:
-        return runs
-    last_edit_order = max(edit.order for edit in evidence.edits)
-    return [run for run in runs if run.order > last_edit_order]
+    return [
+        run
+        for run in (*evidence.validation_runs, *evidence.command_runs)
+        if first_invalidating_edit(evidence, run) is None
+    ]
 
 
 def _failure_command_description(command: str) -> str:
@@ -812,41 +809,38 @@ def _validation_details(evidence: TranscriptEvidence) -> dict[str, Any]:
         "validation_run_count": len(evidence.validation_runs),
         "command_run_count": len(evidence.command_runs),
         "unknown_outcome_count": unknown_count,
-        "uncredited_runs": _uncredited_runs(evidence, last_edit_order),
+        "uncredited_runs": _uncredited_runs(evidence),
         "last_task_edit_order": last_edit_order,
         "degraded_capabilities": list(evidence.degraded_capabilities),
     }
 
 
-def _uncredited_runs(
-    evidence: TranscriptEvidence,
-    last_edit_order: int | None,
-) -> list[dict[str, object]]:
+def _uncredited_runs(evidence: TranscriptEvidence) -> list[dict[str, object]]:
     uncredited: list[dict[str, object]] = []
     runs = sorted(
         (*evidence.validation_runs, *evidence.command_runs),
         key=lambda item: (item.order, item.completed_at),
     )
+    staleness = [(run, first_invalidating_edit(evidence, run)) for run in runs]
     fresh_success_cores = {
         run.core_command
-        for run in runs
-        if (last_edit_order is None or run.order > last_edit_order)
+        for run, invalidating_edit in staleness
+        if invalidating_edit is None
         and run.outcome == "success"
         and not run.wrapped
         and run.core_command is not None
     }
-    for run in runs:
-        if last_edit_order is not None and run.order <= last_edit_order:
+    for run, invalidating_edit in staleness:
+        if invalidating_edit is not None:
             if run.core_command in fresh_success_cores:
                 continue
-            record = {
-                **execution_details(run),
-                "reason": "stale after a later task edit",
-            }
-            invalidating_edit = first_invalidating_edit(evidence.edits, run.order)
-            if invalidating_edit is not None:
-                record["invalidating_edit"] = edit_details(invalidating_edit)
-            uncredited.append(record)
+            uncredited.append(
+                {
+                    **execution_details(run),
+                    "reason": "stale after a later task edit",
+                    "invalidating_edit": edit_details(invalidating_edit),
+                }
+            )
         elif run.wrapped:
             uncredited.append(
                 {

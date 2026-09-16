@@ -120,41 +120,6 @@ async def discover_codex_models(
     return models
 
 
-async def discover_grok_models_with_source(
-    *,
-    client_cls: type[ACPClient],
-    acp_discoverer: ACPDiscoverer,
-    which: Which,
-    models_from_cache: Callable[[], list[dict[str, Any]]],
-    static_models: Callable[[], list[dict[str, Any]]],
-    logger: logging.Logger,
-) -> tuple[list[dict[str, Any]], str]:
-    if not which(client_cls.cli_name):
-        try:
-            cached = models_from_cache()
-        except Exception:
-            cached = []
-        if cached:
-            return cached, "cache"
-        return static_models(), "static"
-
-    acp_error: Exception | None = None
-    try:
-        return await acp_discoverer(client_cls), "live"
-    except Exception as exc:
-        acp_error = exc
-
-    try:
-        cached = models_from_cache()
-    except Exception:
-        cached = []
-    if cached:
-        return cached, "cache"
-    if acp_error is not None:
-        logger.debug("Grok ACP model discovery failed; using static fallback: %s", acp_error)
-    return static_models(), "static"
-
-
 def codex_uses_loopback_model_endpoint(config: Mapping[str, Any]) -> bool:
     """Return whether Codex's active model provider uses a loopback endpoint."""
     provider_id = config.get("model_provider")

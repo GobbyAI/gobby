@@ -1982,7 +1982,23 @@ async fn outbound_messages_match_corpus() {
     mock.shutdown().await;
 }
 
-#[tokio::test]
+/// Wait for `ready` without a `yield_now` spin. A ready-spin keeps the
+/// current-thread runtime non-idle, so a tokio `timeout` never fires after
+/// `time::pause` (auto-advance requires idle) or a freshly resumed clock.
+async fn poll_until(limit: Duration, mut ready: impl FnMut() -> bool, on_timeout: &'static str) {
+    timeout(limit, async {
+        loop {
+            if ready() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect(on_timeout);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn late_control_reply_cannot_settle_a_newer_request() {
     let mock = MockDaemon::start("local-token").await;
     mock.suppress_ws("terminal_take_control");
@@ -1992,7 +2008,6 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         .expect("connect live daemon");
     let attachment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-    tokio::time::pause();
     let timed = {
         let daemon = daemon.clone();
         tokio::spawn(async move {
@@ -2007,23 +2022,20 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    for _ in 0..10_000 {
-        if daemon.pending_counts().2 == 1
-            && mock.requests().iter().any(|request| {
-                request.body.as_ref().and_then(|body| body.get("schedule"))
-                    == Some(&json!("exact-deadline"))
-            })
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(daemon.pending_counts().2, 1);
-    tokio::time::advance(CONTROL_REQUEST_DEADLINE - Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    poll_until(
+        Duration::from_secs(5),
+        || {
+            daemon.pending_counts().2 == 1
+                && mock.requests().iter().any(|request| {
+                    request.body.as_ref().and_then(|body| body.get("schedule"))
+                        == Some(&json!("exact-deadline"))
+                })
+        },
+        "exact-deadline registered",
+    )
+    .await;
     assert!(!timed.is_finished());
-    tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    tokio::time::sleep(CONTROL_REQUEST_DEADLINE + Duration::from_millis(50)).await;
     assert_eq!(
         timed.await.expect("exact deadline task"),
         Err(DaemonError::Timeout)
@@ -2039,7 +2051,6 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
             .await,
         Err(DaemonError::ControlScopeIndeterminate)
     );
-    tokio::time::resume();
 
     let (_, mut observed) = daemon.subscribe();
     mock.send_event(json!({
@@ -2090,15 +2101,17 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    timeout(Duration::from_secs(1), async {
-        while !mock.requests().iter().any(|request| {
-            request.body.as_ref().and_then(|body| body.get("schedule")) == Some(&json!("post-send"))
-        }) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("post-send control write completed");
+    poll_until(
+        Duration::from_secs(10),
+        || {
+            mock.requests().iter().any(|request| {
+                request.body.as_ref().and_then(|body| body.get("schedule"))
+                    == Some(&json!("post-send"))
+            })
+        },
+        "post-send control write completed",
+    )
+    .await;
     post_send.abort();
     assert!(post_send
         .await
@@ -2165,12 +2178,18 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    while daemon.pending_counts().2 != 1 {
-        tokio::task::yield_now().await;
-    }
-    for _ in 0..100 {
-        tokio::task::yield_now().await;
-    }
+    poll_until(
+        Duration::from_secs(10),
+        || daemon.pending_counts().2 == 1,
+        "mid-send registered",
+    )
+    .await;
+    poll_until(
+        Duration::from_secs(2),
+        || daemon.control_write_started("attachment-mid-send"),
+        "mid-send write started",
+    )
+    .await;
     let pre_write = {
         let daemon = daemon.clone();
         tokio::spawn(async move {
@@ -2185,9 +2204,12 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    while daemon.pending_counts().2 != 2 {
-        tokio::task::yield_now().await;
-    }
+    poll_until(
+        Duration::from_secs(30),
+        || daemon.pending_counts().2 == 2,
+        "pre-write registered",
+    )
+    .await;
     pre_write.abort();
     assert!(pre_write
         .await
@@ -2207,9 +2229,12 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
                 .await
         })
     };
-    while daemon.pending_counts().2 != 2 {
-        tokio::task::yield_now().await;
-    }
+    poll_until(
+        Duration::from_secs(10),
+        || daemon.pending_counts().2 == 2,
+        "pre-write replacement registered",
+    )
+    .await;
     mid_send.abort();
     assert!(mid_send
         .await
@@ -2230,16 +2255,17 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         Err(DaemonError::ControlScopeIndeterminate)
     );
     read_gate.notify_one();
-    timeout(Duration::from_secs(5), async {
-        while !mock.requests().iter().any(|request| {
-            request.body.as_ref().and_then(|body| body.get("schedule"))
-                == Some(&json!("pre-write-replacement"))
-        }) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("replacement control reaches resumed sink");
+    poll_until(
+        Duration::from_secs(5),
+        || {
+            mock.requests().iter().any(|request| {
+                request.body.as_ref().and_then(|body| body.get("schedule"))
+                    == Some(&json!("pre-write-replacement"))
+            })
+        },
+        "replacement control reaches resumed sink",
+    )
+    .await;
     let resumed_requests = mock.requests();
     let pre_write_schedules: Vec<_> = resumed_requests
         .iter()

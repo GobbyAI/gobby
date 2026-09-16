@@ -5217,6 +5217,12 @@
       "activation": "live",
       "default": [],
       "fields": {
+        "bounded_inputs": {
+          "default": false,
+          "identity": false,
+          "secrecy": "none",
+          "type": "boolean"
+        },
         "categories": {
           "default": [],
           "identity": false,

@@ -52,6 +52,7 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
 
     assert wait_tools.EXTENDED_TIMEOUT_TOOL_NAMES == (
         "close_task",
+        "submit_close_review",
         "expand_task",
         "merge_resolve",
         "suggest_next_task",

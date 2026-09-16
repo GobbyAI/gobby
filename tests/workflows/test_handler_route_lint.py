@@ -120,13 +120,13 @@ def test_error_guard_cannot_depend_on_success_only_assignment() -> None:
                 "record_merge_result",
                 variable="merge_result_recorded",
             ),
-            _handler("gobby-tasks-ops", "close_linked_github_issue"),
+            _handler("gobby-tasks-ops", "append_description_section"),
         ],
         error=[
             _handler("gobby-tasks-ops", "record_merge_result"),
             _handler(
                 "gobby-tasks-ops",
-                "close_linked_github_issue",
+                "append_description_section",
                 when="vars.get('merge_result_recorded') is True",
             ),
         ],

@@ -11,7 +11,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,

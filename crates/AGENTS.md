@@ -12,6 +12,9 @@ the rebuild/reinstall new-inode requirement) live in `AGENTS.md`.
 cargo build -p gobby-code                 # gcode CLI
 cargo build --release -p <crate>          # one release artifact; install it via a new inode (AGENTS.md)
 uv run gobby cutover                      # build/install the release binary set, pin, restart, smoke
+                                          # refuses uncommitted schema inputs (--allow-dirty overrides)
+                                          # and proves the candidate gdaemon with `gdaemon schema plan`
+                                          # before promoting; nothing is promoted or stopped on refusal
 
 # Lint & format — match repo config; never relax lints to pass
 cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-daemon, gobby-hooks

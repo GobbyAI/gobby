@@ -95,7 +95,6 @@ def install_isolated_checkout_project(
     root: Path,
     *,
     name: str = "test-project",
-    github_url: str | None = "https://github.com/test/test-project",
     machine_id: str | None = None,
     monkeypatch: Any | None = None,
 ) -> IsolatedCheckoutProject:
@@ -107,7 +106,7 @@ def install_isolated_checkout_project(
     # Register the canonical path: production lookups compare realpaths, and a
     # tempfile-based root such as macOS /var/... resolves to /private/var/....
     root = root.resolve()
-    project = LocalProjectManager(db).create(name=name, github_url=github_url)
+    project = LocalProjectManager(db).create(name=name)
     write_project_marker(root, project_id=project.id, name=name)
     root_path = str(root)
     LocalProjectCheckoutManager(db).register(resolved_machine_id, project.id, root_path)

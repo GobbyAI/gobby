@@ -97,6 +97,27 @@ def test_probe_daemon_lock_returns_absent_when_free(tmp_path: Path) -> None:
     assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
 
 
+def test_probe_daemon_lock_reads_held_lock_without_write_access(tmp_path: Path) -> None:
+    pid_file = tmp_path / "gobby.pid"
+    claim = claim_pid_file(pid_file)
+    assert claim is not None
+    real_open = os.open
+
+    def deny_writable_open(path: str | os.PathLike[str], flags: int, *args: int) -> int:
+        if flags & (os.O_WRONLY | os.O_RDWR):
+            raise PermissionError(f"sandbox denies writing {path}")
+        return real_open(path, flags, *args)
+
+    with patch("gobby.runner_pid_file.os.open", side_effect=deny_writable_open):
+        try:
+            probe = probe_daemon_lock(pid_file)
+            assert probe.state is ProbeState.DAEMON
+            assert probe.pid == os.getpid()
+        finally:
+            claim.release()
+        assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
+
+
 def test_probe_daemon_lock_reports_owner_while_held(tmp_path: Path) -> None:
     pid_file = tmp_path / "gobby.pid"
     claim = claim_pid_file(pid_file)

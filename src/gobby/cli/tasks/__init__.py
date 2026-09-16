@@ -16,7 +16,6 @@ from gobby.cli.tasks._utils import (
     cascade_progress,
     check_tasks_enabled,
     get_backup_manager,
-    get_github_importer,
     get_task_manager,
     parse_task_refs,
 )
@@ -27,7 +26,6 @@ __all__ = [
     "check_tasks_enabled",
     "get_task_manager",
     "get_backup_manager",
-    "get_github_importer",
     "parse_task_refs",
     "tasks",
 ]

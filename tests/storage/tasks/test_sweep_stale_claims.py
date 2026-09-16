@@ -33,6 +33,7 @@ from gobby.storage.sessions._contested_expiry import (
     read_session_variables,
     record_contested_terminal_expiry,
 )
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation, Task
@@ -348,6 +349,47 @@ def test_sweep_skips_closed_and_escalated_tasks(
 
     assert _claim(temp_db, closed.id) == SESS_DEAD
     assert _claim(temp_db, escalated.id) == SESS_DEAD
+
+
+def test_sweep_keeps_a_claim_while_its_close_review_is_active(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A headless closer exits right after close_task hands off to the validator.
+
+    The close-evaluation fingerprint keys on claimed_by_session_id, so releasing
+    the claim while the background review runs turns every later verdict stale
+    (#22389 lost three closes this way). The sweep leaves the claim alone until
+    the review reaches a terminal status.
+    """
+    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
+    reviewed = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
+    settled = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
+    store = TaskCloseReviewStore(temp_db)
+    for task, settle in ((reviewed, False), (settled, True)):
+        row = temp_db.fetchone("SELECT updated_at FROM tasks WHERE id = %s", (task.id,))
+        assert row is not None
+        review, created = store.create_or_get_active(
+            task_id=task.id,
+            task_ref=f"#{task.seq_num}",
+            caller_session_id=SESS_DEAD,
+            close_arguments={"task_id": task.id, "reason": "completed"},
+            expected_task_updated_at=row["updated_at"],
+            review_fingerprint="review",
+            evidence_fingerprint="evidence",
+            diff_sha="a" * 64,
+            test_bodies_sha="b" * 64,
+            stable_facts={},
+        )
+        assert created
+        if settle:
+            store.finish(review.id, status="error", result_payload={}, error="validator died")
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == 1
+    assert _claim(temp_db, reviewed.id) == SESS_DEAD
+    assert _claim(temp_db, settled.id) is None
 
 
 def test_generic_sweep_defers_live_session_claims(

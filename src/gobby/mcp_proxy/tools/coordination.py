@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
+from gobby.mcp_proxy.tools.headless_waits import headless_wait_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.coordination_waits import CoordinationWaitManager, coordination_wait_payload
 
@@ -31,6 +32,13 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         waiter = ctx.get_current_session_id()
         if waiter is None or ctx.db is None or ctx.completion_registry is None:
             return {"success": False, "error": "Coordination waits require active session services"}
+        refusal = headless_wait_refusal(
+            agent_run_manager=ctx.agent_run_manager,
+            session_id=waiter,
+            tool_name="wait_for_coordination",
+        )
+        if refusal is not None:
+            return refusal
         try:
             owner = ctx.resolve_session_id(owner_session)
             row = await asyncio.to_thread(

@@ -42,22 +42,38 @@ def _post_tool_output(okay_output: str) -> object:
     return event.data["tool_output"]
 
 
-def _truncated(spill_path: Path) -> str:
-    # Grok 1.0.30 keeps a prefix of a large MCP result and appends this notice.
+_SAVED_TAIL = (
+    "saved to the file above; use `run_terminal_command` to query it (e.g. `jq` or `python3`).]"
+)
+_LONG_LINE_TAIL = (
+    "with a very long line, so grep/read_file are ineffective on it — use "
+    "`run_terminal_command` to query the saved file (e.g. `jq` or `python3`).]"
+)
+
+
+def _truncated(spill_path: Path, tail: str = _SAVED_TAIL) -> str:
+    # Grok keeps a prefix of a large MCP result and appends one of these notices.
     return (
         _FULL_OUTPUT[:24]
         + "\n\n[MCP output truncated: showing first 0.0 KB of 0.1 KB. Full output written to: "
-        + f"{spill_path}. The full output is valid JSON saved to the file above; use "
-        + "`run_terminal_command` to query it (e.g. `jq` or `python3`).]"
+        + f"{spill_path}. The full output is valid JSON {tail}"
     )
 
 
-def test_truncated_mcp_output_reads_the_spilled_full_result(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "tail",
+    [_SAVED_TAIL, _LONG_LINE_TAIL],
+    ids=["saved-to-file-notice", "very-long-line-notice"],
+)
+def test_truncated_mcp_output_reads_the_spilled_full_result(tmp_path: Path, tail: str) -> None:
     spill = tmp_path / "session" / "mcp" / f"{_TOOL_USE_ID}.json"
     spill.parent.mkdir(parents=True)
     spill.write_text(_FULL_OUTPUT, encoding="utf-8")
 
-    assert _post_tool_output(_truncated(spill)) == {"success": True, "result": {"closed": True}}
+    assert _post_tool_output(_truncated(spill, tail)) == {
+        "success": True,
+        "result": {"closed": True},
+    }
 
 
 @pytest.mark.parametrize(

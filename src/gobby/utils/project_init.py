@@ -28,7 +28,14 @@ logger = logging.getLogger(__name__)
 
 WORKTREE_LOCAL_PROJECT_KEYS = frozenset({"parent_project_id", "parent_project_path"})
 NONPORTABLE_PROJECT_KEYS = WORKTREE_LOCAL_PROJECT_KEYS | frozenset(
-    {"linear_team_id", "linear_project_id"}
+    {
+        "github_repo",
+        "github_url",
+        "linear_project_id",
+        "linear_sync_enabled",
+        "linear_synced_at",
+        "linear_team_id",
+    }
 )
 
 
@@ -336,7 +343,6 @@ def _init_with_marker(
     db: HubDatabase,
     root: Path,
     marker: dict[str, Any],
-    github_url: str | None,
 ) -> InitResult:
     """Attach `root` to the project named by an existing marker.
 
@@ -356,7 +362,6 @@ def _init_with_marker(
     from gobby.storage.workspace_machine_scope import require_local_machine_id
     from gobby.utils.checkout_root import MarkerMismatchError, validate_checkout_root
 
-    del github_url
     project_id = str(marker["id"])
     if project_id in CHECKOUT_FREE_PROJECT_IDS:
         raise CheckoutSentinelRejectedError(
@@ -433,9 +438,6 @@ def _init_no_marker(
     db: HubDatabase,
     root: Path,
     name: str | None,
-    github_url: str | None,
-    *,
-    detect_github_remote: bool,
 ) -> InitResult:
     from gobby.storage.project_checkouts import (
         CheckoutRootTakenError,
@@ -445,7 +447,6 @@ def _init_no_marker(
     from gobby.storage.projects import LocalProjectManager, NameAttachRejectedError
     from gobby.storage.workspace_machine_scope import require_local_machine_id
     from gobby.utils.checkout_root import validate_checkout_root
-    from gobby.utils.git import get_github_url as detect_github_url
 
     manager = LocalProjectManager(db)
     project_name = name or root.name
@@ -454,8 +455,6 @@ def _init_no_marker(
         raise NameAttachRejectedError(
             f"project name {project_name!r} already exists; init is marker-authoritative"
         )
-    if github_url is None and detect_github_remote:
-        github_url = detect_github_url(root)
 
     verification = detect_verification_commands(root)
     project_id = str(uuid.uuid4())
@@ -475,7 +474,7 @@ def _init_no_marker(
             from gobby.utils.checkout_root import MarkerMismatchError
 
             raise MarkerMismatchError(f"failed to publish marker at {root}")
-        return _init_with_marker(db, root, winner, github_url)
+        return _init_with_marker(db, root, winner)
 
     _hit_failpoint("after_marker_only")
     machine_id = require_local_machine_id(
@@ -497,8 +496,6 @@ def _init_no_marker(
     try:
         with db.transaction():
             manager.ensure_exists(project_id, project_name)
-            if github_url is not None:
-                manager.update(project_id, github_url=github_url)
             LocalProjectCheckoutManager(db).register(machine_id, project_id, root_str)
     except UniqueViolation as exc:
         _unlink_still_matching_marker(root, project_id, "name_reject")
@@ -528,10 +525,7 @@ def _init_no_marker(
 def _initialize_project(
     cwd: Path | None = None,
     name: str | None = None,
-    github_url: str | None = None,
     db: HubDatabase | None = None,
-    *,
-    detect_github_remote: bool,
 ) -> InitResult:
     """Initialize a Gobby project. Marker id is authoritative; names do not attach."""
     from gobby.storage.hub.runtime import runtime_hub_database
@@ -543,9 +537,7 @@ def _initialize_project(
             return _initialize_project(
                 cwd=cwd,
                 name=name,
-                github_url=github_url,
                 db=owned_db,
-                detect_github_remote=detect_github_remote,
             )
 
     if cwd is None:
@@ -558,51 +550,23 @@ def _initialize_project(
         loaded = _read_marker_file(marker_file)
         if loaded is None or not loaded.get("id"):
             raise MarkerMismatchError(f"malformed marker at {marker_file}")
-        return _init_with_marker(db, cwd, loaded, github_url)
+        return _init_with_marker(db, cwd, loaded)
 
     context = get_project_context(cwd)
     if context and context.get("id"):
         project_root = Path(str(context.get("project_path") or cwd))
-        return _init_with_marker(db, project_root, context, github_url)
+        return _init_with_marker(db, project_root, context)
 
-    return _init_no_marker(
-        db,
-        cwd,
-        name,
-        github_url,
-        detect_github_remote=detect_github_remote,
-    )
+    return _init_no_marker(db, cwd, name)
 
 
 def initialize_project(
     cwd: Path | None = None,
     name: str | None = None,
-    github_url: str | None = None,
     db: HubDatabase | None = None,
 ) -> InitResult:
-    """Initialize a project, discovering its remote with synchronous Git when needed."""
-    return _initialize_project(
-        cwd=cwd,
-        name=name,
-        github_url=github_url,
-        db=db,
-        detect_github_remote=True,
-    )
-
-
-def initialize_project_from_resolved_metadata(
-    cwd: Path,
-    *,
-    github_url: str | None,
-    db: HubDatabase,
-) -> InitResult:
-    """Initialize a project after an async caller has resolved optional Git metadata."""
-    return _initialize_project(
-        cwd=cwd,
-        github_url=github_url,
-        db=db,
-        detect_github_remote=False,
-    )
+    """Initialize a project from a checkout root."""
+    return _initialize_project(cwd=cwd, name=name, db=db)
 
 
 def _update_project_json_verification(

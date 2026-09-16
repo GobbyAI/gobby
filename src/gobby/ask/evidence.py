@@ -101,7 +101,7 @@ def _contains_credential(value: object, *, source_references: bool = False) -> b
         return any(
             _credential_text(str(key))
             or (
-                key not in {"path", "paths", "excerpt"}
+                key not in {"path", "paths", "excerpt", "numbered_excerpt"}
                 and _contains_credential(child, source_references=key == "query")
             )
             for key, child in value.items()

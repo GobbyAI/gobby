@@ -1,5 +1,7 @@
+// reason: bindgen wrappers keep unused libghostty-vt symbols and C names.
 #![allow(dead_code)]
 
+// reason: bindgen wrappers keep unused libghostty-vt symbols and C names.
 #[allow(
     dead_code,
     non_camel_case_types,

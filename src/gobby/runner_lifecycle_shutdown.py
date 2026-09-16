@@ -223,10 +223,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_tmux_window_repair_task",
     )
 
-    external_issue_sync_shutdown = getattr(runner, "_external_issue_sync_shutdown", None)
-    if external_issue_sync_shutdown is not None:
-        external_issue_sync_shutdown.set()
-
     from gobby.providers.capabilities.refresh import CAPABILITY_REFRESH_DRAIN_TIMEOUT_SECONDS
     from gobby.runner_model_metadata_refresh import MODEL_METADATA_DRAIN_TIMEOUT_SECONDS
 
@@ -249,14 +245,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         )
         for attr in periodic_task_attrs
     ]
-    cancellations.extend(
-        (
-            (
-                "_external_issue_sync_task",
-                _cancel_runner_task(runner, "_external_issue_sync_task", timeout=10.0),
-            ),
-        )
-    )
     results = await asyncio.gather(
         *(cancellation for _, cancellation in cancellations),
         return_exceptions=True,

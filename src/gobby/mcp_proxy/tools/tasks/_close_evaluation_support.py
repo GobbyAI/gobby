@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from gobby.config.validation_detection import resolve_validation_detection_config
+from gobby.code_index.storage import CodeIndexStorage
+from gobby.config.validation_detection import (
+    ValidationDetectionConfig,
+    resolve_validation_detection_config,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.transcript_evidence import (
-    TranscriptEvidence,
-    TranscriptEvidenceUnavailable,
     derive_transcript_evidence,
     merge_transcript_evidence,
 )
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
+    TranscriptEvidence,
+    TranscriptEvidenceUnavailable,
+)
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
+from gobby.tasks.transcript_sync import transcript_sync_point
 from gobby.workflows.task_dirty_state import committable_task_paths, has_committable_edits
 
 __all__ = [
@@ -121,6 +133,61 @@ def fingerprint_differences(
     return changed
 
 
+#: A provider that flushes its transcript at turn end can trail its own live activity
+#: sidecar. Close waits this long for the transcript to catch up to the sync point
+#: taken at call time before reporting the evidence unavailable.
+_TRANSCRIPT_CATCHUP_TIMEOUT_SECONDS = 15.0
+#: How often to re-derive while waiting for the flush.
+_TRANSCRIPT_CATCHUP_INTERVAL_SECONDS = 1.0
+#: Slack between a sidecar record and the transcript line describing the same activity.
+_TRANSCRIPT_CATCHUP_TOLERANCE_SECONDS = 5.0
+
+
+async def _derive_session_evidence_at_sync_point(
+    session: Session,
+    window_start: str | datetime | None,
+    detection: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    *,
+    archive_dir: str | None,
+) -> TranscriptEvidence:
+    """Derive one session's evidence once its transcript covers live provider activity.
+
+    A headless Grok run is a single turn and writes ``updates.jsonl`` when that turn
+    ends, so a close called mid-turn parses a transcript holding none of the commands
+    the worker actually ran (#22367). Waiting bounded for the flush preserves that
+    evidence, and a transcript still behind at the deadline is reported unavailable —
+    a retryable infrastructure failure — rather than judged as though it were complete.
+    """
+    sync_point = await asyncio.to_thread(transcript_sync_point, session)
+    tolerance = timedelta(seconds=_TRANSCRIPT_CATCHUP_TOLERANCE_SECONDS)
+    deadline = time.monotonic() + _TRANSCRIPT_CATCHUP_TIMEOUT_SECONDS
+    while True:
+        evidence = await derive_transcript_evidence(
+            session,
+            window_start,
+            detection,
+            task_edited_files,
+            repo_path,
+            archive_dir=archive_dir,
+        )
+        if sync_point is None:
+            return evidence
+        latest = evidence.latest_record_at
+        if latest is not None and latest >= sync_point - tolerance:
+            return evidence
+        if time.monotonic() >= deadline:
+            raise TranscriptEvidenceUnavailable(
+                f"Transcript for {session.source} session {session.ref} is still behind "
+                f"live activity at {sync_point.isoformat()}: newest parsed record "
+                f"{latest.isoformat() if latest is not None else 'none'}.",
+                source=session.source,
+                attempted_paths=tuple(evidence.attempted_paths),
+            )
+        await asyncio.sleep(_TRANSCRIPT_CATCHUP_INTERVAL_SECONDS)
+
+
 async def derive_close_transcript_evidence(
     ctx: RegistryContext,
     *,
@@ -176,7 +243,7 @@ async def derive_close_transcript_evidence(
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         try:
-            session_evidence = await derive_transcript_evidence(
+            session_evidence = await _derive_session_evidence_at_sync_point(
                 session,
                 effective_window,
                 detection,
@@ -275,6 +342,26 @@ def task_session_window_start(
         ):
             return format_git_since(row.get("created_at") or row.get("link_created_at"))
     return None
+
+
+def task_edit_languages(
+    ctx: RegistryContext, project_id: str, edits: Iterable[TranscriptEdit]
+) -> dict[str, str]:
+    """Return gcode's indexed language for each edited path the code index knows.
+
+    Close freshness lets an unknown path invalidate every earlier run, so a failed
+    lookup degrades to an empty mapping and the conservative any-edit rule.
+    """
+    paths = sorted({edit.path for edit in edits})
+    if not paths:
+        return {}
+    storage = CodeIndexStorage(ctx.task_manager.db)
+    try:
+        rows = [(path, storage.get_file(project_id, path)) for path in paths]
+    except Exception as exc:
+        logger.debug("Edit language lookup failed for project %s: %s", project_id, exc)
+        return {}
+    return {path: row.language for path, row in rows if row is not None}
 
 
 def format_git_since(value: Any) -> str | None:

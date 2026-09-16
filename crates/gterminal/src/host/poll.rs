@@ -361,10 +361,10 @@ fn apply_sgr(params: &str, fg: &mut u32, bg: &mut u32, modifier: &mut u16) {
     }
 }
 
-#[cfg(test)]
-#[path = "poll/tests.rs"]
-mod tests;
-
 pub fn numeric_format() -> &'static str {
     "#{pid} #{start_time} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{cursor_very_visible} #{alternate_on} #{keypad_cursor_flag} #{keypad_flag} #{bracket_paste_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_any_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{wrap_flag} #{origin_flag} #{insert_flag} #{scroll_region_upper} #{scroll_region_lower} #{pane_in_mode} #{cursor_shape} #{cursor_blinking} #{cursor_colour} #{mouse_utf8_flag} #{pane_dead}"
 }
+
+#[cfg(test)]
+#[path = "poll/tests.rs"]
+mod tests;

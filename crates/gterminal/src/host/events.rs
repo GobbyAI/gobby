@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, Mutex};
 use super::backpressure;
 use crate::protocol::EVENT_QUEUE_ENTRIES;
 
+#[cfg(feature = "vt-engine")]
 struct EventSubscriber {
     tx: mpsc::Sender<Value>,
     queued_bytes: Arc<AtomicUsize>,
@@ -18,7 +19,9 @@ struct EventSubscriber {
 struct EventState {
     seq: u64,
     ring: VecDeque<(u64, usize, Value)>,
+    #[cfg(feature = "vt-engine")]
     ring_bytes: usize,
+    #[cfg(feature = "vt-engine")]
     subscribers: Vec<EventSubscriber>,
 }
 
@@ -32,6 +35,8 @@ pub(crate) struct HostEvents {
 pub(crate) struct EventReceiver {
     rx: mpsc::Receiver<Value>,
     queued_bytes: Arc<AtomicUsize>,
+    #[cfg(not(feature = "vt-engine"))]
+    _tx: mpsc::Sender<Value>,
 }
 
 impl EventReceiver {
@@ -51,7 +56,9 @@ impl HostEvents {
             state: Arc::new(Mutex::new(EventState {
                 seq: 0,
                 ring: VecDeque::new(),
+                #[cfg(feature = "vt-engine")]
                 ring_bytes: 0,
+                #[cfg(feature = "vt-engine")]
                 subscribers: Vec::new(),
             })),
         }
@@ -65,7 +72,10 @@ impl HostEvents {
     pub async fn subscribe(&self, since: Option<u64>) -> (Value, EventReceiver) {
         let (tx, rx) = mpsc::channel(EVENT_QUEUE_ENTRIES);
         let queued_bytes = Arc::new(AtomicUsize::new(0));
+        #[cfg(feature = "vt-engine")]
         let mut state = self.state.lock().await;
+        #[cfg(not(feature = "vt-engine"))]
+        let state = self.state.lock().await;
         let gap = since.is_some_and(|cursor| !cursor_is_replayable(&state, cursor));
         if let Some(cursor) = since.filter(|_| !gap) {
             for (_, _, event) in state.ring.iter().filter(|(seq, _, _)| *seq > cursor) {
@@ -74,6 +84,7 @@ impl HostEvents {
                 }
             }
         }
+        #[cfg(feature = "vt-engine")]
         state.subscribers.push(EventSubscriber {
             tx,
             queued_bytes: queued_bytes.clone(),
@@ -86,9 +97,18 @@ impl HostEvents {
             "gap": gap,
         });
         drop(state);
-        (ack, EventReceiver { rx, queued_bytes })
+        (
+            ack,
+            EventReceiver {
+                rx,
+                queued_bytes,
+                #[cfg(not(feature = "vt-engine"))]
+                _tx: tx,
+            },
+        )
     }
 
+    #[cfg(feature = "vt-engine")]
     pub async fn emit_terminal_exited(
         &self,
         terminal_id: String,
@@ -104,6 +124,7 @@ impl HostEvents {
         .await;
     }
 
+    #[cfg(feature = "vt-engine")]
     async fn emit(&self, mut event: Value) {
         let mut state = self.state.lock().await;
         state.seq = state.seq.saturating_add(1);

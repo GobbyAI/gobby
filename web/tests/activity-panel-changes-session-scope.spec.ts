@@ -139,9 +139,9 @@ async function setupMocks(page: Page, current: SessionRecord) {
             machine_id: "machine-1",
             root_path: "/tmp/project-one",
           },
-          github_url: null,
-          github_repo: null,
-          linear_team_id: null,
+
+
+
           approval_rules: [],
           created_at: "2026-04-08T12:00:00Z",
           updated_at: "2026-04-08T12:00:00Z",

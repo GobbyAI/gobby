@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning for the Gobby observability stack.
+# Dashboard JSON is bind-mounted read-only, so Grafana keeps it in sync with
+# the repository copy instead of the Grafana database.
+
+apiVersion: 1
+
+providers:
+  - name: gobby
+    orgId: 1
+    folder: Gobby
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -19,6 +19,10 @@ from gobby.utils.datetime import utc_now
 
 TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
 CLOSE_REVIEW_RETRY_SECONDS = 900
+# A daemon stop or restart is over in seconds and the daemon is already back up
+# by the time the caller reads its payload, so that cause carries its own short
+# wait instead of inheriting the 900s provider-pressure default.
+CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS = 60
 
 
 def validator_spawn_overrides(
@@ -115,6 +119,12 @@ def build_agentic_review_prompt(
             "and required_evidence null. Count it as neither satisfied nor a gap. Set the "
             "overall status valid when every remaining implementer-owned criterion is satisfied. "
         )
+    elif closure_reason not in NO_WORK_CLOSE_REASONS:
+        prompt += (
+            "The close caller is not a spawned agent: judge every criterion, including any "
+            "beginning `Live:`, as satisfied or gap; `pending_external` is rejected as "
+            "malformed for this review. "
+        )
     prompt += (
         "Inspect the task and evidence relevant to the stated closure reason. "
         "For completed work, inspect linked commits, exact acceptance tests, deterministic "
@@ -145,12 +155,13 @@ def build_terminal_review_payload(
     close_result: Mapping[str, Any] | None = None,
     message: str | None = None,
     error_class: TaskCloseReviewErrorClass = "action_required",
+    retry_seconds: int = CLOSE_REVIEW_RETRY_SECONDS,
 ) -> dict[str, Any]:
     """Build the persisted automatic-wake contract for one terminal review."""
     result = dict(close_result or {})
     closed = status == "closed"
     retry_after = (
-        (utc_now() + timedelta(seconds=CLOSE_REVIEW_RETRY_SECONDS)).isoformat()
+        (utc_now() + timedelta(seconds=retry_seconds)).isoformat()
         if status == "error" and error_class == "retryable_infrastructure"
         else None
     )
@@ -219,6 +230,8 @@ def build_terminal_review_payload(
 
 
 __all__ = [
+    "CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS",
+    "CLOSE_REVIEW_RETRY_SECONDS",
     "TASK_CLOSE_VALIDATOR_AGENT",
     "build_agentic_review_prompt",
     "build_terminal_review_payload",

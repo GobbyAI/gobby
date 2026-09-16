@@ -32,7 +32,6 @@ from gobby.build.observability import (
 )
 from gobby.build.options import resolve_build_isolation
 from gobby.build.profiles import BuildProfileError
-from gobby.config.build import DeliveryMode
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 from gobby.servers.responses import JSONResponse
 
@@ -58,8 +57,6 @@ class BuildRequest(BaseModel):
     cwd: str | None = None
     project_explicit: bool = False
     profile: str | None = None
-    delivery_mode: DeliveryMode | None = None
-    delivery_target_repo: str | None = None
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
@@ -97,8 +94,6 @@ class BuildControlRequest(BaseModel):
     yes: bool = False
     no_resume: bool = False
     profile: str | None = None
-    delivery_mode: DeliveryMode | None = None
-    delivery_target_repo: str | None = None
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
     isolation: Literal["none", "worktree", "clone"] | None = None
@@ -122,8 +117,6 @@ _RESTART_OPTION_FIELDS = frozenset(
         "workspace_backend",
         "isolation",
         "clone",
-        "delivery_mode",
-        "delivery_target_repo",
         "no_merge",
         "pr",
         "stage",
@@ -179,10 +172,6 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         isolation_explicit=isolation.explicit,
         unattended=request_data.unattended if request_data.unattended is not None else False,
         unattended_explicit="unattended" in request_data.model_fields_set,
-        delivery_mode=request_data.delivery_mode or "auto",
-        delivery_mode_explicit="delivery_mode" in request_data.model_fields_set,
-        delivery_target_repo=request_data.delivery_target_repo,
-        delivery_target_repo_explicit="delivery_target_repo" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),
@@ -216,10 +205,6 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
         isolation=isolation.isolation,
         isolation_explicit=isolation.explicit,
-        delivery_mode=request_data.delivery_mode or "auto",
-        delivery_mode_explicit="delivery_mode" in request_data.model_fields_set,
-        delivery_target_repo=request_data.delivery_target_repo,
-        delivery_target_repo_explicit="delivery_target_repo" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),

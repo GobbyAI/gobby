@@ -69,7 +69,10 @@ def test_install_droid_global_writes_hooks_and_mcp(
         handler = hooks[hook_type][0]["hooks"][0]
         command = handler["command"]
         base = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
-        assert command == base
+        if hook_type == "SessionEnd":
+            assert command == f"{base} --enqueue-only"
+        else:
+            assert command == base
         assert handler["timeout"] == 150
 
     mcp = _load_json(droid_env / ".factory" / "mcp.json")

@@ -577,8 +577,8 @@
     },
     {
       "name": "source-control",
-      "description": "Manage commits, isolated repositories and verified delivery",
-      "when": "Working with branches, workspaces, merges or PR delivery",
+      "description": "Manage commits, isolated repositories and local delivery",
+      "when": "Working with branches, workspaces or merges",
       "overview": "references/source-control/overview.md",
       "topics": [
         {
@@ -610,12 +610,6 @@
           "description": "Resolve and land local work",
           "when": "Surveying or executing local delivery",
           "path": "references/source-control/merge-campaigns.md"
-        },
-        {
-          "name": "pr-delivery",
-          "description": "Apply remote delivery policy",
-          "when": "Creating, reviewing or landing PRs",
-          "path": "references/source-control/pr-delivery.md"
         },
         {
           "name": "cleanup",
@@ -1001,7 +995,7 @@
     },
     {
       "name": "integrations",
-      "description": "Connect hooks, webhooks, extension packages and external issue trackers",
+      "description": "Connect hooks, webhooks, extension packages and external MCP servers",
       "overview": "references/integrations/overview.md",
       "when": "Setting up or diagnosing external integration boundaries",
       "topics": [
@@ -1025,9 +1019,9 @@
         },
         {
           "name": "external",
-          "description": "Connect GitHub and Linear issue workflows",
+          "description": "Use GitHub and Linear MCP servers",
           "path": "references/integrations/external.md",
-          "when": "Setting up issue imports, synchronization or triage"
+          "when": "Calling GitHub or Linear tools through the generic MCP proxy"
         }
       ]
     }

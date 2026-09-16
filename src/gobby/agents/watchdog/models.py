@@ -266,6 +266,31 @@ class WatchdogTranscriptSnapshot:
             and self.has_conclusive_turn_completed
         )
 
+    @property
+    def has_open_tool_call(self) -> bool:
+        """True when the newest tool event is a start without a later update."""
+        last_tool: TranscriptEventSummary | None = None
+        for event in self.tail:
+            if event.payload_type in {"tool_call", "tool_call_update"}:
+                last_tool = event
+        return last_tool is not None and last_tool.payload_type == "tool_call"
+
+    def latest_tail_timestamp(self) -> datetime | None:
+        stamps = [event.timestamp for event in self.tail if event.timestamp is not None]
+        return max(stamps) if stamps else None
+
+    def is_live_transcript_activity(
+        self, *, idle_timeout_seconds: float, now: datetime | None = None
+    ) -> bool:
+        """Open tools stay live; other tail activity is live within the idle window."""
+        if self.has_open_tool_call:
+            return True
+        latest = self.latest_tail_timestamp()
+        if latest is None:
+            return False
+        clock = now if now is not None else datetime.now(UTC)
+        return (clock - latest).total_seconds() < idle_timeout_seconds
+
     def to_log_dict(self) -> dict[str, object]:
         return {
             "provider": self.provider,

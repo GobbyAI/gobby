@@ -112,9 +112,9 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
             name: "p",
             display_name: "P",
             checkout: { machine_id: "machine-1", root_path: "/tmp/p" },
-            github_url: null,
-            github_repo: null,
-            linear_team_id: null,
+
+
+
             approval_rules: [],
             created_at: "2026-08-22T00:00:00Z",
             updated_at: "2026-08-22T00:00:00Z",

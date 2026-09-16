@@ -181,19 +181,25 @@ async def recover_completed_turn(
         return 0
 
     step_context, lookup_succeeded = await host._load_step_workflow_context(run)
+    if step_context is not None:
+        mcp_required_by = (
+            f"while pinned in MCP-gated step '{step_context.current_step}'"
+            if step_progress_requires_gobby_mcp(step_context)
+            else None
+        )
+    else:
+        mcp_required_by = "with no step workflow or task" if run.task_id is None else None
     if (
         lookup_succeeded
-        and step_context is not None
-        and step_progress_requires_gobby_mcp(step_context)
+        and mcp_required_by is not None
         and await host._session_made_successful_mcp_call(run) is False
     ):
-        # This workflow step cannot advance without a Gobby MCP call and the
-        # session has never completed one, so no number of reprompts can produce
-        # workflow progress.
+        # An MCP-gated step cannot advance, and an unbound run cannot hand back
+        # its result, without a Gobby MCP call. The session has never completed
+        # one, so no number of reprompts can help.
         reason = (
             "Gobby MCP proxy tools unavailable: session made no successful Gobby MCP "
-            f"call while pinned in MCP-gated step '{step_context.current_step}' "
-            "(likely stdio bridge startup failure)"
+            f"call {mcp_required_by} (likely stdio bridge startup failure)"
         )
         startup_error = codex_mcp_startup_error(pane_tail)
         if startup_error is not None:
@@ -201,7 +207,7 @@ async def recover_completed_turn(
         logger.error("Failing idle agent %s without reprompts: %s", run.id, reason)
         await host._log_transcript_snapshot(
             run,
-            reason="failing run pinned in MCP-gated step with no successful MCP call",
+            reason="failing run that made no successful Gobby MCP call",
             snapshot=snapshot,
             level=logging.ERROR,
         )

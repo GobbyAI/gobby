@@ -101,7 +101,6 @@ PUBLIC_PATHS = [
     "/api/admin/startup-progress",
     "/api/auth/status",
     "/api/comms/webhooks/test",
-    "/api/github/webhooks/test",
     "/assets/app.js",
     "/favicon.ico",
     "/logo.png",

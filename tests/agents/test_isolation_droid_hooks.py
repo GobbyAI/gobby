@@ -24,7 +24,12 @@ def _hook_commands(configs: list[dict[str, Any]]) -> list[str]:
 
 
 def _assert_gobby_droid_command(command: str, hook_type: str) -> None:
-    assert command.endswith(f" --gobby-owned --cli=droid --type={hook_type}")
+    suffix = f" --gobby-owned --cli=droid --type={hook_type}"
+    if hook_type == "SessionEnd":
+        # Isolated worktrees inherit the bundled template, including the
+        # enqueue-only SessionEnd that survives Droid teardown (#22402).
+        suffix += " --enqueue-only"
+    assert command.endswith(suffix)
 
 
 @pytest.mark.asyncio

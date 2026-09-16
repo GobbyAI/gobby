@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.lifecycle_state import (
     current_stage_name,
     initialize_stage_manifest,
@@ -59,7 +58,6 @@ async def build_leaf(
     )
     if opts.isolation in {"worktree", "clone"} and target_branch:
         task_manager.artifacts.set_artifact(task.id, "target_branch", target_branch)
-    await record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = current_stage_name(task_manager, task.id, specs)
     record_build_event(task_manager, task.id, initial_lifecycle)
@@ -107,7 +105,6 @@ async def build_epic(
         task.id,
         target_branch=target_branch,
     )
-    await record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     manifest_input_kind: InputKind = (
         "expanded_epic" if has_existing_expansion_output(task_manager, task) else "epic"
     )

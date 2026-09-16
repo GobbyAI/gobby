@@ -560,6 +560,7 @@ def test_rejection_log_attributes_principal(
     assert record.__dict__["execution_id"] == AGENT_RUN_ID
     assert record.__dict__["session_id"] == SESSION_ID
     assert record.__dict__["code"] == "claims_mismatch"
+    assert record.__dict__["rejection_message"] == "rejected"
     assert record.__dict__["machine_id"] == LOCAL_MACHINE_ID
     assert record.__dict__["project_id"] == PROJECT_ID
 

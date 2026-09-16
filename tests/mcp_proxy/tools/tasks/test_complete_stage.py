@@ -11,7 +11,6 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -364,7 +363,7 @@ def test_complete_stage_keeps_other_running_agent_dispatch_mutex_blocking(
     assert stage_row(temp_db, task.id, "architecture")["state"] == "in_progress"
 
 
-def test_complete_merge_stage_records_one_campaign(
+def test_complete_merge_stage_records_the_completed_commit(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -382,43 +381,11 @@ def test_complete_merge_stage_records_one_campaign(
         commit_sha="complete-stage-sha",
     )
 
-    campaign = TaskDeliveryStateManager(temp_db).get_state(task.id)["campaign"]
-    count_row = temp_db.fetchone(
-        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
-        (task.id,),
-    )
     assert result["stage"]["state"] == "done"
-    assert campaign["state"] == "merged"
-    assert campaign["merge_sha"] == "complete-stage-sha"
-    assert campaign["last_error"] == ""
-    assert count_row is not None
-    assert count_row["campaign_count"] == 1
+    assert stage_row(temp_db, task.id, "merge")["completed_commit_sha"] == "complete-stage-sha"
 
 
-def test_complete_non_merge_stage_does_not_record_campaign(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    task = _in_progress_architecture_task(
-        temp_db,
-        sample_project,
-        session_id="architecture-agent",
-    )
-
-    _complete_stage(_ops_context(temp_db))(
-        task_id=task.id,
-        stage_name="architecture",
-    )
-
-    count_row = temp_db.fetchone(
-        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
-        (task.id,),
-    )
-    assert count_row is not None
-    assert count_row["campaign_count"] == 0
-
-
-def test_rejected_merge_completion_does_not_record_campaign(
+def test_merge_completion_without_a_started_stage_is_rejected(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -431,13 +398,6 @@ def test_rejected_merge_completion_does_not_record_campaign(
             stage_name="merge",
             commit_sha="rejected-sha",
         )
-
-    count_row = temp_db.fetchone(
-        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
-        (task.id,),
-    )
-    assert count_row is not None
-    assert count_row["campaign_count"] == 0
 
 
 register_contract_tests(

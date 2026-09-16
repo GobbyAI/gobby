@@ -59,10 +59,21 @@ def installed_schema_version() -> int:
     return value
 
 
-def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
-    """Run one installed-authoritative gdaemon schema action."""
-    binary = resolve_native_bin("gdaemon")
-    if binary is None:
+def _run_gdaemon(
+    database_url: str,
+    args: list[str],
+    *,
+    action: str,
+    binary: Path | None = None,
+    remedy: str = "Run `gobby install` to refresh gdaemon",
+) -> str:
+    """Run one gdaemon schema action and return its stdout.
+
+    ``binary`` names an unpromoted candidate to prove before promoting it; the
+    default resolves the installed set member, which is the schema authority.
+    """
+    resolved = str(binary) if binary is not None else resolve_native_bin("gdaemon")
+    if resolved is None:
         raise SchemaContractError(
             f"gdaemon is required to {action}; run `gobby install` to install it"
         )
@@ -72,7 +83,7 @@ def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
     env.pop("GOBBY_EXPECTED_SCHEMA_IDENTITY", None)
     try:
         result = subprocess.run(
-            [binary, *args],
+            [resolved, *args],
             check=False,
             capture_output=True,
             text=True,
@@ -90,9 +101,8 @@ def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
         detail = (
             result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         )
-        raise SchemaContractError(
-            f"gdaemon {action} failed: {detail}. Run `gobby install` to refresh gdaemon"
-        )
+        raise SchemaContractError(f"gdaemon {action} failed: {detail}. {remedy}")
+    return result.stdout
 
 
 def sweep_test_schemas(database_url: str, *, age_hours: int) -> None:
@@ -118,6 +128,22 @@ def apply_schema(
         args.append("--destructive")
     _run_gdaemon(database_url, args, action="schema apply")
     logger.info("gdaemon schema apply completed for schema %s", schema or "connection default")
+
+
+def plan_schema(database_url: str, *, gdaemon: Path | None = None) -> str:
+    """Report what a gdaemon schema apply would do, changing nothing.
+
+    Reinstalling gdaemon never repairs a lineage or pending-migration failure, so
+    the remedy names the real fix. Callers treat return code 0 as success; the
+    returned line is for humans.
+    """
+    return _run_gdaemon(
+        database_url,
+        ["schema", "plan"],
+        action="schema plan",
+        binary=gdaemon,
+        remedy="Fix the schema inputs or the hub before restarting",
+    )
 
 
 def verify_schema(database_url: str) -> None:

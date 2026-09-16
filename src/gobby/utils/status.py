@@ -201,10 +201,18 @@ def _provider_model_count(provider_models: Any, provider: str) -> int | None:
     return None
 
 
-def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name: str) -> str:
+def _format_coding_cli_details(
+    hooks: dict[str, Any],
+    provider_models: Any,
+    name: str,
+    drift: dict[str, Any] | None = None,
+) -> str:
     parts = []
     if hooks.get(name):
         parts.append("hooks installed")
+    stale_events = drift.get(name) if isinstance(drift, dict) else None
+    if isinstance(stale_events, list) and stale_events:
+        parts.append("stale hook events: " + ", ".join(str(event) for event in stale_events))
 
     model_count = _provider_model_count(provider_models, name)
     if model_count is not None:
@@ -422,11 +430,12 @@ def format_status_message(
     if deps_info and deps_info.get("coding_clis"):
         clis = deps_info["coding_clis"]
         hooks = clis.get("hooks", {})
+        hook_drift = clis.get("hook_drift", {})
         provider_models = data.get("provider_models")
         lines.append("Coding CLIs:")
         for name, label in _CODING_CLI_LABELS:
             version = clis.get(name)
-            details = _format_coding_cli_details(hooks, provider_models, name)
+            details = _format_coding_cli_details(hooks, provider_models, name, hook_drift)
             if version:
                 lines.append(f"  {label + ':':<{_LW}}{version}{details}")
             else:

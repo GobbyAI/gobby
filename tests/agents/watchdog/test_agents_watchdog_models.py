@@ -188,3 +188,44 @@ def test_snapshot_conclusive_properties_require_valid_order_and_timestamp() -> N
         latest_model_output_line_num=4,
     )
     assert active_after_completion.has_conclusive_turn_completed is False
+
+
+def test_open_tool_call_stays_live_past_the_idle_window() -> None:
+    started = datetime(2026, 9, 15, 1, 32, 30, tzinfo=UTC)
+    snapshot = WatchdogTranscriptSnapshot(
+        provider="grok",
+        latest_turn_kind="started",
+        tail=(TranscriptEventSummary(1, started, "session_update", "tool_call"),),
+    )
+    later = started + timedelta(minutes=11)
+
+    assert snapshot.has_open_tool_call is True
+    assert snapshot.is_live_transcript_activity(idle_timeout_seconds=60, now=later) is True
+
+
+def test_closed_tool_is_idle_once_the_window_elapses() -> None:
+    started = datetime(2026, 9, 15, 1, 32, 30, tzinfo=UTC)
+    snapshot = WatchdogTranscriptSnapshot(
+        provider="grok",
+        latest_turn_kind="started",
+        tail=(
+            TranscriptEventSummary(1, started, "session_update", "tool_call"),
+            TranscriptEventSummary(
+                2, started + timedelta(seconds=2), "session_update", "tool_call_update"
+            ),
+        ),
+    )
+
+    assert snapshot.has_open_tool_call is False
+    assert (
+        snapshot.is_live_transcript_activity(
+            idle_timeout_seconds=60, now=started + timedelta(seconds=10)
+        )
+        is True
+    )
+    assert (
+        snapshot.is_live_transcript_activity(
+            idle_timeout_seconds=60, now=started + timedelta(minutes=11)
+        )
+        is False
+    )

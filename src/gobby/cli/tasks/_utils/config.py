@@ -8,7 +8,6 @@ import click
 
 from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.task_github_import import GitHubIssueImporter
 from gobby.sync.tasks import TaskBackupManager
 
 logger = logging.getLogger(__name__)
@@ -43,8 +42,3 @@ def get_backup_manager(path: str | Path | None = None) -> TaskBackupManager:
     """Get initialized task backup manager."""
     manager = get_task_manager()
     return TaskBackupManager(manager, backup_path=path)
-
-
-def get_github_importer() -> GitHubIssueImporter:
-    """Get initialized GitHub issue importer."""
-    return GitHubIssueImporter(get_task_manager().db)

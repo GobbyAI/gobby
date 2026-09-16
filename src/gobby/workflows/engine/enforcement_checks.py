@@ -39,6 +39,22 @@ _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
         "gobby-skills:get_skill_files",
     }
 )
+# Grok's read-only poll for a backgrounded call. It returns the result of a call
+# the step already allowed or denied, so it grants no capability of its own.
+# Denying it stalled MCP-only steps until the run hit the identical-denial kill.
+_CAPABILITY_NEUTRAL_NATIVE_TOOLS = frozenset({"get_command_or_subagent_output"})
+
+
+def _is_parent_send_message(mcp_key: str, tool_input: dict[str, Any]) -> bool:
+    """True for send_message whose target is parent or omitted."""
+    if mcp_key != "gobby-agents:send_message":
+        return False
+    target = tool_input.get("target", "parent")
+    if target is None:
+        return True
+    if not isinstance(target, str):
+        return False
+    return target.strip().lower() in {"", "parent"}
 
 
 def _step_tool_block_guidance(step_name: str) -> str:
@@ -599,7 +615,7 @@ class EnforcementCheckMixin:
                 return None
 
         # Check native tool allow-list
-        if step.allowed_tools != "all":
+        if step.allowed_tools != "all" and canonical_tool not in _CAPABILITY_NEUTRAL_NATIVE_TOOLS:
             if canonical_tool not in {
                 canonical_gobby_tool_name(allowed) for allowed in step.allowed_tools
             }:
@@ -737,7 +753,9 @@ class EnforcementCheckMixin:
                     return None
 
                 # These calls preserve access to handoff obligations in every step.
-                if mcp_key in _CAPABILITY_NEUTRAL_MCP_TOOLS:
+                if mcp_key in _CAPABILITY_NEUTRAL_MCP_TOOLS or _is_parent_send_message(
+                    mcp_key, self._step_handler_tool_input(tool_input)
+                ):
                     return None
 
                 if mcp_key and step.allowed_mcp_tools != "all":

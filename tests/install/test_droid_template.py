@@ -42,7 +42,13 @@ def test_droid_template_matches_contract_and_rewrites_commands() -> None:
 
         command = hook_config["hooks"][0]["command"]
         base = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
-        assert command == base
+        if hook_type == "SessionEnd":
+            # Droid kills its SessionEnd hook children during teardown, before a
+            # live POST can finish (#22402). Enqueue-only returns right after the
+            # durable inbox write, so the daemon's drain still delivers.
+            assert command == f"{base} --enqueue-only"
+        else:
+            assert command == base
 
 
 def test_default_agent_template_lists_droid_as_supported_source() -> None:

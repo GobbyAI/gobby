@@ -26,8 +26,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/components/rules/ExpressionBuilder.tsx",
   "src/components/rules/RuleEditForm.tsx",
   "src/components/sessions/SessionDetail.tsx",
-  "src/components/source-control/BranchDetail.tsx",
-  "src/components/source-control/PullRequestDetail.tsx",
   "src/components/tasks/ActionFeed.tsx",
   "src/components/tasks/ActivityPulse.tsx",
   "src/components/tasks/AssigneePicker.tsx",

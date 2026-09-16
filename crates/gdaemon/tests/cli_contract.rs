@@ -55,7 +55,7 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["assets_root_hash"], embedded.root_hash);
     // One literal stays as the human tripwire, deliberately: a bare version number is
     // something a reviewer can verify at a glance, which was never true of a checksum.
-    assert_eq!(identity["latest_version"], 437);
+    assert_eq!(identity["latest_version"], 439);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)
@@ -149,5 +149,49 @@ fn destructive_apply_parses_newest_backup_before_connecting() -> anyhow::Result<
     assert!(stderr.contains("invalid hub backup manifest"), "{stderr}");
     assert!(!stderr.contains("failed to connect"), "{stderr}");
     assert!(!stderr.contains("do-not-leak"), "{stderr}");
+    Ok(())
+}
+
+#[test]
+fn schema_help_exposes_plan() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "--help"])
+        .output()?;
+    let stdout = String::from_utf8(output.stdout.clone())?;
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout.contains("plan"), "{stdout}");
+    Ok(())
+}
+
+#[test]
+fn plan_has_no_dsn_argument() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args([
+            "schema",
+            "plan",
+            "--dsn",
+            "postgresql://public@example/gobby",
+        ])
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("unexpected argument '--dsn'"));
+    Ok(())
+}
+
+#[test]
+fn plan_connection_errors_redact_dsn_credentials() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "plan"])
+        .env(DATABASE_URL_ENV, SECRET_DSN)
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("failed to connect to the Gobby PostgreSQL hub"));
+    assert!(!stderr.contains("schema_user"));
+    assert!(!stderr.contains("do-not-leak"));
     Ok(())
 }

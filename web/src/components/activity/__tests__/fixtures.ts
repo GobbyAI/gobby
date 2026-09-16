@@ -61,8 +61,8 @@ export function makeTask(
     complexity_score: null,
     is_expanded: false,
     expansion_status: "none",
-    github_pr_number: null,
-    github_repo: null,
+
+
     allow_automation: null,
     yolo: null,
     isolation: null,

@@ -136,14 +136,16 @@ class _FakeHost:
         self.snapshot_logs.append(reason)
 
 
-def _run() -> AgentRun:
-    return cast(AgentRun, SimpleNamespace(id="run-1", child_session_id="sess-1"))
+def _run(task_id: str | None = None) -> AgentRun:
+    return cast(AgentRun, SimpleNamespace(id="run-1", child_session_id="sess-1", task_id=task_id))
 
 
-async def _recover(host: _FakeHost, *, pane_tail: str | None = None) -> int:
+async def _recover(
+    host: _FakeHost, *, pane_tail: str | None = None, task_id: str | None = None
+) -> int:
     return await recover_completed_turn(
         cast(CompletedTurnRecoveryHost, host),
-        _run(),
+        _run(task_id),
         tmux_name="gobby-test",
         session_id="sess-1",
         transcript_path="/tmp/transcript.jsonl",
@@ -299,6 +301,34 @@ async def test_mcp_call_lookup_failure_fails_open_to_reprompts() -> None:
     host = _FakeHost(step_context=_step_context(_MCP_ONLY_TOOLS), made_call=None)
 
     assert await _recover(host) == 1
+    assert host.failures == []
+    assert len(host.reprompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_unbound_run_without_mcp_calls_fails_without_reprompts() -> None:
+    """An unbound run can only hand back its result through Gobby MCP."""
+    host = _FakeHost(step_context=None, made_call=False)
+
+    assert await _recover(host) == 1
+    assert len(host.failures) == 1
+    assert "Gobby MCP proxy tools unavailable" in host.failures[0]
+    assert "with no step workflow or task" in host.failures[0]
+    assert host.reprompts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("made_call", "task_id"),
+    [(True, None), (None, None), (False, "task-1")],
+    ids=["successful-mcp-call", "lookup-failure", "task-bound"],
+)
+async def test_workflow_less_run_keeps_reprompt_path_unless_unbound_without_mcp_calls(
+    made_call: bool | None, task_id: str | None
+) -> None:
+    host = _FakeHost(step_context=None, made_call=made_call)
+
+    assert await _recover(host, task_id=task_id) == 1
     assert host.failures == []
     assert len(host.reprompts) == 1
 

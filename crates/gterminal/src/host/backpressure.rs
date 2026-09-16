@@ -17,17 +17,20 @@ pub enum ControlClose {
     Overflow,
 }
 
+#[cfg(test)]
 struct ControlEntry {
     value: Value,
     queued_at: Instant,
 }
 
+#[cfg(test)]
 pub struct ControlQueue {
     cap: usize,
     deadline: Duration,
     entries: VecDeque<ControlEntry>,
 }
 
+#[cfg(test)]
 impl ControlQueue {
     pub fn new(cap: usize, deadline: Duration) -> Self {
         Self {

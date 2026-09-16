@@ -143,7 +143,7 @@ step_workflow:
       status_message: |
         Audit the assigned task without changing repository or task content.
 
-        1. Read get_task, get_task_stages, get_artifacts, and get_delivery_state.
+        1. Read get_task, get_task_stages, and get_artifacts.
            Resolve the exact worktree or clone and authoritative target_branch from
            those records — assuming main or auditing an unrelated workspace
            invalidates the review.
@@ -193,7 +193,6 @@ step_workflow:
         - "gobby-tasks:get_task_diff"
         - "gobby-tasks:get_task_stages"
         - "gobby-tasks-ops:get_artifacts"
-        - "gobby-tasks-ops:get_delivery_state"
         - "gobby-worktrees:get_worktree_by_task"
         - "gobby-worktrees:get_worktree"
         - "gobby-clones:get_clone_by_task"

@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import yaml
 
-from gobby.config.build import DeliveryMode, Isolation
+from gobby.config.build import Isolation
 from gobby.paths import get_install_dir
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model
@@ -47,7 +47,7 @@ class BuildProfile:
     skip_stages: list[str]
     isolation: Isolation
     unattended: bool
-    delivery_mode: DeliveryMode
+    delivery_mode: str
     delivery_target_repo: str | None
     enabled: bool
     source: BuildProfileSource
@@ -203,7 +203,7 @@ class BuildProfileLoader:
         if not isinstance(enabled, bool):
             raise BuildProfileError(f"Build profile {name} enabled must be boolean")
         delivery_mode = raw.get("delivery_mode", "auto")
-        if delivery_mode not in {"auto", "pull_request"}:
+        if delivery_mode != "auto":
             raise BuildProfileError(f"Build profile {name} delivery_mode is invalid")
         delivery_target_repo = raw.get("delivery_target_repo")
         if delivery_target_repo is not None and not isinstance(delivery_target_repo, str):
@@ -327,7 +327,7 @@ class BuildProfileManager:
         isolation: Isolation,
         unattended: bool,
         enabled: bool = True,
-        delivery_mode: DeliveryMode = "auto",
+        delivery_mode: str = "auto",
         delivery_target_repo: str | None = None,
         plan_enhancement_rounds: int = 0,
         source: BuildProfileSource = "project",
@@ -674,8 +674,8 @@ class BuildProfileManager:
         _validate_profile_name(profile.name)
         if profile.isolation not in {"none", "worktree", "clone"}:
             raise BuildProfileError("isolation must be one of: none, worktree, clone")
-        if profile.delivery_mode not in {"auto", "pull_request"}:
-            raise BuildProfileError("delivery_mode must be one of: auto, pull_request")
+        if profile.delivery_mode != "auto":
+            raise BuildProfileError("delivery_mode must be auto")
         if profile.plan_enhancement_rounds < 0:
             raise BuildProfileError("plan_enhancement_rounds must be greater than or equal to 0")
         _validate_delivery_target_repo(profile.delivery_target_repo)

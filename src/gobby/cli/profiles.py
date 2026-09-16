@@ -12,7 +12,7 @@ import click
 import psycopg
 
 from gobby.cli.runtime import require_cli_database
-from gobby.config.build import DeliveryMode, Isolation
+from gobby.config.build import Isolation
 from gobby.storage.build_profiles import (
     BuildProfileError,
     BuildProfileLoader,
@@ -110,8 +110,6 @@ def show_profile(name: str, source: str, project_id: str | None, include_deleted
 @click.option("--skip-stages")
 @click.option("--isolation", type=click.Choice(["none", "worktree", "clone"]), default="worktree")
 @click.option("--unattended/--no-unattended", default=False)
-@click.option("--delivery-mode", type=click.Choice(["auto", "pull_request"]), default="auto")
-@click.option("--delivery-target-repo")
 @click.option("--enabled/--disabled", default=True)
 @click.option("--source", type=click.Choice(["installed", "project"]), default="project")
 @click.option("--project-id")
@@ -123,8 +121,6 @@ def create_profile(
     skip_stages: str | None,
     isolation: Isolation,
     unattended: bool,
-    delivery_mode: DeliveryMode,
-    delivery_target_repo: str | None,
     enabled: bool,
     source: str,
     project_id: str | None,
@@ -139,8 +135,6 @@ def create_profile(
                 skip_stages=_parse_csv(skip_stages),
                 isolation=isolation,
                 unattended=unattended,
-                delivery_mode=delivery_mode,
-                delivery_target_repo=delivery_target_repo,
                 enabled=enabled,
                 source=_profile_source(source),
                 project_id=_scope(source, project_id),
@@ -174,8 +168,6 @@ def _profile_toggle(name: str, source: str, project_id: str | None, enabled: boo
 @click.option("--skip-stages")
 @click.option("--isolation", type=click.Choice(["none", "worktree", "clone"]))
 @click.option("--unattended/--no-unattended", default=None)
-@click.option("--delivery-mode", type=click.Choice(["auto", "pull_request"]))
-@click.option("--delivery-target-repo")
 @click.option("--enabled/--disabled", default=None)
 @click.option("--tags")
 def update_profile(
@@ -187,8 +179,6 @@ def update_profile(
     skip_stages: str | None,
     isolation: Isolation | None,
     unattended: bool | None,
-    delivery_mode: DeliveryMode | None,
-    delivery_target_repo: str | None,
     enabled: bool | None,
     tags: str | None,
 ) -> None:
@@ -203,12 +193,6 @@ def update_profile(
         updates["isolation"] = isolation
     if unattended is not None:
         updates["unattended"] = unattended
-    if delivery_mode is not None:
-        updates["delivery_mode"] = delivery_mode
-    if delivery_target_repo is not None:
-        # Click passes None when the option is omitted; only an explicit empty
-        # value should clear the stored delivery target.
-        updates["delivery_target_repo"] = delivery_target_repo or None
     if enabled is not None:
         updates["enabled"] = enabled
     if tags is not None:

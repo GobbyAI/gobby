@@ -125,7 +125,11 @@ def _is_turn_end_event(event_type: HookEventType | str) -> bool:
     return _event_value(event_type) in _TURN_END_EVENT_VALUES
 
 
-def _resolve_rule_events(event_type: HookEventType | str) -> list[RuleTriggerEvent]:
+def _resolve_rule_events(
+    event_type: HookEventType | str,
+    *,
+    source: SessionSource | str | None = None,
+) -> list[RuleTriggerEvent]:
     """Resolve an incoming hook event into rule trigger events."""
     resolved: list[RuleTriggerEvent] = []
     raw_value = _event_value(event_type)
@@ -140,6 +144,9 @@ def _resolve_rule_events(event_type: HookEventType | str) -> list[RuleTriggerEve
         resolved.append(RuleTriggerEvent(raw_value))
     except ValueError:
         pass
+
+    if raw_value == HookEventType.POST_COMPACT.value and source == SessionSource.GROK:
+        resolved.append(RuleTriggerEvent.SESSION_START)
 
     deduped: list[RuleTriggerEvent] = []
     seen: set[RuleTriggerEvent] = set()

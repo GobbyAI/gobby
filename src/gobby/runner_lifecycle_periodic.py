@@ -90,17 +90,6 @@ def _default_loops() -> dict[str, Any]:
     }
 
 
-def _has_enabled_external_issue_integration(mcp_manager: Any) -> bool:
-    """Return whether a configured external-issue connector is enabled."""
-    get_server_config = getattr(mcp_manager, "get_server_config", None)
-    if not callable(get_server_config):
-        return False
-    return any(
-        (config := get_server_config(provider)) is not None and config.enabled is True
-        for provider in ("github", "linear")
-    )
-
-
 def start_periodic_tasks(
     runner: GobbyRunner,
     *,
@@ -342,31 +331,6 @@ def start_periodic_tasks(
         name="tmux-window-repair",
     )
 
-    runner.external_issue_sync_coordinator = None
-    runner._external_issue_sync_shutdown = None
-    runner._external_issue_sync_task = None
-    mcp_proxy = getattr(runner, "mcp_proxy", None)
-    task_manager = getattr(runner, "task_manager", None)
-    if (
-        mcp_proxy is not None
-        and task_manager is not None
-        and _has_enabled_external_issue_integration(mcp_proxy)
-    ):
-        from gobby.sync.external_coordinator import ExternalIssueSyncCoordinator
-
-        runner.external_issue_sync_coordinator = ExternalIssueSyncCoordinator(
-            db=runner.database,
-            mcp_manager=mcp_proxy,
-            task_manager=task_manager,
-            memory_manager=memory_manager,
-            secret_store=getattr(runner, "secret_store", None),
-        )
-        runner._external_issue_sync_shutdown = asyncio.Event()
-        runner._external_issue_sync_task = asyncio.create_task(
-            runner.external_issue_sync_coordinator.run(runner._external_issue_sync_shutdown),
-            name="external-issue-sync",
-        )
-
     periodic_tasks = tuple(
         task
         for task in (
@@ -396,7 +360,6 @@ def start_periodic_tasks(
             runner._bin_freshness_task,
             runner._approval_timeout_task,
             runner._tmux_window_repair_task,
-            runner._external_issue_sync_task,
         )
         if task is not None
     )

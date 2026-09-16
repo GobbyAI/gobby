@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 217,
+  "site_count": 212,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -731,16 +731,6 @@
         "return-value"
       ],
       "statement": "return tuple ( int ( part ) for part in parts [ : 3 ] )"
-    },
-    {
-      "fingerprint": "2efa1d2b158ed13fd1c6c9c73dea036ff911bf7fd03eeca0f44cc229af3008c1",
-      "path": "tests/integrations/test_integrations_linear_graphql.py",
-      "symbol": "test_from_database_async_reads_secret_off_event_loop",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "client = await LinearGraphQLClient . from_database_async ( object ( ) )"
     },
     {
       "fingerprint": "193eaefbae01a2a084688a8d468e5be352b5f47c501f29cec648cc97ae2a0282",
@@ -1911,46 +1901,6 @@
         "arg-type"
       ],
       "statement": "visibility_predicate ( \"bogus\" )"
-    },
-    {
-      "fingerprint": "ffd1524098e8b8fa5c236ef9ee7305d0b0869228fe62b0d5112dabebe45aa932",
-      "path": "tests/sync/test_linear_sync.py",
-      "symbol": "TestLinearSyncServiceSync.test_pull_updates_counts_permanent_graphql_failure_as_errors",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "sync_service . _get_graphql_client . assert_awaited_once_with ( )"
-    },
-    {
-      "fingerprint": "4ca0d2300a434838cd5a36a21ff8c044c2d9d1b513a06e92a7f0d1a805b18583",
-      "path": "tests/sync/test_linear_sync.py",
-      "symbol": "TestLinearSyncServiceSync.test_pull_updates_counts_permanent_graphql_failure_as_errors",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "sync_service . _linear_mcp_has_tool . assert_called_once_with ( \"list_issues\" )"
-    },
-    {
-      "fingerprint": "9cb971373635039b344e8393e4c4d0b6e78c6f48be62814f7fe01156c315a185",
-      "path": "tests/sync/test_linear_sync.py",
-      "symbol": "TestLinearSyncServiceSync.test_pull_updates_defers_transient_graphql_fetch_for_all_linked_tasks",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "sync_service . _get_graphql_client . assert_awaited_once_with ( )"
-    },
-    {
-      "fingerprint": "b3b84099e005e4b339fbded0561cdb511f844013b38cce71ef797769c1a085fa",
-      "path": "tests/sync/test_linear_sync.py",
-      "symbol": "TestLinearSyncServiceSync.test_pull_updates_defers_transient_graphql_fetch_for_all_linked_tasks",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "sync_service . _linear_mcp_has_tool . assert_called_once_with ( \"list_issues\" )"
     },
     {
       "fingerprint": "dcccac98d3a4fcd2814c5d2b50e36b53d70a14cf618b548174c7f1330fba3800",

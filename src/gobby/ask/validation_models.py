@@ -46,6 +46,7 @@ class SourceEvidence(_FrozenModel):
     byte_start: int = Field(ge=0)
     byte_end: int = Field(gt=0)
     excerpt: str
+    numbered_excerpt: str
 
 
 class SourceEvidenceItem(SourceEvidence):

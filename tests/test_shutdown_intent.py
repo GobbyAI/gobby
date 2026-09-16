@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import threading
 import time
 from pathlib import Path
@@ -428,3 +429,33 @@ def test_read_shutdown_intent_logs_malformed_content(
 
     assert record.error == "shutdown marker must be a JSON object"
     assert "content='[]'" in caplog.text
+
+
+def test_write_shutdown_intent_records_sender_when_writer_is_sender(tmp_path: Path) -> None:
+    """Every CLI stop path writes its own argv, so the next incident is attributable."""
+    write_shutdown_intent(
+        "cli_restart", "restart", home=tmp_path, details={"drain_terminals": True}
+    )
+
+    for marker in (get_shutdown_source_path(tmp_path), get_active_shutdown_marker_path(tmp_path)):
+        details = json.loads(marker.read_text())["details"]
+        assert details["sender_argv"] == list(sys.argv)
+        assert details["sender_ppid"] == os.getppid()
+        assert details["sender_cwd"] == os.getcwd()
+        assert details["drain_terminals"] is True
+
+    record = read_shutdown_source_record(home=tmp_path)
+    assert record is not None
+    assert record.sender_detail is not None
+    assert f"ppid={os.getppid()}" in record.sender_detail
+    assert f"cwd={os.getcwd()}" in record.sender_detail
+
+
+def test_explicit_sender_pid_records_no_sender_detail(tmp_path: Path) -> None:
+    """An explicit sender means the writer speaks for another process."""
+    write_shutdown_intent("http_restart", "restart", sender_pid=4321, home=tmp_path)
+
+    assert "details" not in json.loads(get_shutdown_source_path(tmp_path).read_text())
+    record = read_shutdown_source_record(home=tmp_path)
+    assert record is not None
+    assert record.sender_detail is None

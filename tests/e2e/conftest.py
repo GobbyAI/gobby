@@ -244,7 +244,7 @@ class DaemonInstance:
             time.sleep(0.05)
         pytest.fail(f"Daemon health endpoint on port {self.http_port} remained available")
 
-    def restart(self) -> None:
+    def restart(self, *, health_timeout: float = 30.0) -> None:
         """Restart the daemon with the fixture's original process configuration."""
         if self.is_alive():
             raise RuntimeError("Cannot restart a running daemon")
@@ -269,7 +269,7 @@ class DaemonInstance:
                 f"Daemon subprocess died immediately with exit code {process.poll()}.\n"
                 f"Logs:\n{self.read_logs()}\nError output:\n{self.read_error_logs()}"
             )
-        if not wait_for_daemon_health(self.http_port, timeout=30.0):
+        if not wait_for_daemon_health(self.http_port, timeout=health_timeout):
             terminate_process_tree(process.pid)
             pytest.fail(
                 f"Daemon failed to restart within timeout.\n"

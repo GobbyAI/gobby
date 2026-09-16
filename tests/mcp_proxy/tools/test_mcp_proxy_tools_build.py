@@ -57,8 +57,8 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db: Any) -> None:
     assert schema["properties"]["clone"]["type"] == "boolean"
     assert schema["properties"]["unattended"]["type"] == "boolean"
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
-    assert set(schema["properties"]["delivery_mode"]["enum"]) == {"auto", "pull_request"}
-    assert schema["properties"]["delivery_target_repo"]["type"] == "string"
+    assert "delivery_mode" not in schema["properties"]
+    assert "delivery_target_repo" not in schema["properties"]
     assert schema["properties"]["no_merge"]["type"] == "boolean"
     assert schema["properties"]["pr"]["type"] == "string"
     assert "max_review_rounds" not in schema["properties"]
@@ -118,8 +118,6 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
             skip_stages=["qa"],
             workspace_backend="clone",
             unattended=True,
-            delivery_mode="auto",
-            delivery_target_repo="owner/repo",
             no_merge=False,
             pr="123",
             stage=["pr:max_review_rounds=2"],
@@ -164,10 +162,6 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     assert opts.isolation_explicit is True
     assert opts.unattended is True
     assert opts.unattended_explicit is True
-    assert opts.delivery_mode == "auto"
-    assert opts.delivery_mode_explicit is True
-    assert opts.delivery_target_repo == "owner/repo"
-    assert opts.delivery_target_repo_explicit is True
     assert str(opts.clones_dir) == "/tmp"
     assert str(opts.cwd) == "/tmp"
     assert opts.no_merge is False

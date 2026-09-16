@@ -153,7 +153,9 @@ and `gcode evidence --help` prints further examples.
 Operations and selector semantics are:
 
 - `{"operation":"read","read":...}`: `range` uses a safe tracked path and
-  one-based inclusive `start_line`/`end_line`; `symbol` requires one exact
+  one-based inclusive `start_line`/`end_line`. An `end_line` past the end of
+  the file stops at its last line and adds a `range_clamped_to_end_of_file`
+  warning; a `start_line` past the end is `invalid_selector`. `symbol` requires one exact
   `path` plus `qualified_name` indexed at the snapshot hash; `commit_metadata`
   emits one record per changed path (or one empty-change record).
 - `{"operation":"search","search":...}`: lanes are `symbol` (exact name or
@@ -171,7 +173,9 @@ The response echoes the canonical request (with continuation removed), its
 fingerprint, the verified snapshot binding, contract identity, whole evidence
 items, completeness state, applied bounds, exclusions, warnings, and an
 optional continuation. Source citations include exact blob/content/excerpt
-hashes plus line and byte bounds. Commit metadata is derived from the bound Git
+hashes plus line and byte bounds. Their byte-exact `excerpt` is repeated as
+`numbered_excerpt`, with each line prefixed by its one-based number as `N| `,
+so a reader can cite a line without counting newlines. Commit metadata is derived from the bound Git
 commit. Graph evidence carries a hash-verified source citation, owner content
 hash, endpoints, direction/relation, and `extracted`, `inferred`, or
 `unresolved` provenance. Indexed facts only locate evidence: source bytes are

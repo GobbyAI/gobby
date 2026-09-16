@@ -1,3 +1,5 @@
+import fcntl
+import os
 import threading
 from pathlib import Path
 
@@ -51,3 +53,29 @@ def test_export_file_lock_serializes_concurrent_writers(
     assert not first.is_alive()
     assert not second.is_alive()
     assert second_entered.is_set()
+
+
+def test_export_file_lock_holds_unwritable_lock_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "data.jsonl"
+    lock_path = tmp_path / ".data.jsonl.lock"
+    lock_path.touch()
+    real_open = os.open
+
+    # A sandbox that denies writes refuses read-write opens even for root.
+    def write_denied_open(
+        path: str | os.PathLike[str], flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        if os.fspath(path) == str(lock_path) and flags & os.O_RDWR:
+            raise PermissionError(f"write denied: {path}")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", write_denied_open)
+
+    with (
+        export_file_lock(target),
+        lock_path.open("rb") as contender,
+        pytest.raises(BlockingIOError),
+    ):
+        fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

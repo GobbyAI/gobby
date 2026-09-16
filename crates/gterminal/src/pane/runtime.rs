@@ -280,6 +280,7 @@ impl PaneRuntime {
         self.shutdown();
     }
 
+    // reason: spawn takes an explicit pane geometry/theme/shell list rather than a bag struct.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         rows: u16,
@@ -303,6 +304,7 @@ impl PaneRuntime {
         )
     }
 
+    // reason: spawn takes an explicit pane geometry/theme/shell list rather than a bag struct.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_with_launch_env(
         rows: u16,
@@ -334,6 +336,7 @@ impl PaneRuntime {
         )
     }
 
+    // reason: spawn takes an explicit pane geometry/theme/shell list rather than a bag struct.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_argv_command(
         rows: u16,
@@ -371,6 +374,7 @@ impl PaneRuntime {
         )
     }
 
+    // reason: spawn takes an explicit pane geometry/theme/shell list rather than a bag struct.
     #[allow(clippy::too_many_arguments)]
     fn spawn_command_builder(
         rows: u16,
@@ -387,6 +391,7 @@ impl PaneRuntime {
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
         let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
+        crate::kitty_graphics::set_enabled(true);
         if crate::kitty_graphics::is_enabled() {
             terminal
                 .enable_kitty_graphics()
@@ -517,6 +522,7 @@ impl PaneRuntime {
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
         let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
+        crate::kitty_graphics::set_enabled(true);
         if crate::kitty_graphics::is_enabled() {
             terminal
                 .enable_kitty_graphics()
@@ -639,8 +645,6 @@ impl PaneRuntime {
     }
 }
 
-include!("runtime_ops.rs");
-
 #[cfg(test)]
 impl PaneRuntime {
     pub(crate) fn test_with_channel(cols: u16, rows: u16) -> (Self, mpsc::Receiver<Bytes>) {
@@ -684,3 +688,5 @@ impl PaneRuntime {
         )
     }
 }
+
+include!("runtime_ops.rs");

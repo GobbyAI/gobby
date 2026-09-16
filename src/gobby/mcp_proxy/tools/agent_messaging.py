@@ -119,7 +119,8 @@ def add_messaging_tools(
             "A non-system project send derives its project from from_session and rejects "
             "project_id; a system-originated project send requires project_id. "
             "from_session defaults to the calling session's id from SessionContext "
-            "when omitted. target='parent' reaches the session that spawned the sender, "
+            "when omitted. Spawned agents may omit target (defaults to parent). "
+            "target='parent' reaches the session that spawned the sender, "
             "forbids target_id, and is available only to spawned agent sessions, which "
             "may use only target='parent' and cannot override from_session. "
             "Message content never causes wake behavior. wake=true requests immediate "
@@ -134,8 +135,8 @@ def add_messaging_tools(
         ),
     )
     async def send_message(
-        target: Literal["global", "project", "parent", "session", "agent", "build"],
-        content: str,
+        target: Literal["global", "project", "parent", "session", "agent", "build"] | None = None,
+        content: str = "",
         target_id: str | None = None,
         from_session: str | None = None,
         *,
@@ -163,6 +164,31 @@ def add_messaging_tools(
             content = content.strip()
             if not content:
                 return {"success": False, "error": "content is required."}
+
+            if target is None or not target.strip():
+                preview_from_id = _resolve(from_session)
+                preview_sess = session_manager.get(preview_from_id)
+                preview_caller_id = (
+                    _resolve(ctx_session_id)
+                    if ctx_session_id and ctx_session_id != from_session
+                    else preview_from_id
+                )
+                preview_caller = (
+                    preview_sess
+                    if preview_caller_id == preview_from_id
+                    else session_manager.get(preview_caller_id)
+                )
+                if preview_caller is not None and (
+                    preview_caller.agent_run_id or preview_caller.agent_depth > 0
+                ):
+                    target = "parent"
+                else:
+                    return {
+                        "success": False,
+                        "error": "target is required unless the caller is a spawned agent.",
+                        "error_code": "target_required",
+                    }
+
             normalized_target = target.strip().lower()
             if normalized_target in {"global", "project", "parent"} and target_id is not None:
                 return {

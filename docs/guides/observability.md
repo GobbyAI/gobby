@@ -294,6 +294,25 @@ increase(automation_events_total{component="pipeline-heartbeat",outcome="failed"
 Persisted `cron_runs` remains the source of truth for cron run history; use the
 `gobby-cron` run-history tools when exact run status and output matter.
 
+### Scrape The Endpoint
+
+Nothing scrapes `/api/admin/metrics` by default, so a restart discards every
+counter, gauge, and histogram the daemon accumulated. The
+[observability compose example](../examples/observability/README.md) is an
+operator-run Prometheus and Grafana pair that keeps that history on named
+volumes, with an optional `logs` profile adding Loki and the
+[collector reference configuration](../examples/otel-collector/README.md) so log
+lines share the metrics time axis. Its dashboard covers database pool and
+executor saturation, MCP tool and HTTP route p95, daemon uptime resets, and
+`ERROR`/`CRITICAL` log-record rate by surface.
+
+The route is never gated, but the exported series are: `create_metric_readers`
+in `src/gobby/telemetry/exporters.py` attaches the Prometheus reader only when
+`telemetry.metrics_enabled` and `telemetry.exporter.prometheus_enabled` are both
+true. With either off the endpoint still returns 200 with only
+`prometheus_client` process defaults, so a scrape target reads UP while every
+Gobby series is absent. Gobby neither starts nor supervises the containers.
+
 ## CLI
 
 Use the CLI for operator-level checks:
@@ -410,6 +429,7 @@ isolated fixture transcripts and the test hub, never live user sessions.
 
 - [web-ui.md](web-ui.md)
 - [configuration.md](configuration.md#logging-and-telemetry)
+- [Observability compose example (Prometheus + Grafana)](../examples/observability/README.md)
 - [OpenTelemetry log collector reference](../examples/otel-collector/README.md)
 - [cron-scheduler.md](cron-scheduler.md)
 - [mcp-tools.md](mcp-tools.md)

@@ -21,6 +21,7 @@
 //! them reproduces the bindgen output byte for byte. Edit nothing here by
 //! hand — rerun the command above and re-split.
 
+// reason: generated libghostty-vt bindings are not hand-maintained.
 #![allow(
     dead_code,
     non_camel_case_types,

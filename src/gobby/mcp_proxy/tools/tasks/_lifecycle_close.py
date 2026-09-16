@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseEvaluationFingerprint,
     format_git_since,
+    task_edit_languages,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     closes_as_structural_parent as _closes_as_structural_parent,
@@ -72,7 +73,7 @@ from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
 )
@@ -562,6 +563,10 @@ async def _evaluate_close(
                 attempted_paths=tuple(attempted_paths),
                 degraded_capabilities=(message,),
             )
+        transcript = replace(
+            transcript,
+            edit_languages=task_edit_languages(ctx, task.project_id, transcript.edits),
+        )
         evaluation.transcript_evidence = transcript.summary()
         command_gate = replace(
             evaluate_validation_commands(

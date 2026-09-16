@@ -36,7 +36,7 @@ _GROK_POLICY_BLOCK_REASON = "Blocked by Gobby hook"
 # names the file holding the full JSON, <session>/mcp/<toolUseId>.json.
 _MCP_SPILL_NOTICE = re.compile(
     r"\n\n\[MCP output truncated: [^\]]*? Full output written to: (?P<path>/.+?\.json)\. "
-    r"The full output is valid JSON saved to the file above;[^\]]*\]\Z"
+    r"The full output is valid JSON[^\]]*\]\Z"
 )
 
 

@@ -545,18 +545,7 @@ SEED_TABLE_SPECS: Mapping[str, SeedTableSpec] = {
     "projects": SeedTableSpec(
         key_columns=("id",),
         machine_mutable_columns=frozenset({"created_at", "updated_at"}),
-        live_mutable_columns=frozenset(
-            {
-                "deleted_at",
-                "github_repo",
-                "github_url",
-                "linear_project_id",
-                "linear_sync_enabled",
-                "linear_synced_at",
-                "linear_team_id",
-                "repo_path",
-            }
-        ),
+        live_mutable_columns=frozenset({"deleted_at"}),
         live_namespace_owned=False,
         live_owned_key_prefixes=("00000000-",),
     ),

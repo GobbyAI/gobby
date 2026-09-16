@@ -26,15 +26,17 @@ from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
+    _resolve_transcript_path,
+    derive_transcript_evidence,
+    merge_transcript_evidence,
+    select_window_raw_lines,
+)
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
     TranscriptValidationSegment,
-    _resolve_transcript_path,
-    derive_transcript_evidence,
-    merge_transcript_evidence,
-    select_window_raw_lines,
 )
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
@@ -74,9 +76,11 @@ def _raise_missing_transcript() -> None:
 
 
 def test_missing_transcript_exception_preserves_process_pool() -> None:
-    with ProcessPoolExecutor(
-        max_workers=1, mp_context=multiprocessing.get_context("spawn")
-    ) as pool:
+    try:
+        pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+    except OSError as exc:
+        pytest.skip(f"process pool unavailable: {exc}")
+    with pool:
         worker_pid = pool.submit(os.getpid).result(timeout=15)
         with pytest.raises(
             TranscriptEvidenceUnavailable, match="No transcript was found"
@@ -318,6 +322,82 @@ async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) 
     ]
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "Edit")]
     assert evidence.validation_runs[0].completed_at < evidence.edits[0].timestamp
+
+
+_CLAUDE_USER_REJECTED = (
+    "The user doesn't want to proceed with this tool use. The tool use was rejected "
+    "(eg. if it was a file edit, the new_string was NOT written to the file). "
+    "STOP what you are doing and wait for the user to tell you how to proceed."
+)
+_HOOK_BLOCKED = (
+    "Rule enforced by Gobby: [step-enforcement:backend-developer/load_required_skills]\n"
+    'get_skill_file(name="gobby", path="references/development/obligations.md")'
+)
+_PERMISSION_DENIED = "Permission to use Bash has been denied."
+_UNEXECUTED_VALIDATION_COMMAND = "uv run ruff check src/ tests/sync/test_jsonl_io.py"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(_CLAUDE_USER_REJECTED, id="rejected"),
+        pytest.param(_HOOK_BLOCKED, id="hook-blocked"),
+        pytest.param(_PERMISSION_DENIED, id="permission-denied"),
+        pytest.param(f"Hook denied: {_HOOK_BLOCKED}", id="hook-denied-prefix"),
+    ],
+)
+async def test_declined_tool_call_is_not_validation_evidence(tmp_path: Path, result: str) -> None:
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command=_UNEXECUTED_VALIDATION_COMMAND,
+            call_id="denied-1",
+            start=BASE_TIME,
+            result=result,
+            is_error=True,
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert evidence.validation_runs == ()
+    assert evidence.command_runs == ()
+    assert evidence.degraded_capabilities == ()
+
+
+@pytest.mark.asyncio
+async def test_executed_tool_failure_without_exit_code_is_still_failure(tmp_path: Path) -> None:
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="uv run ruff check src/gobby",
+            call_id="fail-1",
+            start=BASE_TIME,
+            result="ruff check found 3 errors",
+            is_error=True,
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code, run.categories) for run in evidence.validation_runs] == [
+        ("failure", None, ("lint", "type_check"))
+    ]
 
 
 @pytest.mark.asyncio
@@ -2655,6 +2735,10 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
         TranscriptValidationSegment(command="pytest tests/unit -q", categories=("test",)),
     )
     assert [segment.segment_index for segment in run.validation_segments] == [0, 1]
+    assert [(segment.languages, segment.bounded_inputs) for segment in run.validation_segments] == [
+        (("python",), True),
+        (("python",), False),
+    ]
 
 
 @pytest.mark.asyncio

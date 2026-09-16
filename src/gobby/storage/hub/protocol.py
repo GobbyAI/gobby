@@ -18,7 +18,6 @@ __all__ = [
     "DispatchMutexRow",
     "ExpansionApplyMutation",
     "HubDatabase",
-    "GitHubIssueTriageMutation",
     "IntegrationWorkspaceMutex",
     "IsolationRegistryReconciliation",
     "LockAcquisitionOrderError",
@@ -95,16 +94,6 @@ class CronRunAdmission:
     """Serializes cron run admission against global active-run caps."""
 
     PRIORITY: ClassVar[int] = 100
-
-
-@dataclass(frozen=True)
-class GitHubIssueTriageMutation:
-    """Serializes task creation or update for one GitHub issue."""
-
-    PRIORITY: ClassVar[int] = 150
-    project_id: str
-    repo: str
-    issue_number: int
 
 
 @dataclass(frozen=True)

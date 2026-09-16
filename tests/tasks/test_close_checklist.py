@@ -12,12 +12,12 @@ from gobby.tasks.close_checklist import (
     first_failed_gate,
 )
 from gobby.tasks.command_equivalence import scope_difference
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence import merge_transcript_evidence
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
-    merge_transcript_evidence,
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
@@ -255,6 +255,8 @@ def _audit_run(
             TranscriptValidationSegment(
                 command=normalized_command,
                 categories=("type_check",),
+                languages=("python",),
+                bounded_inputs=True,
             ),
         ),
     )
@@ -464,6 +466,112 @@ def test_stale_test_types_audit_does_not_satisfy_guard() -> None:
 
     assert gate.status == "failed"
     assert gate.details["latest_test_types_audit"] is None
+
+
+def test_bounded_audit_survives_later_edit_in_other_language() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_audit_run(1), _run(3)),
+            edits=(replace(_edit(2), path="web/src/fixtures.ts"),),
+            edit_languages={"web/src/fixtures.ts": "typescript"},
+        ),
+        has_attributed_edits=True,
+        validation_criteria=(
+            "Run `uv run gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new`."
+        ),
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["latest_test_types_audit"]["outcome"] == "success"
+    assert gate.details["criterion_commands"][0]["status"] == "satisfied"
+    assert gate.details["uncredited_runs"] == []
+    assert gate.details["excluded_runs"] == []
+
+
+@pytest.mark.parametrize(
+    ("path", "languages"),
+    [
+        ("tests/tasks/test_close_checklist.py", {"tests/tasks/test_close_checklist.py": "python"}),
+        (".github/workflows/ci.yml", {".github/workflows/ci.yml": "yaml"}),
+        (".gobby/test-types-baseline.json", {".gobby/test-types-baseline.json": "json"}),
+        ("pyproject.toml", {}),
+    ],
+)
+def test_bounded_audit_is_stale_after_affecting_edit(path: str, languages: dict[str, str]) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_audit_run(1), _run(4)),
+            edits=(replace(_edit(2), path="web/src/app.ts"), replace(_edit(3), path=path)),
+            edit_languages={"web/src/app.ts": "typescript", **languages},
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+    (stale,) = [
+        record for record in gate.details["excluded_runs"] if record["reason_code"] == "stale"
+    ]
+    assert stale["invalidating_edit"]["path"] == path
+    assert [record["invalidating_edit"]["path"] for record in gate.details["uncredited_runs"]] == [
+        path
+    ]
+
+
+def test_test_category_and_compound_runs_stay_globally_stale() -> None:
+    test_run = replace(
+        _run(1, command="uv run pytest tests/test_x.py"),
+        validation_segments=(
+            TranscriptValidationSegment(
+                command="pytest tests/test_x.py",
+                categories=("test",),
+                languages=("python",),
+                bounded_inputs=True,
+            ),
+        ),
+    )
+    compound = replace(
+        _run(
+            2,
+            categories=("lint", "type_check"),
+            command="uv run ruff check src/ && uv run mypy src/",
+        ),
+        validation_segments=(
+            TranscriptValidationSegment(
+                command="ruff check src/",
+                categories=("lint", "type_check"),
+                languages=("python",),
+                bounded_inputs=True,
+            ),
+            TranscriptValidationSegment(
+                command="mypy src/",
+                categories=("lint", "type_check"),
+                segment_index=1,
+                languages=("python",),
+                bounded_inputs=True,
+            ),
+        ),
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(test_run, compound),
+            edits=(replace(_edit(3), path="web/src/app.ts"),),
+            edit_languages={"web/src/app.ts": "typescript"},
+        ),
+        has_attributed_edits=True,
+        validation_criteria="Run `uv run mypy src/`.",
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["fresh_run_count"] == 0
+    assert [record["reason_code"] for record in gate.details["excluded_runs"]] == ["stale", "stale"]
+    assert [record["status"] for record in gate.details["criterion_commands"]] == ["stale"]
 
 
 @pytest.mark.parametrize(

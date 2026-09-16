@@ -67,6 +67,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("BEFORE_TOOL: %s, session %s", tool_name, session_id)
+            ensure_subagent = getattr(self, "_ensure_bound_grok_native_subagent", None)
+            if ensure_subagent is not None:
+                ensure_subagent(event, session_id)
             if event.wait_kind is not None:
                 self._enter_turn_wait(event, event.wait_kind)
             else:

@@ -77,6 +77,7 @@ pub(crate) fn underline_style_from_modifier(modifier: u16) -> u8 {
     ((modifier & UNDERLINE_STYLE_MASK) >> UNDERLINE_STYLE_SHIFT) as u8
 }
 
+#[cfg(feature = "vt-engine")]
 pub(crate) fn modifier_with_underline_style(
     modifier: ratatui::style::Modifier,
     underline_style: u8,

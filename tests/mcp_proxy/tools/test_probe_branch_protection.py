@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 
-import gobby.mcp_proxy.tools.merge as merge_tools
 from gobby.mcp_proxy.tools.merge import create_merge_registry
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from tests.mcp_proxy.tools.git_helpers import GitResult
@@ -22,7 +20,7 @@ def _origin_remote(monkeypatch: pytest.MonkeyPatch) -> None:
             return_value=GitOk(
                 status="ok",
                 argv=("git", "remote", "get-url", "origin"),
-                stdout="https://github.com/acme/widgets.git\n",
+                stdout="https://example.invalid/acme/widgets.git\n",
                 stderr="",
             )
         ),
@@ -38,73 +36,25 @@ def _registry(git_manager: MagicMock):
     )
 
 
-def _mock_github(monkeypatch: pytest.MonkeyPatch, response: httpx.Response) -> None:
-    original_client = httpx.AsyncClient
-    transport = httpx.MockTransport(lambda _request: response)
-
-    def client_factory(**kwargs):
-        return original_client(
-            transport=transport,
-            timeout=kwargs.get("timeout"),
-        )
-
-    monkeypatch.setattr(merge_tools.httpx, "AsyncClient", client_factory)
-
-
 @pytest.mark.asyncio
-async def test_probe_branch_protection_reads_github_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_probe_branch_protection_dry_run_success_is_unprotected() -> None:
     git_manager = MagicMock()
-    _mock_github(
-        monkeypatch,
-        httpx.Response(
-            200,
-            json={
-                "required_status_checks": {
-                    "strict": True,
-                    "contexts": ["test"],
-                    "checks": [{"context": "lint"}],
-                },
-                "required_pull_request_reviews": {
-                    "required_approving_review_count": 2,
-                },
-            },
-        ),
-    )
+    git_manager.run_git_command = AsyncMock(return_value=GitResult(0, stdout="ok"))
 
     result = await _registry(git_manager).call(
         "probe_branch_protection",
         {"repo_path": "/repo", "branch": "main"},
     )
 
-    assert result["requires_pr"] is True
-    assert result["requires_status_checks"] == ["lint", "test"]
-    assert result["requires_up_to_date"] is True
-    assert result["requires_review_count"] == 2
-    assert result["protection_unknown"] is False
-
-
-@pytest.mark.asyncio
-async def test_probe_branch_protection_404_means_unprotected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    git_manager = MagicMock()
-    _mock_github(monkeypatch, httpx.Response(404, json={"message": "Not Found"}))
-
-    result = await _registry(git_manager).call(
-        "probe_branch_protection",
-        {"repo_path": "/repo", "branch": "main"},
-    )
-
+    assert result["success"] is True
     assert result["requires_pr"] is False
-    assert result["source"] == "github_api"
-    assert result["owner"] == "acme"
-    assert result["repo"] == "widgets"
+    assert result["source"] == "push_dry_run"
+    assert result["protection_unknown"] is False
+    git_manager.run_git_command.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_probe_branch_protection_403_falls_back_to_dry_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_probe_branch_protection_dry_run_protected_marker_requires_pr() -> None:
     git_manager = MagicMock()
     git_manager.run_git_command = AsyncMock(
         return_value=GitResult(
@@ -112,7 +62,6 @@ async def test_probe_branch_protection_403_falls_back_to_dry_run(
             stderr="remote: error: GH006: Protected branch update failed",
         )
     )
-    _mock_github(monkeypatch, httpx.Response(403, text="Forbidden"))
 
     result = await _registry(git_manager).call(
         "probe_branch_protection",
@@ -120,10 +69,27 @@ async def test_probe_branch_protection_403_falls_back_to_dry_run(
     )
 
     assert result["requires_pr"] is True
-    assert result["source"] == "push_dry_run_after_403"
+    assert result["source"] == "push_dry_run"
     assert result["protection_unknown"] is False
 
 
+@pytest.mark.asyncio
+async def test_probe_branch_protection_dry_run_unknown_failure_is_unknown() -> None:
+    git_manager = MagicMock()
+    git_manager.run_git_command = AsyncMock(
+        return_value=GitResult(1, stderr="fatal: could not read Username")
+    )
+
+    result = await _registry(git_manager).call(
+        "probe_branch_protection",
+        {"repo_path": "/repo", "branch": "main"},
+    )
+
+    assert result["requires_pr"] is True
+    assert result["protection_unknown"] is True
+
+
+@pytest.mark.asyncio
 async def test_probe_branch_protection_fails_closed_when_git_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

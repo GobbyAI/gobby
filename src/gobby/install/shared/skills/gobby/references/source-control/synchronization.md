@@ -20,7 +20,8 @@ Discover `sync_worktree`, `push_branch` on `gobby-worktrees` and `sync_clone` on
 
 `merge_worktree` and `merge_clone` are local landing operations; they do not
 replace publication or PR review. Passing push/prefer-remote options to force
-local landing into remote delivery is unsupported. Use [PR delivery](pr-delivery.md).
+local landing into remote delivery is unsupported. Open a GitHub PR through the
+GitHub MCP server when that publication is authorized.
 
 The worktree push implementation invokes Git with `--no-verify`; complete the
 repository's required checks explicitly before publication. Do not infer a green

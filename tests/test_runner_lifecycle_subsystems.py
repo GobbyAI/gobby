@@ -56,18 +56,26 @@ def _minimal_init_runner() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_periodic_agent_reconciliation_includes_task_close_reviews(
+async def test_periodic_agent_reconciliation_rotates_credentials_before_runs_and_reviews(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner = SimpleNamespace()
     calls: list[str] = []
 
-    async def agent_reconcile(received: SimpleNamespace) -> int:
+    def rotate_due() -> list[str]:
+        calls.append("credentials")
+        return ["execution-a", "execution-b"]
+
+    runner = cast(
+        "GobbyRunner",
+        SimpleNamespace(managed_credential_manager=SimpleNamespace(rotate_due=rotate_due)),
+    )
+
+    async def agent_reconcile(received: GobbyRunner) -> int:
         assert received is runner
         calls.append("runs")
         return 2
 
-    async def review_reconcile(received: SimpleNamespace) -> int:
+    async def review_reconcile(received: GobbyRunner) -> int:
         assert received is runner
         calls.append("reviews")
         return 3
@@ -85,8 +93,38 @@ async def test_periodic_agent_reconciliation_includes_task_close_reviews(
 
     reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
 
+    assert reconciled == 7
+    assert calls == ["credentials", "runs", "reviews"]
+
+
+@pytest.mark.asyncio
+async def test_failed_credential_rotation_does_not_stop_run_and_review_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def rotate_due() -> list[str]:
+        raise RuntimeError("hub unavailable")
+
+    runner = cast(
+        "GobbyRunner",
+        SimpleNamespace(managed_credential_manager=SimpleNamespace(rotate_due=rotate_due)),
+    )
+    monkeypatch.setattr(
+        lifecycle_subsystems,
+        "_reclassify_reconciliation_pending_runs",
+        AsyncMock(return_value=2),
+    )
+    monkeypatch.setattr(
+        lifecycle_subsystems,
+        "_reconcile_task_close_reviews",
+        AsyncMock(return_value=3),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+        reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
+
     assert reconciled == 5
-    assert calls == ["runs", "reviews"]
+    assert "Managed credential rotation failed" in caplog.text
 
 
 @pytest.mark.asyncio

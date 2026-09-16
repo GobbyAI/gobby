@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.merge_branch_protection_tool import register_branch_protection_tool
 from gobby.mcp_proxy.tools.merge_direct import (
@@ -21,7 +19,6 @@ from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.worktrees.git import WorktreeGitManager
     from gobby.worktrees.merge import MergeResolver
@@ -32,7 +29,6 @@ def create_merge_registry(
     merge_resolver: MergeResolver,
     git_manager: WorktreeGitManager | None = None,
     worktree_manager: Any | None = None,
-    db: HubDatabase | None = None,
 ) -> InternalToolRegistry:
     """
     Create a merge tool registry with all merge-related tools.
@@ -42,7 +38,6 @@ def create_merge_registry(
         merge_resolver: MergeResolver for AI-powered conflict resolution.
         git_manager: WorktreeGitManager for git operations.
         worktree_manager: LocalWorktreeManager for resolving worktree paths.
-        db: Local database for resolving GitHub tokens.
 
     Returns:
         InternalToolRegistry with all merge tools registered.
@@ -66,8 +61,6 @@ def create_merge_registry(
         registry,
         git_manager=git_manager,
         worktree_manager=worktree_manager,
-        db=db,
-        async_client_factory=httpx.AsyncClient,
     )
     register_merge_landscape_tools(
         registry,

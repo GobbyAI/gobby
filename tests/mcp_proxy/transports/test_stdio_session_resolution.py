@@ -31,7 +31,6 @@ class _FakeDb:
                 "id": PROJECT_ID,
                 "name": "test-project",
                 "repo_path": None,
-                "github_url": None,
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             }

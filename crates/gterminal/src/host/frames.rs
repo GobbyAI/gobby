@@ -13,8 +13,7 @@ use super::embed::{self, AttachOutcome};
 use super::state::HostState;
 use crate::protocol::{
     check_client_version, read_message, validate_dimensions, write_message, ClientMessage,
-    FramingError, RenderEncoding, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE,
-    PROTOCOL_VERSION,
+    FramingError, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE,
 };
 
 const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -357,16 +356,6 @@ async fn write_frame<M: serde::Serialize>(
     write_message(&mut buf, msg).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     writer.write_all(&buf).await?;
     writer.flush().await
-}
-
-#[allow(dead_code)]
-fn _protocol_version() -> u32 {
-    PROTOCOL_VERSION
-}
-
-#[allow(dead_code)]
-fn _duration() -> Duration {
-    Duration::from_millis(1)
 }
 
 #[cfg(test)]
