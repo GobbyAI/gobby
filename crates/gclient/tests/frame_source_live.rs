@@ -704,7 +704,6 @@ async fn cancelled_direct_read_retires_and_closes_both_halves() {
             timeout(IO_TIMEOUT, host.read(&mut byte))
                 .await
                 .expect("cancelled source closes socket")
-                .expect("socket close")
         });
         let mut source = UnixSocketFrameSource::connect_stream(
             client,
@@ -724,7 +723,14 @@ async fn cancelled_direct_read_retires_and_closes_both_halves() {
                 .await,
             Err(FrameError::Cancelled)
         ));
-        assert_eq!(host_task.await.expect("host task"), 0);
+        // The cancelled reader may leave partial bytes unread; closing an
+        // AF_UNIX socket with unread bytes resets the peer on Linux, while
+        // macOS reads EOF. Either is the close.
+        match host_task.await.expect("host task") {
+            Ok(0) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+            other => panic!("socket close: {other:?}"),
+        }
     }
 
     let (client, mut host) = UnixStream::pair().expect("writer socket pair");

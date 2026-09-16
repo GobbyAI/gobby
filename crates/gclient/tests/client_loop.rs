@@ -4774,41 +4774,38 @@ async fn ctrl_click_link_with(opener: &str) -> Chrome {
     chrome.link_opener = opener.to_string();
     let (input_tx, input_rx) = mpsc::channel(256);
 
-    let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
-        settle_live_event().await;
-        send_mouse(
-            &input_tx,
-            MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            KeyModifiers::CONTROL,
-        )
-        .await;
-        send_mouse(
-            &input_tx,
-            MouseEventKind::Up(MouseButton::Left),
-            column,
-            row,
-            KeyModifiers::CONTROL,
-        )
-        .await;
-        settle_live_event().await;
-        drop(input_tx);
-    };
+    // Queue the click before the loop starts: the loop draws before its first
+    // select and input outranks frames there, so the click routes before the
+    // spent scripted source's EOF starts a proxy fallback, which would defer
+    // it and drop it once input closes.
+    send_mouse(
+        &input_tx,
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        KeyModifiers::CONTROL,
+    )
+    .await;
+    send_mouse(
+        &input_tx,
+        MouseEventKind::Up(MouseButton::Left),
+        column,
+        row,
+        KeyModifiers::CONTROL,
+    )
+    .await;
+    drop(input_tx);
 
     let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
+    run_live_loop(
+        &mut workspace,
+        &mut terminal,
+        &mut chrome,
+        input_rx,
+        &mut switch,
+    )
+    .await
+    .expect("live loop exits cleanly");
     chrome
 }
 
