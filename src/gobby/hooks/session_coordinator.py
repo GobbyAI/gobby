@@ -34,6 +34,7 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import TerminalAction
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 
 if TYPE_CHECKING:
@@ -882,6 +883,18 @@ class SessionCoordinator:
         db = getattr(self._agent_run_manager, "db", None)
         if db is None:
             return None
+
+        try:
+            if CoordinationWaitManager(db).has_active_wait(session_id):
+                # Yielding the turn is how a registered wait is served: the step is
+                # incomplete precisely because the session is waiting on another
+                # session, and the wake resumes it. Failing the run here would punish
+                # the coordination the workflow asked for (#22367).
+                return None
+        except Exception as e:
+            self.logger.warning(
+                "Failed to verify coordination hold for session %s: %s", session_id, e
+            )
 
         try:
             from gobby.workflows.step_context import first_incomplete_step_workflow

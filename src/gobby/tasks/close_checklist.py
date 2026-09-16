@@ -20,7 +20,7 @@ from gobby.tasks.criterion_commands import (
     expand_successful_and_segments,
     first_invalidating_edit,
 )
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
 )

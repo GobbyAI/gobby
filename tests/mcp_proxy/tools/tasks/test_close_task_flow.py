@@ -41,7 +41,7 @@ from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import TddEvidenceResult
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,

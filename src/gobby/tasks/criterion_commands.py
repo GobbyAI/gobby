@@ -16,7 +16,7 @@ from gobby.tasks.command_equivalence import (
     parse_validation_shell,
     scope_difference,
 )
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,

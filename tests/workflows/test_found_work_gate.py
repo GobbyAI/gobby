@@ -19,7 +19,7 @@ from gobby.config.validation_detection import (
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
