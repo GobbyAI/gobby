@@ -1,0 +1,172 @@
+{
+  "provider": "droid",
+  "capture_type": "live_session_transcript_extract",
+  "capture_status": "live_proven",
+  "cli_version": "0.219.0",
+  "captured_at": "2026-09-16",
+  "capture_notes": "Extract of a spawn_agent droid exec run (glm-5.3-flash, tmux, sandboxed). Kept: session_start, the prompt, the first tool-calling turn, the Skill PreToolUse hook record, both tool results, the final answer, and the turn outcome. Dropped: system-reminder context records, other hook records, thinking blocks, reasoning fields, and a later rule-driven follow-up turn. The router menu is cut to its first three entries identically in the hook stdout and the tool result, and the final answer to its first paragraph. Identifiers, owner, organization, host, and paths are sanitized. settings is a key subset of the <session>.settings.json sidecar; the daemon recorded context_used_tokens=21213 for this live session.",
+  "records": [
+    {
+      "type": "session_start",
+      "id": "00000000-0000-4000-8000-000000000221",
+      "title": "This is a read-only compatibility probe. Do not create, modify, or delete any files, and do not claim or close tasks. 1. Use your shell tool (Execute)...",
+      "owner": "<OWNER>",
+      "organizationId": "<ORGANIZATION_ID>",
+      "version": 2,
+      "cwd": "<WORKSPACE>",
+      "hostId": "<HOST_ID>",
+      "isSessionTitleManuallySet": false
+    },
+    {
+      "type": "message",
+      "id": "message-1",
+      "timestamp": "2026-09-16T18:30:33.432Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "This is a read-only compatibility probe. Do not create, modify, or delete any files, and do not claim or close tasks.\n\n1. Use your shell tool (Execute) to run exactly: command -v ps; ps -o ppid= -p $$; echo \"shell=$0\"\n2. Invoke your Skill tool with the skill named gobby, and note exactly what the tool result or denial reason says.\n3. Reply with the verbatim output of step 1 and the verbatim text you received in step 2, then end your turn."
+          }
+        ],
+        "interactionMode": "auto"
+      }
+    },
+    {
+      "type": "message",
+      "id": "message-3",
+      "parentId": "message-1",
+      "timestamp": "2026-09-16T18:30:39.345Z",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll run both probe steps now."
+          },
+          {
+            "type": "tool_use",
+            "id": "tool-call-execute",
+            "name": "Execute",
+            "input": {
+              "summary": "Run read-only shell compatibility probe",
+              "command": "command -v ps; ps -o ppid= -p $$; echo \"shell=$0\"",
+              "riskLevelReason": "The command only reads shell/process information and writes nothing, so it is strictly read-only.",
+              "riskLevel": "low"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "tool-call-skill",
+            "name": "Skill",
+            "input": {
+              "skill": "gobby"
+            }
+          }
+        ],
+        "openaiMessageId": "<OPENAI_MESSAGE_ID>",
+        "modelId": "glm-5.3-flash",
+        "apiProvider": "fireworks",
+        "reasoningEffort": "high"
+      }
+    },
+    {
+      "type": "message",
+      "id": "message-4",
+      "parentId": "message-3",
+      "timestamp": "2026-09-16T18:30:39.590Z",
+      "message": {
+        "role": "user",
+        "content": [],
+        "visibility": "user_only",
+        "hookEventName": "PreToolUse",
+        "hookMatcher": "Skill",
+        "hookCommands": [
+          {
+            "type": "command",
+            "command": "<HOME>/.gobby/bin/ghook --gobby-owned --cli=droid --type=PreToolUse",
+            "timeout": 120
+          }
+        ],
+        "hookStatus": "completed",
+        "hookResults": [
+          {
+            "exitCode": 0,
+            "stdout": "{\"continue\":true,\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Gobby router resolved through its capability catalog\\n\\n- `/gobby tasks` — Discover, own, verify, and complete task work\\n- `/gobby plan` — Draft, verify, approve, and expand implementation plans\\n- `/gobby build` — Start, coordinate, monitor, and recover stage automation\"}}\n",
+            "stderr": ""
+          }
+        ],
+        "hookToolCallId": "tool-call-skill",
+        "hookOrder": 1789583439353001,
+        "hookStartTime": 1789583439353,
+        "hookEndTime": 1789583439590
+      }
+    },
+    {
+      "type": "message",
+      "id": "message-5",
+      "parentId": "message-3",
+      "timestamp": "2026-09-16T18:30:40.061Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool-call-skill",
+            "is_error": true,
+            "content": "Error: Gobby router resolved through its capability catalog\n\n- `/gobby tasks` — Discover, own, verify, and complete task work\n- `/gobby plan` — Draft, verify, approve, and expand implementation plans\n- `/gobby build` — Start, coordinate, monitor, and recover stage automation"
+          },
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool-call-execute",
+            "is_error": false,
+            "content": "<HOME>/.gobby/runtime/droid-ps-shim/a06fe087161557f1/ps\n78028\nshell=/bin/bash\n\n\n[Process exited with code 0]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "message",
+      "id": "message-6",
+      "parentId": "message-5",
+      "timestamp": "2026-09-16T18:30:53.482Z",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Both probe steps completed. No files were created, modified, or deleted, and no tasks were claimed or closed."
+          }
+        ],
+        "openaiMessageId": "<OPENAI_MESSAGE_ID>",
+        "modelId": "glm-5.3-flash",
+        "apiProvider": "fireworks",
+        "reasoningEffort": "high"
+      }
+    },
+    {
+      "type": "agent_turn_outcome",
+      "turnId": "<TURN_ID>",
+      "reason": "completed",
+      "resultKind": "text"
+    }
+  ],
+  "settings": {
+    "model": "glm-5.3-flash",
+    "reasoningEffort": "high",
+    "autonomyMode": "auto-high",
+    "tokenUsage": {
+      "inputTokens": 33978,
+      "outputTokens": 2214,
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 81920,
+      "thinkingTokens": 0,
+      "factoryCredits": 3468
+    },
+    "lastCallTokenUsage": {
+      "inputTokens": 733,
+      "outputTokens": 230,
+      "cacheReadTokens": 20480
+    }
+  }
+}

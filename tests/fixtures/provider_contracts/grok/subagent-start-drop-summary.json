@@ -1,4 +1,5 @@
 {
+  "provider": "grok",
   "capture_type": "gobby-hooks-log-and-grok-discovery",
   "grok_version": "1.0.30",
   "debug_trace": "subagent-start-debug-trace.json",
