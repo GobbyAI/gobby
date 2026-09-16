@@ -7,6 +7,8 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use bytes::Bytes;
 use gobby_terminal::pane::{PaneShellConfig, ShellMode};
 use gobby_terminal::protocol::{
@@ -411,28 +413,70 @@ fn start_host(dir: &Path, extra: &[&str]) -> (host_support::HostProc, UnixStream
     (child, control, dir.join(FRAMES_SOCKET))
 }
 
+/// Read the next message, or `None` when the peer stays silent for `idle`.
+fn next_message(stream: &mut UnixStream, idle: Duration) -> Option<ServerMessage> {
+    stream.set_read_timeout(Some(idle)).expect("read timeout");
+    match read_message(stream, MAX_FRAME_SIZE) {
+        Ok(message) => Some(message),
+        Err(err) if is_timeout(&err) => None,
+        other => panic!("frame peer should stay connected, got {other:?}"),
+    }
+}
+
+/// Echo one unique line into the terminal so the next producer tick has a real
+/// change. Repeating the same line would scroll into an identical screen, which
+/// the encoder correctly treats as nothing to send.
+fn write_line(control: &mut UnixStream, host_terminal_id: &str, operation_seq: u64) {
+    let data = STANDARD.encode(format!("line-{operation_seq:06}"));
+    assert_eq!(
+        rpc(
+            control,
+            "write",
+            json!({
+                "operation_seq": operation_seq,
+                "host_terminal_id": host_terminal_id,
+                "kind": "text",
+                "encoding": "utf8-b64",
+                "data": data,
+                "submit": true,
+            }),
+        )["ok"],
+        true,
+        "control write must reach the terminal"
+    );
+}
+
+fn is_delta(message: &ServerMessage) -> bool {
+    matches!(message, ServerMessage::Terminal(frame) if !frame.full)
+}
+
+/// The wire half of the slow-observer contract: the peer is caught up by
+/// exactly one replacement keyframe, and the bytes the kernel held for it
+/// never exceed `delta_queue_bytes`. No control stat reports per-observer
+/// queued bytes, so the host-side half -- the mailbox high-water mark --
+/// is proved by `queued_bytes_never_exceed_the_delta_queue_cap` in
+/// `src/host/backpressure/tests.rs`.
 #[test]
 fn slow_observer_resyncs_with_one_keyframe() {
     let dir = tempfile::tempdir().expect("tempdir");
     let rows = 8;
     let cols = 24;
-    // One local 8x24 keyframe plus slack; a second live frame must overflow.
-    let cap = one_keyframe_cap(rows, cols).saturating_add(256);
+    // Admits one ANSI keyframe for this screen (asserted from the wire below)
+    // plus a few deltas. The host pins the peer socket's SO_SNDBUF to the same
+    // value, so the kernel can never hold more than the cap either.
+    let cap = 1024usize;
     let cap_arg = cap.to_string();
     let (_child, mut control, frames_path) = start_host(
         dir.path(),
         &["--delta-queue-bytes", &cap_arg, "--lag-timeout-ms", "5000"],
     );
-    // Finite burst then idle so the replacement keyframe is not mixed with live
-    // frames. 150 lines at 10ms overflows a one-keyframe cap without hitting lag.
+    // Screen changes come from control writes, so the producer is quiet exactly
+    // when the test stops writing. "Exactly one replacement keyframe" is then
+    // observable on the peer socket as silence after that keyframe.
     let host_terminal_id = spawn_committed(
         &mut control,
         "term-keyframe",
-        &[
-            "/bin/sh",
-            "-c",
-            "i=0; while [ \"$i\" -lt 150 ]; do i=$((i+1)); printf '%048d\\n' \"$i\"; sleep 0.01; done; exec sleep 30",
-        ],
+        &["/bin/sh", "-c", "exec sleep 30"],
         rows,
         cols,
     );
@@ -440,75 +484,104 @@ fn slow_observer_resyncs_with_one_keyframe() {
     let mut slow = attach_observer(
         &frames_path,
         &host_terminal_id,
-        RenderEncoding::SemanticFrame,
+        RenderEncoding::TerminalAnsi,
         rows,
         cols,
     );
     let mut fast = attach_observer(
         &frames_path,
         &host_terminal_id,
-        RenderEncoding::SemanticFrame,
+        RenderEncoding::TerminalAnsi,
         rows,
         cols,
     );
-    let initial = drain_frames(&mut slow, Duration::from_millis(80));
+    let initial = drain_frames(&mut slow, Duration::from_millis(200));
+    let first_keyframe = initial
+        .iter()
+        .find(|message| is_keyframe(message))
+        .unwrap_or_else(|| panic!("slow observer should see the initial keyframe: {initial:?}"));
     assert!(
-        initial.iter().any(is_keyframe),
-        "slow observer should see the initial keyframe before pause: {initial:?}"
+        encoded_bytes(first_keyframe) <= cap,
+        "the byte cap must admit one keyframe; keyframe={} cap={cap}",
+        encoded_bytes(first_keyframe)
     );
-    let _ = drain_frames(&mut fast, Duration::from_millis(80));
-    let during = read_frames_for(&mut fast, Duration::from_millis(2000));
+    let _ = drain_frames(&mut fast, Duration::from_millis(200));
+
+    // `slow` stops reading here. Thirty screen changes are far more than its
+    // byte cap holds, while `fast` drains every one of them.
+    let mut operation_seq = 2u64;
+    let mut kept_reading = 0usize;
+    for _ in 0..30 {
+        write_line(&mut control, &host_terminal_id, operation_seq);
+        operation_seq += 1;
+        // One change per producer tick: the 30 ms broadcast interval would
+        // otherwise fold a burst of writes into a single delta.
+        let tick = Instant::now() + Duration::from_millis(45);
+        while Instant::now() < tick {
+            if next_message(&mut fast, Duration::from_millis(45)).is_some() {
+                kept_reading += 1;
+            }
+        }
+    }
     assert!(
-        during >= 4,
-        "continuously reading observer must keep receiving frames while the slow one pauses; got {during}"
+        kept_reading >= 4,
+        "a continuously reading observer must keep receiving frames while the slow one pauses; got {kept_reading}"
     );
 
-    slow.set_read_timeout(Some(Duration::from_millis(500)))
-        .expect("slow timeout");
-    let replacement = match read_message(&mut slow, MAX_FRAME_SIZE) {
-        Ok(message) => message,
-        other => panic!("resync must deliver a replacement keyframe, got {other:?}"),
+    // Resume. Whatever the kernel accepted before the queue collapsed is a stale
+    // delta; the mailbox holds one keyframe in place of everything it dropped.
+    let mut stale: Vec<ServerMessage> = Vec::new();
+    let replacement = loop {
+        let Some(message) = next_message(&mut slow, Duration::from_millis(1000)) else {
+            panic!(
+                "resync must deliver a replacement keyframe; stale={} frames",
+                stale.len()
+            );
+        };
+        if is_keyframe(&message) {
+            break message;
+        }
+        assert!(
+            is_delta(&message),
+            "pre-collapse traffic must be deltas, got {message:?}"
+        );
+        stale.push(message);
     };
-    let queued_bytes = encoded_bytes(&replacement);
-    assert!(is_keyframe(&replacement), "resync frame must be a keyframe");
+    // Everything the kernel accepted before the writer blocked fits the cap; the
+    // blocked write is the single message beyond it.
+    let stale_bytes: usize = stale.iter().map(encoded_bytes).sum();
+    let accepted = stale_bytes.saturating_sub(stale.last().map_or(0, encoded_bytes));
     assert!(
-        queued_bytes <= cap,
-        "byte cap never exceeded; queued={queued_bytes} cap={cap}"
+        accepted <= cap,
+        "bytes held for the paused peer never exceeded the cap; accepted={accepted} cap={cap} stale={} frames",
+        stale.len()
     );
-    // The socket may still hold one in-flight write from before collapse.
-    // The mailbox holds exactly one replacement keyframe. Later broadcasts
-    // arrive on the 30ms producer interval, not in this burst.
-    slow.set_read_timeout(Some(Duration::from_millis(2)))
-        .expect("burst timeout");
-    let mut burst = vec![replacement];
-    loop {
-        match read_message(&mut slow, MAX_FRAME_SIZE) {
-            Ok(message) => burst.push(message),
-            Err(err) if is_timeout(&err) => break,
-            other => panic!("slow observer should stay connected, got {other:?}"),
-        }
+    assert!(
+        encoded_bytes(&replacement) <= cap,
+        "the replacement keyframe fits the byte cap; keyframe={} cap={cap}",
+        encoded_bytes(&replacement)
+    );
+    if let Some(extra) = next_message(&mut slow, Duration::from_millis(600)) {
+        panic!(
+            "exactly one replacement keyframe: the quiet producer added another frame (keyframe={}, {} bytes)",
+            is_keyframe(&extra),
+            encoded_bytes(&extra)
+        );
     }
-    assert!(
-        burst.len() <= 3,
-        "exactly one replacement keyframe plus at most kernel in-flight frames; got {} frames",
-        burst.len()
-    );
-    assert!(
-        burst.iter().all(|message| encoded_bytes(message) <= cap),
-        "byte cap never exceeded; cap={cap} frames={}",
-        burst.len()
-    );
 
-    slow.set_read_timeout(Some(Duration::from_millis(200)))
-        .expect("connected timeout");
-    match read_message(&mut slow, MAX_FRAME_SIZE) {
-        Ok(ServerMessage::Terminal(_) | ServerMessage::Frame(_)) => {}
-        Ok(ServerMessage::Error { code, .. }) => {
-            panic!("slow observer was closed after draining: {code}")
-        }
-        Err(err) if is_timeout(&err) => {}
-        other => panic!("slow observer should stay connected, got {other:?}"),
-    }
+    // The peer is still attached and resynced: the next screen change reaches it
+    // as one delta on the producer cadence, not as a second replacement.
+    write_line(&mut control, &host_terminal_id, operation_seq);
+    let live = next_message(&mut slow, Duration::from_millis(1000))
+        .unwrap_or_else(|| panic!("the resynced observer must receive live output"));
+    assert!(
+        is_delta(&live),
+        "post-resync frames arrive as deltas on the producer cadence, got {live:?}"
+    );
+    assert!(
+        next_message(&mut slow, Duration::from_millis(400)).is_none(),
+        "one screen change must produce one frame"
+    );
 
     send_json(
         &mut control,
@@ -522,15 +595,20 @@ fn lagged_observer_is_closed_and_released() {
     let dir = tempfile::tempdir().expect("tempdir");
     let rows = 8;
     let cols = 24;
+    let lag = Duration::from_millis(400);
+    let lag_arg = lag.as_millis().to_string();
+    // One local keyframe plus slack: the second queued frame overflows, so a
+    // peer that never reads is lagged rather than merely slow.
+    let cap_arg = one_keyframe_cap(rows, cols).saturating_add(256).to_string();
     let (_child, mut control, frames_path) = start_host(
         dir.path(),
         &[
             "--max-attachments-per-terminal",
             "2",
             "--lag-timeout-ms",
-            "200",
+            &lag_arg,
             "--delta-queue-bytes",
-            "4096",
+            &cap_arg,
         ],
     );
     let host_terminal_id = spawn_committed(
@@ -570,21 +648,75 @@ fn lagged_observer_is_closed_and_released() {
     );
     let _ = drain_frames(&mut fast, Duration::from_millis(80));
     let _ = drain_frames(&mut slow, Duration::from_millis(80));
-    let during = read_frames_for(&mut fast, Duration::from_millis(500));
+
+    // `slow` stops reading here. The host must close it at the configured lag
+    // timeout, release its slot, and keep serving `fast` the whole time.
+    let stopped = Instant::now();
+    let mut kept_reading = 0usize;
+    let mut released = None;
+    while stopped.elapsed() < lag * 8 {
+        kept_reading += read_frames_for(&mut fast, Duration::from_millis(60));
+        match try_attach_observer(
+            &frames_path,
+            &host_terminal_id,
+            RenderEncoding::SemanticFrame,
+            rows,
+            cols,
+        ) {
+            Ok(stream) => {
+                released = Some(stream);
+                break;
+            }
+            Err(code) => assert_eq!(code, "capacity", "unexpected attach refusal"),
+        }
+    }
+    let closed_after = stopped.elapsed();
     let log = std::fs::read_to_string(dir.path().join("gterm.log")).unwrap_or_default();
+    let mut replacement = released.unwrap_or_else(|| {
+        panic!(
+            "the lagged observer slot was never released within {:?}; log={log}",
+            lag * 8
+        )
+    });
     assert!(
-        during >= 1,
-        "the remaining observer must keep receiving frames; got {during}; log={log}"
+        closed_after >= lag / 2,
+        "the lagged close must wait for the timeout, not fire immediately; closed_after={closed_after:?} lag={lag:?}"
     );
-    try_attach_observer(
-        &frames_path,
-        &host_terminal_id,
-        RenderEncoding::SemanticFrame,
-        rows,
-        cols,
-    )
-    .expect("lagged observer slot must be released");
-    drop(slow);
+    assert!(
+        closed_after <= lag * 4,
+        "the lagged close must land near the timeout; closed_after={closed_after:?} lag={lag:?}"
+    );
+    assert!(
+        kept_reading >= 4,
+        "the remaining observer must keep receiving frames throughout the lag window; got {kept_reading}; log={log}"
+    );
+
+    // The closed peer learns why: `lagged` on the wire, then EOF.
+    slow.set_read_timeout(Some(Duration::from_millis(2000)))
+        .expect("drain timeout");
+    let mut saw_lagged = false;
+    loop {
+        match read_message(&mut slow, MAX_FRAME_SIZE) {
+            Ok(ServerMessage::Error { code, .. }) => {
+                assert_eq!(code, "lagged", "the close must name the lag");
+                saw_lagged = true;
+            }
+            Ok(_) => {}
+            Err(FramingError::Eof) => break,
+            other => panic!("lagged peer must end with `lagged` then EOF, got {other:?}"),
+        }
+    }
+    assert!(
+        saw_lagged,
+        "the never-draining peer must receive `lagged` before EOF; log={log}"
+    );
+
+    // The released slot serves a new observer.
+    let after = drain_frames(&mut replacement, Duration::from_millis(200));
+    assert!(
+        after.iter().any(is_keyframe),
+        "a new observer must receive frames after the lagged close; got {after:?}"
+    );
 
     send_json(
         &mut control,
