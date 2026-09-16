@@ -408,7 +408,7 @@ describe("coarse-pointer touch targets", () => {
       "h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex",
     );
     expect(selectorSource).toMatch(
-      /cn\(\s*"w-full rounded-\[inherit\] py-0 text-\[length:var\(--text-sm\)\] \[font-family:inherit\]",\s*segmentedActiveOptionCls\(isLightTheme\),\s*coarseHitAreaCls,\s*\)/,
+      /cn\(\s*"w-full rounded-\[inherit\] py-0 \[font-family:inherit\] text-\[length:var\(--text-sm\)\]",\s*segmentedActiveOptionCls\(isLightTheme\),\s*coarseHitAreaCls,\s*\)/,
     );
   });
 
