@@ -14,7 +14,10 @@ from gobby.hooks.session_coordinator import (
 )
 from gobby.mcp_proxy.tools.agents_query_tools import register_agent_query_tools
 from gobby.mcp_proxy.tools.coordination import register_coordination_tools
-from gobby.mcp_proxy.tools.headless_waits import HEADLESS_WAIT_ERROR_CODE
+from gobby.mcp_proxy.tools.headless_waits import (
+    HEADLESS_AGENT_WAIT_GUIDANCE,
+    HEADLESS_WAIT_ERROR_CODE,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import LocalAgentRunManager
 
@@ -75,6 +78,8 @@ async def test_headless_run_refuses_an_agent_wait_before_resolving_the_target(
 
     assert result["success"] is False
     assert result["error_code"] == HEADLESS_WAIT_ERROR_CODE
+    # A run has no session to message; its result rides a later tool result.
+    assert result["retry_guidance"] == HEADLESS_AGENT_WAIT_GUIDANCE
     # The refusal is target-independent: no run is looked up to reach it.
     ctx.agent_run_manager.find_by_id_prefix.assert_not_called()
 

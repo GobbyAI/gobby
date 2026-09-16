@@ -4,8 +4,8 @@
 the turn yields, so a tool whose contract is "register a durable wait, then end the
 turn" kills the run: the process is gone before the wake payload exists, and the
 daemon sees a child that ended mid-workflow (#22367). Resuming such a run would mean
-respawning the CLI, so these tools refuse the wait instead and tell the worker to
-coordinate with a durable message inside the turn it already holds.
+respawning the CLI, so these tools refuse the wait instead and tell the worker how to
+get the same result inside the turn it already holds.
 """
 
 from __future__ import annotations
@@ -19,6 +19,15 @@ HEADLESS_WAIT_GUIDANCE = (
     "Do not call a wait_for_* tool again in this run. Send the other session a durable "
     "message with gobby-agents:send_message, keep working in this turn, and read any reply "
     "from a later tool result."
+)
+# An agent wait has no session to message. spawn_agent subscribes the parent to its
+# child's completion and a task-close review delivers its verdict to the closing session;
+# both arrive through the hook that attaches pending notifications to tool results.
+HEADLESS_AGENT_WAIT_GUIDANCE = (
+    "Do not call a wait_for_* tool again in this run, and do not end the turn. A run this "
+    "session spawned, and a task-close validator, report their result as a completion "
+    "notification attached to a later tool result. Finish any remaining work, then keep "
+    "the turn open with short bounded shell waits, each under a minute, until it arrives."
 )
 
 
@@ -51,5 +60,9 @@ def headless_wait_refusal(
             "to resume."
         ),
         "error_code": HEADLESS_WAIT_ERROR_CODE,
-        "retry_guidance": HEADLESS_WAIT_GUIDANCE,
+        "retry_guidance": (
+            HEADLESS_AGENT_WAIT_GUIDANCE
+            if tool_name == "wait_for_agent"
+            else HEADLESS_WAIT_GUIDANCE
+        ),
     }

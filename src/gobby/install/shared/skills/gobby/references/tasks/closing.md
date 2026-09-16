@@ -17,7 +17,8 @@ Finish in this order:
    `preview=true`. Include exact validation commands and results in the summary.
 5. Repair any deterministic blocker before retrying. If the response is
    `agentic_review_required`, register `wait_for_agent` with `validator_run_id`
-   and yield. Do not poll or repeatedly call close while review is running.
+   and yield. Do not poll or repeatedly call close while review is running. A
+   headless run refuses that wait; follow the refusal's `retry_guidance` instead.
 6. After `closed=true` or a closure notification, call `review_task_memories`
    with the task and summary; change memory only for valuable durable knowledge.
 

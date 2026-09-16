@@ -37,8 +37,11 @@ database is never a test target.
 For native schema diagnostics, `gdaemon schema version --json` prints the
 binary's embedded identity without opening the hub. `gdaemon schema verify`
 checks the configured hub's current schema after enforcing checkout identity;
-its report counts checked receipts, seed rows and catalog objects. Preserve an
-identity mismatch and coordinate the normal cutover with its owner. Direct
+its report counts checked receipts, seed rows and catalog objects.
+`gdaemon schema plan` runs apply's lineage validation and pending-migration
+resolution without writing and prints the database and code heads with pending
+migrations; `gobby restart` and `cutover` run it before stopping or promoting.
+Preserve an identity mismatch and coordinate the normal cutover with its owner. Direct
 `schema apply` and `sweep-test-schemas` are migration/test implementation
 entrypoints; use the documented Python maintenance workflow for live recovery.
 

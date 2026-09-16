@@ -1362,8 +1362,8 @@
     {
       "id": "native-schema-inspection",
       "kind": "source-inspection",
-      "command": "Read crates/gdaemon/src/main.rs SchemaCommand, verify_schema, print_schema_identity",
-      "result": "Version prints embedded identity without hub connection; verify enforces expected identity, resolves configured database/current schema and delegates SchemaRunner verification before reporting checked receipt, seed-row and object counts. No native mutation probe."
+      "command": "Read crates/gdaemon/src/main.rs SchemaCommand, verify_schema, plan_schema, print_schema_identity",
+      "result": "Version prints embedded identity without hub connection; verify enforces expected identity, resolves configured database/current schema and delegates SchemaRunner verification before reporting checked receipt, seed-row and object counts. Plan resolves the same database/current schema and delegates SchemaRunner::plan, printing database and code heads, baseline_pending and pending migration versions without writing. No native mutation probe."
     }
   ],
   "discrepancies": [
@@ -1496,6 +1496,15 @@
       "command": "gdaemon schema verify",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
       "implementation": "crates/gdaemon/src/main.rs::verify_schema",
+      "verification": [
+        "native-schema-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "command": "gdaemon schema plan",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": "crates/gdaemon/src/main.rs::plan_schema",
       "verification": [
         "native-schema-inspection"
       ],
