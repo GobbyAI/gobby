@@ -176,7 +176,7 @@ impl FrameMailbox {
     /// already behind (`coalesce`) or when `msg` would exceed `cap`.
     pub fn push_observed(&self, msg: &ServerMessage, cap: usize, coalesce: bool) -> PushResult {
         if coalesce && self.queued_bytes() > 0 {
-            self.replace_with_keyframe(msg, cap);
+            let _ = self.replace_with_keyframe(msg, cap);
             return PushResult::Overflow;
         }
         if coalesce && self.is_writing() {
@@ -184,27 +184,31 @@ impl FrameMailbox {
         }
         match self.try_push(msg, cap) {
             PushResult::Overflow => {
-                self.replace_with_keyframe(msg, cap);
+                let _ = self.replace_with_keyframe(msg, cap);
                 PushResult::Overflow
             }
             other => other,
         }
     }
 
-    pub fn replace_with_keyframe(&self, msg: &ServerMessage, cap: usize) {
+    /// Replace everything queued with one keyframe. Returns false when the
+    /// mailbox is closed or the keyframe alone exceeds `cap`; the queue is then
+    /// left untouched and the observer is still owed a repaint.
+    pub fn replace_with_keyframe(&self, msg: &ServerMessage, cap: usize) -> bool {
         let bytes = encoded_message_bytes(msg);
         let mut inner = self.lock();
         if inner.closed {
-            return;
+            return false;
         }
         if bytes > cap {
-            return;
+            return false;
         }
         inner.items.clear();
         inner.queued_bytes = bytes;
         inner.items.push_back((bytes, msg.clone()));
         drop(inner);
         self.shared.notify.notify_waiters();
+        true
     }
 
     pub fn force_push(&self, msg: ServerMessage, cap: usize) {

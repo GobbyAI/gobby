@@ -134,8 +134,9 @@ pub fn truncate_title(text: &str) -> String {
 /// attachment's channel; returns whether a message was queued.
 ///
 /// A synced attachment whose last committed frame equals `frame` sends
-/// nothing. The encoder commits only after a successful send, so a dropped
-/// delta marks the attachment desynced and the next frame is a full repaint.
+/// nothing. A delta that will not fit is replaced by one keyframe: queuing that
+/// keyframe commits it as the encoder baseline, which resyncs the attachment,
+/// so later frames are deltas against it instead of repeated full repaints.
 pub(crate) fn push_terminal_ansi(
     att: &mut Attachment,
     frame: &FrameData,
@@ -155,18 +156,7 @@ pub(crate) fn push_terminal_ansi(
         bytes,
     });
     if att.desynced && att.mailbox.queued_bytes() > 0 {
-        let mut keyframe = att.encoder.encode(frame, true);
-        let keyframe_bytes = std::mem::take(&mut keyframe.bytes);
-        let keyframe_msg = ServerMessage::Terminal(TerminalFrame {
-            seq,
-            width: frame.width,
-            height: frame.height,
-            full: true,
-            bytes: keyframe_bytes,
-        });
-        att.mailbox.replace_with_keyframe(&keyframe_msg, cap);
-        att.encoder.commit(frame.clone(), keyframe);
-        att.last_send = Instant::now();
+        queue_replacement_keyframe(att, frame, seq, cap);
         return true;
     }
     if att.desynced && att.mailbox.is_writing() {
@@ -180,19 +170,7 @@ pub(crate) fn push_terminal_ansi(
             true
         }
         PushResult::Overflow => {
-            let mut keyframe = att.encoder.encode(frame, true);
-            let keyframe_bytes = std::mem::take(&mut keyframe.bytes);
-            let keyframe_msg = ServerMessage::Terminal(TerminalFrame {
-                seq,
-                width: frame.width,
-                height: frame.height,
-                full: true,
-                bytes: keyframe_bytes,
-            });
-            att.mailbox.replace_with_keyframe(&keyframe_msg, cap);
-            att.encoder.commit(frame.clone(), keyframe);
-            att.desynced = true;
-            att.last_send = Instant::now();
+            queue_replacement_keyframe(att, frame, seq, cap);
             true
         }
         PushResult::Closed => {
@@ -200,6 +178,28 @@ pub(crate) fn push_terminal_ansi(
             false
         }
     }
+}
+
+/// Queue one full repaint in place of everything the attachment still owes its
+/// peer. A queued keyframe is the resync: it becomes the encoder baseline, so
+/// the attachment is only left desynced when the mailbox refuses it.
+fn queue_replacement_keyframe(att: &mut Attachment, frame: &FrameData, seq: u64, cap: usize) {
+    let mut keyframe = att.encoder.encode(frame, true);
+    let keyframe_bytes = std::mem::take(&mut keyframe.bytes);
+    let keyframe_msg = ServerMessage::Terminal(TerminalFrame {
+        seq,
+        width: frame.width,
+        height: frame.height,
+        full: true,
+        bytes: keyframe_bytes,
+    });
+    if att.mailbox.replace_with_keyframe(&keyframe_msg, cap) {
+        att.encoder.commit(frame.clone(), keyframe);
+        att.desynced = false;
+    } else {
+        att.desynced = true;
+    }
+    att.last_send = Instant::now();
 }
 
 #[cfg(test)]

@@ -122,7 +122,10 @@ fn overflow_replaces_queued_deltas_with_one_keyframe() {
         push_terminal_ansi(&mut att, &changed, 2, cap),
         "overflow still queues a replacement keyframe"
     );
-    assert!(att.desynced);
+    assert!(
+        !att.desynced,
+        "a queued replacement keyframe is the resync, so nothing more is owed"
+    );
 
     let repaint = terminal_frame(&mailbox);
     assert!(repaint.full);
@@ -130,4 +133,12 @@ fn overflow_replaces_queued_deltas_with_one_keyframe() {
     let text = String::from_utf8(repaint.bytes).unwrap();
     assert_eq!(text.matches('A').count(), 5);
     assert_eq!(text.matches('B').count(), 1);
+
+    let mut again = changed.clone();
+    again.cells[1] = cell("C", 0);
+    assert!(push_terminal_ansi(&mut att, &again, 3, cap));
+    assert!(
+        !terminal_frame(&mailbox).full,
+        "the next change after a replacement is a delta, not a repeated repaint"
+    );
 }
