@@ -39,6 +39,18 @@
         "required_args_all": [
           "--fail-on-new"
         ]
+      },
+      {
+        "id": "gobby-guard-set-g",
+        "label": "Gobby Guard set G group",
+        "languages": [],
+        "categories": [
+          "test"
+        ],
+        "prefixes": [
+          "python -m gobby.guard_set_g",
+          "python3 -m gobby.guard_set_g"
+        ]
       }
     ]
   },

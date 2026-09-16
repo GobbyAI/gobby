@@ -21,23 +21,26 @@ cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 cargo build --release -p gobby-client
 ```
 
-On macOS, Zig 0.15.2's libc++ build is incompatible with the macOS 27 SDK
-(`INFINITY` is undeclared in `__random/clamp_to_integral.h`). Select an installed
-Xcode with the macOS 26.5 SDK for this toolchain, for example:
+On macOS the plain host command above works with Command Line Tools and the
+macOS 27 SDK. Zig 0.15.2 cannot compile its bundled libc++ against that SDK
+(`INFINITY` is undeclared in `__random/clamp_to_integral.h`), but it only
+compiles libc++ when a C++ shared library is emitted, and
+`crates/gterminal/build.rs` passes `-Demit-lib-vt-shared=false` (vendored patch
+0002) so the normal build emits and links the static archive alone.
+
+Select an installed Xcode with the macOS 26.5 SDK only for commands that emit
+the shared library. The one in this repository is the optional non-SIMD Darwin
+archive regression, which runs `zig build -Demit-lib-vt` directly:
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk macosx --show-sdk-version
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo build --release -p gobby-terminal --features vt-engine --bin gterm
-```
-
-Verify that the first command reports `26.5`. `SDKROOT` does not override Zig's
-`xcrun --sdk macosx` lookup. Keep SIMD enabled for normal builds. The optional
-non-SIMD Darwin archive uses the same member-preserving normalization as the
-SIMD archive; its focused build/link regression is:
-
-```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
 ```
+
+Verify that the first command reports `26.5`; it fails until the Xcode license
+has been accepted. `SDKROOT` does not override Zig's `xcrun --sdk macosx`
+lookup. Keep SIMD enabled for normal builds. The non-SIMD Darwin archive uses
+the same member-preserving normalization as the SIMD archive.
 
 End users receive prebuilt GitHub release assets. The installer local-workspace
 fallback for `gterm` builds `--features vt-engine` with a 600s timeout; if
