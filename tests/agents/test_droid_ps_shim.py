@@ -10,6 +10,7 @@ import os
 import subprocess  # nosec B404 # asserts on a locally re-signed system binary.
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,8 +32,13 @@ def _stub_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path,
     monkeypatch.setattr(droid_ps_shim, "CODESIGN", codesign)
 
     calls: list[list[str]] = []
+    real_run = subprocess.run
 
-    def fake_run(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        # The patch is process-wide: pass other callers through, or their argv[-1]
+        # lands as a file in the working directory.
+        if argv[:1] != [str(codesign)]:
+            return real_run(argv, **kwargs)
         calls.append(argv)
         Path(argv[-1]).write_bytes(b"signed")
         return subprocess.CompletedProcess(argv, 0, b"", b"")
