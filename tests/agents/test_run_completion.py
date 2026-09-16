@@ -381,29 +381,19 @@ def test_exit_notification_reports_incomplete_for_early_exit(blocked: bool) -> N
 
 def test_dirty_paths_do_not_mask_failed_status() -> None:
     assert (
-        run_completion.agent_exit_public_status(
-            "provider_error", ["a.py"], fallback="error"
-        )
+        run_completion.agent_exit_public_status("provider_error", ["a.py"], fallback="error")
         == "error"
     )
     assert (
-        run_completion.agent_exit_public_status(
-            "user_cancelled", ["a.py"], fallback="cancelled"
-        )
+        run_completion.agent_exit_public_status("user_cancelled", ["a.py"], fallback="cancelled")
         == "cancelled"
     )
+    assert run_completion.agent_exit_public_status(None, ["a.py"], fallback="timeout") == "timeout"
     assert (
-        run_completion.agent_exit_public_status(None, ["a.py"], fallback="timeout")
-        == "timeout"
+        run_completion.agent_exit_public_status(None, ["a.py"], fallback="success") == "incomplete"
     )
     assert (
-        run_completion.agent_exit_public_status(None, ["a.py"], fallback="success")
-        == "incomplete"
-    )
-    assert (
-        run_completion.agent_exit_public_status(
-            "task_completed", ["a.py"], fallback="success"
-        )
+        run_completion.agent_exit_public_status("task_completed", ["a.py"], fallback="success")
         == "incomplete"
     )
 

@@ -110,7 +110,6 @@ async def test_research_leaf_defaults_to_research_stage(
     assert [row["stage_name"] for row in result.manifest or []] == ["research"]
 
 
-
 def test_plan_enhancement_rounds_inherits_profile_default_when_not_explicit(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:

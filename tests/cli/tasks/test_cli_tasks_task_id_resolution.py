@@ -86,9 +86,7 @@ def hub_sample_project(
 ) -> dict[str, Any]:
     """Create a sample project through the active hub database adapter."""
 
-    project = isolated_checkout_factory(
-        hub_db, "test-project"
-    ).project
+    project = isolated_checkout_factory(hub_db, "test-project").project
     return project.to_dict()
 
 

@@ -48,9 +48,7 @@ class TestProject:
 
     def test_to_dict(self, project_manager: LocalProjectManager) -> None:
         """Test converting Project to dictionary."""
-        project = project_manager.create(
-            name="test-project"
-        )
+        project = project_manager.create(name="test-project")
 
         d = project.to_dict()
         assert d["id"] == project.id
@@ -67,9 +65,7 @@ class TestLocalProjectManager:
 
     def test_create_project(self, project_manager: LocalProjectManager) -> None:
         """Test creating a new project."""
-        project = project_manager.create(
-            name="my-project"
-        )
+        project = project_manager.create(name="my-project")
 
         assert project.id is not None
         assert project.name == "my-project"

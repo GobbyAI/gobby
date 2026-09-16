@@ -88,9 +88,7 @@ class TestProjectRoutes:
     @pytest.fixture
     def real_project(self, project_manager: LocalProjectManager) -> dict:
         """Create a real project in the database."""
-        proj = project_manager.create(
-            name="my-project"
-        )
+        proj = project_manager.create(name="my-project")
         return proj.to_dict()
 
     @pytest.fixture

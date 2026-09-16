@@ -44,9 +44,7 @@ class _NoCheckout:
 def no_checkout(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> _NoCheckout:
     machine_id = insert_isolated_machine(temp_db)
     patch_local_machine_id(monkeypatch, machine_id)
-    project = LocalProjectManager(temp_db).create(
-        name="no-checkout"
-    )
+    project = LocalProjectManager(temp_db).create(name="no-checkout")
     session = SessionManager(temp_db).register(
         external_id="no-checkout-session",
         machine_id=machine_id,
