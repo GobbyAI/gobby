@@ -249,7 +249,7 @@ fn open_pty(rows: u16, cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &mut size,
+            std::ptr::from_mut(&mut size),
         )
     };
     if result < 0 {

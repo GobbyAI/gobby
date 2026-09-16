@@ -34,7 +34,7 @@ pub(crate) fn run(argv: Vec<OsString>) -> ! {
     if unsafe { libc::setsid() } < 0 {
         fail("setsid", io::Error::last_os_error());
     }
-    if unsafe { libc::ioctl(PTY_FD, libc::TIOCSCTTY.into(), 0) } < 0 {
+    if unsafe { libc::ioctl(PTY_FD, libc::TIOCSCTTY as _, 0) } < 0 {
         fail("setsid", io::Error::last_os_error());
     }
 
