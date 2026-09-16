@@ -26,6 +26,7 @@ from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 
 logger = logging.getLogger("gobby.runner_lifecycle")
 
@@ -242,24 +243,43 @@ async def _reconcile_task_close_reviews(
             )
             reconciled += 1
         elif review.active and run is None and review.status != "launching":
-            message = "Persisted task-close validator run is missing."
-            payload = build_terminal_review_payload(review, status="error", message=message)
-            current = (
-                await _run_db(
-                    runner,
-                    store.finish,
-                    review.id,
-                    status="error",
-                    result_payload=payload,
-                    error=message,
-                )
-                or review
+            # A `finalizing` review whose run row was purged can still belong to
+            # a task that did close. terminal_review_delivery reconstructs that
+            # `closed` payload from the task alone, so consult it before
+            # reporting a failure for a task that succeeded.
+            reconstructed = (
+                await _run_db(runner, terminal_review_delivery, db, review.agent_run_id)
+                if review.status == "finalizing" and review.agent_run_id
+                else None
             )
+            if reconstructed is not None:
+                current = await _run_db(runner, store.get, review.id) or review
+            else:
+                message = "Persisted task-close validator run is missing."
+                payload = build_terminal_review_payload(review, status="error", message=message)
+                current = (
+                    await _run_db(
+                        runner,
+                        store.finish,
+                        review.id,
+                        status="error",
+                        result_payload=payload,
+                        error=message,
+                    )
+                    or review
+                )
             reconciled += 1
         elif review.active and run is not None and run.status in TERMINAL_AGENT_RUN_STATUSES:
             await _run_db(runner, terminal_review_delivery, db, run.id)
             current = await _run_db(runner, store.get, review.id) or review
             reconciled += 1
+
+        if startup and current.status == "finalizing":
+            swept = await _terminalize_orphaned_finalizing(runner, db, store, current)
+            if swept is not None:
+                if swept.status != "finalizing":
+                    reconciled += 1
+                current = swept
 
         if startup and current.active and current.agent_run_id and run is not None:
             await _run_db(
@@ -299,6 +319,69 @@ async def _reconcile_task_close_reviews(
                     )
                 reconciled += 1
     return reconciled
+
+
+async def _terminalize_orphaned_finalizing(
+    runner: GobbyRunner,
+    db: Any,
+    store: TaskCloseReviewStore,
+    review: TaskCloseReview,
+) -> TaskCloseReview | None:
+    """Release a `finalizing` review the daemon abandoned mid-submission.
+
+    Startup-only by contract, and that scope is load-bearing rather than
+    cautious. `claim_finalizing` holds `finalizing` across `commit_close`'s git
+    subprocesses, so on the periodic tick this status is reachable while a real
+    `submit_close_review` is still running and the reconciler would win the
+    write and then contradict the caller. No in-process submit survives a
+    restart, so only at daemon start is every `finalizing` row provably
+    orphaned. Without this the row holds `uq_task_close_reviews_active_task`
+    forever and the task can never be closed again.
+
+    A verdict is never reapplied here: `commit_close` resolves project context
+    from the process cwd, which in the daemon loop is the daemon's own, so a
+    reconciler-driven reapply could evaluate a different commit set than the
+    validator reviewed. A fresh `close_task` re-derives every input.
+    """
+    from gobby.tasks.agentic_close_review import (
+        CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS,
+        build_terminal_review_payload,
+    )
+    from gobby.tasks.close_review_delivery import terminal_review_delivery
+
+    if review.agent_run_id:
+        # The task may have closed before the interruption; this path rebuilds
+        # the `closed` payload from the task itself and needs no verdict.
+        await _run_db(runner, terminal_review_delivery, db, review.agent_run_id)
+        review = await _run_db(runner, store.get, review.id) or review
+        if review.status != "finalizing":
+            return review
+    # The captured submission distinguishes a verdict that reached the daemon
+    # and died inside finalization from one that was never sent (#22404); the
+    # terminal payload replaces it, so record the distinction before the write.
+    logger.warning(
+        "Terminalizing task-close review %s orphaned in finalizing by a daemon restart "
+        "(submitted verdict captured: %s)",
+        review.id,
+        review.result_payload is not None,
+    )
+    message = "Daemon restarted while the task-close verdict was being finalized."
+    payload = build_terminal_review_payload(
+        review,
+        status="error",
+        message=message,
+        error_class="retryable_infrastructure",
+        retry_seconds=CLOSE_REVIEW_DAEMON_STOP_RETRY_SECONDS,
+    )
+    swept: TaskCloseReview | None = await _run_db(
+        runner,
+        store.finish_orphaned_finalizing,
+        review.id,
+        expected_updated_at=review.updated_at,
+        result_payload=payload,
+        error=message,
+    )
+    return swept
 
 
 def _close_review_deadline(close_arguments: dict[str, Any]) -> datetime | None:

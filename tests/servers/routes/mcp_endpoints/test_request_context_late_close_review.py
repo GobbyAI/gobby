@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -273,7 +273,13 @@ async def test_malformed_late_verdict_can_be_corrected_and_terminal_result_repla
     monkeypatch.setattr(orchestration, "LocalAgentRunManager", lambda db: case.manager)
     claims: list[str] = []
 
-    def claim(store: TaskCloseReviewStore, review_id: str, run_id: str) -> TaskCloseReview | None:
+    def claim(
+        store: TaskCloseReviewStore,
+        review_id: str,
+        run_id: str,
+        *,
+        verdict: Mapping[str, Any] | None = None,
+    ) -> TaskCloseReview | None:
         if case.review.terminal and case.review.status != "error":
             return None
         claims.append(case.review.status)
