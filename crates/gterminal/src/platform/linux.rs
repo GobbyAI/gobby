@@ -1,8 +1,5 @@
 #[cfg(test)]
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::OnceLock,
-};
+use std::collections::{HashSet, VecDeque};
 use std::{
     io::Write,
     os::fd::RawFd,
@@ -11,13 +8,9 @@ use std::{
 };
 
 use super::{read_limited_reader, ClipboardCommand, ClipboardImage, LimitedRead, Signal};
-#[cfg(test)]
-use super::{ForegroundJob, ForegroundProcess};
 
 #[cfg(test)]
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
-#[cfg(test)]
-const PROCESS_DETECTION_ENV_VAR: &str = "GTERM_PROCESS_DETECTION";
 #[cfg(test)]
 const CHILD_GROUPS_SCAN_LIMIT: usize = 64;
 
@@ -75,22 +68,6 @@ fn parse_process_detection_mode(value: Option<&str>) -> Result<ProcessDetectionM
 }
 
 #[cfg(test)]
-fn process_detection_mode() -> ProcessDetectionMode {
-    static MODE: OnceLock<ProcessDetectionMode> = OnceLock::new();
-    *MODE.get_or_init(|| {
-        let value = std::env::var(PROCESS_DETECTION_ENV_VAR).ok();
-        parse_process_detection_mode(value.as_deref()).unwrap_or_else(|value| {
-            tracing::warn!(
-                variable = PROCESS_DETECTION_ENV_VAR,
-                %value,
-                "unknown process detection mode; using native detection"
-            );
-            ProcessDetectionMode::Native
-        })
-    })
-}
-
-#[cfg(test)]
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
     vec!["/bin/sh".into(), flag.into(), command.into()]
 }
@@ -142,51 +119,6 @@ fn shell_quote(value: &str) -> String {
 }
 
 #[cfg(test)]
-fn foreground_job_for_group(child_pid: u32, process_group_id: u32) -> Option<ForegroundJob> {
-    let members = foreground_process_group_members(child_pid, process_group_id)?;
-    let processes = members
-        .into_iter()
-        .map(|member| {
-            let argv = process_argv(member.pid);
-            ForegroundProcess {
-                pid: member.pid,
-                name: member.comm,
-                argv0: None,
-                cmdline: argv.as_ref().map(|parts| parts.join(" ")),
-                argv,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if processes.is_empty() {
-        return None;
-    }
-
-    Some(ForegroundJob {
-        process_group_id,
-        processes,
-    })
-}
-
-/// Best-effort foreground group for environments that do not expose terminal
-/// foreground groups. This mode is explicit because background jobs cannot be
-/// distinguished from foreground jobs without the native terminal signal.
-#[cfg(test)]
-fn child_groups_foreground_process_group(child_pid: u32) -> Option<u32> {
-    let shell_group_id = process_pgrp_and_comm(child_pid)
-        .map(|(pgrp, _)| pgrp)
-        .filter(|pgrp| *pgrp > 0)? as u32;
-
-    child_groups_foreground_process_group_with(
-        child_pid,
-        shell_group_id,
-        process_task_ids,
-        process_task_children,
-        |pid| process_pgrp_and_comm(pid).map(|(pgrp, _)| pgrp),
-    )
-}
-
-#[cfg(test)]
 fn child_groups_foreground_process_group_with(
     child_pid: u32,
     shell_group_id: u32,
@@ -217,20 +149,6 @@ fn child_groups_foreground_process_group_with(
         }
     }
     newest.or(Some(shell_group_id))
-}
-
-#[cfg(test)]
-fn foreground_process_group_members(
-    child_pid: u32,
-    process_group_id: u32,
-) -> Option<Vec<ProcGroupMember>> {
-    foreground_process_group_members_with(
-        child_pid,
-        process_group_id,
-        process_task_ids,
-        process_task_children,
-        live_process_group_member,
-    )
 }
 
 #[cfg(test)]
@@ -277,44 +195,6 @@ fn process_tree_pids(
     pids
 }
 
-#[cfg(test)]
-fn process_task_ids(pid: u32) -> Vec<u32> {
-    std::fs::read_dir(format!("/proc/{pid}/task"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| numeric_file_name(&entry))
-        .collect()
-}
-
-#[cfg(test)]
-fn process_task_children(pid: u32, tid: u32) -> Vec<u32> {
-    let Some(children) = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children")).ok()
-    else {
-        return Vec::new();
-    };
-    children
-        .split_whitespace()
-        .filter_map(|child| child.parse::<u32>().ok())
-        .collect()
-}
-
-#[cfg(test)]
-fn numeric_file_name(entry: &std::fs::DirEntry) -> Option<u32> {
-    let file_name = entry.file_name();
-    let value = file_name.to_str()?;
-    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    value.parse().ok()
-}
-
-#[cfg(test)]
-fn live_process_group_member(process_group_id: u32, pid: u32) -> Option<ProcGroupMember> {
-    let (pgrp, comm) = process_pgrp_and_comm(pid)?;
-    (pgrp > 0 && pgrp as u32 == process_group_id).then_some(ProcGroupMember { pid, comm })
-}
-
 pub fn foreground_process_group_id(child_pid: u32) -> Option<u32> {
     // /proc/<pid>/stat format: "pid (comm) state ppid pgrp session tty_nr tpgid ..."
     // The (comm) field can contain spaces and parens, so we find the last ')' first.
@@ -332,12 +212,6 @@ pub fn foreground_process_group_id_for_tty_fd(fd: RawFd) -> Option<u32> {
 }
 
 #[cfg(test)]
-fn process_pgrp_and_comm(pid: u32) -> Option<(i32, String)> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    process_pgrp_and_comm_from_stat(&stat)
-}
-
-#[cfg(test)]
 fn process_pgrp_and_comm_from_stat(stat: &str) -> Option<(i32, String)> {
     let close = stat.rfind(')')?;
     let comm = stat.get(1 + stat.find('(')?..close)?.to_string();
@@ -345,20 +219,6 @@ fn process_pgrp_and_comm_from_stat(stat: &str) -> Option<(i32, String)> {
     let fields: Vec<&str> = rest.split_whitespace().collect();
     let pgrp: i32 = fields.get(2)?.parse().ok()?;
     Some((pgrp, comm))
-}
-
-#[cfg(test)]
-fn process_argv(pid: u32) -> Option<Vec<String>> {
-    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    if bytes.is_empty() {
-        return None;
-    }
-    let parts: Vec<String> = bytes
-        .split(|&b| b == 0)
-        .filter(|part| !part.is_empty())
-        .map(|part| String::from_utf8_lossy(part).into_owned())
-        .collect();
-    (!parts.is_empty()).then_some(parts)
 }
 
 /// Get the current working directory of a process.
