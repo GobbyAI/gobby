@@ -119,10 +119,10 @@ jobs:
       - name: Test (gobby-client)
         run: cargo nextest run --profile ci -p gobby-client
 
-      - name: Setup Zig 0.15.2
+      - name: Setup Zig 0.16.0
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - name: Clippy (gobby-terminal, vt-engine)
         run: cargo clippy -p gobby-terminal --features vt-engine --all-targets -- -D warnings
