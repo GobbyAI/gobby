@@ -230,6 +230,16 @@ runs. Each step can define:
 Step restrictions are additive with the rule engine. A tool must satisfy both
 the current step and the active rules.
 
+A few tools bypass the native allow-list because they carry no capability of
+their own. Provider tool-catalog tools (Claude Code's `ToolSearch`, Grok's
+`search_tool`) discover tools without executing any, and skip a step's tool
+checks entirely. Grok's `get_command_or_subagent_output` is a read-only poll
+that returns the result of a call the step already allowed or denied, so it
+passes a step's native allow-list; without the exemption a run that polled it
+inside an MCP-only step collected identical `step-native-tool-allowlist`
+denials until it was killed at the third one. A step that names the poll in
+`blocked_tools` still blocks it.
+
 ## Lifecycle Model
 
 Rules should be authored against semantic workflow events:
