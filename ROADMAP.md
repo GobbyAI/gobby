@@ -27,7 +27,9 @@ architecture decision record. The live tracker is epic #21542.
   scoping). The remaining gate is the physical two-machine smoke (#19600). The
   M0 operating model is **one active daemon per shared hub**; standbys hold the
   lease control surface only.
-- **Terminals**: tmux remains the default; native PTY launches are opt-in.
+- **Terminals**: native PTY is the default (#22104, on the macOS acceptance evidence
+  in `docs/evidence/native-backend-flip.md`); tmux remains supported per spawn or as
+  a deployment-wide rollback via `gobby config set terminals.default_backend tmux`.
   `gclient` supports direct semantic frames from the local `gterm` host for
   native PTY rows and tmux rows via the host's tmux observer; the cell-mode
   daemon-WS proxy (`terminal_frame`, bincode-b64 semantic frames); and remote

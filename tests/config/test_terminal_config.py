@@ -23,20 +23,20 @@ _P2_CONSUMERS = (
 
 def test_shared_terminal_config_precedes_host_config() -> None:
     config = TerminalConfig()
-    assert config.default_backend == "tmux"
+    assert config.default_backend == "native"
     assert config.spawn_in_doubt_seconds > 0
 
     daemon = DaemonConfig()
-    assert daemon.terminals.default_backend == "tmux"
+    assert daemon.terminals.default_backend == "native"
     assert daemon.terminals.spawn_in_doubt_seconds == config.spawn_in_doubt_seconds
     assert type(daemon.terminals) is TerminalConfig
     assert type(daemon.tmux) is TmuxConfig
 
-    native = DaemonConfig.model_validate(
-        {"terminals": {"default_backend": "native", "spawn_in_doubt_seconds": 90.0}}
+    overridden = DaemonConfig.model_validate(
+        {"terminals": {"default_backend": "tmux", "spawn_in_doubt_seconds": 90.0}}
     )
-    assert native.terminals.default_backend == "native"
-    assert native.terminals.spawn_in_doubt_seconds == 90.0
+    assert overridden.terminals.default_backend == "tmux"
+    assert overridden.terminals.spawn_in_doubt_seconds == 90.0
 
     with pytest.raises(ValidationError):
         DaemonConfig.model_validate({"terminals": {"default_backend": "ssh"}})

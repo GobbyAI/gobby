@@ -1,4 +1,4 @@
-"""Backend selection under the tmux default (herdr-foundation-landing leaf 1.3)."""
+"""Backend selection under the native default (#22104; was the tmux default)."""
 
 from __future__ import annotations
 
@@ -32,27 +32,28 @@ _TERMINAL_CREATE_WS = _REPO / "src" / "gobby" / "servers" / "websocket" / "termi
 
 
 @pytest.mark.asyncio
-async def test_explicit_and_external_selection_under_tmux_default(
+async def test_explicit_and_external_selection_under_native_default(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     daemon = DaemonConfig()
-    assert TerminalConfig().default_backend == "tmux"
-    assert daemon.terminals.default_backend == "tmux"
+    assert TerminalConfig().default_backend == "native"
+    assert daemon.terminals.default_backend == "native"
     loaded = yaml.safe_load(_CONFIG_YAML.read_text(encoding="utf-8"))
-    assert loaded["terminals"]["default_backend"] == "tmux"
+    assert loaded["terminals"]["default_backend"] == "native"
     guide = _GUIDE.read_text(encoding="utf-8")
     assert "## Backend status" in guide
-    assert "`tmux` is the default backend" in guide
+    assert "`native` is the default backend" in guide
+    assert "`tmux` remains supported" in guide
     assert "`host_unavailable`" in guide
 
-    assert resolve_terminal_backend(None, daemon) == "tmux"
-    assert resolve_terminal_backend(None, None) == "tmux"
+    assert resolve_terminal_backend(None, daemon) == "native"
+    assert resolve_terminal_backend(None, None) == "native"
     assert resolve_terminal_backend("tmux", daemon) == "tmux"
     assert resolve_terminal_backend("native", daemon) == "native"
-    opted_in = DaemonConfig.model_validate({"terminals": {"default_backend": "native"}})
-    assert resolve_terminal_backend(None, opted_in) == "native"
+    rolled_back = DaemonConfig.model_validate({"terminals": {"default_backend": "tmux"}})
+    assert resolve_terminal_backend(None, rolled_back) == "tmux"
     with pytest.raises(ValueError, match="invalid terminal_backend"):
         resolve_terminal_backend("ssh", daemon)
 

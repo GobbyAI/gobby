@@ -92,20 +92,19 @@ version is unpublished or yanked. Do not invent a combined workflow.
 
 ## Backend status
 
-`tmux` is the default backend: `terminals.default_backend: tmux` in the bundled
-`config.yaml` and `TerminalConfig.default_backend`. Externally discovered sessions
-(`ownership: external`) are always tmux. `native` is explicit opt-in — `backend:
-native` on the spawn request, or `terminals.default_backend: native` — and requires
-an installed `gterm`. When the host is unavailable a native spawn fails before fork
-with the typed refusal `host_unavailable` (`HostUnavailableError`, a
-`HostCommandError`); there is no silent tmux fallback. Native lifecycle, host
-recovery, coordinated writes, and the workspace client are implemented; native
-launches remain opt-in. The native default flip gate is
-`docs/evidence/native-backend-flip.md`: P7's host-driven acceptance suite must be
-green in ordinary CI on macOS and Linux at the same commit, with no later red
-evidence row. Evidence rows are append-only in execution order. Until that gate is
-satisfied, `tmux` remains the default. Roll back a native-default deployment with
-`gobby config set terminals.default_backend tmux`.
+`native` is the default backend: `terminals.default_backend: native` in the bundled
+`config.yaml` and `TerminalConfig.default_backend`. `tmux` remains supported and is
+selected per spawn with `backend: tmux`, or globally with
+`terminals.default_backend: tmux`; externally discovered sessions
+(`ownership: external`) are always tmux. A native spawn requires an installed
+`gterm`. When the host is unavailable it fails before fork with the typed refusal
+`host_unavailable` (`HostUnavailableError`, a `HostCommandError`); there is no silent
+tmux fallback. The flip landed under #22104 on the evidence in
+`docs/evidence/native-backend-flip.md`: P7's host-driven acceptance suite green in
+ordinary CI at one commit with no later red row for a required OS. The required OS
+set is macOS only — Linux is deferred by user decision (2026-09-16) and its rows stay
+recorded without gating. Evidence rows are append-only in execution order. Roll a
+deployment back to tmux with `gobby config set terminals.default_backend tmux`.
 
 ## Landing worktree
 

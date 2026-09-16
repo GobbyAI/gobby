@@ -11,7 +11,7 @@ class TerminalConfig(BaseModel):
     """Shared terminal settings for spawn, reaping, and REST/WS surfaces."""
 
     default_backend: Literal["tmux", "native"] = Field(
-        default="tmux",
+        default="native",
         description="Default TerminalRuntime backend for new Gobby-owned terminals.",
     )
     spawn_in_doubt_seconds: float = Field(
