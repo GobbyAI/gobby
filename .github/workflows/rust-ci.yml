@@ -116,9 +116,6 @@ jobs:
       - name: Clippy (gobby-client)
         run: cargo clippy -p gobby-client --all-targets -- -D warnings
 
-      - name: Test (gobby-client)
-        run: cargo nextest run --profile ci -p gobby-client
-
       - name: Setup Zig 0.16.0
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         with:
@@ -129,6 +126,10 @@ jobs:
 
       - name: Test (gobby-terminal, vt-engine)
         run: cargo nextest run --profile ci -p gobby-terminal --features vt-engine
+
+      # After Zig: frame_source_live builds and drives a vt-engine gterm host.
+      - name: Test (gobby-client)
+        run: cargo nextest run --profile ci -p gobby-client
 
       - name: Clippy (gobby-terminal, Windows cross)
         env:

@@ -100,9 +100,11 @@ pub(super) async fn connect_socket(
     let authorization =
         HeaderValue::from_str(&format!("Bearer {token}")).map_err(protocol_error)?;
     request.headers_mut().insert(AUTHORIZATION, authorization);
+    // Nagle off: keystrokes and control requests are small frames sent back
+    // to back, and Linux loopback holds each one behind the delayed ACK.
     let connection = timeout(
         super::REQUEST_DEADLINE,
-        tokio_tungstenite::connect_async(request),
+        tokio_tungstenite::connect_async_with_config(request, None, true),
     );
     let (socket, _) = tokio::select! {
         result = connection => result

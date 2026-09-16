@@ -116,6 +116,8 @@ impl MockDaemon {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream, _)) = accepted else { break };
+                        // The daemon's asyncio transports disable Nagle too.
+                        let _ = stream.set_nodelay(true);
                         let state = Arc::clone(&server_state);
                         let events = server_events.clone();
                         connections.spawn(async move {
