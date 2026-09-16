@@ -28,6 +28,7 @@ __all__ = [
     "SendResult",
     "TmuxPaneIO",
     "clear_composer",
+    "live_runtime_pane",
 ]
 
 logger = logging.getLogger(__name__)
@@ -51,9 +52,24 @@ class PaneIO(Protocol):
 
     async def send_key(self, key: NamedKey) -> SendResult: ...
 
+    # A trailing newline submits the text, matching tmux's literal send.
     async def type_text(self, text: str) -> SendResult: ...
 
     async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None: ...
+
+
+def live_runtime_pane(
+    session_id: str,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> RuntimePaneIO | None:
+    """PaneIO over the session's live terminals row, or None when it has none."""
+    if terminal_manager is None or terminal_runtime_registry is None:
+        return None
+    terminal = terminal_manager.get_live_for_session(session_id)
+    if terminal is None:
+        return None
+    return RuntimePaneIO(terminal_runtime_registry.resolve(terminal.backend), terminal)
 
 
 class RuntimePaneIO:
@@ -81,8 +97,9 @@ class RuntimePaneIO:
         return _outcome_result(outcome, f"{self.backend} key write")
 
     async def type_text(self, text: str) -> SendResult:
+        body = text.rstrip("\n")
         try:
-            outcome = await self._runtime.write_text(self._terminal, text, submit=False)
+            outcome = await self._runtime.write_text(self._terminal, body, submit=body != text)
         except IndeterminateWrite as exc:
             return _outcome_result(exc, f"{self.backend} text write")
         except TerminalWriteError as exc:

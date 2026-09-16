@@ -30,6 +30,7 @@ from gobby.terminals.lookup import manager_for_terminal_context
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.terminals.pane_io import PaneIO
 
 # A follow-up Enter is only sent when the composer still shows the pull prompt;
 # this many leading characters identify it against an operator's own draft.
@@ -184,35 +185,57 @@ def schedule_handoff_compact_continuation(
     delay_seconds: float = HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
     db: HubDatabase | None = None,
     on_send_failure: Callable[[], None] | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
 ) -> bool:
-    """Schedule a best-effort tmux prompt send without blocking SessionStart."""
-    session_id = getattr(session, "id", "unknown")
-    ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
-    if ctx is None:
-        logger.debug("Cannot schedule set_handoff compact continuation; no terminal context")
+    """Schedule a best-effort prompt send without blocking SessionStart."""
+    session_id = str(getattr(session, "id", "unknown"))
+    pane = _continuation_pane(session, session_id, terminal_manager, terminal_runtime_registry)
+    if pane is None:
         return False
-
-    target = ctx.get("tmux_pane") or ctx.get("tmux_session")
-    if not target:
-        logger.debug(
-            "Cannot schedule set_handoff compact continuation for session %s; no tmux target",
-            session_id,
-        )
-        return False
-
-    tmux = manager_for_terminal_context(ctx)
     cli_source = getattr(session, "source", None)
     coro = _send_handoff_compact_continuation(
-        tmux,
-        str(target),
+        pane,
         prompt,
-        str(session_id),
+        session_id,
         delay_seconds=delay_seconds,
         cli_source=cli_source,
         on_send_failure=on_send_failure,
         composer_read=_composer_reader(db, cli_source),
     )
     return _schedule_coroutine(coro, loop=loop)
+
+
+def _continuation_pane(
+    session: Any,
+    session_id: str,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> PaneIO | None:
+    """Route like compaction delivery: the live terminals row, else the tmux pane."""
+    from gobby.terminals.pane_io import TmuxPaneIO, live_runtime_pane
+
+    try:
+        pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
+    except Exception:
+        logger.warning(
+            "Failed resolving the live terminal for set_handoff compact continuation %s",
+            session_id,
+            exc_info=True,
+        )
+        pane = None
+    if pane is not None:
+        return pane
+    ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    target = None if ctx is None else ctx.get("tmux_pane") or ctx.get("tmux_session")
+    if not target:
+        logger.warning(
+            "Cannot schedule set_handoff compact continuation for session %s; "
+            "no live terminal or tmux target",
+            session_id,
+        )
+        return None
+    return TmuxPaneIO(manager_for_terminal_context(ctx), str(target))
 
 
 def _composer_reader(
@@ -256,14 +279,14 @@ def _persist_pull_prompt_message(
 def schedule_codex_handoff_compact_continuation_readiness(
     db: HubDatabase,
     *,
+    pane: PaneIO,
     pending_session_id: str,
-    target_session: Any,
     before_command: str | None,
     attempt_id: str | None = None,
     loop: Any | None = None,
     poll_seconds: float = _CODEX_COMPACT_READY_POLL_SECONDS,
 ) -> bool:
-    """Wait for Codex's terminal completion signal before submitting continuation."""
+    """Wait for Codex's terminal completion signal on the compacted pane, then continue."""
     if before_command is None:
         logger.debug(
             "Cannot schedule Codex compact readiness for session %s; baseline capture failed",
@@ -271,24 +294,9 @@ def schedule_codex_handoff_compact_continuation_readiness(
         )
         return False
 
-    ctx = parse_terminal_context_value(getattr(target_session, "terminal_context", None))
-    if ctx is None:
-        logger.debug("Cannot schedule Codex compact readiness; no terminal context")
-        return False
-
-    target = ctx.get("tmux_pane") or ctx.get("tmux_session")
-    if not target:
-        logger.debug(
-            "Cannot schedule Codex compact readiness for session %s; no tmux target",
-            pending_session_id,
-        )
-        return False
-
-    tmux = manager_for_terminal_context(ctx)
     coro = _continue_after_codex_compaction_ready(
         db,
-        tmux=tmux,
-        target=str(target),
+        pane=pane,
         pending_session_id=pending_session_id,
         before_command=before_command,
         poll_seconds=poll_seconds,
@@ -303,6 +311,8 @@ def consume_and_schedule_handoff_compact_continuation(
     pending_session_id: str | None,
     target_session: Any,
     loop: Any | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
 ) -> bool:
     """Consume a fresh marker and schedule its continuation prompt.
 
@@ -332,6 +342,8 @@ def consume_and_schedule_handoff_compact_continuation(
         prompt,
         loop=loop,
         db=db,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
         on_send_failure=partial(
             _persist_pull_prompt_message,
             db,
@@ -404,8 +416,7 @@ def _take_same_terminal_handoff_compact_continuation_pending(
 
 
 async def _send_handoff_compact_continuation(
-    tmux: Any,
-    target: str,
+    pane: PaneIO,
     prompt: str,
     session_id: str,
     *,
@@ -415,8 +426,7 @@ async def _send_handoff_compact_continuation(
     composer_read: Callable[[str | None], ComposerRead] | None = None,
 ) -> bool:
     sent = await _type_handoff_compact_continuation(
-        tmux,
-        target,
+        pane,
         prompt,
         session_id,
         delay_seconds=delay_seconds,
@@ -429,8 +439,7 @@ async def _send_handoff_compact_continuation(
 
 
 async def _type_handoff_compact_continuation(
-    tmux: Any,
-    target: str,
+    pane: PaneIO,
     prompt: str,
     session_id: str,
     *,
@@ -438,25 +447,22 @@ async def _type_handoff_compact_continuation(
     cli_source: str | None,
     composer_read: Callable[[str | None], ComposerRead] | None,
 ) -> bool:
-    from gobby.terminals.composer import composer_clear_sequence
-    from gobby.terminals.pane_io import TmuxPaneIO
+    from gobby.terminals.pane_io import clear_composer
 
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
         # An operator draft in the composer would be submitted with the pull
         # prompt, so empty the box first (blind: the prompt reads fine regardless).
-        pane = TmuxPaneIO(tmux, target)
-        for key in composer_clear_sequence(cli_source):
-            ok, reason = await pane.send_key(key)
-            if not ok:
-                logger.warning(
-                    "Failed clearing the composer before set_handoff continuation for %s: %s",
-                    session_id,
-                    reason,
-                )
-                return False
-        ok = await tmux.dispatch_keys(target, f"{prompt}\n", literal=True)
+        ok, reason = await clear_composer(pane, cli_source)
+        if not ok:
+            logger.warning(
+                "Failed clearing the composer before set_handoff continuation for %s: %s",
+                session_id,
+                reason,
+            )
+            return False
+        ok, reason = await pane.type_text(f"{prompt}\n")
     except Exception:
         logger.warning(
             "Failed to send set_handoff compact continuation prompt for session %s",
@@ -466,29 +472,32 @@ async def _type_handoff_compact_continuation(
         return False
     if not ok:
         logger.warning(
-            "tmux send-keys returned false for set_handoff compact continuation %s", session_id
+            "Failed to send set_handoff compact continuation prompt for session %s: %s",
+            session_id,
+            reason,
         )
         return False
-    # A composer still settling the bracketed paste can swallow the Enter that
-    # send_keys appended; this second Enter submits in that case and is a no-op
-    # on an already-submitted (empty) composer. Delivery already succeeded, so
-    # a retry failure is logged, never propagated.
+    # A composer still settling the bracketed paste can swallow the submitting
+    # Enter; this second Enter submits in that case and is a no-op on an
+    # already-submitted (empty) composer. Delivery already succeeded, so a
+    # retry failure is logged, never propagated.
     await asyncio.sleep(HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
     if composer_read is not None and not await _follow_up_enter_wanted(pane, prompt, composer_read):
         return True
     try:
-        retry_ok = await tmux.dispatch_keys(target, "Enter", literal=False)
+        retry_ok, retry_reason = await pane.send_key("enter")
     except Exception:
-        retry_ok = False
         logger.warning(
             "Failed follow-up Enter for set_handoff compact continuation %s",
             session_id,
             exc_info=True,
         )
+        return True
     if not retry_ok:
         logger.warning(
-            "tmux follow-up Enter returned false for set_handoff compact continuation %s",
+            "Follow-up Enter failed for set_handoff compact continuation %s: %s",
             session_id,
+            retry_reason,
         )
     return True
 
@@ -496,8 +505,7 @@ async def _type_handoff_compact_continuation(
 async def _continue_after_codex_compaction_ready(
     db: HubDatabase,
     *,
-    tmux: Any,
-    target: str,
+    pane: PaneIO,
     pending_session_id: str,
     before_command: str,
     poll_seconds: float,
@@ -535,10 +543,7 @@ async def _continue_after_codex_compaction_ready(
             return
 
         try:
-            output = await tmux.snapshot_lines(
-                target,
-                lines=CODEX_COMPACT_READY_CAPTURE_LINES,
-            )
+            output = await pane.snapshot(CODEX_COMPACT_READY_CAPTURE_LINES)
         except Exception:
             logger.debug(
                 "Failed to inspect Codex compact readiness for session %s",
@@ -573,8 +578,7 @@ async def _continue_after_codex_compaction_ready(
             # A restored marker has no consumer inside the readiness window, so
             # a failed send queues the prompt for the hook piggyback instead.
             await _send_handoff_compact_continuation(
-                tmux,
-                target,
+                pane,
                 prompt,
                 pending_session_id,
                 delay_seconds=0,

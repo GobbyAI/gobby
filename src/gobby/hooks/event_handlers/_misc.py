@@ -258,6 +258,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     pending_session_id=session_id,
                     target_session=session,
                     loop=getattr(self._session_coordinator, "_event_loop", None),
+                    terminal_manager=getattr(self, "terminal_manager", None),
+                    terminal_runtime_registry=self._terminal_runtime_registry,
                 )
             except Exception:
                 self.logger.warning(

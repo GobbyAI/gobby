@@ -84,6 +84,15 @@ async def test_runtime_pane_sends_named_keys_and_unsubmitted_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_pane_submits_text_ending_in_a_newline_like_tmux() -> None:
+    runtime = _FakeRuntime()
+    pane = RuntimePaneIO(cast(TerminalRuntime, runtime), _Terminal())
+
+    assert await pane.type_text("Call get_handoff()\n") == (True, None)
+    assert runtime.texts == [("Call get_handoff()", True)]
+
+
+@pytest.mark.asyncio
 async def test_runtime_pane_reports_indeterminate_and_typed_failures() -> None:
     indeterminate = RuntimePaneIO(
         cast(TerminalRuntime, _FakeRuntime(key_outcome=IndeterminateWrite("lost"))), _Terminal()
