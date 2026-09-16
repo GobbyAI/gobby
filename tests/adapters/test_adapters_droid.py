@@ -327,6 +327,30 @@ class TestDroidTranslateFromHookResponse:
             },
         }
 
+    def test_pre_tool_use_deny_folds_context_into_the_reason(self) -> None:
+        # Droid shows the model no additionalContext on PreToolUse, so a denial's
+        # context (such as the Gobby router menu) must ride the decision reason.
+        adapter = DroidAdapter()
+        result = adapter.translate_from_hook_response(
+            HookResponse(
+                decision="block",
+                reason="Gobby router resolved through its capability catalog",
+                context="Menus list choices only.",
+            ),
+            hook_type="PreToolUse",
+        )
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "Gobby router resolved through its capability catalog\n\n"
+                    "Menus list choices only."
+                ),
+            },
+        }
+
     @pytest.mark.parametrize("blocking", ["deny", "block"])
     @pytest.mark.parametrize("override", [{"permission_decision": "allow"}, {"auto_approve": True}])
     def test_a_block_wins_over_a_permission_allow(

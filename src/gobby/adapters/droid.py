@@ -19,7 +19,9 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.degradation import (
+    AdapterDegradationKind,
     persist_kwargs_from_hook_response,
+    record_adapter_degradation,
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
@@ -305,6 +307,34 @@ class DroidAdapter(BaseAdapter):
             **persist_kwargs_from_hook_response(response, self._hook_manager),
         )
 
+    def _deny_reason_with_context(
+        self,
+        response: HookResponse,
+        context: str,
+        reason: str | None,
+        *,
+        hook_type: str | None,
+    ) -> str:
+        """Fold context into a denial: Droid's PreToolUse shows the model only the reason."""
+        record_adapter_degradation(
+            provider=self.source,
+            hook_type=hook_type,
+            kind=AdapterDegradationKind.REROUTED_FIELD,
+            response_field="context",
+            destination_channel="permissionDecisionReason",
+            event_logger=logger,
+        )
+        bounded = truncate_context_for_adapter(
+            context,
+            provider=self.source,
+            hook_type=hook_type,
+            destination_channel="permissionDecisionReason",
+            contributor_sizes={"response.context": len(context)},
+            event_logger=logger,
+            **persist_kwargs_from_hook_response(response, self._hook_manager),
+        )
+        return "\n\n".join(part for part in (reason, bounded) if part)
+
     def translate_from_hook_response(
         self,
         response: HookResponse,
@@ -374,8 +404,17 @@ class DroidAdapter(BaseAdapter):
                 hook_output = ensure_hook_specific_output()
                 if permission_decision:
                     hook_output["permissionDecision"] = permission_decision
-                    if normalized_reason:
-                        hook_output["permissionDecisionReason"] = normalized_reason
+                    decision_reason = normalized_reason
+                    if (
+                        permission_decision == "deny"
+                        and response.context
+                        and not additional_context
+                    ):
+                        decision_reason = self._deny_reason_with_context(
+                            response, response.context, normalized_reason, hook_type=hook_type
+                        )
+                    if decision_reason:
+                        hook_output["permissionDecisionReason"] = decision_reason
                 if response.modified_input is not None and permission_decision != "deny":
                     hook_output["updatedInput"] = response.modified_input
         elif decision_style == DroidDecisionStyle.NONE and is_denied and normalized_reason:
