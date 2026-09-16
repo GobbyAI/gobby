@@ -7,7 +7,7 @@ mod host_support;
 
 use embed_support::{
     attach, connect_frames, crate_src, gclient_views, list_terminals, read_msg, read_msg_timeout,
-    spawn_host, start_tmux, start_tmux_sized, wait_until, write_msg,
+    spawn_host, spawn_host_with_env_removed, start_tmux, start_tmux_sized, wait_until, write_msg,
 };
 use gobby_terminal::host::{
     classify_poll, parse_poll_batch, truncate_attach_history, PollClass, POLL_FIELD_COUNT,
@@ -114,6 +114,34 @@ fn tmux_capture_poll_round_trip() {
         .any(|m| frame_text(m).is_some_and(|t| t.contains("GOBBY-SECOND"))));
     let log = std::fs::read_to_string(host.socket_dir().join("gterm.log")).unwrap_or_default();
     assert!(!log.contains("send-keys"), "host must not write to tmux");
+}
+
+/// A host started the way a daemon starts it, with no UTF-8 locale and outside
+/// tmux, still gets frames. tmux rewrites control and non-ASCII bytes in
+/// display-message output to `_` for a client it does not treat as UTF-8,
+/// which unframes the poll batch's title lines.
+#[test]
+fn tmux_poll_survives_a_host_without_a_utf8_locale() {
+    let pane = start_tmux();
+    pane.send_hex(b"echo GOBBY-LOCALE\n");
+    wait_until(Duration::from_secs(2), || {
+        pane.tmux(&["capture-pane", "-p", "-t", &pane.pane_id])
+            .contains("GOBBY-LOCALE")
+    });
+    let host = spawn_host_with_env_removed(&[], &["LC_ALL", "LC_CTYPE", "LANG", "TMUX"]);
+    let mut stream = connect_frames(&host, None);
+    match attach(&mut stream, pane.locator()) {
+        ServerMessage::Attached { created, .. } => assert!(created),
+        other => panic!("{other:?}"),
+    }
+    let msgs = collect_until(&mut stream, Duration::from_secs(3), |m| {
+        frame_text(m).is_some_and(|t| t.contains("GOBBY-LOCALE"))
+    });
+    assert!(
+        msgs.iter()
+            .any(|m| frame_text(m).is_some_and(|t| t.contains("GOBBY-LOCALE"))),
+        "{msgs:?}"
+    );
 }
 
 #[test]
@@ -580,6 +608,39 @@ fn poll_header_keeps_field_positions_when_tmux_lacks_a_variable() {
         assert_eq!(parsed.title, "sh");
         assert_eq!(parsed.capture, "screen");
     }
+}
+
+/// Poll batches captured from real tmux for a new 80x24 `/bin/sh` pane after
+/// `echo PROBE-TEXT`: tmux 3.4 (ubuntu:24.04) and tmux 3.3a (debian:bookworm),
+/// capture tails trimmed.
+#[test]
+fn poll_batch_parses_captured_distro_tmux_output() {
+    let tmux_34 = "219|1789593017|80|24|2|2|1||0|0|0||0|0|0|0|0|1|0|0|0|23|0||||0|0\nGTERM_TITLE_LEN=12\nGTERM_TITLE=3ba10abfd67d\n# echo PROBE-TEXT   \nPROBE-TEXT          \n";
+    let tmux_33a = "163|1789593020|80|24|2|2|1||0|0|0||0|0|0|0|0|1|0|0|0|23|0||||0|0\nGTERM_TITLE_LEN=12\nGTERM_TITLE=d5d899581e7a\n# echo PROBE-TEXT\nPROBE-TEXT\n# \n";
+    for (batch, pid, start_time, title) in [
+        (tmux_34, 219, 1_789_593_017, "3ba10abfd67d"),
+        (tmux_33a, 163, 1_789_593_020, "d5d899581e7a"),
+    ] {
+        let parsed = parse_poll_batch(batch).unwrap_or_else(|| panic!("parse {batch:?}"));
+        assert_eq!(
+            (parsed.pid, parsed.start_time, parsed.width, parsed.height),
+            (pid, start_time, 80, 24)
+        );
+        assert_eq!((parsed.cursor_x, parsed.cursor_y), (2, 2));
+        let modes = &parsed.modes;
+        assert!(modes.cursor_visible && modes.wrap && !modes.pane_in_mode);
+        assert_eq!(
+            (modes.scroll_region_upper, modes.scroll_region_lower),
+            (0, 23)
+        );
+        assert!(!parsed.pane_dead);
+        assert_eq!(parsed.title, title);
+        assert!(parsed.capture.starts_with("# echo PROBE-TEXT"), "{batch:?}");
+    }
+    // tmux 3.4 with LANG unset and no -u: the newline inside the title format
+    // came back as `_`, so the title is unframed and the batch is refused.
+    let unframed = "218|1789593013|80|24|2|2|1||0|0|0||0|0|0|0|0|1|0|0|0|23|0||||0|0\nGTERM_TITLE_LEN=12_GTERM_TITLE=6eb9a684f528\n# echo PROBE-TEXT   \n";
+    assert!(parse_poll_batch(unframed).is_none());
 }
 
 #[test]
