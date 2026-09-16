@@ -7,12 +7,18 @@
 
 use anyhow::Context;
 use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode};
-use postgres::{Client, NoTls, config::SslMode};
+use postgres::{
+    Client, NoTls,
+    config::{Host, SslMode},
+};
 use postgres_openssl::MakeTlsConnector;
+use std::sync::mpsc;
 use std::time::Duration;
 
 const GOBBY_APPLICATION_NAME: &str = "gobby-cli";
 const MANAGED_APPLICATION_NAME_PREFIX: &str = "gobby-agent-";
+/// Bound for one whole connect attempt when the URL sets no `connect_timeout`.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
@@ -124,7 +130,7 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
         config.application_name(GOBBY_APPLICATION_NAME);
     }
     if config.get_connect_timeout().is_none() {
-        config.connect_timeout(Duration::from_secs(5));
+        config.connect_timeout(DEFAULT_CONNECT_TIMEOUT);
     }
     Ok(config)
 }
@@ -189,11 +195,91 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
 fn connect_once(database_url: &str) -> anyhow::Result<Client> {
     let requested_ssl_mode = requested_ssl_mode(database_url);
     let config = connection_config(database_url)?;
-    match requested_ssl_mode.unwrap_or_else(|| requested_ssl_mode_from_config(&config)) {
+    let mode = requested_ssl_mode.unwrap_or_else(|| requested_ssl_mode_from_config(&config));
+    connect_bounded(config, mode)
+}
+
+/// Run one connect attempt under a bound that covers the whole handshake.
+///
+/// `postgres::Config::connect_timeout` is handed to `connect_socket` alone in
+/// the pinned tokio-postgres 0.7.17: TLS negotiation and the startup and
+/// authentication exchange in `connect_raw` are unbounded. A server that
+/// accepts the TCP connection and then never answers therefore parks the
+/// caller forever. In #22412 a `gcode` refresh resolved `localhost` to `::1`,
+/// the kernel handed the socket ephemeral source port 60891 — the hub's own
+/// port — and the SYN found itself: a TCP self-connection that is ESTABLISHED
+/// at once and answers nothing. That connect sat for five hours while the
+/// refresh's first connection kept the project index advisory lock, so every
+/// `gcode` run on the machine read a stale index until the process was killed.
+///
+/// The attempt runs on its own thread and the caller waits `connect_timeout`
+/// (5 s by default) for its result, so the bound covers DNS, TCP, TLS and the
+/// startup handshake for every `sslmode`. Successful connects are unchanged:
+/// `postgres::Config::connect` builds the client and its runtime exactly as
+/// before, and both move back here intact. A hub that legitimately needs more
+/// room raises `connect_timeout` in its URL, which now buys the whole attempt
+/// rather than the TCP phase alone.
+///
+/// The sync `postgres::Client` owns the runtime it was built on and cannot be
+/// assembled from the async parts (`postgres::Client::new` is crate-private),
+/// so a connect that outlives the bound cannot be cancelled: its thread stays
+/// parked on one socket for the life of the process. Every caller of this
+/// module is a short-lived CLI process, so the parked thread dies with the
+/// process instead of accumulating; long-running services use the async pool.
+fn connect_bounded(config: postgres::Config, mode: RequestedSslMode) -> anyhow::Result<Client> {
+    let bound = config
+        .get_connect_timeout()
+        .copied()
+        .unwrap_or(DEFAULT_CONNECT_TIMEOUT);
+    let endpoint = endpoint_label(&config);
+    let (sender, receiver) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("gobby-postgres-connect".to_string())
+        .spawn(move || {
+            let _ = sender.send(connect_for_mode(&config, mode));
+        })
+        .context("failed to start the bounded PostgreSQL hub connect")?;
+
+    match receiver.recv_timeout(bound) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(anyhow::anyhow!(
+            "the Gobby PostgreSQL hub at {endpoint} did not answer the startup handshake \
+             within {:.1}s",
+            bound.as_secs_f64(),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
+            "the connect to the Gobby PostgreSQL hub at {endpoint} ended without a result"
+        )),
+    }
+}
+
+/// Host and port of the configured hub, with no user, password or database.
+fn endpoint_label(config: &postgres::Config) -> String {
+    let host = config
+        .get_hosts()
+        .first()
+        .map(|host| match host {
+            Host::Tcp(host) => host.clone(),
+            #[cfg(unix)]
+            Host::Unix(path) => path.display().to_string(),
+        })
+        .or_else(|| {
+            config
+                .get_hostaddrs()
+                .first()
+                .map(|hostaddr| hostaddr.to_string())
+        })
+        .unwrap_or_else(|| "unknown host".to_string());
+    let port = config.get_ports().first().copied().unwrap_or(5432);
+    format!("{host}:{port}")
+}
+
+fn connect_for_mode(config: &postgres::Config, mode: RequestedSslMode) -> anyhow::Result<Client> {
+    match mode {
         RequestedSslMode::Disable => config
             .connect(NoTls)
             .context("failed to connect to the Gobby PostgreSQL hub"),
-        RequestedSslMode::Prefer => match connect_with_tls_unverified(&config) {
+        RequestedSslMode::Prefer => match connect_with_tls_unverified(config) {
             Ok(client) => Ok(client),
             Err(error) => {
                 log::debug!(
@@ -207,9 +293,9 @@ fn connect_once(database_url: &str) -> anyhow::Result<Client> {
         // libpq `sslmode=require` requires encryption without CA or hostname
         // verification. `verify-ca` keeps CA verification while allowing
         // hostname mismatch; `verify-full` keeps both checks strict.
-        RequestedSslMode::Require => connect_with_tls_unverified(&config),
-        RequestedSslMode::VerifyCa => connect_with_tls_verify_ca(&config),
-        RequestedSslMode::VerifyFull => connect_with_tls_verification(&config, true),
+        RequestedSslMode::Require => connect_with_tls_unverified(config),
+        RequestedSslMode::VerifyCa => connect_with_tls_verify_ca(config),
+        RequestedSslMode::VerifyFull => connect_with_tls_verification(config, true),
     }
 }
 
@@ -400,6 +486,12 @@ fn run_schema_validator<C>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    /// Only ever sent to a socket that never answers; the assertions below
+    /// prove it never reaches an error message.
+    const SILENT_SERVER_TEST_PASSWORD: &str = "silent-server-test-password";
 
     #[test]
     fn password_authentication_failure_requires_sqlstate() {
@@ -605,5 +697,63 @@ mod tests {
 
         let _connector = tls_connector(TlsConnectorMode::VerifyFull)?;
         Ok(())
+    }
+
+    /// A server that accepts the TCP connection and never answers the startup
+    /// message is the #22412 shape: the socket is ESTABLISHED at once, so the
+    /// `connect_timeout` that only guards `connect_socket` never fires.
+    #[test]
+    fn silent_server_connect_fails_within_bound() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind the silent server");
+        let port = listener.local_addr().expect("silent server address").port();
+        let (release_sender, release_receiver) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let mut accepted = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { break };
+                accepted.push(stream);
+                if accepted.len() == 2 {
+                    break;
+                }
+            }
+            // Hold every accepted socket open, unanswered, until the test ends.
+            let _ = release_receiver.recv();
+            drop(accepted);
+        });
+
+        for sslmode in ["disable", "require"] {
+            let database_url = format!(
+                "postgresql://gobby:{SILENT_SERVER_TEST_PASSWORD}@127.0.0.1:{port}\
+                 /gobby?sslmode={sslmode}&connect_timeout=1"
+            );
+            let (result_sender, result_receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = result_sender.send(connect_readonly(&database_url));
+            });
+
+            let outcome = result_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_else(|_| {
+                    panic!("sslmode={sslmode} connect must fail closed, not hang past its bound")
+                });
+            let error = outcome.err().unwrap_or_else(|| {
+                panic!("sslmode={sslmode} silent server cannot hand back a client")
+            });
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("startup handshake"),
+                "sslmode={sslmode} error must name the unanswered startup handshake: {message}"
+            );
+            assert!(
+                message.contains("127.0.0.1") && message.contains(&port.to_string()),
+                "sslmode={sslmode} error must name host and port: {message}"
+            );
+            assert!(
+                !message.contains(SILENT_SERVER_TEST_PASSWORD),
+                "sslmode={sslmode} error must not carry credentials: {message}"
+            );
+        }
+
+        drop(release_sender);
     }
 }
