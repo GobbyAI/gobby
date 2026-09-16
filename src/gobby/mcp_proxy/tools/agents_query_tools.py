@@ -44,6 +44,7 @@ from gobby.mcp_proxy.tools.agents_payloads import (
     _agent_result_payload,
 )
 from gobby.mcp_proxy.tools.agents_runtime import facade
+from gobby.mcp_proxy.tools.headless_waits import headless_wait_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
@@ -377,6 +378,15 @@ def register_agent_query_tools(
     )
     async def wait_for_agent(run_id: str) -> dict[str, Any]:
         agents = facade()
+        # A headless run cannot yield its turn for any target, so refuse before
+        # resolving one: the CLI exits at the yield and the wake finds no process.
+        refusal = headless_wait_refusal(
+            agent_run_manager=ctx.agent_run_manager,
+            session_id=ctx.get_current_session_id(),
+            tool_name="wait_for_agent",
+        )
+        if refusal is not None:
+            return refusal
         run, error = _lookup_run(run_id)
         if error is not None:
             return error

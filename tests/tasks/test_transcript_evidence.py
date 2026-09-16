@@ -26,15 +26,17 @@ from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
+    _resolve_transcript_path,
+    derive_transcript_evidence,
+    merge_transcript_evidence,
+    select_window_raw_lines,
+)
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
     TranscriptValidationSegment,
-    _resolve_transcript_path,
-    derive_transcript_evidence,
-    merge_transcript_evidence,
-    select_window_raw_lines,
 )
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output

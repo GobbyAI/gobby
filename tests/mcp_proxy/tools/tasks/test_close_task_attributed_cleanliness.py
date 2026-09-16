@@ -24,7 +24,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEvidence,
+    TranscriptValidationRun,
+)
 from gobby.tasks.validation import TaskValidator
 from gobby.utils.daemon_git import GitFailed, GitOk
 from gobby.utils.daemon_git import daemon_git as daemon_git_client

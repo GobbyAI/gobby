@@ -11,7 +11,10 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence,
 )
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptEvidenceUnavailable
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEvidence,
+    TranscriptEvidenceUnavailable,
+)
 from tests.tasks.test_close_checklist import _run
 
 _SUPPORT = "gobby.mcp_proxy.tools.tasks._close_evaluation_support"
@@ -42,7 +45,14 @@ def _context(links: list[dict[str, Any]], sessions: dict[str, Any]) -> MagicMock
 
 
 def _session(session_id: str, created_at: str) -> SimpleNamespace:
-    return SimpleNamespace(id=session_id, created_at=created_at)
+    # ``source`` and ``transcript_path`` carry the provider identity the close path
+    # reads before parsing, so every stand-in session must supply them.
+    return SimpleNamespace(
+        id=session_id,
+        created_at=created_at,
+        source="claude",
+        transcript_path=None,
+    )
 
 
 async def _derive(

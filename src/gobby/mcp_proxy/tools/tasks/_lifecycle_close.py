@@ -73,7 +73,7 @@ from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
-from gobby.tasks.transcript_evidence import (
+from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
 )
