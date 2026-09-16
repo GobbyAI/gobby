@@ -102,19 +102,25 @@ pub fn spawn_host(socket_dir: &Path) -> HostProc {
 fn private_gterm(socket_dir: &Path) -> PathBuf {
     let src = gterm_bin();
     let dst = socket_dir.join("gterm");
+    // Stage under a private name and rename over `gterm` so every spawn execs a
+    // new inode. `std::fs::copy` onto an existing path truncates and rewrites
+    // the inode a previous host in this directory already executed, and macOS
+    // kills the next exec of an in-place-overwritten signed binary with SIGKILL.
+    let staged = socket_dir.join(".gterm.staged");
     let mut last_err = None;
     for _ in 0..20 {
-        match std::fs::copy(&src, &dst) {
+        match std::fs::copy(&src, &staged) {
             Ok(_) => {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let mut perms = std::fs::metadata(&dst)
+                    let mut perms = std::fs::metadata(&staged)
                         .expect("gterm copy metadata")
                         .permissions();
                     perms.set_mode(0o755);
-                    std::fs::set_permissions(&dst, perms).expect("gterm copy mode");
+                    std::fs::set_permissions(&staged, perms).expect("gterm copy mode");
                 }
+                std::fs::rename(&staged, &dst).expect("rename staged gterm copy");
                 return dst;
             }
             Err(err) => {
