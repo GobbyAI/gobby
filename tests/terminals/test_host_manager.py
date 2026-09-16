@@ -561,6 +561,8 @@ async def test_degraded_startup_without_host(tmp_path: Path, temp_db: HubDatabas
     assert state["enabled"] is True
     assert state["running"] is False
     assert state["last_error"]
+    # The degraded start arms the retry loop (#22425); stop cancels it.
+    await host.stop()
 
 
 @pytest.mark.asyncio
@@ -588,6 +590,7 @@ async def test_startup_settles_after_start_even_when_degraded(
     await host.start()
     assert host.native_available is False
     assert await host.wait_startup_settled(0.01) is True
+    await host.stop()
 
 
 @pytest.mark.asyncio
@@ -1741,4 +1744,117 @@ async def test_stale_pidfile_at_start_recovers_without_restart(
     locator = AttachLocator(backend="native", frame_host_epoch="epoch-1", host_terminal_id="ht-1")
     await frame.handshake(locator, local_token="token")
     assert frame.closed is False
+    await host.stop()
+
+
+async def test_stale_control_socket_spawns_host(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    """A socket file nobody listens on spawns a host instead of degrading (#22425)."""
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_client import HostUnavailableError
+    from gobby.terminals.host_manager import TerminalHostManager
+    from gobby.terminals.host_protocol import control_socket_path
+
+    # The file a host that died without unlinking its socket leaves behind.
+    control_socket_path(tmp_path).touch()
+    terminals = TerminalManager(temp_db)
+    fresh = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4343)
+    spawns: list[FakeHostProcess] = []
+    connects = {"n": 0}
+
+    async def connect_after_spawn() -> FakeControlClient:
+        connects["n"] += 1
+        if connects["n"] == 1:
+            # What HostClient.connect raises for a refused connection.
+            raise HostUnavailableError("gterm host unavailable")
+        return fresh
+
+    def spawn() -> FakeHostProcess:
+        process = FakeHostProcess(pid=4343)
+        spawns.append(process)
+        return process
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        terminal_config=TerminalConfig(),
+        terminal_manager=terminals,
+        run_manager=FakeRunManager(),
+        connector=connect_after_spawn,
+        spawner=spawn,
+        pid_identity=lambda pid: pid == 4343,
+    )
+
+    await host.start()
+
+    assert spawns, "a stale control socket must not abort the spawn"
+    assert host.running is True
+    assert host.native_available is True
+    assert host.adopted is False
+    assert host.spawned_this_construction is True
+    assert host.host_pid == 4343
+    await host.stop()
+
+
+async def test_spawn_failure_retries_from_health_loop(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    """A start that spawned nothing recovers on a health tick, not a restart (#22425)."""
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_client import HostUnavailableError
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    terminals = TerminalManager(temp_db)
+    epoch = str(uuid.uuid4())
+    client = FakeControlClient(host_epoch=epoch, host_pid=4242)
+    binary_installed = False
+    spawns: list[FakeHostProcess] = []
+
+    async def connect() -> FakeControlClient:
+        # Nothing answers the control socket until this manager spawns a host.
+        if not spawns:
+            raise HostUnavailableError("gterm host unavailable")
+        return client
+
+    def spawn() -> FakeHostProcess:
+        if not binary_installed:
+            raise FileNotFoundError("gterm")
+        process = FakeHostProcess(pid=4242)
+        spawns.append(process)
+        return process
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        terminal_config=TerminalConfig(),
+        terminal_manager=terminals,
+        run_manager=FakeRunManager(),
+        connector=connect,
+        spawner=spawn,
+        pid_identity=lambda pid: pid == 4242,
+    )
+
+    def binary_appears(tick: int) -> None:
+        nonlocal binary_installed
+        if tick == 1:
+            binary_installed = True
+
+    ticks = _Ticks(count=1, before_tick=binary_appears)
+    host._sleep = ticks
+
+    await host.start()
+    assert host.running is False
+    assert spawns == []
+    assert host.last_error
+    assert host._health_task is not None, "a failed spawn must arm the health loop"
+
+    await asyncio.wait_for(ticks.done.wait(), 5)
+
+    assert len(spawns) == 1
+    assert host.running is True
+    assert host.native_available is True
+    assert host.host_epoch == epoch
+    assert host.host_pid == 4242
+    assert host.last_error is None
     await host.stop()

@@ -1,28 +1,34 @@
+#[cfg(test)]
 use std::{
     collections::{HashSet, VecDeque},
+    sync::OnceLock,
+};
+use std::{
     io::Write,
     os::fd::RawFd,
     path::PathBuf,
     process::{Command, Stdio},
-    sync::OnceLock,
 };
 
-use super::{
-    read_limited_reader, ClipboardCommand, ClipboardImage, ForegroundJob, ForegroundProcess,
-    LimitedRead, Signal,
-};
+use super::{read_limited_reader, ClipboardCommand, ClipboardImage, LimitedRead, Signal};
+#[cfg(test)]
+use super::{ForegroundJob, ForegroundProcess};
 
 #[cfg(test)]
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
+#[cfg(test)]
 const PROCESS_DETECTION_ENV_VAR: &str = "GTERM_PROCESS_DETECTION";
+#[cfg(test)]
 const CHILD_GROUPS_SCAN_LIMIT: usize = 64;
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessDetectionMode {
     Native,
     ChildGroups,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcGroupMember {
     pid: u32,
@@ -53,11 +59,13 @@ fn proc_file_indicates_wsl(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn text_indicates_wsl(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     text.contains("microsoft") || text.contains("wsl")
 }
 
+#[cfg(test)]
 fn parse_process_detection_mode(value: Option<&str>) -> Result<ProcessDetectionMode, &str> {
     match value {
         None | Some("") | Some("native") => Ok(ProcessDetectionMode::Native),
@@ -66,6 +74,7 @@ fn parse_process_detection_mode(value: Option<&str>) -> Result<ProcessDetectionM
     }
 }
 
+#[cfg(test)]
 fn process_detection_mode() -> ProcessDetectionMode {
     static MODE: OnceLock<ProcessDetectionMode> = OnceLock::new();
     *MODE.get_or_init(|| {
@@ -132,6 +141,7 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+#[cfg(test)]
 fn foreground_job_for_group(child_pid: u32, process_group_id: u32) -> Option<ForegroundJob> {
     let members = foreground_process_group_members(child_pid, process_group_id)?;
     let processes = members
@@ -161,6 +171,7 @@ fn foreground_job_for_group(child_pid: u32, process_group_id: u32) -> Option<For
 /// Best-effort foreground group for environments that do not expose terminal
 /// foreground groups. This mode is explicit because background jobs cannot be
 /// distinguished from foreground jobs without the native terminal signal.
+#[cfg(test)]
 fn child_groups_foreground_process_group(child_pid: u32) -> Option<u32> {
     let shell_group_id = process_pgrp_and_comm(child_pid)
         .map(|(pgrp, _)| pgrp)
@@ -175,6 +186,7 @@ fn child_groups_foreground_process_group(child_pid: u32) -> Option<u32> {
     )
 }
 
+#[cfg(test)]
 fn child_groups_foreground_process_group_with(
     child_pid: u32,
     shell_group_id: u32,
@@ -207,6 +219,7 @@ fn child_groups_foreground_process_group_with(
     newest.or(Some(shell_group_id))
 }
 
+#[cfg(test)]
 fn foreground_process_group_members(
     child_pid: u32,
     process_group_id: u32,
@@ -220,6 +233,7 @@ fn foreground_process_group_members(
     )
 }
 
+#[cfg(test)]
 fn foreground_process_group_members_with(
     child_pid: u32,
     process_group_id: u32,
@@ -235,6 +249,7 @@ fn foreground_process_group_members_with(
     (!members.is_empty()).then_some(members)
 }
 
+#[cfg(test)]
 fn process_tree_pids(
     roots: impl IntoIterator<Item = u32>,
     mut task_ids: impl FnMut(u32) -> Vec<u32>,
@@ -262,6 +277,7 @@ fn process_tree_pids(
     pids
 }
 
+#[cfg(test)]
 fn process_task_ids(pid: u32) -> Vec<u32> {
     std::fs::read_dir(format!("/proc/{pid}/task"))
         .into_iter()
@@ -271,6 +287,7 @@ fn process_task_ids(pid: u32) -> Vec<u32> {
         .collect()
 }
 
+#[cfg(test)]
 fn process_task_children(pid: u32, tid: u32) -> Vec<u32> {
     let Some(children) = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children")).ok()
     else {
@@ -282,6 +299,7 @@ fn process_task_children(pid: u32, tid: u32) -> Vec<u32> {
         .collect()
 }
 
+#[cfg(test)]
 fn numeric_file_name(entry: &std::fs::DirEntry) -> Option<u32> {
     let file_name = entry.file_name();
     let value = file_name.to_str()?;
@@ -291,6 +309,7 @@ fn numeric_file_name(entry: &std::fs::DirEntry) -> Option<u32> {
     value.parse().ok()
 }
 
+#[cfg(test)]
 fn live_process_group_member(process_group_id: u32, pid: u32) -> Option<ProcGroupMember> {
     let (pgrp, comm) = process_pgrp_and_comm(pid)?;
     (pgrp > 0 && pgrp as u32 == process_group_id).then_some(ProcGroupMember { pid, comm })
@@ -312,11 +331,13 @@ pub fn foreground_process_group_id_for_tty_fd(fd: RawFd) -> Option<u32> {
     (pgid > 0).then_some(pgid as u32)
 }
 
+#[cfg(test)]
 fn process_pgrp_and_comm(pid: u32) -> Option<(i32, String)> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     process_pgrp_and_comm_from_stat(&stat)
 }
 
+#[cfg(test)]
 fn process_pgrp_and_comm_from_stat(stat: &str) -> Option<(i32, String)> {
     let close = stat.rfind(')')?;
     let comm = stat.get(1 + stat.find('(')?..close)?.to_string();
@@ -326,6 +347,7 @@ fn process_pgrp_and_comm_from_stat(stat: &str) -> Option<(i32, String)> {
     Some((pgrp, comm))
 }
 
+#[cfg(test)]
 fn process_argv(pid: u32) -> Option<Vec<String>> {
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
     if bytes.is_empty() {

@@ -17,7 +17,12 @@ from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import TerminalManager
-from gobby.terminals.host_client import HostClient, HostCommandError, HostManagerStopped
+from gobby.terminals.host_client import (
+    HostClient,
+    HostCommandError,
+    HostManagerStopped,
+    HostUnavailableError,
+)
 from gobby.terminals.host_control import HostControlError
 from gobby.terminals.host_events import HostEvent, HostEventStream, collect_gap_cut
 from gobby.terminals.host_identity import PidIdentity, is_live_gterm, pid_matches_ping
@@ -211,6 +216,9 @@ class TerminalHostManager:
             self.native_available = False
             self.last_error = str(exc)
             logger.warning("gterm host unavailable; native launches degraded: %s", exc)
+            # A failed start is retried on the health interval instead of
+            # staying degraded until the next daemon restart (#22425).
+            self._arm_health()
 
     async def _activate_adopted(self) -> None:
         """Bring an adopted host into service; shared by start and retry."""
@@ -534,8 +542,12 @@ class TerminalHostManager:
             return _Adopt.ABSENT
         try:
             client = await self._connect()
-        except (OSError, ConnectionError) as exc:
+        except (OSError, ConnectionError, HostUnavailableError) as exc:
             # Nobody is listening: a stale socket file, not a live host.
+            # `HostClient.connect` wraps the refused connection in
+            # `HostUnavailableError` (a RuntimeError), so the probe failure has
+            # to be caught by type here or a stale socket aborts the spawn and
+            # leaves native launches degraded until a restart (#22425).
             self.last_error = str(exc)
             return _Adopt.ABSENT
         previous_mismatch = self.host_mismatch
@@ -918,6 +930,11 @@ class TerminalHostManager:
             if client is None:
                 if self.host_mismatch is not None:
                     await self._retry_adoption()
+                elif not self.running:
+                    # A start that never produced a host (stale socket, spawn
+                    # failure): re-probe and spawn from here so recovery does
+                    # not need a daemon restart (#22425).
+                    await self._start_host()
                 continue
             try:
                 ping = await client.ping()

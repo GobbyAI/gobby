@@ -188,7 +188,24 @@ struct HostArgs {
 }
 
 impl HostArgs {
+    /// Parse `gterm host` argv, or print usage and exit (0 for help, 2 for a
+    /// bad argument) before anything touches the socket dir (#22425).
     fn parse() -> Self {
+        match Self::from_args(std::env::args().skip(2)) {
+            Ok(args) => args,
+            Err(ArgError::Help) => {
+                print!("{HOST_USAGE}");
+                std::process::exit(0);
+            }
+            Err(ArgError::Invalid(message)) => {
+                eprintln!("gterm host: {message}");
+                eprint!("{HOST_USAGE}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    fn from_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Self, ArgError> {
         let mut socket_dir = std::env::var("GTERM_SOCKET_DIR")
             .ok()
             .map(PathBuf::from)
@@ -198,77 +215,115 @@ impl HostArgs {
                     .unwrap_or_else(|| PathBuf::from("."))
             });
         let mut host_config = HostConfig::default();
-        let mut args = std::env::args().skip(1);
-        let _cmd = args.next();
+        let mut args = argv.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--help" | "-h" => return Err(ArgError::Help),
                 "--socket-dir" => {
-                    if let Some(value) = args.next() {
-                        socket_dir = PathBuf::from(value);
-                    }
+                    socket_dir = PathBuf::from(value_for(&arg, &mut args)?);
                 }
                 "--max-attachments-per-terminal" => {
-                    host_config.max_attachments_per_terminal = parse_u32(args.next());
+                    host_config.max_attachments_per_terminal =
+                        parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--max-attachments-total" => {
-                    host_config.max_attachments_total = parse_u32(args.next());
+                    host_config.max_attachments_total = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--max-attached-terminals" => {
-                    host_config.max_attached_terminals = parse_u32(args.next());
+                    host_config.max_attached_terminals = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--native-scrollback-max-lines" => {
-                    host_config.native_scrollback_max_lines = parse_u32(args.next());
+                    host_config.native_scrollback_max_lines = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--native-scrollback-max-bytes" => {
-                    host_config.native_scrollback_max_bytes = parse_u32(args.next());
+                    host_config.native_scrollback_max_bytes = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--tmux-attach-history-lines" => {
-                    host_config.tmux_attach_history_lines = parse_u32(args.next());
+                    host_config.tmux_attach_history_lines = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--tmux-attach-history-max-bytes" => {
-                    host_config.tmux_attach_history_max_bytes = parse_u32(args.next());
+                    host_config.tmux_attach_history_max_bytes =
+                        parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--tmux-poll-interval-ms" => {
-                    host_config.tmux_poll_interval_ms = parse_u32(args.next());
+                    host_config.tmux_poll_interval_ms = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--tmux-poll-backoff-ceiling-ms" => {
-                    host_config.tmux_poll_backoff_ceiling_ms = parse_u32(args.next());
+                    host_config.tmux_poll_backoff_ceiling_ms =
+                        parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--delta-queue-bytes" => {
-                    host_config.delta_queue_bytes = parse_u32(args.next());
+                    host_config.delta_queue_bytes = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--lag-timeout-ms" => {
-                    host_config.lag_timeout_ms = parse_u32(args.next());
+                    host_config.lag_timeout_ms = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--control-deadline-ms" => {
-                    host_config.control_deadline_ms = parse_u32(args.next());
+                    host_config.control_deadline_ms = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--control-queue-entries" => {
-                    host_config.control_queue_entries = parse_u32(args.next());
+                    host_config.control_queue_entries = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--event-queue-bytes" => {
-                    host_config.event_queue_bytes = parse_u32(args.next());
+                    host_config.event_queue_bytes = parse_u32(value_for(&arg, &mut args)?)
                 }
-                _ => {}
+                _ => return Err(ArgError::Invalid(format!("unknown argument `{arg}`"))),
             }
         }
         let log_file = std::env::var("GTERM_LOG_FILE")
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| socket_dir.join("logs").join("gterm.log"));
-        Self {
+        Ok(Self {
             token_file: socket_dir.join(TOKEN_FILE),
             pid_file: socket_dir.join(PID_FILE),
             log_file,
             socket_dir,
             shutdown_grace_ms: 150,
             host_config,
-        }
+        })
     }
 }
 
-fn parse_u32(value: Option<String>) -> u32 {
-    value.and_then(|v| v.parse().ok()).unwrap_or(u32::MAX)
+/// Why `gterm host` stops before starting: the caller asked for help, or the
+/// argv is unusable.
+enum ArgError {
+    Help,
+    Invalid(String),
+}
+
+const HOST_USAGE: &str = "\
+usage: gterm host [OPTIONS]
+
+Options:
+      --socket-dir PATH                  control/frames sockets, token, and pidfile directory
+      --max-attachments-per-terminal N   attachment ceiling for one terminal
+      --max-attachments-total N          attachment ceiling for the host
+      --max-attached-terminals N         attached terminal ceiling for the host
+      --native-scrollback-max-lines N    native scrollback line ceiling
+      --native-scrollback-max-bytes N    native scrollback byte ceiling
+      --tmux-attach-history-lines N      tmux attach history lines per observer
+      --tmux-attach-history-max-bytes N  tmux attach history byte ceiling
+      --tmux-poll-interval-ms N          tmux poll interval in milliseconds
+      --tmux-poll-backoff-ceiling-ms N   tmux poll backoff ceiling in milliseconds
+      --delta-queue-bytes N              frame delta queue byte ceiling
+      --lag-timeout-ms N                 frame lag timeout in milliseconds
+      --control-deadline-ms N            control delivery deadline in milliseconds
+      --control-queue-entries N          control queue entry ceiling
+      --event-queue-bytes N              event queue byte ceiling
+  -h, --help                             print this help and exit
+
+Environment: GTERM_SOCKET_DIR overrides the default socket dir, GTERM_LOG_FILE
+the default log path.
+";
+
+fn value_for(flag: &str, args: &mut impl Iterator<Item = String>) -> Result<String, ArgError> {
+    args.next()
+        .ok_or_else(|| ArgError::Invalid(format!("`{flag}` needs a value")))
+}
+
+fn parse_u32(value: String) -> u32 {
+    value.parse().unwrap_or(u32::MAX)
 }
 
 fn read_local_token(socket_dir: &Path) -> String {

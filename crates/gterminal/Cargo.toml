@@ -76,6 +76,10 @@ name = "host_lifecycle"
 required-features = ["vt-engine"]
 
 [[test]]
+name = "host_cli_args"
+required-features = ["vt-engine"]
+
+[[test]]
 name = "control_protocol"
 required-features = ["vt-engine"]
 
