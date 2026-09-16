@@ -87,15 +87,13 @@ The MIT license text is at `vendor/portable-pty/LICENSE.md`.
 
 ### libghostty-vt
 
-Local patch `vendor/patches/libghostty-vt/0001-default-grapheme-cluster-mode.patch`
-defaults lib-vt panes to grapheme clustering (DEC private mode 2027) so RIS
-does not disable it.
-
-Local patch `vendor/patches/libghostty-vt/0003-normalize-darwin-nonsimd-archive.patch`
+One local patch,
+`vendor/patches/libghostty-vt/0003-normalize-darwin-nonsimd-archive.patch`,
 routes native Darwin static archives through `CombineArchivesStep` even without
-SIMD, so Apple `ld` accepts the compiler runtime member. Both are documented in
+SIMD, so Apple `ld` accepts the compiler runtime member. It is documented in
 `vendor/libghostty-vt.patches.md`, together with the removed
-`0002-optional-lib-vt-shared.patch`.
+`0001-default-grapheme-cluster-mode.patch` (replaced by
+`GHOSTTY_TERMINAL_OPT_MODE_DEFAULT`) and `0002-optional-lib-vt-shared.patch`.
 
 ### portable-pty
 

@@ -88,7 +88,13 @@ pub const GhosttyResult_GHOSTTY_INVALID_VALUE: GhosttyResult = -2;
 pub const GhosttyResult_GHOSTTY_OUT_OF_SPACE: GhosttyResult = -3;
 #[doc = " The requested value has no value"]
 pub const GhosttyResult_GHOSTTY_NO_VALUE: GhosttyResult = -4;
-#[doc = " The requested value has no value"]
+#[doc = " Operation failed while reading from or writing to external I/O"]
+pub const GhosttyResult_GHOSTTY_IO_ERROR: GhosttyResult = -5;
+#[doc = " Operation failed because encoded input exceeded a configured limit"]
+pub const GhosttyResult_GHOSTTY_LIMIT_EXCEEDED: GhosttyResult = -6;
+#[doc = " Operation was rejected by a safety check (e.g. pasted text that could\n inject commands). Nothing was done. Confirm with the user and retry\n with the operation's allow flag set."]
+pub const GhosttyResult_GHOSTTY_REJECTED: GhosttyResult = -7;
+#[doc = " Operation was rejected by a safety check (e.g. pasted text that could\n inject commands). Nothing was done. Confirm with the user and retry\n with the operation's allow flag set."]
 pub const GhosttyResult_GHOSTTY_RESULT_MAX_VALUE: GhosttyResult = 2147483647;
 #[doc = " Result codes for libghostty-vt operations."]
 pub type GhosttyResult = ::std::os::raw::c_int;
@@ -99,6 +105,13 @@ pub struct GhosttyTerminalImpl {
 }
 #[doc = " Opaque handle to a terminal instance.\n\n @ingroup terminal"]
 pub type GhosttyTerminal = *mut GhosttyTerminalImpl;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySnapshotDecoderImpl {
+    _unused: [u8; 0],
+}
+#[doc = " Opaque handle to an incremental terminal snapshot decoder.\n\n @ingroup snapshot"]
+pub type GhosttySnapshotDecoder = *mut GhosttySnapshotDecoderImpl;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyTrackedGridRefImpl {
@@ -150,6 +163,13 @@ pub struct GhosttyRenderStateRowCellsImpl {
 pub type GhosttyRenderStateRowCells = *mut GhosttyRenderStateRowCellsImpl;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct GhosttySearchImpl {
+    _unused: [u8; 0],
+}
+#[doc = " Opaque handle to a terminal search.\n\n A search is bound to the terminal it was created with. It borrows the\n terminal, so it never frees it, and the search must be freed with\n ghostty_search_free(). If the terminal is freed first, the search\n detects this: calls that need the terminal fail cleanly and the\n search can still be freed.\n\n @ingroup search"]
+pub type GhosttySearch = *mut GhosttySearchImpl;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct GhosttySgrParserImpl {
     _unused: [u8; 0],
 }
@@ -186,8 +206,8 @@ pub const GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_HTML: GhosttyFormatter
 pub const GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_MAX_VALUE: GhosttyFormatterFormat =
     2147483647;
 #[doc = " Terminal content output format.\n\n @ingroup formatter"]
-pub type GhosttyFormatterFormat = ::std::os::raw::c_uint;
-#[doc = " A borrowed byte string (pointer + length).\n\n The memory is not owned by this struct. The pointer is only valid\n for the lifetime documented by the API that produces or consumes it."]
+pub type GhosttyFormatterFormat = ::std::os::raw::c_int;
+#[doc = " A borrowed byte string (pointer + length).\n\n The memory is not owned by this struct. The pointer is only valid\n for the lifetime documented by the API that produces or consumes it.\n Empty strings produced by the library have a non-NULL pointer to valid\n storage."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyString {
@@ -287,10 +307,10 @@ impl Default for GhosttyCodepoints {
     }
 }
 unsafe extern "C" {
-    #[doc = " Return a pointer to a null-terminated JSON string describing the\n layout of every C API struct for the current target.\n\n This is primarily useful for language bindings that can't easily\n set C struct fields and need to do so via byte offsets. For example,\n WebAssembly modules can't share struct definitions with the host.\n\n Example (abbreviated):\n @code{.json}\n {\n   \"GhosttyMouseEncoderSize\": {\n     \"size\": 40,\n     \"align\": 8,\n     \"fields\": {\n       \"size\":           { \"offset\": 0,  \"size\": 8, \"type\": \"u64\" },\n       \"screen_width\":   { \"offset\": 8,  \"size\": 4, \"type\": \"u32\" },\n       \"screen_height\":  { \"offset\": 12, \"size\": 4, \"type\": \"u32\" },\n       \"cell_width\":     { \"offset\": 16, \"size\": 4, \"type\": \"u32\" },\n       \"cell_height\":    { \"offset\": 20, \"size\": 4, \"type\": \"u32\" },\n       \"padding_top\":    { \"offset\": 24, \"size\": 4, \"type\": \"u32\" },\n       \"padding_bottom\": { \"offset\": 28, \"size\": 4, \"type\": \"u32\" },\n       \"padding_right\":  { \"offset\": 32, \"size\": 4, \"type\": \"u32\" },\n       \"padding_left\":   { \"offset\": 36, \"size\": 4, \"type\": \"u32\" }\n     }\n   }\n }\n @endcode\n\n The returned pointer is valid for the lifetime of the process.\n\n @return Pointer to the null-terminated JSON string."]
+    #[doc = " Return the versioned libghostty-vt C type manifest for the current target.\n\n The manifest defines all the public types available in the linked\n build. The types contain their layouts, enum values, union fields, and more.\n\n Language bindings, such as WebAssembly hosts, should obtain offsets,\n sizes, alignments, array shapes, enum constants, and tagged-union arms from\n this manifest rather than hardcoding them. Consumers should reject unknown\n schema versions and verify the descriptors they require at initialization.\n\n Packed type descriptors define fields using `lsb` and `width`. `lsb` is\n relative to bit zero of the containing numerical value; for nested packed\n layouts it is relative to the immediate containing field. Tagged packed\n unions select an inline arm layout using the named tag field. These layouts\n describe the current linked build and are not a cross-version stability\n promise.\n\n The formal format is defined by the\n <a href=\"types.schema.json\">libghostty-vt ABI manifest JSON Schema</a>.\n\n Example (abbreviated):\n @code{.json}\n {\n   \"schema\": 1,\n   \"abi\": {\n     \"target\": \"wasm32\", \"os\": \"freestanding\", \"environment\": \"none\",\n     \"pointer_size\": 4, \"usize_size\": 4, \"max_alignment\": 16,\n     \"endian\": \"little\"\n   },\n   \"types\": {\n     \"GhosttyRenderStateData\": {\n       \"kind\": \"enum\", \"size\": 4, \"align\": 4,\n       \"underlying\": \"i32\", \"prefix\": \"GHOSTTY_RENDER_STATE_DATA_\",\n       \"values\": { \"INVALID\": 0, \"DIRTY\": 3, \"MAX_VALUE\": 2147483647 }\n     },\n     \"GhosttyStyleColor\": {\n       \"kind\": \"struct\", \"size\": 16, \"align\": 8,\n       \"fields\": {\n         \"tag\": { \"offset\": 0, \"size\": 4,\n                  \"type\": \"GhosttyStyleColorTag\" },\n         \"value\": { \"offset\": 8, \"size\": 8,\n                    \"type\": \"GhosttyStyleColorValue\", \"tag\": \"tag\",\n                    \"arms\": { \"NONE\": null, \"PALETTE\": \"palette\",\n                              \"RGB\": \"rgb\" } }\n       }\n     }\n   }\n }\n @endcode\n\n The returned pointer is valid for the lifetime of the process.\n\n @return Pointer to the null-terminated JSON string."]
     pub fn ghostty_type_json() -> *const ::std::os::raw::c_char;
 }
-#[doc = " Function table for custom memory allocator operations.\n\n This vtable defines the interface for a custom memory allocator. All\n function pointers must be valid and non-NULL.\n\n @ingroup allocator\n\n If you're not going to use a custom allocator, you can ignore all of\n this. All functions that take an allocator pointer allow NULL to use a\n default allocator.\n\n The interface is based on the Zig allocator interface. I'll say up front\n that it is easy to look at this interface and think \"wow, this is really\n overcomplicated\". The reason for this complexity is well thought out by\n the Zig folks, and it enables a diverse set of allocation strategies\n as shown by the Zig ecosystem. As a consolation, please note that many\n of the arguments are only needed for advanced use cases and can be\n safely ignored in simple implementations. For example, if you look at\n the Zig implementation of the libc allocator in `lib/std/heap.zig`\n (search for CAllocator), you'll see it is very simple.\n\n We chose to align with the Zig allocator interface because:\n\n   1. It is a proven interface that serves a wide variety of use cases\n      in the real world via the Zig ecosystem. It's shown to work.\n\n   2. Our core implementation itself is Zig, and this lets us very\n      cheaply and easily convert between C and Zig allocators.\n\n NOTE(mitchellh): In the future, we can have default implementations of\n resize/remap and allow those to be null."]
+#[doc = " Function table for custom memory allocator operations.\n\n This vtable defines the interface for a custom memory allocator. All\n function pointers must be valid and non-NULL.\n\n @ingroup allocator\n\n If you're not going to use a custom allocator, you can ignore all of\n this. All functions that take an allocator pointer allow NULL to use a\n default allocator. Native freestanding builds must provide an allocator\n for operations that allocate memory.\n\n The interface is based on the Zig allocator interface. I'll say up front\n that it is easy to look at this interface and think \"wow, this is really\n overcomplicated\". The reason for this complexity is well thought out by\n the Zig folks, and it enables a diverse set of allocation strategies\n as shown by the Zig ecosystem. As a consolation, please note that many\n of the arguments are only needed for advanced use cases and can be\n safely ignored in simple implementations. For example, if you look at\n the Zig implementation of the libc allocator in `lib/std/heap.zig`\n (search for CAllocator), you'll see it is very simple.\n\n We chose to align with the Zig allocator interface because:\n\n   1. It is a proven interface that serves a wide variety of use cases\n      in the real world via the Zig ecosystem. It's shown to work.\n\n   2. Our core implementation itself is Zig, and this lets us very\n      cheaply and easily convert between C and Zig allocators.\n\n NOTE(mitchellh): In the future, we can have default implementations of\n resize/remap and allow those to be null."]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct GhosttyAllocatorVtable {
@@ -350,7 +370,7 @@ const _: () = {
     ["Offset of field: GhosttyAllocatorVtable::free"]
         [::std::mem::offset_of!(GhosttyAllocatorVtable, free) - 24usize];
 };
-#[doc = " Custom memory allocator.\n\n For functions that take an allocator pointer, a NULL pointer indicates\n that the default allocator should be used. The default allocator will\n be libc malloc/free if we're linking to libc. If libc isn't linked,\n a custom allocator is used (currently Zig's SMP allocator).\n\n @ingroup allocator\n\n Usage example:\n @code\n GhosttyAllocator allocator = {\n     .vtable = &my_allocator_vtable,\n     .ctx = my_allocator_state\n };\n @endcode"]
+#[doc = " Custom memory allocator.\n\n For functions that take an allocator pointer, a NULL pointer indicates\n that the default allocator should be used. The default allocator will\n be libc malloc/free if we're linking to libc. If libc isn't linked,\n a custom allocator is used (currently Zig's SMP allocator). On native\n freestanding targets, the default allocator always fails instead.\n\n @ingroup allocator\n\n Usage example:\n @code\n GhosttyAllocator allocator = {\n     .vtable = &my_allocator_vtable,\n     .ctx = my_allocator_state\n };\n @endcode"]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyAllocator {
@@ -378,7 +398,7 @@ impl Default for GhosttyAllocator {
     }
 }
 unsafe extern "C" {
-    #[doc = " Allocate a buffer of `len` bytes.\n\n Uses the provided allocator, or the default allocator if NULL is passed.\n The returned buffer must be freed with ghostty_free() using the same\n allocator.\n\n @param allocator Pointer to the allocator to use, or NULL for the default\n @param len Number of bytes to allocate\n @return Pointer to the allocated buffer, or NULL if allocation failed\n\n @ingroup allocator"]
+    #[doc = " Allocate a buffer of `len` bytes.\n\n Uses the provided allocator, or the default allocator if NULL is passed.\n The returned buffer must be freed with ghostty_free() using the same\n allocator.\n\n @param allocator Pointer to the allocator to use, or NULL for the default\n @param len Number of bytes to allocate\n @return Pointer to the allocated buffer, or NULL if len is zero or\n         allocation failed\n\n @ingroup allocator"]
     pub fn ghostty_alloc(allocator: *const GhosttyAllocator, len: usize) -> *mut u8;
 }
 unsafe extern "C" {
@@ -391,7 +411,7 @@ pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_SMALL: GhosttyOptimizeMod
 pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_FAST: GhosttyOptimizeMode = 3;
 pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_MODE_MAX_VALUE: GhosttyOptimizeMode = 2147483647;
 #[doc = " Build optimization mode."]
-pub type GhosttyOptimizeMode = ::std::os::raw::c_uint;
+pub type GhosttyOptimizeMode = ::std::os::raw::c_int;
 #[doc = " Invalid data type. Never results in any data extraction."]
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_INVALID: GhosttyBuildInfo = 0;
 #[doc = " Whether SIMD-accelerated code paths are enabled.\n\n Output type: bool *"]
@@ -417,7 +437,7 @@ pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_BUILD: GhosttyBuildInfo = 
 #[doc = " The build metadata string (e.g. commit hash). Has zero length if\n no build metadata is present.\n\n Output type: GhosttyString *"]
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_MAX_VALUE: GhosttyBuildInfo = 2147483647;
 #[doc = " Build info data types that can be queried.\n\n Each variant documents the expected output pointer type."]
-pub type GhosttyBuildInfo = ::std::os::raw::c_uint;
+pub type GhosttyBuildInfo = ::std::os::raw::c_int;
 unsafe extern "C" {
     #[doc = " Query a compile-time build configuration value.\n\n The caller must pass a pointer to the correct output type for the\n requested data (see GhosttyBuildInfo variants for types).\n\n @param data The build info field to query\n @param out Pointer to store the result (type depends on data parameter)\n @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the\n         data type is invalid\n\n @ingroup build_info"]
     pub fn ghostty_build_info(
@@ -555,7 +575,7 @@ pub const GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_LIGHT: GhosttyColorScheme = 0;
 pub const GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK: GhosttyColorScheme = 1;
 pub const GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_MAX_VALUE: GhosttyColorScheme = 2147483647;
 #[doc = " Color scheme reported in response to a CSI ? 996 n query.\n\n @ingroup terminal"]
-pub type GhosttyColorScheme = ::std::os::raw::c_uint;
+pub type GhosttyColorScheme = ::std::os::raw::c_int;
 #[doc = " Primary device attributes (DA1) response data.\n\n Returned as part of GhosttyDeviceAttributes in response to a CSI c query.\n The conformance_level is the Pp parameter and features contains the Ps\n feature codes.\n\n @ingroup terminal"]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -675,204 +695,4 @@ pub const GhosttyFocusEvent_GHOSTTY_FOCUS_LOST: GhosttyFocusEvent = 1;
 #[doc = " Terminal window lost focus"]
 pub const GhosttyFocusEvent_GHOSTTY_FOCUS_MAX_VALUE: GhosttyFocusEvent = 2147483647;
 #[doc = " Focus event types for focus reporting mode (mode 1004)."]
-pub type GhosttyFocusEvent = ::std::os::raw::c_uint;
-unsafe extern "C" {
-    #[doc = " Encode a focus event into a terminal escape sequence.\n\n Encodes a focus gained (CSI I) or focus lost (CSI O) report into the\n provided buffer.\n\n If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE\n and writes the required buffer size to @p out_written. The caller can\n then retry with a sufficiently sized buffer.\n\n @param event The focus event to encode\n @param buf Output buffer to write the encoded sequence into (may be NULL)\n @param buf_len Size of the output buffer in bytes\n @param[out] out_written On success, the number of bytes written. On\n             GHOSTTY_OUT_OF_SPACE, the required buffer size.\n @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer\n         is too small"]
-    pub fn ghostty_focus_encode(
-        event: GhosttyFocusEvent,
-        buf: *mut ::std::os::raw::c_char,
-        buf_len: usize,
-        out_written: *mut usize,
-    ) -> GhosttyResult;
-}
-#[doc = " Opaque cell value.\n\n Represents a single terminal cell. The internal layout is opaque and\n must be queried via ghostty_cell_get(). Obtain cell values from\n terminal query APIs.\n\n @ingroup screen"]
-pub type GhosttyCell = u64;
-#[doc = " Opaque row value.\n\n Represents a single terminal row. The internal layout is opaque and\n must be queried via ghostty_row_get(). Obtain row values from\n terminal query APIs.\n\n @ingroup screen"]
-pub type GhosttyRow = u64;
-#[doc = " A single codepoint (may be zero for empty)."]
-pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT: GhosttyCellContentTag = 0;
-#[doc = " A codepoint that is part of a multi-codepoint grapheme cluster."]
-pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME: GhosttyCellContentTag = 1;
-#[doc = " No text; background color from palette."]
-pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE: GhosttyCellContentTag = 2;
-#[doc = " No text; background color as RGB."]
-pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB: GhosttyCellContentTag = 3;
-#[doc = " No text; background color as RGB."]
-pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_TAG_MAX_VALUE: GhosttyCellContentTag =
-    2147483647;
-#[doc = " Cell content tag.\n\n Describes what kind of content a cell holds.\n\n @ingroup screen"]
-pub type GhosttyCellContentTag = ::std::os::raw::c_uint;
-#[doc = " Not a wide character, cell width 1."]
-pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW: GhosttyCellWide = 0;
-#[doc = " Wide character, cell width 2."]
-pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_WIDE: GhosttyCellWide = 1;
-#[doc = " Spacer after wide character. Do not render."]
-pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL: GhosttyCellWide = 2;
-#[doc = " Spacer at end of soft-wrapped line for a wide character."]
-pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_HEAD: GhosttyCellWide = 3;
-#[doc = " Spacer at end of soft-wrapped line for a wide character."]
-pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_MAX_VALUE: GhosttyCellWide = 2147483647;
-#[doc = " Cell wide property.\n\n Describes the width behavior of a cell.\n\n @ingroup screen"]
-pub type GhosttyCellWide = ::std::os::raw::c_uint;
-#[doc = " Regular output content, such as command output."]
-pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_OUTPUT: GhosttyCellSemanticContent = 0;
-#[doc = " Content that is part of user input."]
-pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_INPUT: GhosttyCellSemanticContent = 1;
-#[doc = " Content that is part of a shell prompt."]
-pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_PROMPT: GhosttyCellSemanticContent = 2;
-#[doc = " Content that is part of a shell prompt."]
-pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_MAX_VALUE: GhosttyCellSemanticContent =
-    2147483647;
-#[doc = " Semantic content type of a cell.\n\n Set by semantic prompt sequences (OSC 133) to distinguish between\n command output, user input, and shell prompt text.\n\n @ingroup screen"]
-pub type GhosttyCellSemanticContent = ::std::os::raw::c_uint;
-#[doc = " Invalid data type. Never results in any data extraction."]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_INVALID: GhosttyCellData = 0;
-#[doc = " The codepoint of the cell (0 if empty or bg-color-only).\n\n Output type: uint32_t *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_CODEPOINT: GhosttyCellData = 1;
-#[doc = " The content tag describing what kind of content is in the cell.\n\n Output type: GhosttyCellContentTag *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG: GhosttyCellData = 2;
-#[doc = " The wide property of the cell.\n\n Output type: GhosttyCellWide *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_WIDE: GhosttyCellData = 3;
-#[doc = " Whether the cell has text to render.\n\n Output type: bool *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_HAS_TEXT: GhosttyCellData = 4;
-#[doc = " Whether the cell has non-default styling.\n\n Output type: bool *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_HAS_STYLING: GhosttyCellData = 5;
-#[doc = " The style ID for the cell (for use with style lookups).\n\n Output type: uint16_t *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_STYLE_ID: GhosttyCellData = 6;
-#[doc = " Whether the cell has a hyperlink.\n\n Output type: bool *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_HAS_HYPERLINK: GhosttyCellData = 7;
-#[doc = " Whether the cell is protected.\n\n Output type: bool *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_PROTECTED: GhosttyCellData = 8;
-#[doc = " The semantic content type of the cell (from OSC 133).\n\n Output type: GhosttyCellSemanticContent *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_SEMANTIC_CONTENT: GhosttyCellData = 9;
-#[doc = " The palette index for the cell's background color.\n Only valid when content_tag is GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE.\n\n Output type: GhosttyColorPaletteIndex *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_PALETTE: GhosttyCellData = 10;
-#[doc = " The RGB value for the cell's background color.\n Only valid when content_tag is GHOSTTY_CELL_CONTENT_BG_COLOR_RGB.\n\n Output type: GhosttyColorRgb *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_RGB: GhosttyCellData = 11;
-#[doc = " The RGB value for the cell's background color.\n Only valid when content_tag is GHOSTTY_CELL_CONTENT_BG_COLOR_RGB.\n\n Output type: GhosttyColorRgb *"]
-pub const GhosttyCellData_GHOSTTY_CELL_DATA_MAX_VALUE: GhosttyCellData = 2147483647;
-#[doc = " Cell data types.\n\n These values specify what type of data to extract from a cell\n using `ghostty_cell_get`.\n\n @ingroup screen"]
-pub type GhosttyCellData = ::std::os::raw::c_uint;
-#[doc = " No prompt cells in this row."]
-pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_NONE: GhosttyRowSemanticPrompt = 0;
-#[doc = " Prompt cells exist and this is a primary prompt line."]
-pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT: GhosttyRowSemanticPrompt = 1;
-#[doc = " Prompt cells exist and this is a continuation line."]
-pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION:
-    GhosttyRowSemanticPrompt = 2;
-#[doc = " Prompt cells exist and this is a continuation line."]
-pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_MAX_VALUE: GhosttyRowSemanticPrompt =
-    2147483647;
-#[doc = " Row semantic prompt state.\n\n Indicates whether any cells in a row are part of a shell prompt,\n as reported by OSC 133 sequences.\n\n @ingroup screen"]
-pub type GhosttyRowSemanticPrompt = ::std::os::raw::c_uint;
-#[doc = " Invalid data type. Never results in any data extraction."]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_INVALID: GhosttyRowData = 0;
-#[doc = " Whether this row is soft-wrapped.\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_WRAP: GhosttyRowData = 1;
-#[doc = " Whether this row is a continuation of a soft-wrapped row.\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_WRAP_CONTINUATION: GhosttyRowData = 2;
-#[doc = " Whether any cells in this row have grapheme clusters.\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_GRAPHEME: GhosttyRowData = 3;
-#[doc = " Whether any cells in this row have styling (may have false positives).\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_STYLED: GhosttyRowData = 4;
-#[doc = " Whether any cells in this row have hyperlinks (may have false positives).\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_HYPERLINK: GhosttyRowData = 5;
-#[doc = " The semantic prompt state of this row.\n\n Output type: GhosttyRowSemanticPrompt *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_SEMANTIC_PROMPT: GhosttyRowData = 6;
-#[doc = " Whether this row contains a Kitty virtual placeholder.\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER: GhosttyRowData = 7;
-#[doc = " Whether this row is dirty and requires a redraw.\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_DIRTY: GhosttyRowData = 8;
-#[doc = " Whether this row is dirty and requires a redraw.\n\n Output type: bool *"]
-pub const GhosttyRowData_GHOSTTY_ROW_DATA_MAX_VALUE: GhosttyRowData = 2147483647;
-#[doc = " Row data types.\n\n These values specify what type of data to extract from a row\n using `ghostty_row_get`.\n\n @ingroup screen"]
-pub type GhosttyRowData = ::std::os::raw::c_uint;
-unsafe extern "C" {
-    #[doc = " Get data from a cell.\n\n Extracts typed data from the given cell based on the specified\n data type. The output pointer must be of the appropriate type for the\n requested data kind. Valid data types and output types are documented\n in the `GhosttyCellData` enum.\n\n @param cell The cell value\n @param data The type of data to extract\n @param out Pointer to store the extracted data (type depends on data parameter)\n @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the\n         data type is invalid\n\n @ingroup screen"]
-    pub fn ghostty_cell_get(
-        cell: GhosttyCell,
-        data: GhosttyCellData,
-        out: *mut ::std::os::raw::c_void,
-    ) -> GhosttyResult;
-}
-unsafe extern "C" {
-    #[doc = " Get multiple data fields from a cell in a single call.\n\n Each element in the keys array specifies a data kind, and the\n corresponding element in the values array receives the result.\n\n Processing stops at the first error; on success out_written\n is set to count, on error it is set to the index of the\n failing key (i.e. the number of values successfully written).\n\n @param cell The cell value\n @param count Number of key/value pairs\n @param keys Array of data kinds to query\n @param values Array of output pointers (types must match each key's\n               documented output type)\n @param[out] out_written On return, receives the number of values\n             successfully written (may be NULL)\n @return GHOSTTY_SUCCESS if all queries succeed\n\n @ingroup screen"]
-    pub fn ghostty_cell_get_multi(
-        cell: GhosttyCell,
-        count: usize,
-        keys: *const GhosttyCellData,
-        values: *mut *mut ::std::os::raw::c_void,
-        out_written: *mut usize,
-    ) -> GhosttyResult;
-}
-unsafe extern "C" {
-    #[doc = " Get data from a row.\n\n Extracts typed data from the given row based on the specified\n data type. The output pointer must be of the appropriate type for the\n requested data kind. Valid data types and output types are documented\n in the `GhosttyRowData` enum.\n\n @param row The row value\n @param data The type of data to extract\n @param out Pointer to store the extracted data (type depends on data parameter)\n @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the\n         data type is invalid\n\n @ingroup screen"]
-    pub fn ghostty_row_get(
-        row: GhosttyRow,
-        data: GhosttyRowData,
-        out: *mut ::std::os::raw::c_void,
-    ) -> GhosttyResult;
-}
-unsafe extern "C" {
-    #[doc = " Get multiple data fields from a row in a single call.\n\n Each element in the keys array specifies a data kind, and the\n corresponding element in the values array receives the result.\n\n Processing stops at the first error; on success out_written\n is set to count, on error it is set to the index of the\n failing key (i.e. the number of values successfully written).\n\n @param row The row value\n @param count Number of key/value pairs\n @param keys Array of data kinds to query\n @param values Array of output pointers (types must match each key's\n               documented output type)\n @param[out] out_written On return, receives the number of values\n             successfully written (may be NULL)\n @return GHOSTTY_SUCCESS if all queries succeed\n\n @ingroup screen"]
-    pub fn ghostty_row_get_multi(
-        row: GhosttyRow,
-        count: usize,
-        keys: *const GhosttyRowData,
-        values: *mut *mut ::std::os::raw::c_void,
-        out_written: *mut usize,
-    ) -> GhosttyResult;
-}
-#[doc = " Style identifier type.\n\n Used to look up the full style from a grid reference.\n Obtain this from a cell via GHOSTTY_CELL_DATA_STYLE_ID.\n\n @ingroup style"]
-pub type GhosttyStyleId = u16;
-pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_NONE: GhosttyStyleColorTag = 0;
-pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_PALETTE: GhosttyStyleColorTag = 1;
-pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB: GhosttyStyleColorTag = 2;
-pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE: GhosttyStyleColorTag = 2147483647;
-#[doc = " Style color tags.\n\n These values identify the type of color in a style color.\n Use the tag to determine which field in the color value union to access.\n\n @ingroup style"]
-pub type GhosttyStyleColorTag = ::std::os::raw::c_uint;
-#[doc = " Style color value union.\n\n Use the tag to determine which field is active.\n\n @ingroup style"]
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub union GhosttyStyleColorValue {
-    pub palette: GhosttyColorPaletteIndex,
-    pub rgb: GhosttyColorRgb,
-    pub _padding: u64,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of GhosttyStyleColorValue"][::std::mem::size_of::<GhosttyStyleColorValue>() - 8usize];
-    ["Alignment of GhosttyStyleColorValue"]
-        [::std::mem::align_of::<GhosttyStyleColorValue>() - 8usize];
-    ["Offset of field: GhosttyStyleColorValue::palette"]
-        [::std::mem::offset_of!(GhosttyStyleColorValue, palette) - 0usize];
-    ["Offset of field: GhosttyStyleColorValue::rgb"]
-        [::std::mem::offset_of!(GhosttyStyleColorValue, rgb) - 0usize];
-    ["Offset of field: GhosttyStyleColorValue::_padding"]
-        [::std::mem::offset_of!(GhosttyStyleColorValue, _padding) - 0usize];
-};
-impl Default for GhosttyStyleColorValue {
-    fn default() -> Self {
-        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
-            s.assume_init()
-        }
-    }
-}
-#[doc = " Style color (tagged union).\n\n A color used in a style attribute. Can be unset (none), a palette\n index, or a direct RGB value.\n\n @ingroup style"]
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct GhosttyStyleColor {
-    pub tag: GhosttyStyleColorTag,
-    pub value: GhosttyStyleColorValue,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of GhosttyStyleColor"][::std::mem::size_of::<GhosttyStyleColor>() - 16usize];
-    ["Alignment of GhosttyStyleColor"][::std::mem::align_of::<GhosttyStyleColor>() - 8usize];
-    ["Offset of field: GhosttyStyleColor::tag"]
-        [::std::mem::offset_of!(GhosttyStyleColor, tag) - 0usize];
-    ["Offset of field: GhosttyStyleColor::value"]
-        [::std::mem::offset_of!(GhosttyStyleColor, value) - 8usize];
-};
+pub type GhosttyFocusEvent = ::std::os::raw::c_int;

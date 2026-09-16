@@ -834,7 +834,6 @@ fn new_(
         .{
             .cols = cols,
             .rows = rows,
-            .default_modes = .{ .grapheme_cluster = true },
         },
     );
     errdefer t.deinit(alloc);

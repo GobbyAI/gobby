@@ -934,14 +934,14 @@ fn grouped_semantic_key_repeats_expand_at_the_destination() {
     let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
     let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
     let key = crate::input::TerminalKey::new(
-        crossterm::event::KeyCode::Char('x'),
+        crossterm::event::KeyCode::Char('a'),
         crossterm::event::KeyModifiers::empty(),
     )
     .with_repeat_count(3);
 
     assert_eq!(
         pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
-        b"xxx"
+        b"aaa"
     );
 }
 
@@ -2075,10 +2075,9 @@ fn process_pty_bytes_returns_split_xtgettcap_query_response() {
     let result = pane.process_pty_bytes(pane_id, 0, b"\x1bP+q4", &tx);
     assert!(result.terminal_responses.is_empty());
     assert!(rx.try_recv().is_err());
+    // A DCS string ends at the ESC that opens the string terminator, so the
+    // reply lands on the read carrying that ESC, not on the following `\`.
     let result = pane.process_pty_bytes(pane_id, 0, b"D73\x1b", &tx);
-    assert!(result.terminal_responses.is_empty());
-    assert!(rx.try_recv().is_err());
-    let result = pane.process_pty_bytes(pane_id, 0, b"\\", &tx);
 
     assert_eq!(
         result.terminal_responses,
@@ -2087,6 +2086,9 @@ fn process_pty_bytes_returns_split_xtgettcap_query_response() {
             Some(b"\\E]52;%p1%s;%p2%s\\007")
         )]
     );
+    assert!(rx.try_recv().is_err());
+    let result = pane.process_pty_bytes(pane_id, 0, b"\\", &tx);
+    assert!(result.terminal_responses.is_empty());
     assert!(rx.try_recv().is_err());
 }
 

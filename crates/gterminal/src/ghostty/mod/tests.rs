@@ -86,8 +86,11 @@ fn kitty_image_fingerprint_refreshes_on_retransmission() {
         .generation;
     assert_ne!(first_generation, 0);
 
-    // Same id and size, different pixels.
+    // Same id and size, different pixels. Retransmitting an image id drops
+    // that image's placements, as the Kitty protocol requires, so the new
+    // pixels need a new placement before they are queryable again.
     terminal.write(b"\x1b_Ga=t,f=32,t=d,i=7,s=1,v=1,q=2;AAAAAA==\x1b\\");
+    terminal.write(b"\x1b_Ga=p,i=7,p=3,c=10,r=5,q=2;\x1b\\");
     let second = terminal
         .kitty_image_placements_with_data_filter(|_| true)
         .unwrap();
@@ -154,7 +157,9 @@ fn kitty_storage_generation_skips_only_proven_empty_storage() {
     terminal.scroll_viewport_row(0);
     assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
 
-    terminal.write(b"\x1b_Ga=d,d=A\x1b\\");
+    // `d=A` deletes only placements intersecting the active area, and this
+    // one has scrolled into history, so delete by image id instead.
+    terminal.write(b"\x1b_Ga=d,d=I,i=1\x1b\\");
     let deleted = terminal.kitty_graphics_generation().unwrap();
     assert_ne!(deleted, placed);
     assert!(terminal.kitty_image_placements().unwrap().is_empty());
@@ -206,11 +211,29 @@ fn kitty_graphics_local_media_are_enabled() {
         .get_bool(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE)
         .unwrap());
     assert!(terminal
-        .get_bool(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE)
-        .unwrap());
-    assert!(terminal
         .get_bool(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM)
         .unwrap());
+
+    // The temporary-file medium reports the directory it is scoped to, and an
+    // empty directory means the medium is disabled.
+    let mut directory = ffi::GhosttyString::default();
+    // SAFETY: the out pointer is a live GhosttyString, the output type this
+    // data key documents.
+    unsafe {
+        ffi::ghostty_terminal_get(
+            terminal.raw,
+            ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+            (&mut directory as *mut ffi::GhosttyString).cast(),
+        )
+        .into_result()
+        .unwrap();
+    }
+    // SAFETY: the terminal owns the directory bytes and outlives this borrow.
+    let directory = unsafe { borrowed_bytes(directory) }.expect("temp directory");
+    assert_eq!(
+        directory,
+        std::env::temp_dir().as_os_str().as_encoded_bytes()
+    );
 }
 
 #[test]
@@ -687,16 +710,44 @@ fn test_clipboard_content(mime: &[u8], data: &[u8]) -> ffi::GhosttyClipboardCont
     }
 }
 
+/// Stands in for the terminal-owned reply state a real request carries.
+struct ClipboardReplyCapture {
+    result: Cell<Option<ffi::GhosttyClipboardWriteResult>>,
+}
+
+unsafe extern "C" fn capture_clipboard_reply(
+    write: *const ffi::GhosttyClipboardWrite,
+    reply: *const ffi::GhosttyClipboardWriteReply,
+) {
+    // SAFETY: the test owns the request, its ctx, and the reply for this call.
+    let capture = unsafe { &*(*write).ctx.cast::<ClipboardReplyCapture>() };
+    // SAFETY: the reply is borrowed for the duration of this call.
+    capture.result.set(Some(unsafe { (*reply).result }));
+}
+
+/// Drive the clipboard callback and return the answer it replied with, or
+/// `None` when it returned without replying (which denies the write).
 fn invoke_clipboard_callback(
     terminal: &mut Terminal,
     contents: &[ffi::GhosttyClipboardContent],
     size: usize,
-) -> ffi::GhosttyClipboardWriteResult {
+) -> Option<ffi::GhosttyClipboardWriteResult> {
+    let capture = ClipboardReplyCapture {
+        result: Cell::new(None),
+    };
     let request = ffi::GhosttyClipboardWrite {
         size,
         location: ffi::GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
         contents: contents.as_ptr(),
         contents_len: contents.len(),
+        name: ffi::GhosttyString {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
+        granted: false,
+        can_remember: false,
+        ctx: (&capture as *const ClipboardReplyCapture).cast(),
+        reply: Some(capture_clipboard_reply),
     };
     // SAFETY: the request and its borrowed content live through this call.
     unsafe {
@@ -704,8 +755,9 @@ fn invoke_clipboard_callback(
             terminal.raw,
             (&mut *terminal.callback_state as *mut TerminalCallbackState).cast(),
             &request,
-        )
+        );
     }
+    capture.result.get()
 }
 
 #[test]
@@ -718,31 +770,33 @@ fn clipboard_callback_ignores_clear_and_rejects_unsupported_writes() {
 
     assert_eq!(
         invoke_clipboard_callback(&mut terminal, &[], full_size),
-        success
+        Some(success)
     );
     assert!(terminal.take_clipboard_writes().is_empty());
 
     let empty = test_clipboard_content(b"text/plain", b"");
     assert_eq!(
         invoke_clipboard_callback(&mut terminal, &[empty], full_size),
-        unsupported
+        Some(unsupported)
     );
     let text = test_clipboard_content(b"text/plain", b"text");
     let image = test_clipboard_content(b"image/png", b"image");
     assert_eq!(
         invoke_clipboard_callback(&mut terminal, &[text, image], full_size),
-        unsupported
+        Some(unsupported)
     );
 
     let oversized = vec![b'x'; MAX_CLIPBOARD_BYTES + 1];
     let oversized = test_clipboard_content(b"text/plain", &oversized);
     assert_eq!(
         invoke_clipboard_callback(&mut terminal, &[oversized], full_size),
-        invalid
+        Some(invalid)
     );
+    // A request too small to carry `reply` cannot be answered at all, so the
+    // callback denies it by returning and records nothing.
     assert_eq!(
         invoke_clipboard_callback(&mut terminal, &[text], full_size - 1),
-        invalid
+        None
     );
     assert!(terminal.take_clipboard_writes().is_empty());
 }
