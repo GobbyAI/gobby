@@ -297,9 +297,17 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let _ = writer_task.await;
 }
 
+/// Forward one subscriber's events onto the connection's outbound queue.
+///
+/// Waiting for capacity instead of giving up on a momentarily full queue is
+/// what makes `event_overflow` reachable: that marker is the last thing the
+/// subscriber's channel holds, so a try-send that dropped it would take away
+/// the one message explaining why the events stopped. A peer that never drains
+/// is still bounded, because `write_outbound` closes it at `control_deadline`
+/// and dropping the receiver ends this loop.
 async fn recv_event(mut rx: EventReceiver, outbound: mpsc::Sender<Value>) {
     while let Some(event) = rx.recv().await {
-        if enqueue_control(&outbound, event).is_err() {
+        if send_control(&outbound, event).await.is_err() {
             break;
         }
     }

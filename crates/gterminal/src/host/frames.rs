@@ -27,7 +27,9 @@ const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// peer that never drains at all.
 const LAG_CLOSE_GRACE: Duration = Duration::from_secs(1);
 
-fn set_send_buffer(stream: &UnixStream, bytes: u32) {
+/// Cap what the kernel will hold for this socket's send side, which is what
+/// bounds the bytes in flight to the peer.
+pub(crate) fn set_send_buffer(stream: &UnixStream, bytes: u32) {
     let size = i32::try_from(bytes.max(256)).unwrap_or(i32::MAX);
     // SAFETY: `stream` is a live Unix socket; `SO_SNDBUF` takes an `i32` whose
     // storage outlives the call. Failure is ignored so a kernel that rejects the
