@@ -16,15 +16,16 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      # `crates/gterminal/vendor/` is excluded from the rewriting hooks: the
-      # vendored trees must stay byte-identical to the upstream dist archives,
-      # and trailing whitespace in `vendor/patches/*.patch` context lines is
-      # part of the diff.
+      # The vendored trees under `crates/gterminal/vendor/` and their patches
+      # are excluded from the rewriting hooks: the trees must stay
+      # byte-identical to the upstream dist archives, and trailing whitespace
+      # in `vendor/patches/*.patch` context lines is part of the diff. The
+      # hand-maintained `*.patches.md` and `*.vendor.json` stay in scope.
       - id: trailing-whitespace
-        exclude: ^(?:\.gobby/|crates/gterminal/vendor/)
+        exclude: ^(?:\.gobby/|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/)
       - id: end-of-file-fixer
         exclude: >-
-          ^(?:\.gobby/|crates/gterminal/vendor/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
+          ^(?:\.gobby/|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
       - id: check-yaml
         args: [--unsafe]  # Allow custom tags
       - id: check-json

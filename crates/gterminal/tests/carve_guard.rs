@@ -33,7 +33,6 @@ const REQUIRED: &[&str] = &[
     "pane/cursor.rs",
     "pane/input.rs",
     "pane/kitty_keyboard.rs",
-    "pane/xtgettcap.rs",
     "pane/state.rs",
     "pane/osc.rs",
     "pty/mod.rs",

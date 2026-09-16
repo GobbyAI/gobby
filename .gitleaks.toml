@@ -10,5 +10,5 @@ useDefault = true
 [allowlist]
 description = "Vendored upstream sources are not ours to edit"
 paths = [
-  '''^crates/gterminal/vendor/''',
+  '''^crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/''',
 ]

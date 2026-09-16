@@ -269,10 +269,10 @@ below when executing them.
 4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
 5. `cd web && npx vitest run src/hooks src/components/activity`
 6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
-   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
-   (`cp` to a dotfile, `mv -f` over the name, per this guide's § "Rebuild and
-   reinstall"). macOS kills processes that exec an in-place-overwritten signed binary,
-   so overwriting the installed path directly is not an option.
+   against `gclient` and `gterm` rebuilt from the tree and promoted through
+   `stage_and_promote_binary_file` (per this guide's § "Rebuild and reinstall").
+   macOS kills processes that exec an in-place-overwritten signed binary, so
+   overwriting the installed path directly is not an option.
 7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
    set before.
 
@@ -322,8 +322,8 @@ and 1055 tests. Run group 6 from the repository root again.
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 ```
 
-Rebuild `gclient` as in group 1, then use the dotfile `cp` and `mv -f` sequence
-under *Rebuild and reinstall* for both binaries. The `gterm` binary requires
+Rebuild `gclient` as in group 1, then promote both binaries through
+`stage_and_promote_binary_file` as under *Rebuild and reinstall*. The `gterm` binary requires
 `vt-engine`: bare `cargo build --release -p gobby-terminal` builds the library,
 prints `Finished`, and exits 0 without building the binary, leaving any stale
 `gterm` in place. Regression coverage:
