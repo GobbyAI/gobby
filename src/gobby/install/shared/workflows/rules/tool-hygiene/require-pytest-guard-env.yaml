@@ -24,7 +24,7 @@ rules:
       command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
       reason: >-
         Run pytest through the test env prefix:
-        DATABASE_URL="${DATABASE_URL:-postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test}"
+        DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
         GOBBY_TEST_PROTECT=1 uv run pytest <targets>.
         Without GOBBY_TEST_PROTECT=1, DB-backed tests skip silently and read as
         passing; with it but no test DATABASE_URL, they fail loudly. The prefix

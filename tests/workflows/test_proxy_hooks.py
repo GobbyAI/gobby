@@ -138,6 +138,7 @@ def _event(
     command: str = "git status",
     *,
     source: SessionSource = SessionSource.CLAUDE,
+    cwd: str | None = None,
 ) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -145,7 +146,18 @@ def _event(
         source=source,
         timestamp=datetime.now(UTC),
         data={"tool_name": "Bash", "tool_input": {"command": command}},
+        cwd=cwd,
     )
+
+
+def _linked_worktree(root: Path, name: str) -> Path:
+    """Create a linked worktree of ``root/main`` whose ``.git`` file points at its git dir."""
+    git_dir = root / "main" / ".git" / "worktrees" / name
+    git_dir.mkdir(parents=True)
+    worktree = root / "worktrees" / name
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    return worktree
 
 
 def _create_rule(
@@ -609,6 +621,101 @@ async def test_rtk_rewrite_preserves_leading_cd(
     response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
 
     assert response.modified_input is None
+
+
+@pytest.mark.parametrize("command", ["git add -A", "git commit -m wip"])
+async def test_claude_git_stays_bare_in_linked_worktree(
+    command: str,
+    tmp_path: Path,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    worktree = _linked_worktree(tmp_path, "wt-1")
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    response = await RuleEngine(db).evaluate(
+        _event(command, cwd=str(worktree)),
+        SESSION_ID,
+        {},
+    )
+
+    assert response.modified_input is None
+
+
+async def test_claude_git_dash_c_other_worktree_stays_bare_in_linked_worktree(
+    tmp_path: Path,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    worktree = _linked_worktree(tmp_path, "wt-1")
+    other = _linked_worktree(tmp_path, "wt-2")
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    response = await RuleEngine(db).evaluate(
+        _event(f"git -C {other} status", cwd=str(worktree)),
+        SESSION_ID,
+        {},
+    )
+
+    assert response.modified_input is None
+
+
+async def test_claude_non_git_rewrite_still_applies_in_linked_worktree(
+    tmp_path: Path,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    worktree = _linked_worktree(tmp_path, "wt-1")
+    command = "uv run pytest tests/workflows/test_proxy_hooks.py"
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    response = await RuleEngine(db).evaluate(
+        _event(command, cwd=str(worktree)),
+        SESSION_ID,
+        {},
+    )
+
+    assert response.modified_input == {"command": f"rtk {command}"}
+
+
+async def test_claude_git_rewrite_still_applies_in_main_checkout(
+    tmp_path: Path,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    main = tmp_path / "main"
+    (main / ".git").mkdir(parents=True)
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    response = await RuleEngine(db).evaluate(
+        _event("git status", cwd=str(main)),
+        SESSION_ID,
+        {},
+    )
+
+    assert response.modified_input == {"command": "rtk git status"}
+
+
+async def test_other_provider_git_rewrite_still_applies_in_linked_worktree(
+    tmp_path: Path,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    worktree = _linked_worktree(tmp_path, "wt-1")
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    response = await RuleEngine(db).evaluate(
+        _event("git status", source=SessionSource.CODEX, cwd=str(worktree)),
+        SESSION_ID,
+        {},
+    )
+
+    assert response.modified_input == {"command": "rtk git status"}
 
 
 @pytest.mark.parametrize(
