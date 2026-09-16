@@ -127,7 +127,9 @@ is currently active. Inspect installed worktree/task rows before acting on it.
   `tmux attach-session` in a PTY at that geometry, the bounded `capture-pane`
   history goes out as `terminal_attach_history`, raw PTY bytes stream as
   `terminal_output` keyed by attachment id, and `terminal_input` writes raw
-  bytes to the PTY; a `native` row goes through the gterm host proxy. The #20805
+  bytes to the PTY; a `native` row goes through the gterm host proxy. Operator
+  flags, exit codes, and stale-socket start recovery for that host are in
+  [CLI commands — gterm host](cli-commands.md#gterm-host). The #20805
   no-op-resize guard lives in `TmuxPTYBridge.resize` for tmux rows and in
   `src/gobby/servers/websocket/terminal_ws.py::_handle_terminal_resize` for native
   rows. The current gclient renders tmux rows through a gterm host observer

@@ -118,6 +118,47 @@ Setting `terminals.stop_host_on_shutdown: true` in config makes every stop
 drain; the admin `POST /shutdown?terminals=true` and
 `POST /restart?terminals=true` routes are the HTTP equivalents.
 
+#### `gterm host`
+
+`gterm host` is the supervised native PTY host the daemon adopts on start.
+Operators rarely launch it by hand.
+
+```bash
+gterm host [OPTIONS]
+```
+
+| Option | Default |
+| --- | --- |
+| `--socket-dir PATH` | `$GTERM_SOCKET_DIR`, else `~/.gobby` (`.` when home is unavailable) |
+| `--max-attachments-per-terminal N` | `8` |
+| `--max-attachments-total N` | `128` |
+| `--max-attached-terminals N` | `64` |
+| `--native-scrollback-max-lines N` | `10000` |
+| `--native-scrollback-max-bytes N` | `8388608` (8 MiB) |
+| `--tmux-attach-history-lines N` | `500` |
+| `--tmux-attach-history-max-bytes N` | `262144` (256 KiB) |
+| `--tmux-poll-interval-ms N` | `150` |
+| `--tmux-poll-backoff-ceiling-ms N` | `5000` |
+| `--delta-queue-bytes N` | `2097152` (2 MiB) |
+| `--lag-timeout-ms N` | `5000` |
+| `--control-deadline-ms N` | `2000` |
+| `--control-queue-entries N` | `16` |
+| `--event-queue-bytes N` | `262144` (256 KiB) |
+| `-h`, `--help` | print usage and exit |
+
+`$GTERM_LOG_FILE` overrides the default log path (`<socket-dir>/logs/gterm.log`).
+
+`--help` / `-h` prints usage to stdout and exits 0. An unknown argument, or a
+flag given without its value, prints usage to stderr and exits 2 without
+starting a host — no control socket, frames socket, or pidfile is created in
+the socket dir.
+
+When the control socket under the socket dir exists but nothing listens (a host
+that died without cleaning up), daemon start treats the probe refusal as no
+host and spawns a fresh one. If that spawn fails, the health loop retries the
+start path; a later successful probe recovers the host without a daemon
+restart.
+
 A restart-protected cron run (the nightly `gobby:memory-dream` sweep, which
 runs for hours) holds a lease while it is active: `gobby stop` refuses and
 prints the job name and elapsed time. `--wait` defers the stop until the run
