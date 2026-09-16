@@ -215,7 +215,10 @@ __marimo__/
 .claude/
 .clawhub/
 .codex/
+.factory/
 .gemini/
+.grok/
+.qwen/
 .agent/
 .agentvibes/
 .antigravity/
