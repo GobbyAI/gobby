@@ -11,10 +11,10 @@ Herdr issues: https://github.com/herdrdev/herdr/issues/761
               https://github.com/herdrdev/herdr/issues/1533
 Vendored base: portable-pty 0.9.0
 ---
-diff --git a/vendor/portable-pty/Cargo.toml b/vendor/portable-pty/Cargo.toml
+diff --git a/crates/gterminal/vendor/portable-pty/Cargo.toml b/crates/gterminal/vendor/portable-pty/Cargo.toml
 index b8d11230..8a33abf9 100644
---- a/vendor/portable-pty/Cargo.toml
-+++ b/vendor/portable-pty/Cargo.toml
+--- a/crates/gterminal/vendor/portable-pty/Cargo.toml
++++ b/crates/gterminal/vendor/portable-pty/Cargo.toml
 @@ -102,8 +102,8 @@ version = "1.3"
  [target."cfg(windows)".dependencies.lazy_static]
  version = "1.4"
@@ -34,10 +34,10 @@ index b8d11230..8a33abf9 100644
      "namedpipeapi",
      "synchapi",
  ]
-diff --git a/vendor/portable-pty/Cargo.toml.orig b/vendor/portable-pty/Cargo.toml.orig
+diff --git a/crates/gterminal/vendor/portable-pty/Cargo.toml.orig b/crates/gterminal/vendor/portable-pty/Cargo.toml.orig
 index 0c3d6b8d..21abe3b6 100644
---- a/vendor/portable-pty/Cargo.toml.orig
-+++ b/vendor/portable-pty/Cargo.toml.orig
+--- a/crates/gterminal/vendor/portable-pty/Cargo.toml.orig
++++ b/crates/gterminal/vendor/portable-pty/Cargo.toml.orig
 @@ -27,12 +27,13 @@ serde_support = ["serde", "serde_derive"]
  [target."cfg(windows)".dependencies]
  bitflags = "1.3"
@@ -53,10 +53,10 @@ index 0c3d6b8d..21abe3b6 100644
      "namedpipeapi",
      "synchapi",
  ]}
-diff --git a/vendor/portable-pty/src/win/psuedocon.rs b/vendor/portable-pty/src/win/psuedocon.rs
+diff --git a/crates/gterminal/vendor/portable-pty/src/win/psuedocon.rs b/crates/gterminal/vendor/portable-pty/src/win/psuedocon.rs
 index 133eab52..d4f111bb 100644
---- a/vendor/portable-pty/src/win/psuedocon.rs
-+++ b/vendor/portable-pty/src/win/psuedocon.rs
+--- a/crates/gterminal/vendor/portable-pty/src/win/psuedocon.rs
++++ b/crates/gterminal/vendor/portable-pty/src/win/psuedocon.rs
 @@ -4,17 +4,24 @@ use crate::win::procthreadattr::ProcThreadAttributeList;
  use anyhow::{bail, ensure, Error};
  use filedescriptor::{FileDescriptor, OwnedHandle};

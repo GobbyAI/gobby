@@ -40,19 +40,13 @@ GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60
 ```
 
 `gobby-terminal` builds a vendored Zig library (libghostty-vt) whenever the
-`vt-engine` feature is on, which the `gterm` binary requires. The plain build
-works with Command Line Tools and the macOS 27 SDK:
+`vt-engine` feature is on, which the `gterm` binary requires. That build needs
+Zig 0.16 on PATH and compiles against whatever macOS SDK Command Line Tools
+ships, including 27; no `DEVELOPER_DIR` or Xcode selection is involved.
 
 ```bash
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 ```
-
-Zig 0.15's bundled libcxx does not compile against that SDK (`use of undeclared
-identifier 'INFINITY'`), but `build.rs` emits only the static archive
-(`-Demit-lib-vt-shared=false`), so the normal build never compiles it. Only
-commands that emit the shared library, such as the `build_env` non-SIMD archive
-test, need `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` to select
-the macOS 26.5 SDK; see `docs/guides/gterminal-development-guide.md`.
 
 Builds land in one shared directory per project,
 `~/.gobby/cache/cargo-target/<project_id>/`: Gobby links `<checkout>/target` there

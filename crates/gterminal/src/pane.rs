@@ -9,7 +9,6 @@ mod shell;
 mod shutdown;
 mod state;
 mod terminal;
-mod xtgettcap;
 
 pub use self::runtime::ChildExit;
 pub use self::runtime::ChildExitWatch;

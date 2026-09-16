@@ -11,13 +11,13 @@ quotes in the command tail and changes cmd.exe parsing.
 Herdr issue: https://github.com/herdrdev/herdr/issues/1041
 Vendored base: portable-pty 0.9.0
 ---
- vendor/portable-pty/src/cmdbuilder.rs | 40 +++++++++++++++++++++++++++
+ crates/gterminal/vendor/portable-pty/src/cmdbuilder.rs | 40 +++++++++++++++++++++++++++
  1 file changed, 40 insertions(+)
 
-diff --git a/vendor/portable-pty/src/cmdbuilder.rs b/vendor/portable-pty/src/cmdbuilder.rs
+diff --git a/crates/gterminal/vendor/portable-pty/src/cmdbuilder.rs b/crates/gterminal/vendor/portable-pty/src/cmdbuilder.rs
 index 0000000..0000000 100644
---- a/vendor/portable-pty/src/cmdbuilder.rs
-+++ b/vendor/portable-pty/src/cmdbuilder.rs
+--- a/crates/gterminal/vendor/portable-pty/src/cmdbuilder.rs
++++ b/crates/gterminal/vendor/portable-pty/src/cmdbuilder.rs
 @@ -202,6 +202,8 @@ fn get_base_env() -> BTreeMap<OsString, EnvEntry> {
  #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
  pub struct CommandBuilder {

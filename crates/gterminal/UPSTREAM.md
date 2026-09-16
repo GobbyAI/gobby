@@ -32,7 +32,7 @@ Paths are herdr paths at the fork-point commit. Gobby-local `include!` /
 | `src/pane/state.rs` | `crates/gterminal/src/pane/state.rs` |
 | `src/pane/terminal.rs` | `crates/gterminal/src/pane/terminal.rs` (+ `terminal_io.rs`, `terminal_render.rs`, `terminal_style.rs`) |
 | `src/pane/terminal/windows_recent_fallback.rs` | `crates/gterminal/src/pane/terminal/windows_recent_fallback.rs` |
-| `src/pane/xtgettcap.rs` | `crates/gterminal/src/pane/xtgettcap.rs` |
+| `src/pane/xtgettcap.rs` | removed (#22310): libghostty-vt answers `XTGETTCAP` itself |
 | `src/pty/mod.rs` | `crates/gterminal/src/pty/mod.rs` |
 | `src/pty/actor.rs` | `crates/gterminal/src/pty/actor.rs` |
 | `src/pty/actor/unix.rs` | `crates/gterminal/src/pty/actor/unix.rs` |

@@ -10,37 +10,27 @@ binaries on purpose: the Ghostty VT engine sits behind `gobby-terminal`'s
 
 ## Build
 
-Zig 0.15 is a **build-time** dependency only for `vt-engine` (the `gterm`
+Zig 0.16.0 is a **build-time** dependency only for `vt-engine` (the `gterm`
 binary and its CI jobs). `gobby-client` never invokes Zig.
 
 ```bash
-# Host (requires zig 0.15 on PATH)
+# Host (requires zig 0.16.0 on PATH)
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 
 # Workspace client (Zig-free)
 cargo build --release -p gobby-client
 ```
 
-On macOS the plain host command above works with Command Line Tools and the
-macOS 27 SDK. Zig 0.15.2 cannot compile its bundled libc++ against that SDK
-(`INFINITY` is undeclared in `__random/clamp_to_integral.h`), but it only
-compiles libc++ when a C++ shared library is emitted, and
-`crates/gterminal/build.rs` passes `-Demit-lib-vt-shared=false` (vendored patch
-0002) so the normal build emits and links the static archive alone.
-
-Select an installed Xcode with the macOS 26.5 SDK only for commands that emit
-the shared library. The one in this repository is the optional non-SIMD Darwin
-archive regression, which runs `zig build -Demit-lib-vt` directly:
+On macOS the build uses whatever SDK Command Line Tools ships; the macOS 27 SDK
+is the validated one. No `DEVELOPER_DIR` or Xcode selection is needed — Zig
+0.16.0 compiles its bundled libc++ against that SDK. Keep SIMD enabled for
+normal builds; libghostty-vt bundles its own simdutf, so nothing links a system
+copy. The optional non-SIMD Darwin archive uses the same member-preserving
+normalization as the SIMD archive; its focused build/link regression is:
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk macosx --show-sdk-version
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
 ```
-
-Verify that the first command reports `26.5`; it fails until the Xcode license
-has been accepted. `SDKROOT` does not override Zig's `xcrun --sdk macosx`
-lookup. Keep SIMD enabled for normal builds. The non-SIMD Darwin archive uses
-the same member-preserving normalization as the SIMD archive.
 
 End users receive prebuilt GitHub release assets. The installer local-workspace
 fallback for `gterm` builds `--features vt-engine` with a 600s timeout; if
@@ -49,21 +39,30 @@ Gobby-hosted GitHub assets. `gclient`'s local build is ordinary cargo.
 
 ### Rebuild and reinstall
 
-A crate change is live only after rebuild **and** reinstall via a new inode.
-macOS kills processes that exec an in-place-overwritten signed binary:
+A crate change is live only after rebuild **and** reinstall:
 
 ```bash
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 cargo build --release -p gobby-client
-mkdir -p ~/.gobby/bin
-cp target/release/gterm ~/.gobby/bin/.gterm.new
-mv -f ~/.gobby/bin/.gterm.new ~/.gobby/bin/gterm
-cp target/release/gclient ~/.gobby/bin/.gclient.new
-mv -f ~/.gobby/bin/.gclient.new ~/.gobby/bin/gclient
-chmod 755 ~/.gobby/bin/gterm ~/.gobby/bin/gclient
 ```
 
-`install -m 755` over an existing path is not sufficient on macOS.
+Never copy a built artifact into `~/.gobby/bin` by hand. `cp`/`mv`/`install`
+skip the ad-hoc code signature and the identity stamp, and the next daemon
+start is refused with `mixed installed binary set`. Promotion is owned by
+`stage_and_promote_binary_file`
+(`src/gobby/install/bin_freshness_promotion.py`), which stages the bytes, signs
+them, and atomically replaces the destination through a new inode — macOS kills
+processes that exec an in-place-overwritten signed binary. `gterm` and
+`gclient` each promote through that function individually.
+
+`gcode`, `gdaemon`, and `ghook` are a coherent set and promote together through
+`promote_workspace_binary_set` (`src/gobby/install/bin_set_coherence.py`), which
+writes `~/.gobby/bin/.gdaemon-schema-identity.json` when it promotes the
+complete set. `gterm` and `gclient` are not set members, so a `gobby-core`
+change means rebuilding them alongside the set and promoting them separately.
+
+Because promotion re-signs the binary, read `sha256` from `~/.gobby/bin/` to
+verify an install, never from `target/release/`.
 
 ## Protocol contracts
 
@@ -282,10 +281,10 @@ below when executing them.
 4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
 5. `cd web && npx vitest run src/hooks src/components/activity`
 6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
-   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
-   (`cp` to a dotfile, `mv -f` over the name, per this guide's § "Rebuild and
-   reinstall"). macOS kills processes that exec an in-place-overwritten signed binary,
-   so overwriting the installed path directly is not an option.
+   against `gclient` and `gterm` rebuilt from the tree and promoted through
+   `stage_and_promote_binary_file` (per this guide's § "Rebuild and reinstall").
+   macOS kills processes that exec an in-place-overwritten signed binary, so
+   overwriting the installed path directly is not an option.
 7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
    set before.
 
@@ -335,8 +334,8 @@ and 1055 tests. Run group 6 from the repository root again.
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 ```
 
-Rebuild `gclient` as in group 1, then use the dotfile `cp` and `mv -f` sequence
-under *Rebuild and reinstall* for both binaries. The `gterm` binary requires
+Rebuild `gclient` as in group 1, then promote both binaries through
+`stage_and_promote_binary_file` as under *Rebuild and reinstall*. The `gterm` binary requires
 `vt-engine`: bare `cargo build --release -p gobby-terminal` builds the library,
 prints `Finished`, and exits 0 without building the binary, leaving any stale
 `gterm` in place. Regression coverage:

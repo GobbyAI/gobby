@@ -260,21 +260,6 @@ fn ghostty_cell_style(
     style.add_modifier(modifiers)
 }
 
-#[derive(Debug)]
-enum OrderedPtyResponseEvent {
-    DefaultColor(DefaultColorTrackedEvent),
-    Xtgettcap(XtgettcapResponse),
-}
-
-impl OrderedPtyResponseEvent {
-    fn end_offset(&self) -> usize {
-        match self {
-            Self::DefaultColor(event) => event.end_offset,
-            Self::Xtgettcap(response) => response.end_offset,
-        }
-    }
-}
-
 fn remove_last_matching_libghostty_color_reply(
     responses: &mut Vec<Bytes>,
     event: DefaultColorEvent,

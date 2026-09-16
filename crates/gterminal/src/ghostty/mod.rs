@@ -141,12 +141,12 @@ pub const MOD_CTRL: u16 = ffi::GHOSTTY_MODS_CTRL as u16;
 pub const MOD_ALT: u16 = ffi::GHOSTTY_MODS_ALT as u16;
 pub const MOD_SUPER: u16 = ffi::GHOSTTY_MODS_SUPER as u16;
 
-pub const KEY_ENTER: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ENTER;
-pub const KEY_UP: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_UP;
-pub const KEY_DOWN: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_DOWN;
-pub const KEY_LEFT: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_LEFT;
-pub const KEY_RIGHT: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_RIGHT;
-pub const KEY_A: u32 = ffi::GhosttyKey_GHOSTTY_KEY_A;
+pub const KEY_ENTER: ffi::GhosttyKey = ffi::GhosttyKey_GHOSTTY_KEY_ENTER;
+pub const KEY_UP: ffi::GhosttyKey = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_UP;
+pub const KEY_DOWN: ffi::GhosttyKey = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_DOWN;
+pub const KEY_LEFT: ffi::GhosttyKey = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_LEFT;
+pub const KEY_RIGHT: ffi::GhosttyKey = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_RIGHT;
+pub const KEY_A: ffi::GhosttyKey = ffi::GhosttyKey_GHOSTTY_KEY_A;
 
 pub const MOUSE_ACTION_PRESS: ffi::GhosttyMouseAction =
     ffi::GhosttyMouseAction_GHOSTTY_MOUSE_ACTION_PRESS;
@@ -181,21 +181,23 @@ pub const MODE_BRACKETED_PASTE: u16 = 2004;
 pub const MODE_SYNCHRONIZED_OUTPUT: u16 = 2026;
 pub const MODE_GRAPHEME_CLUSTER: u16 = 2027;
 pub const MODE_COLOR_SCHEME_REPORT: u16 = 2031;
-// These are documented in vendor/libghostty-vt/include/ghostty/vt/terminal.h,
-// but the generated bindings do not currently expose named constants for them.
-const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData = 18;
-const TERMINAL_DATA_COLOR_CURSOR: ffi::GhosttyTerminalData = 20;
+// Short aliases for bindgen's fully qualified discriminant names. The modules
+// that mod.rs include!s use these identifiers unqualified.
+const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData =
+    ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND;
+const TERMINAL_DATA_COLOR_CURSOR: ffi::GhosttyTerminalData =
+    ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_CURSOR;
 
 const KITTY_IMAGE_STORAGE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const APC_MAX_BYTES: usize = 16 * 1024 * 1024;
 const APC_MAX_BYTES_KITTY: usize = 16 * 1024 * 1024;
 pub(crate) const KITTY_UNICODE_PLACEHOLDER: u32 = 0x10EEEE;
-// The vendored C headers expose these placement fields, but the checked-in
-// generated bindings predate the names. Keep the explicit values aligned with
-// vendor/libghostty-vt/include/ghostty/vt/kitty_graphics.h.
-const KITTY_PLACEMENT_DATA_IS_VIRTUAL: ffi::GhosttyKittyGraphicsPlacementData = 3;
-const KITTY_PLACEMENT_DATA_COLUMNS: ffi::GhosttyKittyGraphicsPlacementData = 10;
-const KITTY_PLACEMENT_DATA_ROWS: ffi::GhosttyKittyGraphicsPlacementData = 11;
+const KITTY_PLACEMENT_DATA_IS_VIRTUAL: ffi::GhosttyKittyGraphicsPlacementData =
+    ffi::GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL;
+const KITTY_PLACEMENT_DATA_COLUMNS: ffi::GhosttyKittyGraphicsPlacementData =
+    ffi::GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS;
+const KITTY_PLACEMENT_DATA_ROWS: ffi::GhosttyKittyGraphicsPlacementData =
+    ffi::GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS;
 
 static INSTALL_PNG_DECODER: Once = Once::new();
 static KITTY_PLACEHOLDER_DIACRITICS: OnceLock<HashMap<u32, u32>> = OnceLock::new();
@@ -540,12 +542,48 @@ unsafe extern "C" fn clipboard_write_trampoline(
     _terminal: ffi::GhosttyTerminal,
     userdata: *mut c_void,
     write: *const ffi::GhosttyClipboardWrite,
-) -> ffi::GhosttyClipboardWriteResult {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+) {
+    // The callback returns nothing: a request answered through `reply` carries
+    // its result, and returning without replying denies the write. A request
+    // we cannot answer is therefore denied, and a denied write must not be
+    // recorded either, so resolve `reply` before capturing anything.
+    // SAFETY: the request stays alive for the duration of this callback.
+    let Some(reply) = (unsafe { clipboard_write_reply_fn(write) }) else {
+        return;
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: libghostty-vt owns these values for the synchronous callback.
         unsafe { capture_clipboard_write(userdata, write) }
     }))
-    .unwrap_or(ffi::GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA)
+    .unwrap_or(ffi::GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA);
+    let answer = ffi::GhosttyClipboardWriteReply {
+        size: std::mem::size_of::<ffi::GhosttyClipboardWriteReply>(),
+        result,
+        remember: false,
+    };
+    // SAFETY: reply is the terminal-owned answer function for this request,
+    // and `answer` is borrowed only for the call.
+    unsafe { reply(write, &answer) };
+}
+
+/// The answer function of a clipboard write request, if it carries one.
+///
+/// `GhosttyClipboardWrite` is a sized struct, so `reply` is readable only when
+/// `size` covers it. A null or undersized request cannot be answered at all.
+unsafe fn clipboard_write_reply_fn(
+    write: *const ffi::GhosttyClipboardWrite,
+) -> ffi::GhosttyClipboardWriteReplyFn {
+    if write.is_null() {
+        return None;
+    }
+    let required_size = std::mem::offset_of!(ffi::GhosttyClipboardWrite, reply)
+        + std::mem::size_of::<ffi::GhosttyClipboardWriteReplyFn>();
+    // SAFETY: size is the leading field of the live request.
+    if unsafe { (*write).size } < required_size {
+        return None;
+    }
+    // SAFETY: the size check above covers the reply field.
+    unsafe { (*write).reply }
 }
 
 unsafe fn capture_clipboard_write(
