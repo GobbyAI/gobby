@@ -116,15 +116,17 @@ def test_codewiki_routes_absent(client: TestClient) -> None:
     assert status.status_code == 404
 
 
-def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:
+@pytest.mark.parametrize("file_path", ["src/app.py", "-app.py"])
+def test_graph_file_delegates(client: TestClient, mock_server: MagicMock, file_path: str) -> None:
+    # A repository file may be named like an option; the route passes it through unchanged.
     response = client.get(
-        "/api/code-index/graph/file/src/app.py",
+        f"/api/code-index/graph/file/{file_path}",
         params={"project_id": PROJECT_ID},
     )
     assert response.status_code == 200
     mock_server.services.code_indexer.graph_file.assert_awaited_once_with(
         PROJECT_ID,
-        "src/app.py",
+        file_path,
     )
 
 
