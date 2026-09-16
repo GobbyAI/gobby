@@ -35,7 +35,10 @@ Host → client:
 - `TerminalExited` / `Error`
 
 `reservation_id` is required only for a daemon internal observer bind. User
-and tmux attaches omit it and never present a reservation. Tmux attaches carry
+and tmux attaches omit it and never present a reservation. The daemon opens one
+frames stream per observer bind and drains it: a later `AttachTerminal` on the
+same stream replaces that stream's attachment, and the host closes the stream
+when its terminal is removed or the reader lags out. Tmux attaches carry
 the pane `locator` (socket, server pid, start time, pane id). `Hello.tmux_identity`
 is the client's own pane, used to refuse recursive self-view. `FrameData.modes`
 carries cursor/mouse/keypad/copy-mode flags so a mode change with no cell change

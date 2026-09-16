@@ -335,3 +335,39 @@ async def test_handshake_with_changed_epoch_still_raises_host_epoch_changed() ->
     assert not isinstance(failure.value, HostNotAdoptedError)
     assert writer.writes, "the hello went out and the welcome epoch was compared"
     assert writer.closed is True
+
+
+async def test_pump_marks_the_client_closed_at_eof() -> None:
+    reader = asyncio.StreamReader()
+    writer = _RecordingWriter()
+    client = FrameClient(reader, cast(Any, writer))
+    forgotten = asyncio.Event()
+
+    client.start_pump(on_closed=forgotten.set)
+    client.start_pump(on_closed=pytest.fail)
+    reader.feed_data(_golden("frame.bin"))
+    await asyncio.sleep(0)
+    assert client.closed is False, "frames the daemon never renders are drained, not fatal"
+
+    reader.feed_eof()
+    await asyncio.wait_for(forgotten.wait(), timeout=2)
+
+    assert client.closed is True
+    assert writer.closed is True, "EOF from the host closes the daemon side too"
+
+
+async def test_close_cancels_the_pump() -> None:
+    reader = asyncio.StreamReader()
+    writer = _RecordingWriter()
+    client = FrameClient(reader, cast(Any, writer))
+    client.start_pump()
+    pump = client._pump_task
+    assert pump is not None
+
+    await client.close()
+    await asyncio.sleep(0)
+
+    assert pump.cancelled() or pump.done()
+    assert client._pump_task is None
+    client.start_pump()
+    assert client._pump_task is None, "a closed client never starts a pump"

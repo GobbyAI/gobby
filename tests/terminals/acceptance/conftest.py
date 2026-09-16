@@ -193,9 +193,7 @@ async def native_host(
             workdir=acceptance_workdir,
         )
     finally:
-        frame_client = runtime._frame_client
-        if frame_client is not None:
-            await frame_client.close()
+        await runtime.close_frame_streams()
         if not manager.host_drained:
             await manager.stop(drain_host=True)
         shutil.rmtree(socket_dir, ignore_errors=True)

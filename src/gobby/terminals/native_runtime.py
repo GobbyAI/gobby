@@ -214,9 +214,10 @@ class NativeTerminalRuntime:
         self._machine_id = machine_id
         self._spawn_in_doubt_seconds = spawn_in_doubt_seconds
         self._frame_client = frame_client
-        # The host epoch a self-opened frame stream belongs to. An injected
-        # client keeps `None` and is always reused, exactly as before.
-        self._frame_client_epoch: str | None = None
+        # Self-opened observer streams keyed by host terminal id. The host
+        # replaces a stream's attachment on every attach and closes the stream
+        # once its terminal is removed, so each bound terminal needs its own.
+        self._observer_streams: dict[str, FrameClient] = {}
         self._run_manager = run_manager
         self._subscribed = False
 
@@ -270,18 +271,8 @@ class NativeTerminalRuntime:
                 return token
         return ""
 
-    async def _ensure_frame_client(self, locator: AttachLocator) -> Any:
+    async def _open_frame_stream(self, locator: AttachLocator) -> FrameClient:
         epoch = locator.frame_host_epoch or str(getattr(self._client, "host_epoch", "") or "")
-        existing = self._frame_client
-        if existing is not None and not bool(getattr(existing, "closed", False)):
-            # A frame stream belongs to the host that answered its handshake.
-            # After a respawn that host is gone, and reusing the stream writes
-            # every later attach into a dead socket forever, so drop it here
-            # rather than let the caller see a raw ConnectionResetError.
-            if self._frame_client_epoch is None or self._frame_client_epoch == epoch:
-                return existing
-            await existing.close()
-            self._frame_client = None
         directory = self._socket_dir()
         if directory is None:
             raise HostCommandError("attach_failed")
@@ -290,17 +281,56 @@ class NativeTerminalRuntime:
         except (OSError, ConnectionError) as exc:
             raise HostCommandError("attach_failed") from exc
         client = FrameClient(reader, writer)
-        await client.handshake(
-            AttachLocator(
-                backend="native",
-                frame_host_epoch=epoch,
-                host_terminal_id=locator.host_terminal_id,
-            ),
-            local_token=self._frame_token(),
-        )
-        self._frame_client = client
-        self._frame_client_epoch = epoch
+        try:
+            await client.handshake(
+                AttachLocator(
+                    backend="native",
+                    frame_host_epoch=epoch,
+                    host_terminal_id=locator.host_terminal_id,
+                ),
+                local_token=self._frame_token(),
+            )
+        except BaseException:
+            await client.close()
+            raise
         return client
+
+    async def _bind_frames(self, locator: AttachLocator, reservation_id: str) -> None:
+        """Attach the daemon observer for one terminal on a stream of its own.
+
+        A frame stream belongs to the host that answered its handshake and to
+        the terminal it last attached: the host swaps the attachment on every
+        ``attach_terminal`` and closes the stream when that terminal is removed
+        or its unread frames lag out. Reusing one stream across terminals
+        therefore unbinds the previous observer and, after the first terminal
+        exits, writes every later bind into a dead socket. Each bind gets a
+        fresh stream, drained by a pump that forgets it at EOF.
+        """
+        if self._frame_client is not None:
+            await self._frame_client.attach_terminal(locator, reservation_id=reservation_id)
+            return
+        key = locator.host_terminal_id or ""
+        stream = await self._open_frame_stream(locator)
+        try:
+            await stream.attach_terminal(locator, reservation_id=reservation_id)
+        except BaseException:
+            await stream.close()
+            raise
+        previous = self._observer_streams.pop(key, None)
+        self._observer_streams[key] = stream
+        stream.start_pump(on_closed=lambda: self._forget_stream(key, stream))
+        if previous is not None:
+            await previous.close()
+
+    def _forget_stream(self, key: str, stream: FrameClient) -> None:
+        if self._observer_streams.get(key) is stream:
+            del self._observer_streams[key]
+
+    async def close_frame_streams(self) -> None:
+        streams = list(self._observer_streams.values())
+        self._observer_streams.clear()
+        for stream in streams:
+            await stream.close()
 
     async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
         try:
@@ -335,8 +365,7 @@ class NativeTerminalRuntime:
             frame_host_epoch=str(getattr(self._client, "host_epoch", "") or ""),
             host_terminal_id=prepared.host_terminal_id,
         )
-        client = await self._ensure_frame_client(locator)
-        await client.attach_terminal(locator, reservation_id=reservation_id)
+        await self._bind_frames(locator, reservation_id)
         prepared.acknowledge_observer()
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
@@ -754,13 +783,13 @@ class NativeTerminalRuntime:
         attaches = getattr(self._client, "attaches", None)
         if isinstance(attaches, list):
             attaches.append(rid)
-        if self._frame_client is not None and rid is not None:
+        if rid is not None:
             locator = AttachLocator(
                 backend="native",
                 frame_host_epoch=str(getattr(self._client, "host_epoch", "") or ""),
                 host_terminal_id=match.host_terminal_id,
             )
-            await self._frame_client.attach_terminal(locator, reservation_id=rid)
+            await self._bind_frames(locator, rid)
 
     def _require_current_epoch(self, expected_epoch: str | None) -> str:
         if not expected_epoch:

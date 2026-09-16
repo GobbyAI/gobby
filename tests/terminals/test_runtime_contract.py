@@ -338,11 +338,14 @@ async def _start_harness(backend: str) -> ContractHarness:
                 rows=SPAWN_ROWS,
                 cols=SPAWN_COLS,
             )
-            frame = (
-                runtime._frame_client if isinstance(runtime._frame_client, FrameClient) else None
+            cleanup.push_async_callback(runtime.close_frame_streams)
+            # The daemon drains its observer stream, so the harness watches the
+            # terminal through a viewer stream of its own.
+            frame = await _open_frame_client(
+                socket_dir, epoch, host_terminal_id=prepared.host_terminal_id
             )
-            if frame is not None:
-                cleanup.push_async_callback(frame.close)
+            cleanup.push_async_callback(frame.close)
+            await frame.attach_terminal(await runtime.attach_locator(terminal))
             harness = ContractHarness(
                 backend=backend,
                 runtime=runtime,

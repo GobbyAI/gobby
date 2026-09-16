@@ -298,3 +298,56 @@ def test_release_task_claim_type_error_is_not_swallowed() -> None:
         handler._release_task_claim_with_mutex("task-1")
 
     task_manager.release_task_claim.assert_called_once_with("task-1")
+
+
+async def test_cancelled_run_sweep_keeps_the_live_claim_owner(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    """A coordinator that took over a cancelled worker's task keeps its claim variables."""
+    session_manager = SessionManager(temp_db)
+    worker = session_manager.register(
+        external_id="task-recovery-cancelled-worker",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    coordinator = session_manager.register(
+        external_id="task-recovery-live-coordinator",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Finish the worker's task",
+        validation_criteria="The coordinator keeps its claim.",
+    )
+    task_manager.claim_task(task.id, coordinator.id)
+    variable_manager = SessionVariableManager(temp_db)
+    claim = {
+        "task_claimed": True,
+        "claimed_tasks": {task.id: f"#{task.seq_num}"},
+        "active_task_id": task.id,
+    }
+    for session in (worker, coordinator):
+        variable_manager.merge_variables(session.id, dict(claim))
+    run = _Run(
+        id="recovery-cancelled-worker",
+        status="cancelled",
+        task_id=task.id,
+        child_session_id=worker.id,
+        claimed_session_id=coordinator.id,
+    )
+    handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier(), run_db=_run_db)
+
+    # The lifecycle sweep revisits a terminal cancelled run on every cycle.
+    for _ in range(2):
+        assert not await handler.recover_task_from_terminal_agent(run, outcome="cancelled")
+
+    assert task.id not in variable_manager.get_variables(worker.id)["claimed_tasks"]
+    kept = variable_manager.get_variables(coordinator.id)
+    assert kept["task_claimed"] is True
+    assert kept["claimed_tasks"] == {task.id: f"#{task.seq_num}"}
+    assert task_manager.get_task(task.id).claimed_by_session_id == coordinator.id

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
+import shutil
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,7 +16,8 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.storage.terminals import native_locator_key
+from gobby.storage.terminals import AttachLocator, native_locator_key
+from gobby.terminals.frame_client import decode_frame
 from gobby.terminals.host_client import (
     HostBatchTarget,
     HostCommandError,
@@ -20,7 +25,7 @@ from gobby.terminals.host_client import (
     HostUnavailableError,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow
+from gobby.terminals.host_protocol import HostListRow, frames_socket_path
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
@@ -32,6 +37,7 @@ from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
     InputPayloadTooLargeError,
+    PreparedSpawn,
     SnapshotResult,
     TerminalSpawnRequest,
     TerminalWriteError,
@@ -300,6 +306,19 @@ class FakeHostClient:
         return encode_control_line(payload)
 
 
+@dataclass
+class _RecordingFrame:
+    """Injected frame client that records observer attaches instead of dialing a host."""
+
+    attaches: list[str | None] = field(default_factory=list)
+
+    async def attach_terminal(
+        self, locator: AttachLocator, *, reservation_id: str | None = None
+    ) -> None:
+        del locator
+        self.attaches.append(reservation_id)
+
+
 def _runtime(client: FakeHostClient | None = None) -> tuple[NativeTerminalRuntime, FakeHostClient]:
     host = client or FakeHostClient()
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
@@ -537,7 +556,9 @@ async def test_reconnect_reconciles_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_spawn_prepare_commit_survives_host_death() -> None:
-    runtime, host = _runtime()
+    host = FakeHostClient()
+    frame = _RecordingFrame()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch, frame_client=frame)
     request = TerminalSpawnRequest(
         terminal_id=uuid4(),
         spawn_key="gobby-native",
@@ -588,6 +609,7 @@ async def test_spawn_prepare_commit_survives_host_death() -> None:
     )
     await runtime.rebind_prepared(prepared, reservation_id="rsv")
     assert host.attaches[-1] == "rsv"
+    assert frame.attaches == ["rsv"], "a reservation rebind re-attaches the observer stream"
 
     host.available = False
     host.children_alive = False
@@ -932,3 +954,113 @@ def test_frame_token_prefers_the_socket_directory(
     runtime = NativeTerminalRuntime(_SocketDirClient(socket_dir=sockets))
 
     assert runtime._frame_token() == "socket-token"
+
+
+_WIRE_GOLDEN = (
+    Path(__file__).resolve().parents[2]
+    / "crates"
+    / "gterminal"
+    / "tests"
+    / "fixtures"
+    / "wire_golden"
+)
+
+
+class _FrameHost:
+    """Fake `gterm-frames.sock` peer: welcomes every hello and records attaches."""
+
+    def __init__(self) -> None:
+        self.connections: list[asyncio.StreamWriter] = []
+        self.attaches: asyncio.Queue[tuple[int, str, str | None]] = asyncio.Queue()
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        index = len(self.connections)
+        self.connections.append(writer)
+        try:
+            while True:
+                header = await reader.readexactly(4)
+                payload = await reader.readexactly(int.from_bytes(header, "little"))
+                message = decode_frame(header + payload)
+                if message["type"] == "hello":
+                    writer.write((_WIRE_GOLDEN / "welcome.bin").read_bytes())
+                    await writer.drain()
+                elif message["type"] == "attach_terminal":
+                    self.attaches.put_nowait(
+                        (index, str(message["host_terminal_id"]), message.get("reservation_id"))
+                    )
+        except (asyncio.IncompleteReadError, ConnectionError):
+            return
+        finally:
+            writer.close()
+
+
+def _frames_dir() -> Path:
+    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
+    path = Path(tempfile.mkdtemp(prefix="f", dir=root)).resolve()
+    if len(os.fsencode(frames_socket_path(path))) >= 104:
+        path.rmdir()
+        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
+    return path
+
+
+def _prepared(host_terminal_id: str) -> PreparedSpawn:
+    return PreparedSpawn(
+        terminal_id=uuid4(),
+        spawn_key=f"sk-{host_terminal_id}",
+        locator=None,
+        process=None,
+        host_terminal_id=host_terminal_id,
+    )
+
+
+async def _until(predicate: Callable[[], bool]) -> None:
+    async def poll() -> None:
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), timeout=2)
+
+
+async def test_each_observer_bind_gets_its_own_frame_stream() -> None:
+    socket_dir = _frames_dir()
+    (socket_dir / "local_cli_token").write_text("socket-token\n", encoding="utf-8")
+    frames = _FrameHost()
+    server = await asyncio.start_unix_server(
+        frames.handle, path=str(frames_socket_path(socket_dir))
+    )
+    runtime, _host = _runtime(FakeHostClient(socket_dir=socket_dir))
+    try:
+        first, second = _prepared("ht-1"), _prepared("ht-2")
+        await runtime.bind_observer(first, "rsv-1")
+        await runtime.bind_observer(second, "rsv-2")
+
+        assert await asyncio.wait_for(frames.attaches.get(), timeout=2) == (0, "ht-1", "rsv-1")
+        assert await asyncio.wait_for(frames.attaches.get(), timeout=2) == (1, "ht-2", "rsv-2")
+        assert first.observer_bound and second.observer_bound
+        assert set(runtime._observer_streams) == {"ht-1", "ht-2"}
+
+        # The host removes ht-1 and drops its stream; ht-2's observer is untouched.
+        frames.connections[0].close()
+        await frames.connections[0].wait_closed()
+        await _until(lambda: "ht-1" not in runtime._observer_streams)
+        assert runtime._observer_streams["ht-2"].closed is False
+
+        # The next bind opens a fresh stream instead of writing into the dead one.
+        await runtime.bind_observer(_prepared("ht-3"), "rsv-3")
+        assert await asyncio.wait_for(frames.attaches.get(), timeout=2) == (2, "ht-3", "rsv-3")
+        assert set(runtime._observer_streams) == {"ht-2", "ht-3"}
+
+        # Rebinding a terminal replaces its stream and closes the previous one.
+        await runtime.bind_observer(_prepared("ht-2"), "rsv-4")
+        assert await asyncio.wait_for(frames.attaches.get(), timeout=2) == (3, "ht-2", "rsv-4")
+        await _until(lambda: frames.connections[1].is_closing())
+        assert set(runtime._observer_streams) == {"ht-2", "ht-3"}
+
+        await runtime.close_frame_streams()
+        assert runtime._observer_streams == {}
+        await _until(lambda: all(w.is_closing() for w in frames.connections))
+    finally:
+        await runtime.close_frame_streams()
+        server.close()
+        await server.wait_closed()
+        shutil.rmtree(socket_dir, ignore_errors=True)

@@ -12,6 +12,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.tasks.state_semantics import (
     current_stage,
+    get_claimed_session_id,
     is_task_actively_claimed,
     projected_task_state,
 )
@@ -457,6 +458,11 @@ class TaskRecoveryHandler:
         the authoritative attribution the parent coordinator's
         `checkpoint_agent_worktree` reads to tell the terminal child's work from
         genuinely unattributed dirt (#21897).
+
+        A session that still owns the task's claim in the database is left alone:
+        a cancelled worker's task that its coordinator has since claimed is swept
+        on every lifecycle cycle, and dropping the owner's variables there made
+        every edit gate read a live claim as unclaimed (#22425).
         """
         if not self._task_manager:
             return
@@ -469,10 +475,11 @@ class TaskRecoveryHandler:
             from gobby.workflows.task_claim_state import release_claimed_task
 
             session_var_manager = SessionVariableManager(db)
+            live_owner = self._live_claim_owner(task_id)
             session_ids = {
                 session_id
                 for session_id in (db_run.child_session_id, db_run.claimed_session_id)
-                if session_id
+                if session_id and session_id != live_owner
             }
             for session_id in session_ids:
                 session_vars = session_var_manager.get_variables(session_id)
@@ -485,6 +492,19 @@ class TaskRecoveryHandler:
                 task_id,
                 e,
             )
+
+    def _live_claim_owner(self, task_id: str) -> str | None:
+        """Return the session that actively owns ``task_id`` in the database, if any."""
+        if not self._task_manager:
+            return None
+        try:
+            task = self._task_manager.get_task(task_id)
+        except Exception:
+            return None
+        owner = get_claimed_session_id(task)
+        if owner and is_task_actively_claimed(task, owner):
+            return owner
+        return None
 
     async def recover_task_from_failed_agent(self, run_id: str) -> None:
         """Recover task ownership after a failed agent run."""

@@ -414,12 +414,17 @@ class FrameClient:
         self.closed = False
         self._queue: list[dict[str, Any]] = []
         self._queue_bytes = 0
+        self._pump_task: asyncio.Task[None] | None = None
 
     async def close(self) -> None:
         if self.closed:
             return
         self.closed = True
         self.attached = False
+        pump = self._pump_task
+        self._pump_task = None
+        if pump is not None and pump is not asyncio.current_task():
+            pump.cancel()
         self._writer.close()
         try:
             await self._writer.wait_closed()
@@ -442,6 +447,30 @@ class FrameClient:
                 raise FrameProtocolError("unexpected eof")
             buf.extend(chunk)
         return bytes(buf)
+
+    def start_pump(self, on_closed: Callable[[], None] | None = None) -> None:
+        """Drain host frames nobody renders and flip ``closed`` at EOF.
+
+        The host pushes every frame of the attached terminal down this stream
+        and drops the stream once the terminal is removed or the reader lags.
+        Consuming the bytes keeps an observer bind alive, and EOF marks the
+        client dead so a later bind never reuses a stream the host has closed.
+        """
+        if self._pump_task is not None or self.closed:
+            return
+        self._pump_task = asyncio.get_running_loop().create_task(self._pump(on_closed))
+
+    async def _pump(self, on_closed: Callable[[], None] | None) -> None:
+        try:
+            while await self._reader.read(65536):
+                pass
+        except (OSError, ConnectionError):
+            pass
+        finally:
+            self._pump_task = None
+            await self.close()
+            if on_closed is not None:
+                on_closed()
 
     async def _send(self, payload: dict[str, Any]) -> None:
         self._writer.write(encode_frame(payload))
