@@ -284,6 +284,30 @@ async def test_argv_spawn_pane_pid_is_the_launched_program(
     assert await pid_matches_agent_identity(pane_pid, provider="claude", session_id=session_id)
 
 
+@pytest.mark.parametrize("shell", ["/bin/bash", "/bin/zsh"])
+async def test_shell_line_spawn_pane_pid_is_the_launched_program(
+    tmux_manager: TmuxSessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    shell: str,
+) -> None:
+    """A web terminal's single command line must leave pane_pid on its program, not sh."""
+    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
+
+    if not Path(shell).is_file():
+        pytest.skip(f"{shell} is not installed")
+    monkeypatch.setenv("SHELL", shell)
+    program = [sys.executable, "-c", "import time; time.sleep(60)"]
+    shell_cmd, extra_env = tmux_spawn_shell_and_env(
+        [shlex.join(program)], {"PATH": os.environ["PATH"]}, None
+    )
+    await tmux_manager.create_session(name="shell-line", command=shell_cmd, env=extra_env)
+
+    info = await tmux_manager.get_session("shell-line")
+    assert info is not None and info.pane_pid is not None
+    pane_pid = info.pane_pid
+    await _wait_for(lambda: _process_cmdline(pane_pid) == program)
+
+
 async def _spawn_gobby_terminal(
     *,
     runtime: TmuxTerminalRuntime,

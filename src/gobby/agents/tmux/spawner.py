@@ -62,8 +62,10 @@ def tmux_spawn_shell_and_env(
         # bash leaves pane_pid on the shell, whose argv fails the provider identity check.
         shell_cmd = f"exec {shlex.join(command)}"
     else:
-        # A single element is a caller-authored shell command line (web terminals).
-        shell_cmd = command[0]
+        # A single element is a caller-authored shell command line (web terminals). The
+        # pane's /bin/sh may be bash, which never execs the last command of a list, so
+        # exec a nested sh: it execs a simple line such as ``zsh``, keeping pane_pid on it.
+        shell_cmd = f"exec /bin/sh -c {shlex.quote(command[0])}"
     cli = auth_cli or _infer_auth_cli(command)
     denied = CLI_DENIED_AMBIENT_KEYS.get(cli or "", frozenset())
     unset_names = ["VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", *sorted(denied)]
