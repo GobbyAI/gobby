@@ -4,7 +4,7 @@ Gobby is a local-first control plane for AI coding tools: persistent sessions,
 task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
 automation around the tools developers already use.
 
-Last refreshed: 2026-09-09 (decision 17). This document is the roadmap and the
+Last refreshed: 2026-09-16 (decision 18). This document is the roadmap and the
 architecture decision record. The live tracker is epic #21542.
 
 ## Where we are (2026-09-01)
@@ -447,6 +447,16 @@ separate planning effort before implementation.
     scopes and unbound tokens, teams on one hub and per-user privacy inside a
     hub. Open at S2.11: whether `ghook` posts to the hub directly or through
     the local node; the envelope spool stays local either way (decision 9).
+18. **All timer-driven periodic work in the daemon runs on the gdaemon
+    heartbeat host** (2026-09-16; `.gobby/plans/gdaemon-front-door.md` §1.2
+    runtime). The host lands in Stage 1 (#21543) with an empty roster as the
+    scheduling foundation; an absorbed family attaches its interval jobs
+    through the `AppState` heartbeat handle during composition (Stage 2,
+    #21544), and its Python timer loops (`_check_loop`, `_poll_loop` variants,
+    the `start_periodic_tasks` maintenance loops) retire with the family — no
+    Python bridge, no dual-run window. Event-driven and coalescing loops and
+    I/O pumps keep their own mechanisms, and the node-channel keepalive
+    (`gdaemon-front-door.md §4.4`) is unrelated.
 
 ## References
 
