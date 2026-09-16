@@ -101,6 +101,73 @@ class TestGobbyRunnerSignalHandlers:
         assert signal.SIGTERM in signals_registered
         assert signal.SIGINT in signals_registered
 
+    def test_falls_back_to_signal_signal_when_loop_lacks_support(self) -> None:
+        """Windows event loops raise NotImplementedError; both signals still register."""
+        from gobby.runner_maintenance import setup_signal_handlers
+
+        mock_loop = MagicMock()
+        mock_loop.add_signal_handler.side_effect = NotImplementedError
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.lifecycle.signal.signal") as mock_signal,
+        ):
+            setup_signal_handlers(MagicMock())
+
+        attempted = [attempt.args[0] for attempt in mock_loop.add_signal_handler.call_args_list]
+        assert attempted == [signal.SIGTERM, signal.SIGINT]
+        registered = [registration.args[0] for registration in mock_signal.call_args_list]
+        assert registered == [signal.SIGTERM, signal.SIGINT]
+        os_handlers = [registration.args[1] for registration in mock_signal.call_args_list]
+        assert all(callable(os_handler) for os_handler in os_handlers)
+        assert os_handlers[0] is not os_handlers[1]
+        # Registration alone schedules nothing on the loop.
+        mock_loop.call_soon_threadsafe.assert_not_called()
+
+    def test_fallback_handlers_schedule_their_own_handler_on_the_loop(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        """Each OS handler defers to the loop thread with the handler for its own signal."""
+        from gobby.runner_maintenance import setup_signal_handlers
+
+        mock_loop = MagicMock()
+        mock_loop.add_signal_handler.side_effect = NotImplementedError
+        shutdown_callback = MagicMock()
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.lifecycle.get_gobby_home", return_value=tmp_path),
+            patch("gobby.runner_maintenance.lifecycle.signal.signal") as mock_signal,
+        ):
+            setup_signal_handlers(shutdown_callback)
+            os_handlers = {
+                registration.args[0]: registration.args[1]
+                for registration in mock_signal.call_args_list
+            }
+            os_handlers[signal.SIGINT](signal.SIGINT.value, None)
+            os_handlers[signal.SIGTERM](signal.SIGTERM.value, None)
+
+            # The OS handlers only schedule work; shutdown runs later on the loop thread.
+            shutdown_callback.assert_not_called()
+            scheduled = [
+                scheduling.args[0] for scheduling in mock_loop.call_soon_threadsafe.call_args_list
+            ]
+            assert len(scheduled) == 2
+            assert scheduled[0] is not scheduled[1]
+
+            with caplog.at_level(logging.INFO, logger="gobby.runner_maintenance"):
+                scheduled[0]()
+
+        shutdown_callback.assert_called_once_with()
+        received = [
+            record.message for record in caplog.records if record.message.startswith("Received ")
+        ]
+        assert len(received) == 1
+        assert received[0].startswith("Received SIGINT")
+
 
 class TestGobbyRunnerRun:
     """Tests for the run method."""

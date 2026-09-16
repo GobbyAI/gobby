@@ -1,15 +1,21 @@
-"""POSIX file locking and durable atomic replacement helpers."""
+"""Inter-process file locking and durable atomic replacement helpers."""
 
 from __future__ import annotations
 
-import fcntl
+import errno
 import math
 import os
+import sys
 import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+if sys.platform == "win32":  # pragma: no cover - Windows only
+    import msvcrt
+else:  # pragma: no branch - POSIX platforms share fcntl
+    import fcntl
 
 
 class DurableFileError(OSError):
@@ -26,22 +32,48 @@ def exclusive_file_lock(path: Path, *, timeout_seconds: float | None = None) -> 
     lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         os.fchmod(lock_fd, 0o600)
-        if timeout_seconds is None:
+        if sys.platform == "win32":  # pragma: no cover - Windows only
+            # msvcrt locks a byte range from the current offset; pin one real byte.
+            os.ftruncate(lock_fd, 1)
+            os.lseek(lock_fd, 0, os.SEEK_SET)
+        if sys.platform != "win32" and timeout_seconds is None:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
         else:
-            cutoff = time.monotonic() + timeout_seconds
-            while True:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    remaining = cutoff - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("durable file lock deadline exceeded") from None
-                    time.sleep(min(0.01, remaining))
-        yield
+            cutoff = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+            while not _try_exclusive_lock(lock_fd):
+                if cutoff is None:
+                    time.sleep(0.01)
+                    continue
+                remaining = cutoff - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("durable file lock deadline exceeded")
+                time.sleep(min(0.01, remaining))
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":  # pragma: no cover - Windows only
+                os.lseek(lock_fd, 0, os.SEEK_SET)
+                msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
     finally:
         os.close(lock_fd)
+
+
+def _try_exclusive_lock(lock_fd: int) -> bool:
+    """Take the sidecar lock without blocking; False means another holder has it."""
+    if sys.platform == "win32":  # pragma: no cover - Windows only
+        try:
+            msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            # Contention surfaces as EACCES/EDEADLOCK; anything else is a real failure.
+            if exc.errno in (errno.EACCES, errno.EDEADLOCK):
+                return False
+            raise
+        return True
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
 
 
 def durable_replace(path: Path, content: bytes, *, mode: int = 0o600) -> None:
@@ -68,12 +100,14 @@ def durable_replace(path: Path, content: bytes, *, mode: int = 0o600) -> None:
             os.close(fd)
 
         os.replace(temp_path, path)
-        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        directory_fd = os.open(path.parent, directory_flags)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        # Windows cannot open a directory as an fd; NTFS journals the rename itself.
+        if sys.platform != "win32":  # pragma: no branch - POSIX fsyncs the directory entry
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, directory_flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
         if path.read_bytes() != content:
             raise DurableFileError(f"Durable replacement readback mismatch for {path}")

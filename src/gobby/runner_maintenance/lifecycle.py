@@ -18,6 +18,8 @@ from gobby.shutdown_intent import (
 )
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger("gobby.runner_maintenance")
@@ -130,8 +132,20 @@ def setup_signal_handlers(
 
         return handle_shutdown
 
+    def _make_os_handler(handler: Callable[[], None]) -> Callable[[int, FrameType | None], None]:
+        def on_signal(_signum: int, _frame: FrameType | None) -> None:
+            loop.call_soon_threadsafe(handler)
+
+        return on_signal
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _make_handler(sig))
+        handler = _make_handler(sig)
+        try:
+            loop.add_signal_handler(sig, handler)
+        except NotImplementedError:
+            # Windows event loops lack add_signal_handler. signal.signal handlers run
+            # outside the loop's callback cycle, so hop back onto the loop thread.
+            signal.signal(sig, _make_os_handler(handler))
 
 
 def cleanup_pid_file() -> None:

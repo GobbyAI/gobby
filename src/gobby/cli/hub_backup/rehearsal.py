@@ -8,7 +8,6 @@ import re
 import stat
 import subprocess
 from pathlib import Path
-from pwd import getpwuid
 from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import UUID
@@ -262,6 +261,9 @@ def load_rehearsal_profile(
     home = Path(profile.gobby_home)
     refuse_symlink_traversal(home, label="Rehearsal home")
     refuse_symlink_traversal(get_gobby_home(), label="GOBBY_HOME")
+    # POSIX-only; a module-scope import would break the whole gobby CLI on Windows.
+    from pwd import getpwuid
+
     if (
         profile.owner_uid != os.getuid()
         or not home.is_absolute()
