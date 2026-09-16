@@ -114,7 +114,9 @@ function applyOutcome(
     return {
       inFlight,
       settled: state.settled,
-      retried: state.retried.filter((key) => key !== writeKey(attachmentId, seq)),
+      retried: state.retried.filter(
+        (key) => key !== writeKey(attachmentId, seq),
+      ),
     };
   }
   return {
@@ -143,7 +145,9 @@ export function writeSettlementReducer(
       const { attachmentId, seq } = action.write;
       return {
         inFlight: [
-          ...state.inFlight.filter((write) => !isSame(write, attachmentId, seq)),
+          ...state.inFlight.filter(
+            (write) => !isSame(write, attachmentId, seq),
+          ),
           action.write,
         ],
         settled: state.settled,

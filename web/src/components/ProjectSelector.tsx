@@ -13,10 +13,7 @@ import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { SegmentedControl } from "./ui/SegmentedControl";
-import {
-  coarseHitAreaCls,
-  segmentedActiveOptionCls,
-} from "./ui/controlStyles";
+import { coarseHitAreaCls, segmentedActiveOptionCls } from "./ui/controlStyles";
 
 type ProjectMode = "personal" | "project";
 type PickerMode = "search" | "compact";
@@ -321,7 +318,7 @@ export function ProjectSelector({
           size="sm"
           dense
           className={cn(
-            "w-full rounded-[inherit] py-0 text-[length:var(--text-sm)] [font-family:inherit]",
+            "w-full rounded-[inherit] py-0 [font-family:inherit] text-[length:var(--text-sm)]",
             segmentedActiveOptionCls(isLightTheme),
             coarseHitAreaCls,
           )}

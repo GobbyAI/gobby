@@ -25,9 +25,6 @@ function makeProject(
       root_path: "/Users/josh/Projects/gobby",
     },
 
-
-
-
     approval_rules: [],
     validation_detection: null,
     created_at: "2026-08-11T00:00:00Z",

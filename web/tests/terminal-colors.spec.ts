@@ -136,8 +136,6 @@ async function installApiMocks(page: Page): Promise<void> {
               root_path: "/tmp/terminal-test",
             },
 
-
-
             approval_rules: [],
             created_at: "2026-07-22T00:00:00Z",
             updated_at: "2026-07-22T00:00:00Z",

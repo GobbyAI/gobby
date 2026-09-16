@@ -211,8 +211,6 @@ test("activity panel shows non-current web chats with a web badge", async ({
               root_path: "/tmp/project-one",
             },
 
-
-
             approval_rules: [],
             created_at: "2026-04-08T12:00:00Z",
             updated_at: "2026-04-08T12:00:00Z",
@@ -437,8 +435,6 @@ test("activity panel refreshes sessions after a session_event websocket message"
               machine_id: "machine-1",
               root_path: "/tmp/project-one",
             },
-
-
 
             approval_rules: [],
             created_at: "2026-04-08T12:00:00Z",

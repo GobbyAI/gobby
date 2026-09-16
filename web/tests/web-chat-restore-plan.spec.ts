@@ -254,8 +254,6 @@ async function mockApi(page: Page, counters?: MockApiCounters) {
                 root_path: "/tmp/project-one",
               },
 
-
-
               approval_rules: [],
               created_at: "2026-04-19T18:00:00Z",
               updated_at: "2026-04-19T18:00:00Z",

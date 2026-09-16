@@ -47,12 +47,7 @@ export interface ProjectWithStats {
 }
 
 export type ProjectUpdateFields = Partial<
-  Pick<
-    ProjectWithStats,
-    | "name"
-    | "approval_rules"
-    | "validation_detection"
-  >
+  Pick<ProjectWithStats, "name" | "approval_rules" | "validation_detection">
 >;
 
 export type ProjectSubTab = "overview" | "code" | "settings";
@@ -175,7 +170,6 @@ export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
       (p) =>
         p.display_name.toLowerCase().includes(q) ||
         (p.checkout?.root_path.toLowerCase().includes(q) ?? false),
-
     );
   }, [projects, searchText]);
 

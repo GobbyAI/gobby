@@ -104,9 +104,6 @@ const PROJECT = {
     root_path: "/tmp/project-one",
   },
 
-
-
-
   approval_rules: [],
   validation_detection: null,
   created_at: "2026-04-08T12:00:00Z",
@@ -1500,7 +1497,6 @@ function baseApi(
       };
     case "/api/source-control/status":
       return {
-
         current_branch: "main",
         branch_count: 1,
         worktree_count: 0,

@@ -22,9 +22,6 @@ function makeProject(overrides: Partial<ProjectWithStats>): ProjectWithStats {
     display_name: "Alpha workspace",
     checkout: null,
 
-
-
-
     approval_rules: [],
     validation_detection: null,
     created_at: "2026-01-01T00:00:00.000Z",
