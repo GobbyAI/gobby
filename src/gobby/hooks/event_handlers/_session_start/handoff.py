@@ -60,7 +60,9 @@ def resolve_session_start_identity(
     Compact classification is one-shot: an explicit compact source, a
     awaiting_handoff row, or an expired row with an unconsumed compact marker.
     Grok ``/clear`` emits ``source: "new"``; a unique matching unconsumed
-    clear-attempt marker promotes that startup into a clear successor.
+    clear-attempt marker promotes that startup into a clear successor. Droid loads
+    its ``/clear`` successor as ``source: "resume"`` for a provider session no row
+    knows, so the same marker promotes that resume.
     """
     if not handler._session_manager:
         return SessionStartResolution(session=None, session_source=session_source)
@@ -73,26 +75,16 @@ def resolve_session_start_identity(
             terminal_context=terminal_context,
         )
     if (session_source or "startup") in STARTUP_SOURCES:
-        matched = resolve_matching_clear_continuation(
+        matched = _promote_clear_continuation(
             handler,
+            input_data,
+            session_source,
             machine_id=machine_id,
             project_id=project_id,
             cli_source=cli_source,
             terminal_context=terminal_context,
         )
         if matched is not None:
-            input_data["source"] = "clear"
-            handler.logger.info(
-                "Promoted startup SessionStart to clear continuation",
-                extra={
-                    "event": "clear_continuation_promoted",
-                    "predecessor_id": getattr(matched.clear_predecessor, "id", None),
-                    "attempt_id": matched.clear_attempt_id,
-                    "observed_source": session_source,
-                    "project_id": project_id,
-                    "machine_id": machine_id,
-                },
-            )
             return matched
 
     session = None
@@ -114,6 +106,19 @@ def resolve_session_start_identity(
     except Exception as e:
         handler.logger.warning("Session identity lookup failed for %s: %s", external_id, e)
         return SessionStartResolution(session=None, session_source=session_source)
+
+    if session is None and session_source == "resume":
+        matched = _promote_clear_continuation(
+            handler,
+            input_data,
+            session_source,
+            machine_id=machine_id,
+            project_id=project_id,
+            cli_source=cli_source,
+            terminal_context=terminal_context,
+        )
+        if matched is not None:
+            return matched
 
     if drifted_project and session is not None:
         handler.logger.warning(
@@ -223,6 +228,41 @@ def resolve_session_start_identity(
 
     input_data["source"] = "compact"
     return SessionStartResolution(session=session, session_source="compact")
+
+
+def _promote_clear_continuation(
+    handler: Any,
+    input_data: dict[str, Any],
+    session_source: str,
+    *,
+    machine_id: str,
+    project_id: str,
+    cli_source: str,
+    terminal_context: dict[str, Any] | None,
+) -> SessionStartResolution | None:
+    matched = resolve_matching_clear_continuation(
+        handler,
+        machine_id=machine_id,
+        project_id=project_id,
+        cli_source=cli_source,
+        terminal_context=terminal_context,
+    )
+    if matched is None:
+        return None
+    input_data["source"] = "clear"
+    handler.logger.info(
+        "Promoted %s SessionStart to clear continuation",
+        session_source or "startup",
+        extra={
+            "event": "clear_continuation_promoted",
+            "predecessor_id": getattr(matched.clear_predecessor, "id", None),
+            "attempt_id": matched.clear_attempt_id,
+            "observed_source": session_source,
+            "project_id": project_id,
+            "machine_id": machine_id,
+        },
+    )
+    return matched
 
 
 def resolve_matching_clear_continuation(

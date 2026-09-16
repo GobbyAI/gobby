@@ -222,6 +222,9 @@ successor atomically consumes that marker, records the clear delivery receipt, r
 direct predecessor parentage, and expires the predecessor. Live task claims then move
 through expected-owner compare-and-swap. Web chat performs successor insertion in the
 same transaction; terminal hooks perform the equivalent binding after SessionStart.
+A successor SessionStart whose source is not `clear` still binds through that marker
+when its source is `startup` or `new` (Grok), or `resume` for a provider session no row
+knows (Droid loads its `/clear` successor as a resume).
 
 Manual `/clear` has no marker. Its new session is independent and receives no handoff.
 

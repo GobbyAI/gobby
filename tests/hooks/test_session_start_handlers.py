@@ -16,12 +16,14 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
 from gobby.hooks.event_handlers._session_start.flow import _log_session_start_timing
+from gobby.hooks.event_handlers._session_start.handoff import resolve_session_start_identity
 from gobby.hooks.event_handlers._session_start.materialize import session_start_should_defer
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
     session_start_is_native_subagent_child,
 )
 from gobby.hooks.events import HookEventType, MissingHookMachineIdError
+from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
@@ -1327,15 +1329,23 @@ class TestSessionStartNewSession:
     )
     @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_grok_new_source_promotes_matching_clear_continuation(
+    @pytest.mark.parametrize(
+        ("cli_source", "observed_source"),
+        [("grok", "new"), ("droid", "resume")],
+        ids=["grok-new", "droid-resume-of-unknown-session"],
+    )
+    def test_clear_successor_source_promotes_matching_clear_continuation(
         self,
         mock_sv_mgr_cls: MagicMock,
         mock_resolve_clear: MagicMock,
         mock_take: MagicMock,
         mock_schedule: MagicMock,
+        cli_source: str,
+        observed_source: str,
         mock_dependencies: dict[str, Any],
     ) -> None:
-        """Grok /clear successors emit source=new; a matching marker must not defer."""
+        """Grok /clear successors emit source=new and Droid's emit source=resume for a
+        session no row knows; a matching marker binds either as the clear successor."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
         term = {
             "tmux_pane": "%100",
@@ -1370,10 +1380,10 @@ class TestSessionStartNewSession:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.SESSION_START,
-            session_id="grok-new-ext",
-            source="grok",
+            session_id=f"{cli_source}-clear-successor-ext",
+            source=cli_source,
             data={
-                "source": "new",
+                "source": observed_source,
                 "cwd": "/work/gobby",
                 "terminal_context": term,
             },
@@ -1409,6 +1419,38 @@ class TestSessionStartNewSession:
             and call.args[1].get("handoff_pull_pending") is True
             for call in mock_sv_mgr_cls.return_value.merge_variables.call_args_list
         )
+
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
+    def test_resume_of_a_known_session_is_never_promoted_to_clear(
+        self,
+        mock_resolve_clear: MagicMock,
+    ) -> None:
+        """A pending clear attempt cannot claim a resume the persisted row already owns."""
+        known = SimpleNamespace(id="known-sess", status="active", terminal_context=None)
+        handler = MagicMock()
+        handler._session_manager.find_by_external_id.return_value = known
+        input_data: dict[str, Any] = {"source": "resume"}
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.handoff.resolve_compact_continuation",
+            return_value=CompactIdentityResolution(),
+        ):
+            resolution = resolve_session_start_identity(
+                handler,
+                input_data,
+                "resume",
+                external_id="droid-known-ext",
+                machine_id="21000000-0000-4000-8000-000000000008",
+                project_id="proj-123",
+                cli_source="droid",
+                terminal_context={"tmux_pane": "%100", "tmux_socket_path": "/tmp/tmux"},
+            )
+
+        assert resolution.session is known
+        assert resolution.session_source == "resume"
+        assert resolution.clear_predecessor is None
+        assert input_data["source"] == "resume"
+        mock_resolve_clear.assert_not_called()
 
     @patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
     @patch("gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker")
