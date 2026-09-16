@@ -457,6 +457,19 @@ fn write_line(control: &mut UnixStream, host_terminal_id: &str, operation_seq: u
     );
 }
 
+fn diag(message: &ServerMessage) -> String {
+    match message {
+        ServerMessage::Terminal(frame) => format!(
+            "seq={} full={} wire={} body={:?}",
+            frame.seq,
+            frame.full,
+            encoded_bytes(message),
+            String::from_utf8_lossy(&frame.bytes)
+        ),
+        other => format!("{other:?}"),
+    }
+}
+
 fn is_delta(message: &ServerMessage) -> bool {
     matches!(message, ServerMessage::Terminal(frame) if !frame.full)
 }
@@ -507,6 +520,9 @@ fn slow_observer_resyncs_with_one_keyframe() {
         cols,
     );
     let initial = drain_frames(&mut slow, Duration::from_millis(200));
+    for message in &initial {
+        eprintln!("DIAG initial {}", diag(message));
+    }
     let first_keyframe = initial
         .iter()
         .find(|message| is_keyframe(message))
@@ -529,7 +545,12 @@ fn slow_observer_resyncs_with_one_keyframe() {
         // otherwise fold a burst of writes into a single delta.
         let tick = Instant::now() + Duration::from_millis(45);
         while Instant::now() < tick {
-            if next_message(&mut fast, Duration::from_millis(45)).is_some() {
+            if let Some(message) = next_message(&mut fast, Duration::from_millis(45)) {
+                eprintln!(
+                    "DIAG fast after write {} {}",
+                    operation_seq - 1,
+                    diag(&message)
+                );
                 kept_reading += 1;
             }
         }
@@ -549,6 +570,7 @@ fn slow_observer_resyncs_with_one_keyframe() {
                 stale.len()
             );
         };
+        eprintln!("DIAG slow resume {}", diag(&message));
         if is_keyframe(&message) {
             break message;
         }
@@ -573,6 +595,10 @@ fn slow_observer_resyncs_with_one_keyframe() {
         encoded_bytes(&replacement)
     );
     if let Some(extra) = next_message(&mut slow, Duration::from_millis(600)) {
+        eprintln!("DIAG extra {}", diag(&extra));
+        while let Some(more) = next_message(&mut slow, Duration::from_millis(600)) {
+            eprintln!("DIAG more {}", diag(&more));
+        }
         panic!(
             "exactly one replacement keyframe: the quiet producer added another frame (keyframe={}, {} bytes)",
             is_keyframe(&extra),
