@@ -142,7 +142,8 @@ export function resolveReadingDirection(
       textInfo?: { direction?: string };
     };
     const localeDirection =
-      parsedLocale.getTextInfo?.().direction ?? parsedLocale.textInfo?.direction;
+      parsedLocale.getTextInfo?.().direction ??
+      parsedLocale.textInfo?.direction;
     if (localeDirection === "rtl" || localeDirection === "ltr") {
       return localeDirection;
     }

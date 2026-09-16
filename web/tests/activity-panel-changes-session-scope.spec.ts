@@ -140,8 +140,6 @@ async function setupMocks(page: Page, current: SessionRecord) {
             root_path: "/tmp/project-one",
           },
 
-
-
           approval_rules: [],
           created_at: "2026-04-08T12:00:00Z",
           updated_at: "2026-04-08T12:00:00Z",

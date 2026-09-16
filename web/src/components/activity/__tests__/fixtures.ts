@@ -62,7 +62,6 @@ export function makeTask(
     is_expanded: false,
     expansion_status: "none",
 
-
     allow_automation: null,
     yolo: null,
     isolation: null,

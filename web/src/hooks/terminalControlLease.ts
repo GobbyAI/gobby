@@ -149,7 +149,8 @@ export function createControlLease(deps: ControlLeaseDeps): ControlLease {
     const ws = openSocket();
     const attachmentId = deps.attachmentId();
     const terminalId = deps.terminalId();
-    if (ws === null || attachmentId === null || terminalId === undefined) return;
+    if (ws === null || attachmentId === null || terminalId === undefined)
+      return;
     const seq = writeSeq.next(attachmentId);
     settle({
       type: "sent",
@@ -322,7 +323,8 @@ export function createControlLease(deps: ControlLeaseDeps): ControlLease {
       );
     },
 
-    discard: (attachmentId, seq) => settle({ type: "discard", attachmentId, seq }),
+    discard: (attachmentId, seq) =>
+      settle({ type: "discard", attachmentId, seq }),
 
     dismissRefusal: () => publish({ refusal: null }),
 

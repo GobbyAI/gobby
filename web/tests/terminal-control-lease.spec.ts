@@ -139,8 +139,6 @@ async function installApiMocks(page: Page, theme: "dark" | "light") {
               root_path: "/tmp/terminal-lease",
             },
 
-
-
             approval_rules: [],
             created_at: "2026-09-11T00:00:00Z",
             updated_at: "2026-09-11T00:00:00Z",

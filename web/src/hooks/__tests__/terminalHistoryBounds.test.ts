@@ -30,9 +30,9 @@ describe("terminalHistoryBounds", () => {
       TERMINAL_HISTORY_MAX_LINES,
     );
     expect(lineBounded.text.startsWith("line-501\n")).toBe(true);
-    expect(lineBounded.text.endsWith(`line-${TERMINAL_HISTORY_MAX_LINES + 500}`)).toBe(
-      true,
-    );
+    expect(
+      lineBounded.text.endsWith(`line-${TERMINAL_HISTORY_MAX_LINES + 500}`),
+    ).toBe(true);
   });
 
   it("trims by bytes even when the line count is legal", () => {

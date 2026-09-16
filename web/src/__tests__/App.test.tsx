@@ -119,9 +119,6 @@ function makeProjectsHookState() {
         display_name: "_personal",
         checkout: null,
 
-
-
-
         approval_rules: [],
         validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
@@ -139,9 +136,6 @@ function makeProjectsHookState() {
           root_path: "/tmp/gobby",
         },
 
-
-
-
         approval_rules: [],
         validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
@@ -155,9 +149,6 @@ function makeProjectsHookState() {
         name: "_orphaned",
         display_name: "_orphaned",
         checkout: null,
-
-
-
 
         approval_rules: [],
         validation_detection: null,

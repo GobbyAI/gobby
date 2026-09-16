@@ -22,9 +22,7 @@ export interface TerminalAttachHistory {
 
 export interface TerminalOutputSink {
   onOutput: (callback: (runId: string, data: string) => void) => void;
-  onAttachHistory: (
-    callback: (history: TerminalAttachHistory) => void,
-  ) => void;
+  onAttachHistory: (callback: (history: TerminalAttachHistory) => void) => void;
   /** True when the frame belonged to the output plane. */
   handle: (message: Record<string, unknown>) => boolean;
 }

@@ -32,7 +32,7 @@ from psycopg.types.json import Jsonb
 from gobby.runner_maintenance.storage_hygiene import sweep_orphaned_test_schemas
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.managed_credential_types import auth_schema_for
-from gobby.storage.schema_contract import apply_schema
+from gobby.storage.schema_contract import apply_schema, gdaemon_available
 from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.machine_id import get_machine_id
 
@@ -201,7 +201,17 @@ def isolated_test_database(url: str) -> Iterator[str]:
 
 
 def _cleanup_orphaned_schemas(url: str, age_hours: int = 1) -> None:
-    """Sweep old schemas while preserving live runs whose lease backend was terminated."""
+    """Sweep old schemas while preserving live runs whose lease backend was terminated.
+
+    The sweep is opportunistic hygiene for schemas earlier runs abandoned, not a
+    precondition for the fresh schema this run is about to create. Runners that
+    package the wheel never install gdaemon, so skip the sweep there instead of
+    failing every Postgres-backed test in setup. Any other sweep failure still
+    propagates.
+    """
+    if not gdaemon_available():
+        logger.info("Skipping orphaned test-schema sweep: no gdaemon is installed")
+        return
     sweep_orphaned_test_schemas(url, age_hours)
 
 

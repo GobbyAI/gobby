@@ -142,7 +142,10 @@ describe("writeSettlementReducer", () => {
     expect(retriedAgain.inFlight).toEqual([]);
     expect(retryableWrite(retriedAgain, ATTACHMENT, 3)).toBeNull();
     expect(
-      reduce([{ type: "retry", attachmentId: ATTACHMENT, seq: 3 }], retriedAgain),
+      reduce(
+        [{ type: "retry", attachmentId: ATTACHMENT, seq: 3 }],
+        retriedAgain,
+      ),
     ).toEqual(retriedAgain);
   });
 

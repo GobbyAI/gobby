@@ -50,7 +50,8 @@ export function createAttachmentReadiness(): AttachmentReadiness {
     },
 
     take: () => {
-      if (!armed || attachmentId === null || rows <= 0 || cols <= 0) return null;
+      if (!armed || attachmentId === null || rows <= 0 || cols <= 0)
+        return null;
       armed = false;
       return { attachmentId, terminalId, rows, cols };
     },

@@ -105,6 +105,15 @@ def _run_gdaemon(
     return result.stdout
 
 
+def gdaemon_available() -> bool:
+    """Report whether a gdaemon is resolvable to serve schema actions.
+
+    Callers that can proceed without one — opportunistic maintenance rather than
+    a schema precondition — ask first instead of catching the resulting error.
+    """
+    return resolve_native_bin("gdaemon") is not None
+
+
 def sweep_test_schemas(database_url: str, *, age_hours: int) -> None:
     """Delegate abandoned test-schema sweeping to gdaemon."""
     _run_gdaemon(

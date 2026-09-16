@@ -117,7 +117,8 @@ export function applyRosterPage(
       ? cursor
       : null;
   return {
-    walk: nextCursor === null ? current : { id: current.id, cursor: nextCursor },
+    walk:
+      nextCursor === null ? current : { id: current.id, cursor: nextCursor },
     replace: isFreshWalk,
     rows,
     nextCursor,

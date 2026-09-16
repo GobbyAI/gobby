@@ -113,8 +113,6 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
             display_name: "P",
             checkout: { machine_id: "machine-1", root_path: "/tmp/p" },
 
-
-
             approval_rules: [],
             created_at: "2026-08-22T00:00:00Z",
             updated_at: "2026-08-22T00:00:00Z",

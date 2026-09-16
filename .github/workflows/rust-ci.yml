@@ -225,6 +225,12 @@ jobs:
       - name: Create the gcode test database and machine identity
         run: |
           docker exec gobby-postgres-ci psql -U gobby -d gobby -c "CREATE DATABASE gobby_gcode_test"
+          # initdb.d runs only against POSTGRES_DB and a new database is cloned
+          # from template1, so pg_search is not inherited. gdaemon schema apply
+          # requires it (crates/gcore/src/schema/runner.rs::require_pg_search).
+          # Mirrors src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql.
+          docker exec gobby-postgres-ci psql -U gobby -d gobby_gcode_test \
+            -c "CREATE EXTENSION IF NOT EXISTS pg_search"
           mkdir -p "$GOBBY_HOME"
           uuidgen | tr '[:upper:]' '[:lower:]' > "$GOBBY_HOME/machine_id"
 

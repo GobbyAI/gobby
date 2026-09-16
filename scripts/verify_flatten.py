@@ -30,7 +30,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
-from gobby.storage.schema_contract import DATABASE_URL_ENV, EXPECTED_IDENTITY_ENV
+from gobby.storage.schema_contract import DATABASE_URL_ENV
 
 if __package__:
     from scripts.schema_diff import _postgres_client_connection, _run_postgres_client
@@ -144,7 +144,6 @@ def snapshot(binary: Path, label: str, base_url: str, *, pg_dump: str) -> Snapsh
     with scratch_database(base_url, label) as database_url:
         env = dict(os.environ)
         env[DATABASE_URL_ENV] = database_url
-        env[EXPECTED_IDENTITY_ENV] = json.dumps(identity)
         for action in ("apply", "verify"):
             _run_gdaemon(
                 [str(binary), "schema", action],

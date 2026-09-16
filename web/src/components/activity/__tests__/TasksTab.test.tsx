@@ -106,10 +106,15 @@ describe("TasksTab", () => {
   it("keeps the current tasks and selection when a refresh fails", async () => {
     render(<TasksTab projectId="proj-1" />);
 
-    const selectedTask = await screen.findByText("Open task 2");
-    fireEvent.click(selectedTask);
-    const selectedRow = selectedTask.closest('[role="treeitem"]');
-    expect(selectedRow).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(await screen.findByText("Open task 2"));
+    // Re-read the row instead of holding the node the click was dispatched on:
+    // a commit in between detaches that node, and a detached row reports the
+    // selection it had before the click.
+    const selectedRow = () =>
+      screen.getByText("Open task 2").closest('[role="treeitem"]');
+    await waitFor(() => {
+      expect(selectedRow()).toHaveAttribute("aria-selected", "true");
+    });
 
     mockFetch.resetRoutes();
     mockFetch.mockErrorResponse(/\/api\/tasks\?/, 500);
@@ -124,7 +129,7 @@ describe("TasksTab", () => {
       );
     });
     expect(screen.getByText("Open task 2")).toBeTruthy();
-    expect(selectedRow).toHaveAttribute("aria-selected", "true");
+    expect(selectedRow()).toHaveAttribute("aria-selected", "true");
   });
 
   it("checks all stage filters by default and narrows by deselection", async () => {

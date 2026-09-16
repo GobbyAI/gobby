@@ -338,7 +338,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 "stage_state": stage_state,
             }
 
-            def _page_and_total() -> tuple[list[Task], int]:
+            def _page_and_total() -> "tuple[list[Task], int]":
                 """Read the page and its total from one snapshot.
 
                 Two transactions let a close land between them, so the page

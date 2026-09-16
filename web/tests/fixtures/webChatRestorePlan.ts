@@ -57,7 +57,6 @@ const CLAIMED_TASK_BASE = {
   is_expanded: false,
   expansion_status: "not_expanded",
 
-
   allow_automation: false,
   yolo: false,
   isolation: "worktree",

@@ -334,9 +334,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Build gdaemon schema authority
+      # gcode joins gdaemon here because tests/servers/routes/test_ask.py drives the
+      # real CLI against the authenticated Ask service and resolves the binary
+      # strictly, so a missing target/debug/gcode errors those tests rather than
+      # skipping them.
+      - name: Build gdaemon schema authority and the gcode CLI
         run: |
-          cargo build -p gobby-daemon
+          cargo build -p gobby-daemon -p gobby-code
           echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
 
       - name: Verify packaged gdaemon schema identity
@@ -591,6 +595,14 @@ jobs:
           if 'gobby/ui/web/dist/index.html' not in names:
               raise FileNotFoundError('Wheel missing gobby/ui/web/dist/index.html')
           "
+
+      # The smoke test migrates a worker schema through the shared Postgres
+      # fixtures, and gdaemon owns schema authority, so this job needs one
+      # exactly like the Test job does.
+      - name: Build gdaemon schema authority
+        run: |
+          cargo build -p gobby-daemon
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
 
       - name: Smoke installed wheel UI
         run: |

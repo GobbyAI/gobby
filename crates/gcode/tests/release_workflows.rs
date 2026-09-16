@@ -251,6 +251,11 @@ fn ci_workflow_runs_postgres_backed_rust_tests_without_standalone_setup() {
     assert!(workflow.contains("docker run --detach \\"));
     assert!(workflow.contains("SELECT 1 FROM pg_extension WHERE extname='pg_search'"));
     assert!(workflow.contains("CREATE DATABASE gobby_gcode_test"));
+    // A fresh database is cloned from template1, so the image's initdb.d
+    // pg_search is not inherited and the serial_db schema apply fails without
+    // this step.
+    assert!(workflow.contains("-d gobby_gcode_test \\"));
+    assert!(workflow.contains("CREATE EXTENSION IF NOT EXISTS pg_search"));
     assert!(workflow.contains("> \"$GOBBY_HOME/machine_id\""));
     assert!(workflow.contains("cargo nextest run --profile ci -p gobby-code -E 'test(serial_db)'"));
     assert!(

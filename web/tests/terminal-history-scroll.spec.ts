@@ -142,8 +142,6 @@ async function installApiMocks(page: Page, theme: "dark" | "light") {
               root_path: "/tmp/terminal-history",
             },
 
-
-
             approval_rules: [],
             created_at: "2026-08-22T00:00:00Z",
             updated_at: "2026-08-22T00:00:00Z",
@@ -394,7 +392,9 @@ async function settledScrollback(page: Page): Promise<number> {
 async function historyLineNumbers(page: Page): Promise<number[]> {
   return scrollContainer(page).evaluate((element) =>
     Array.from(element.querySelectorAll(".term-scrollback-row"))
-      .map((row) => /^history-line-(\d+)$/u.exec((row.textContent ?? "").trim()))
+      .map((row) =>
+        /^history-line-(\d+)$/u.exec((row.textContent ?? "").trim()),
+      )
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => Number(match[1])),
   );
