@@ -18,6 +18,7 @@ from psycopg.conninfo import make_conninfo
 from gobby.daemon_lease import ActiveDaemonLease
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.maintenance_epoch import abort_maintenance_epoch, open_maintenance_epoch
+from gobby.storage.schema_contract import SchemaContractError
 from tests.fixtures.postgres import (
     _ISOLATED_SCHEMA_APPLICATION_PREFIX,
     _adapt_seed_rows,
@@ -205,10 +206,52 @@ def test_orphan_cleanup_delegates_to_leased_sweeper_with_live_process_grace(
         calls.append((url, age_hours))
 
     monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", sweep)
+    monkeypatch.setattr(
+        "gobby.storage.schema_contract.resolve_native_bin",
+        lambda name: "/usr/local/bin/gdaemon" if name == "gdaemon" else None,
+    )
 
     _cleanup_orphaned_schemas("postgresql://test")
 
     assert calls == [("postgresql://test", 1)]
+
+
+def test_orphan_cleanup_skips_the_sweep_when_no_gdaemon_is_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runners that only package the wheel have no schema authority to sweep with."""
+    import tests.fixtures.postgres as postgres_fixture
+
+    calls: list[tuple[str, int]] = []
+
+    def sweep(url: str, age_hours: int) -> None:
+        calls.append((url, age_hours))
+
+    monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", sweep)
+    monkeypatch.setattr("gobby.storage.schema_contract.resolve_native_bin", lambda _name: None)
+
+    _cleanup_orphaned_schemas("postgresql://test")
+
+    assert calls == []
+
+
+def test_orphan_cleanup_propagates_a_real_sweep_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a missing binary is tolerated; a sweep that runs and fails still raises."""
+    import tests.fixtures.postgres as postgres_fixture
+
+    def failing_sweep(*_args: object, **_kwargs: object) -> None:
+        raise SchemaContractError("gdaemon schema sweep-test-schemas failed: boom")
+
+    monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", failing_sweep)
+    monkeypatch.setattr(
+        "gobby.storage.schema_contract.resolve_native_bin",
+        lambda name: "/usr/local/bin/gdaemon" if name == "gdaemon" else None,
+    )
+
+    with pytest.raises(SchemaContractError, match="sweep-test-schemas failed"):
+        _cleanup_orphaned_schemas("postgresql://test")
 
 
 def test_isolated_test_schema_rejects_label_that_breaks_name_contract(

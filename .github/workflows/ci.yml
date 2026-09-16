@@ -592,6 +592,14 @@ jobs:
               raise FileNotFoundError('Wheel missing gobby/ui/web/dist/index.html')
           "
 
+      # The smoke test migrates a worker schema through the shared Postgres
+      # fixtures, and gdaemon owns schema authority, so this job needs one
+      # exactly like the Test job does.
+      - name: Build gdaemon schema authority
+        run: |
+          cargo build -p gobby-daemon
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+
       - name: Smoke installed wheel UI
         run: |
           wheel="$(find dist -maxdepth 1 -name 'gobby-*.whl' -print -quit)"

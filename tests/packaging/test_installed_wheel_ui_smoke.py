@@ -16,13 +16,17 @@ from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.integration
+# Evaluated before fixture setup, unlike a skip inside the test body: the shared
+# Postgres fixtures migrate a worker schema through gdaemon, so an opted-out run
+# must not reach them at all.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("GOBBY_RUN_WHEEL_UI_SMOKE") != "1",
+        reason="set GOBBY_RUN_WHEEL_UI_SMOKE=1 to run installed-wheel UI smoke",
+    ),
+]
 logger = logging.getLogger(__name__)
-
-
-def _require_smoke_enabled() -> None:
-    if os.environ.get("GOBBY_RUN_WHEEL_UI_SMOKE") != "1":
-        pytest.skip("set GOBBY_RUN_WHEEL_UI_SMOKE=1 to run installed-wheel UI smoke")
 
 
 def _resolve_wheel_path() -> Path:
@@ -186,7 +190,6 @@ def test_installed_wheel_serves_packaged_index_html(
     The daemon only verifies the schema it is handed, so the migrated, user-seeded
     worker schema from the shared Postgres fixtures stands in for a ``gobby install``.
     """
-    _require_smoke_enabled()
     wheel = _resolve_wheel_path()
     _seed_runtime_state(postgres_db)
     database_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
