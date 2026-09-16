@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 # TODO(#22407): workaround for an upstream Droid defect (factory-execute-supervisor
 # SIGKILLs every Execute command when its `ps` probe cannot run).
 # ON REMOVAL: delete this import outright -- nothing replaces it.
-from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_path_env
+from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_env
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox_policy import (
     SRT_SETTINGS_RELATIVE_PATH,
@@ -643,7 +643,7 @@ async def prepare_sandbox_launch(
         provider_env={
             **run_environment,
             "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir()),
-            **ps_shim_path_env(ps_shim_dir, effective_env),
+            **ps_shim_env(ps_shim_dir, effective_env),
         },
         provider_executable=provider_executable,
         node_path=str(installation.node),
