@@ -335,9 +335,7 @@ class TerminalPromptMonitor:
                     )
                     continue
                 # Enter would submit an operator's unsent draft as a prompt.
-                composer = self._idle_detector.for_provider(run.provider).composer_read(
-                    pane_output
-                )
+                composer = self._idle_detector.for_provider(run.provider).composer_read(pane_output)
                 if composer.state == "draft":
                     logger.debug(
                         "Skipped periodic Enter for agent %s: composer holds a draft", run.id
