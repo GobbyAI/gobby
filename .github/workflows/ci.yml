@@ -382,6 +382,83 @@ jobs:
       - name: Run focused voice tests
         run: uv run pytest tests/voice tests/servers/routes/test_voice_routes.py
 
+  # Plan 7.2: the host-driven acceptance suite, against a gterm host built from
+  # this tree on both supported desktop platforms. GOBBY_RUN_VENDOR_BUILD=1 is
+  # what opts the package in; every other job leaves it unset and skips it.
+  terminal-acceptance:
+    name: Terminal Acceptance (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      GOBBY_RUN_VENDOR_BUILD: "1"
+      GOBBY_TEST_PROTECT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      # The vendored libghostty-vt layer is a Zig build; 0.16.0 is the version
+      # crates/gterminal/build.rs and release-gterminal.yml both require.
+      - name: Setup Zig 0.16.0
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-terminal-acceptance-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install tmux
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v tmux > /dev/null 2>&1; then
+            tmux -V
+            exit 0
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install tmux
+          else
+            sudo apt-get update
+            sudo apt-get install -y tmux
+          fi
+          tmux -V
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      # The suite's session fixture builds this same artifact; running it here
+      # first keeps a host build failure on its own line in the job log.
+      - name: Build the gterm host from the tree
+        run: cargo build -p gobby-terminal --features vt-engine --bin gterm
+
+      - name: Run the host-driven acceptance suite
+        run: uv run pytest tests/terminals/acceptance
+
   security:
     name: Security Scan
     needs: changes
@@ -578,6 +655,7 @@ jobs:
       - test-frontend
       - test
       - voice-extra
+      - terminal-acceptance
       - security
       - build
       - schema-mirror
@@ -614,6 +692,7 @@ jobs:
             check_success "Test (Frontend)" "${{ needs['test-frontend'].result }}"
             check_success "Test (Python)" "${{ needs.test.result }}"
             check_success "Voice Stack" "${{ needs['voice-extra'].result }}"
+            check_success "Terminal Acceptance" "${{ needs['terminal-acceptance'].result }}"
             check_success "Security Scan" "${{ needs.security.result }}"
             check_success "Build Package" "${{ needs.build.result }}"
           fi

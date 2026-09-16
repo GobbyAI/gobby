@@ -1535,3 +1535,393 @@ fn snapshot_text_mode_answers_plainly_when_history_holds_only_styling() {
 
     shutdown_after_snapshot(&mut stream, &mut child, &host_terminal_id);
 }
+
+/// Native terminals admissible at once: `max_attachments_total` (128) less the
+/// four slots reserved for host health, `list`, and lifecycle work.
+const NATIVE_LIST_CEILING: usize = 124;
+/// Distinct tmux panes the host will observe at once (`max_attached_terminals`).
+const TMUX_LIST_CEILING: usize = 64;
+/// `TITLE_MAX_BYTES`: the widest title the host registry will store.
+const LIST_TITLE_BYTES: usize = 1024;
+/// The pane OSC layer keeps at most 256 code points of an OSC 0/2 payload, so a
+/// native title reaches `TITLE_MAX_BYTES` only through four-byte characters.
+const NATIVE_TITLE_CHARS: usize = 256;
+/// The widest member of the closed `observation_reason` vocabulary.
+const WIDEST_OBSERVATION_REASON: &str = "geometry_exceeds_max_cells";
+/// Native terminals bound to a frame observer at once. The registry only learns
+/// a title while an observer is bound, and every bound observer costs the host a
+/// blit encode per tick, so the population is titled in bounded groups.
+const NATIVE_BIND_GROUP: usize = 8;
+/// Slow the tmux poll so 64 observers do not fork a `tmux` batch every 50 ms.
+const LIST_POLL_INTERVAL_MS: &str = "2000";
+/// Populating and titling 188 rows outlasts the shared five-second helper.
+const LIST_SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Plan 7.2.3: the `list` envelope at the shipped admission ceilings.
+///
+/// The population is the whole admissible registry — 124 native terminals plus
+/// 64 tmux observers — every row carrying a title at `TITLE_MAX_BYTES` and the
+/// widest identity fields its half of the host can carry. Those numbers are the
+/// population of this one scenario, never a number of tests.
+#[test]
+fn list_envelope_fits_under_line_cap() {
+    let host = embed_support::spawn_host(&["--tmux-poll-interval-ms", LIST_POLL_INTERVAL_MS]);
+    // Four-byte characters for the OSC path, JSON-escaping ones for tmux: each
+    // is the widest encoded row its source can produce at `TITLE_MAX_BYTES`.
+    let native_title = "\u{1F600}".repeat(NATIVE_TITLE_CHARS);
+    let tmux_title = "\"".repeat(LIST_TITLE_BYTES);
+    assert_eq!(native_title.len(), LIST_TITLE_BYTES);
+    assert_eq!(tmux_title.len(), LIST_TITLE_BYTES);
+    let mut control = embed_support::control(&host);
+
+    admit_native_population(&host, &mut control, &native_title);
+    let panes = admit_tmux_population(&host, &tmux_title);
+
+    embed_support::wait_until(LIST_SETTLE_TIMEOUT, || {
+        let rows = list_rows(&host);
+        rows.len() == NATIVE_LIST_CEILING + TMUX_LIST_CEILING
+            && rows
+                .iter()
+                .all(|row| title_bytes(row) == Some(LIST_TITLE_BYTES))
+    });
+
+    let line = list_line(&host);
+    let envelope: serde_json::Value = serde_json::from_slice(&line).expect("list json");
+    let rows = envelope["terminals"].as_array().expect("list rows");
+    assert_eq!(
+        rows.len(),
+        NATIVE_LIST_CEILING + TMUX_LIST_CEILING,
+        "list must hold the whole admissible population"
+    );
+    for row in rows {
+        assert_eq!(
+            title_bytes(row),
+            Some(LIST_TITLE_BYTES),
+            "every row carries a title at the registry ceiling: {}",
+            row["host_terminal_id"]
+        );
+    }
+    assert!(
+        line.len() < MAX_CONTROL_LINE,
+        "list envelope is {} bytes, at or above the {MAX_CONTROL_LINE}-byte control line cap",
+        line.len()
+    );
+    // `observation_reason` is a closed vocabulary and is `null` on every live
+    // row, so widen the measured line by its longest member on every row.
+    let widest_reason =
+        rows.len() * (WIDEST_OBSERVATION_REASON.len() + 2).saturating_sub("null".len());
+    assert!(
+        line.len() + widest_reason < MAX_CONTROL_LINE,
+        "list envelope is {} bytes and would be {} with the longest observation_reason on \
+         every row, at or above the {MAX_CONTROL_LINE}-byte control line cap",
+        line.len(),
+        line.len() + widest_reason
+    );
+    println!(
+        "list envelope: {} rows, {} bytes measured, {} bytes with the widest \
+         observation_reason on every row, cap {MAX_CONTROL_LINE} bytes",
+        rows.len(),
+        line.len(),
+        line.len() + widest_reason
+    );
+
+    // The 189th admission. Both halves are saturated, so each one refuses.
+    embed_support::send_json(
+        &mut control,
+        &json!({
+            "method": "reserve_observer",
+            "terminal_id": "term-over-ceiling",
+            "reserve_key": "rk-over-ceiling",
+        }),
+    );
+    let refused = embed_support::recv_json(&mut control);
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["error"], "capacity", "{refused}");
+
+    let mut extra = panes.pane.locator();
+    extra.pane_id = new_tmux_pane(&panes.pane, &tmux_title);
+    let mut frames = connect_ansi_frames(&host);
+    embed_support::write_msg(
+        &mut frames,
+        &gobby_terminal::protocol::ClientMessage::AttachTerminal {
+            host_terminal_id: String::new(),
+            reservation_id: None,
+            locator: Some(extra),
+        },
+    );
+    match embed_support::read_msg(&mut frames) {
+        gobby_terminal::protocol::ServerMessage::Error { code, .. } => {
+            assert_eq!(code, "capacity", "a 65th tmux observer must be refused");
+        }
+        other => panic!("a 65th tmux observer was admitted: {other:?}"),
+    }
+}
+
+/// The tmux half of the scenario, kept alive for the whole measurement: closing
+/// a tmux observer reaps its registry row, so the streams outlive the assertions.
+struct TmuxPopulation {
+    pane: embed_support::TmuxPane,
+    _drain: FrameDrain,
+}
+
+/// Fill the native entitlement ceiling with committed, titled terminals.
+///
+/// Each group binds its frame observers, waits for the host to publish their
+/// titles, then releases them; the rows stay `entitled`, so the ceiling stays
+/// full while no observer is left for the host to encode frames for.
+fn admit_native_population(
+    host: &host_support::HostProc,
+    control: &mut std::os::unix::net::UnixStream,
+    title: &str,
+) {
+    let cwd = host.socket_dir().to_string_lossy().into_owned();
+    // `cat` ends on PTY EOF, so no child outlives the host that spawned it.
+    let script = format!("printf '\\033]0;{title}\\007'; exec cat");
+    for group in (0..NATIVE_LIST_CEILING).step_by(NATIVE_BIND_GROUP) {
+        let end = (group + NATIVE_BIND_GROUP).min(NATIVE_LIST_CEILING);
+        let mut bound = Vec::with_capacity(end - group);
+        for index in group..end {
+            // Daemon-shaped identities: a terminal UUID and a hex spawn key.
+            let terminal_id = format!("7e120000-0000-4000-8000-{index:012}");
+            let spawn_key = format!("{index:064}");
+            let reserve_key = format!("{index:032}");
+            embed_support::send_json(
+                control,
+                &json!({
+                    "method": "reserve_observer",
+                    "terminal_id": terminal_id,
+                    "reserve_key": reserve_key,
+                }),
+            );
+            let reserved = embed_support::recv_json(control);
+            assert_eq!(reserved["ok"], true, "reserve {index}: {reserved}");
+            let reservation_id = reserved["reservation_id"]
+                .as_str()
+                .expect("reservation_id")
+                .to_string();
+
+            embed_support::send_json(
+                control,
+                &json!({
+                    "method": "spawn",
+                    "operation_seq": index + 1,
+                    "terminal_id": terminal_id,
+                    "spawn_key": spawn_key,
+                    "reservation_id": reservation_id,
+                    "reserve_key": reserve_key,
+                    "argv": ["/bin/sh", "-c", script],
+                    "cwd": cwd,
+                    "rows": 40,
+                    "cols": 120,
+                    "commit_deadline_ms": 120000,
+                }),
+            );
+            let prepared = embed_support::recv_json(control);
+            assert_eq!(prepared["ok"], true, "spawn {index}: {prepared}");
+            let host_terminal_id = prepared["host_terminal_id"]
+                .as_str()
+                .expect("host_terminal_id")
+                .to_string();
+
+            bound.push(attach_native_frames(
+                host,
+                &host_terminal_id,
+                reservation_id,
+                index,
+            ));
+
+            embed_support::send_json(
+                control,
+                &json!({
+                    "method": "spawn_commit",
+                    "terminal_id": terminal_id,
+                    "spawn_key": spawn_key,
+                }),
+            );
+            let committed = embed_support::recv_json(control);
+            assert_eq!(committed["ok"], true, "commit {index}: {committed}");
+        }
+        embed_support::wait_until(LIST_SETTLE_TIMEOUT, || {
+            list_rows(host)
+                .iter()
+                .filter(|row| title_bytes(row) == Some(LIST_TITLE_BYTES))
+                .count()
+                >= end
+        });
+        drop(bound);
+    }
+}
+
+/// Fill the tmux observation ceiling with titled panes on one tmux server.
+fn admit_tmux_population(host: &host_support::HostProc, title: &str) -> TmuxPopulation {
+    let population = TmuxPopulation {
+        pane: embed_support::start_tmux_sized(120, 40),
+        _drain: FrameDrain::start(),
+    };
+    let pane = &population.pane;
+    pane.tmux(&["select-pane", "-t", &pane.pane_id, "-T", title]);
+    let mut locators = vec![pane.locator()];
+    for _ in 1..TMUX_LIST_CEILING {
+        let mut locator = pane.locator();
+        locator.pane_id = new_tmux_pane(pane, title);
+        locators.push(locator);
+    }
+
+    for (index, locator) in locators.into_iter().enumerate() {
+        let mut stream = connect_ansi_frames(host);
+        embed_support::write_msg(
+            &mut stream,
+            &gobby_terminal::protocol::ClientMessage::AttachTerminal {
+                host_terminal_id: String::new(),
+                reservation_id: None,
+                locator: Some(locator),
+            },
+        );
+        match embed_support::read_msg(&mut stream) {
+            gobby_terminal::protocol::ServerMessage::Attached { .. } => {}
+            other => panic!("tmux attach {index} failed: {other:?}"),
+        }
+        population._drain.adopt(stream);
+    }
+    population
+}
+
+/// Bind one native terminal's reservation to a frame observer.
+fn attach_native_frames(
+    host: &host_support::HostProc,
+    host_terminal_id: &str,
+    reservation_id: String,
+    index: usize,
+) -> std::os::unix::net::UnixStream {
+    let mut stream = connect_ansi_frames(host);
+    embed_support::write_msg(
+        &mut stream,
+        &gobby_terminal::protocol::ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.to_string(),
+            reservation_id: Some(reservation_id),
+            locator: None,
+        },
+    );
+    match embed_support::read_msg(&mut stream) {
+        gobby_terminal::protocol::ServerMessage::Attached { .. } => stream,
+        other => panic!("native attach {index} failed: {other:?}"),
+    }
+}
+
+/// Open one more titled pane on an existing tmux server.
+fn new_tmux_pane(pane: &embed_support::TmuxPane, title: &str) -> String {
+    let pane_id = pane.tmux(&[
+        "new-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "--",
+        "/bin/sh",
+    ]);
+    assert!(!pane_id.is_empty(), "tmux new-window returned no pane id");
+    pane.tmux(&["select-pane", "-t", &pane_id, "-T", title]);
+    pane_id
+}
+
+/// Attach frames as an ANSI-encoding peer, the cheapest encoding for observers
+/// this scenario holds open only to keep their registry rows alive.
+fn connect_ansi_frames(host: &host_support::HostProc) -> std::os::unix::net::UnixStream {
+    use gobby_terminal::protocol::{
+        ClientMessage, RenderEncoding, ServerMessage, PROTOCOL_VERSION,
+    };
+
+    let mut stream =
+        std::os::unix::net::UnixStream::connect(host.socket_dir().join("gterm-frames.sock"))
+            .expect("frames socket");
+    embed_support::write_msg(
+        &mut stream,
+        &ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            encoding: RenderEncoding::TerminalAnsi,
+            local_token: embed_support::LOCAL.into(),
+            cols: 120,
+            rows: 40,
+            tmux_identity: None,
+        },
+    );
+    match embed_support::read_msg(&mut stream) {
+        ServerMessage::Welcome { .. } => stream,
+        other => panic!("frames hello refused: {other:?}"),
+    }
+}
+
+/// A real draining frame peer for the observers this scenario holds open. An
+/// observer whose queue never drains is closed `lagged`, which would reap the
+/// very rows the envelope is measured over.
+struct FrameDrain {
+    streams: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FrameDrain {
+    fn start() -> Self {
+        let streams: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>> =
+            std::sync::Arc::default();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_streams = std::sync::Arc::clone(&streams);
+        let worker_stop = std::sync::Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut buffer = [0_u8; 64 * 1024];
+            while !worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                {
+                    let mut owned = worker_streams.lock().expect("drain streams");
+                    for stream in owned.iter_mut() {
+                        while matches!(std::io::Read::read(stream, &mut buffer), Ok(n) if n > 0) {}
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        Self {
+            streams,
+            stop,
+            worker: Some(worker),
+        }
+    }
+
+    fn adopt(&self, stream: std::os::unix::net::UnixStream) {
+        stream.set_nonblocking(true).expect("non-blocking drain");
+        self.streams.lock().expect("drain streams").push(stream);
+    }
+}
+
+impl Drop for FrameDrain {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Read one `list` reply as raw bytes so the assertion measures the wire line.
+fn list_line(host: &host_support::HostProc) -> Vec<u8> {
+    let mut stream = embed_support::control(host);
+    embed_support::send_json(&mut stream, &json!({"method": "list"}));
+    let mut reader = std::io::BufReader::with_capacity(MAX_CONTROL_LINE, stream);
+    let mut line = Vec::new();
+    std::io::BufRead::read_until(&mut reader, b'\n', &mut line).expect("list line");
+    line
+}
+
+/// Decode the `terminals` array of one `list` reply.
+fn list_rows(host: &host_support::HostProc) -> Vec<serde_json::Value> {
+    let line = list_line(host);
+    let envelope: serde_json::Value = serde_json::from_slice(&line).expect("list json");
+    envelope["terminals"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The stored byte length of one row's title.
+fn title_bytes(row: &serde_json::Value) -> Option<usize> {
+    row["title"].as_str().map(str::len)
+}

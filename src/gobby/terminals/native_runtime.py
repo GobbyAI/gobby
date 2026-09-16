@@ -214,6 +214,9 @@ class NativeTerminalRuntime:
         self._machine_id = machine_id
         self._spawn_in_doubt_seconds = spawn_in_doubt_seconds
         self._frame_client = frame_client
+        # The host epoch a self-opened frame stream belongs to. An injected
+        # client keeps `None` and is always reused, exactly as before.
+        self._frame_client_epoch: str | None = None
         self._run_manager = run_manager
         self._subscribed = False
 
@@ -268,9 +271,17 @@ class NativeTerminalRuntime:
         return ""
 
     async def _ensure_frame_client(self, locator: AttachLocator) -> Any:
+        epoch = locator.frame_host_epoch or str(getattr(self._client, "host_epoch", "") or "")
         existing = self._frame_client
         if existing is not None and not bool(getattr(existing, "closed", False)):
-            return existing
+            # A frame stream belongs to the host that answered its handshake.
+            # After a respawn that host is gone, and reusing the stream writes
+            # every later attach into a dead socket forever, so drop it here
+            # rather than let the caller see a raw ConnectionResetError.
+            if self._frame_client_epoch is None or self._frame_client_epoch == epoch:
+                return existing
+            await existing.close()
+            self._frame_client = None
         directory = self._socket_dir()
         if directory is None:
             raise HostCommandError("attach_failed")
@@ -279,7 +290,6 @@ class NativeTerminalRuntime:
         except (OSError, ConnectionError) as exc:
             raise HostCommandError("attach_failed") from exc
         client = FrameClient(reader, writer)
-        epoch = locator.frame_host_epoch or str(getattr(self._client, "host_epoch", "") or "")
         await client.handshake(
             AttachLocator(
                 backend="native",
@@ -289,6 +299,7 @@ class NativeTerminalRuntime:
             local_token=self._frame_token(),
         )
         self._frame_client = client
+        self._frame_client_epoch = epoch
         return client
 
     async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
