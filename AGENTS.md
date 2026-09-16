@@ -51,9 +51,10 @@ how the system behaves so you can work with it instead of being surprised by it.
       pass before implementation can be specified (`needs-planning`), or a
       clean window for its blast radius (`clean-window`). State why in the
       description.
-   Operational friction is never a deferral reason. Needing a daemon restart
-   means announcing it to active sessions via `send_message` and waiting for a
-   quiet window; a crate change means rebuild + install via new inode
+   Operational friction is never a deferral reason. Needing a daemon restart or
+   cutover means announcing it with a `global` `send_message` (every live session
+   on this machine, across projects) and waiting for a quiet window with no live
+   spawned worker or close validator; a crate change means rebuild + install via new inode
    (Architecture Facts below). Coordination is part of the fix. Never end a
    turn asking "should I fix this?" — and never go silent about a finding
    either; silence is worse than asking. Enhancement ideas with nothing broken
@@ -86,8 +87,9 @@ how the system behaves so you can work with it instead of being surprised by it.
     Message text never wakes a session. Set `wake=true` only when immediate processing
     is intended; it may steer active work, while interrupted, input/approval-waiting,
     and handoff-waiting sessions keep the durable message queued without daemon input.
-    Use one targetless `project` send for repository coordination and `global` only for
-    machine-local coordination across projects.
+    Use one targetless `project` send for repository coordination and `global` for
+    machine-local coordination across projects, which includes every daemon restart
+    or cutover announcement.
 13. A denied call is about that call, never a standing policy. Approval prompts
     do not always name the tool being invoked, so a rejection can mean "not that,
     not now" or simply a misread. Adjust and continue. If you decide to stop
