@@ -48,15 +48,22 @@ def _write_secret_env_file(env: dict[str, str]) -> Path:
     return path
 
 
-def _requires_tmux_env_file(value: str) -> bool:
-    return ";" in value or value.endswith("\\")
+# tmux applies ``-e`` and then silently overwrites these in the pane: PATH with the
+# invoking client's PATH and SHELL with ``default-shell``. Only a value sourced
+# inside the pane command survives. Terminal identity variables (TERM, TMUX, ...)
+# are left to tmux, matching the native host.
+_TMUX_OVERWRITTEN_ENV = frozenset({"PATH", "SHELL"})
+
+
+def _requires_tmux_env_file(key: str, value: str) -> bool:
+    return key in _TMUX_OVERWRITTEN_ENV or ";" in value or value.endswith("\\")
 
 
 def _split_tmux_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     """Split env into values safe for tmux ``-e`` and values requiring shell sourcing."""
     public_env, file_env = split_credential_env(env)
     for key, value in list(public_env.items()):
-        if _requires_tmux_env_file(value):
+        if _requires_tmux_env_file(key, value):
             file_env[key] = public_env.pop(key)
     return public_env, file_env
 

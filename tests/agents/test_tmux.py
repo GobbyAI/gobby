@@ -2247,6 +2247,50 @@ class TestTmuxSessionManagerExtended:
         assert f"GOBBY_PROMPT={shlex.quote(prompt)}\n" in env_file_text
 
     @pytest.mark.asyncio
+    async def test_create_session_routes_tmux_overwritten_env_through_private_env_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """PATH and SHELL skip tmux -e, because tmux overwrites both after applying it."""
+        env_file = tmp_path / "agent-env.sh"
+
+        def fake_mkstemp(*, prefix: str, suffix: str) -> tuple[int, str]:
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            return fd, str(env_file)
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.session_activation.tempfile.mkstemp",
+            fake_mkstemp,
+        )
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.side_effect = [
+                (1, "", ""),  # has_session
+                (0, "", ""),  # new-session
+                (0, "999\n", ""),  # display-message for pane_pid
+            ]
+            await mgr.create_session(
+                name="test",
+                command=["droid", "exec"],
+                cwd="/tmp",
+                env={"PATH": "/shim:/usr/bin", "SHELL": "/bin/zsh", "TERM": "xterm"},
+            )
+
+        new_session_args = [str(arg) for arg in mock_run.await_args_list[1].args]
+        assert "PATH=/shim:/usr/bin" not in new_session_args
+        assert "SHELL=/bin/zsh" not in new_session_args
+        assert "TERM=xterm" in new_session_args
+
+        env_file_text = env_file.read_text(encoding="utf-8")
+        assert "PATH=/shim:/usr/bin\n" in env_file_text
+        assert "SHELL=/bin/zsh\n" in env_file_text
+
+    @pytest.mark.asyncio
     async def test_create_session_removes_private_env_file_when_tmux_create_fails(
         self,
         tmp_path: Path,

@@ -14,13 +14,9 @@ from pathlib import Path
 import pytest
 
 from gobby.agents import droid_ps_shim
-from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_env
+from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_path_env
 
 pytestmark = pytest.mark.unit
-
-# ``_stub_darwin`` patches ``subprocess.run`` to stand in for codesign, so the
-# wrapper tests keep a handle on the real one to actually execute the script.
-_REAL_SUBPROCESS_RUN = subprocess.run
 
 
 def _stub_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, list[list[str]]]:
@@ -45,42 +41,17 @@ def _stub_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path,
     return source, calls
 
 
-class TestPsShimEnv:
+class TestPsShimPathEnv:
     def test_contributes_nothing_without_a_shim_directory(self) -> None:
-        assert ps_shim_env(None, {"PATH": "/usr/bin"}) == {}
+        assert ps_shim_path_env(None, {"PATH": "/usr/bin"}) == {}
 
     def test_prepends_the_shim_directory_so_the_supervisor_resolves_it_first(self) -> None:
-        assert ps_shim_env(Path("/shim"), {"PATH": "/usr/bin:/bin"})["PATH"] == (
-            f"/shim{os.pathsep}/usr/bin:/bin"
-        )
+        assert ps_shim_path_env(Path("/shim"), {"PATH": "/usr/bin:/bin"}) == {
+            "PATH": f"/shim{os.pathsep}/usr/bin:/bin"
+        }
 
     def test_uses_the_shim_directory_alone_when_path_is_unset(self) -> None:
-        assert ps_shim_env(Path("/shim"), {})["PATH"] == "/shim"
-
-    def test_points_shell_at_the_wrapper_so_droids_harvest_keeps_the_shim(self) -> None:
-        # Droid rebuilds its command environment from ``$SHELL -ilc``; PATH alone
-        # is discarded by path_helper in that login shell.
-        overrides = ps_shim_env(Path("/shim"), {"SHELL": "/bin/zsh"})
-        assert overrides["SHELL"] == f"/shim{os.sep}gobby-droid-shell"
-        assert overrides["GOBBY_DROID_REAL_SHELL"] == "/bin/zsh"
-        assert overrides["GOBBY_DROID_PS_SHIM_DIR"] == "/shim"
-
-    def test_omits_the_real_shell_when_the_environment_has_none(self) -> None:
-        assert "GOBBY_DROID_REAL_SHELL" not in ps_shim_env(Path("/shim"), {})
-
-    def test_never_records_its_own_wrapper_as_the_real_shell(self) -> None:
-        # A resume re-prepares the launch from an already-rewritten environment;
-        # adopting that SHELL would make the wrapper exec itself forever.
-        assert "GOBBY_DROID_REAL_SHELL" not in ps_shim_env(
-            Path("/shim"), {"SHELL": f"/shim{os.sep}gobby-droid-shell"}
-        )
-
-    def test_keeps_the_real_shell_recorded_by_an_earlier_launch(self) -> None:
-        overrides = ps_shim_env(
-            Path("/shim"),
-            {"SHELL": f"/shim{os.sep}gobby-droid-shell", "GOBBY_DROID_REAL_SHELL": "/bin/zsh"},
-        )
-        assert overrides["GOBBY_DROID_REAL_SHELL"] == "/bin/zsh"
+        assert ps_shim_path_env(Path("/shim"), {}) == {"PATH": "/shim"}
 
 
 class TestDroidPsShimDir:
@@ -142,122 +113,6 @@ class TestDroidPsShimDir:
         monkeypatch.setattr(subprocess, "run", failing_run)
         # A broken shim must never break the spawn; Droid degrades to today's behavior.
         assert droid_ps_shim_dir() is None
-
-
-def _materialized_shim_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    _stub_darwin(monkeypatch, tmp_path)
-    directory = droid_ps_shim_dir()
-    assert directory is not None
-    return directory
-
-
-def _wrapper_env(directory: Path, real_shell: str) -> dict[str, str]:
-    return {
-        "GOBBY_DROID_REAL_SHELL": real_shell,
-        "GOBBY_DROID_PS_SHIM_DIR": str(directory),
-        "PATH": "/usr/bin:/bin",
-    }
-
-
-class TestShellWrapper:
-    def test_is_materialized_executable_alongside_ps(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        wrapper = _materialized_shim_dir(monkeypatch, tmp_path) / "gobby-droid-shell"
-        assert wrapper.is_file()
-        assert wrapper.stat().st_mode & 0o111
-
-    def test_is_restored_when_a_cached_directory_lost_it(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        directory = _materialized_shim_dir(monkeypatch, tmp_path)
-        (directory / "gobby-droid-shell").unlink()
-        # The cached-``ps`` fast path must not skip restoring the wrapper.
-        assert droid_ps_shim_dir() == directory
-        assert (directory / "gobby-droid-shell").is_file()
-
-
-@pytest.mark.skipif(os.name != "posix", reason="the wrapper is a POSIX shell script")
-def test_the_wrapper_reasserts_the_shim_on_the_command_operand(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    directory = _materialized_shim_dir(monkeypatch, tmp_path)
-    echo_argv = tmp_path / "echo-argv"
-    echo_argv.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
-    os.chmod(echo_argv, 0o755)  # nosec B103 # test fixture in a tmp_path.
-
-    result = _REAL_SUBPROCESS_RUN(  # nosec B603 # fixed argv, locally built wrapper.
-        [str(directory / "gobby-droid-shell"), "-ilc", "echo marker"],
-        env=_wrapper_env(directory, str(echo_argv)),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, result.stderr
-    # The rewritten operand carries its own newline, so compare the whole stream.
-    assert result.stdout == f"-ilc\nPATH={directory}:$PATH\necho marker\n", (
-        "the real shell must keep Droid's flags and receive the re-asserted PATH"
-    )
-
-
-@pytest.mark.skipif(os.name != "posix", reason="the wrapper is a POSIX shell script")
-def test_the_wrapper_leaves_an_interactive_invocation_alone(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    directory = _materialized_shim_dir(monkeypatch, tmp_path)
-    echo_argv = tmp_path / "echo-argv"
-    echo_argv.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
-    os.chmod(echo_argv, 0o755)  # nosec B103 # test fixture in a tmp_path.
-
-    result = _REAL_SUBPROCESS_RUN(  # nosec B603 # fixed argv, locally built wrapper.
-        [str(directory / "gobby-droid-shell"), "-i", "-l"],
-        env=_wrapper_env(directory, str(echo_argv)),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["-i", "-l"]
-
-
-@pytest.mark.skipif(os.name != "posix", reason="the wrapper is a POSIX shell script")
-def test_the_wrapper_survives_a_login_shell_rebuilding_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The regression this wrapper exists for: ``path_helper`` demotes the shim.
-
-    A bare ``PATH`` prepend loses to ``/bin`` once a login shell has run, which is
-    how Droid harvests the environment for every ``Execute``.
-    """
-    directory = _materialized_shim_dir(monkeypatch, tmp_path)
-    wrapper = directory / "gobby-droid-shell"
-    env = _wrapper_env(directory, "/bin/sh")
-
-    unwrapped = _REAL_SUBPROCESS_RUN(  # nosec B603 # fixed argv, system shell.
-        ["/bin/sh", "-lc", "command -v ps"],
-        env={**env, "PATH": f"{directory}:/usr/bin:/bin"},
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    wrapped = _REAL_SUBPROCESS_RUN(  # nosec B603 # fixed argv, locally built wrapper.
-        [str(wrapper), "-lc", "command -v ps"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-
-    assert wrapped.returncode == 0, wrapped.stderr
-    assert wrapped.stdout.strip() == str(directory / "ps")
-    if unwrapped.stdout.strip() != str(directory / "ps"):
-        assert wrapped.stdout.strip() != unwrapped.stdout.strip()
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="the shim re-signs a macOS system binary")
