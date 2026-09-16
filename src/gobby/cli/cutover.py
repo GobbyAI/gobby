@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from gobby.cli.daemon import restart
+from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_set_coherence import (
     IDENTITY_STAMP_NAME,
@@ -26,6 +27,11 @@ _PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks")
 _BINARY_NAMES = ("gcode", "gdaemon", "ghook")
 _PIN_PATH = Path("src/gobby/storage/schema_expected_identity.json")
 _INSTALL_METHOD = "workspace-cutover"
+_SCHEMA_INPUTS = (
+    "crates/gcore/assets/schema",
+    "crates/gcore/src/schema",
+    str(_PIN_PATH),
+)
 
 
 class CutoverError(RuntimeError):
@@ -89,6 +95,23 @@ def _build_artifacts(root: Path) -> dict[str, Path]:
     return artifacts
 
 
+def _dirty_schema_inputs(root: Path) -> list[str]:
+    """List uncommitted schema inputs; a git failure fails the cutover closed.
+
+    Scoped to the inputs that decide the embedded schema: a cutover that builds
+    another session's uncommitted migration, baseline or identity pin ships a
+    daemon whose schema apply cannot succeed. Routine non-schema dirt on the
+    shared checkout is none of this gate's business.
+    """
+    result = _run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *_SCHEMA_INPUTS],
+        cwd=root,
+        label="schema input status",
+        timeout=60,
+    )
+    return [line[3:].strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def _read_installed_pin(bin_dir: Path) -> dict[str, int | str]:
     pin_path = bin_dir / IDENTITY_STAMP_NAME
     try:
@@ -127,9 +150,12 @@ def run_cutover(
     bin_dir: Path,
     *,
     restart_daemon: Callable[[], None],
+    start_refusal: Callable[[Path], str | None],
 ) -> None:
-    """Build, promote, verify, and restart one coherent native-binary set."""
+    """Build, prove, promote, verify, and restart one coherent native-binary set."""
     artifacts = _build_artifacts(root)
+    if refusal := start_refusal(artifacts["gdaemon"]):
+        raise CutoverError(f"refusing to promote: {refusal}")
     try:
         promote_workspace_binary_set(
             artifacts,
@@ -154,8 +180,14 @@ def run_cutover(
     show_default=True,
     help="Gobby workspace containing Cargo.toml and crates/.",
 )
+@click.option(
+    "--allow-dirty",
+    "allow_dirty",
+    is_flag=True,
+    help="Build even when the schema inputs have uncommitted changes.",
+)
 @click.pass_context
-def cutover(ctx: click.Context, workspace: Path) -> None:
+def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool) -> None:
     """Build and activate all schema-aware native binaries as one set."""
     root = _workspace_root(workspace)
     bin_dir = native_bin_dir()
@@ -168,7 +200,18 @@ def cutover(ctx: click.Context, workspace: Path) -> None:
                 raise CutoverError(f"daemon restart failed (exit {exc.code})") from exc
 
     try:
-        run_cutover(root, bin_dir, restart_daemon=restart_daemon)
+        if not allow_dirty and (dirty := _dirty_schema_inputs(root)):
+            raise CutoverError(
+                "refusing to build from uncommitted schema inputs: "
+                + ", ".join(dirty)
+                + "; commit or stash them, or pass --allow-dirty"
+            )
+        run_cutover(
+            root,
+            bin_dir,
+            restart_daemon=restart_daemon,
+            start_refusal=lambda candidate: restart_start_refusal(ctx, candidate),
+        )
     except CutoverError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo("Cutover complete: gcode, gdaemon, ghook, schema pin, and daemon agree.")

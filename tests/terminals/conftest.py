@@ -12,8 +12,14 @@ import pytest
 
 from gobby.guard_set_g import (
     durable_hosts as _durable_hosts,
+)
+from gobby.guard_set_g import (
     finalize_pidfile_host as _finalize_pidfile_host,
+)
+from gobby.guard_set_g import (
     leaked_hosts,
+)
+from gobby.guard_set_g import (
     snapshot_gterm_hosts as _gterm_hosts,
 )
 from tests.native_binary_selection import (

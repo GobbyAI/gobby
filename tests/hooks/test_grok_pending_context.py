@@ -598,6 +598,7 @@ def test_grok_post_compact_runs_session_start_compact_rules(
     grok_session_id: str,
     sample_project: dict[str, Any],
     mock_dependencies: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Grok PostCompact evaluates session_start(compact) YAML through HookManager."""
     sync_result = sync_bundled_rules(session_manager.db, get_bundled_rules_path())
@@ -648,8 +649,10 @@ def test_grok_post_compact_runs_session_start_compact_rules(
             return response.context, response
         return response.context, None
 
-    setattr(manager_with_mocks, "_evaluate_workflow_rules", evaluate_rules)
-    setattr(manager_with_mocks, "_evaluate_blocking_webhooks", lambda *args, **kwargs: None)
+    monkeypatch.setattr(manager_with_mocks, "_evaluate_workflow_rules", evaluate_rules)
+    monkeypatch.setattr(
+        manager_with_mocks, "_evaluate_blocking_webhooks", lambda *args, **kwargs: None
+    )
 
     event = _event(HookEventType.POST_COMPACT, grok_session_id)
     event.project_id = sample_project["id"]

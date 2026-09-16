@@ -138,6 +138,12 @@ gobby restart [--verbose] [--docker] [--terminals] [--wait | --force]
 `gobby stop`: without `--terminals` the restarted daemon adopts the surviving
 `gterm host`, and attached `gclient` sessions reconnect to the same terminals.
 
+Before stopping anything, the command proves the start half will succeed: the
+linked-worktree guard, the installed binary set, the schema identity, and a
+read-only `gdaemon schema plan` against the hub. On refusal it prints the reason
+and leaves the running daemon alone, because a stop that cannot start again has
+no way back.
+
 ### `gobby status`
 
 Show daemon status, runtime information, and configured ports.
@@ -319,7 +325,7 @@ Build and activate one coherent set of the three schema-aware Rust binaries from
 a Gobby source checkout:
 
 ```bash
-gobby cutover [--path PATH]
+gobby cutover [--path PATH] [--allow-dirty]
 ```
 
 The command runs one locked release build for `gcode`, `gdaemon`, and `ghook`,
@@ -331,6 +337,18 @@ after all three binaries promote. Before restart, cutover verifies that the exac
 fails closed with the three-binary rebuild remedy. Promotion failures name the
 members already promoted and those still unpromoted. Cutover does not claim to
 restore binaries after a partial promotion.
+
+The command refuses before it builds when the schema inputs carry uncommitted
+changes — `crates/gcore/assets/schema`, `crates/gcore/src/schema`, and
+`src/gobby/storage/schema_expected_identity.json` — because a build that embeds
+another session's in-flight migration ships a daemon whose schema apply cannot
+succeed. `--allow-dirty` skips that gate and nothing else; routine non-schema
+dirt elsewhere in the checkout never blocks it.
+
+After the build and before promotion, the freshly built candidate `gdaemon` must
+prove itself: its embedded schema identity must match the checkout pin, and its
+read-only `gdaemon schema plan` must succeed against the hub. On refusal nothing
+is promoted and nothing is stopped.
 
 ### `gobby auth`
 
