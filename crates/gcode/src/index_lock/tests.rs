@@ -837,13 +837,16 @@ mod serial_db {
         let key = project_lock_key(project_id);
         let mut waiter = db::connect_readwrite(&database_url).expect("connect blocked acquirer");
 
+        // The window is many times the notice interval on purpose: a loaded
+        // macOS box coalesces short timers, so a 20ms poll can land 200ms late
+        // and a 300ms window then fits a single notice whatever the loop does.
         let (acquired, records) = capture_logs(|| {
             try_advisory_lock_until(
                 &mut waiter,
                 key,
-                Duration::from_millis(300),
-                Duration::from_millis(20),
-                Some(Duration::from_millis(50)),
+                Duration::from_secs(2),
+                Duration::from_millis(50),
+                Some(Duration::from_millis(200)),
             )
         });
 
@@ -868,7 +871,7 @@ mod serial_db {
             "every notice must name the holding backend: {notices:?}"
         );
         assert!(
-            notices[0].contains("giving up after 0s"),
+            notices[0].contains("giving up after 2s"),
             "the notice must state the deadline it is counting down to: {notices:?}"
         );
     }

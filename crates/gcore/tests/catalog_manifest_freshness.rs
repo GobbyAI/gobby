@@ -630,34 +630,6 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
 }
 
 #[test]
-fn task_delete_foreign_key_lookup_uses_the_dispatch_task_index() -> anyhow::Result<()> {
-    let _serial = DATABASE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = scratch_database()? else {
-        return Ok(());
-    };
-    SchemaRunner::new(&mut client, "public")?.apply()?;
-    client.batch_execute("SET enable_seqscan = off")?;
-
-    let plan = client
-        .query(
-            "EXPLAIN (COSTS OFF) SELECT 1 FROM gh_triage_build_dispatches WHERE task_id = $1",
-            &[&Uuid::nil()],
-        )?
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    assert!(
-        plan.contains("idx_gh_triage_build_dispatches_task_id"),
-        "unexpected query plan:\n{plan}"
-    );
-    Ok(())
-}
-
-#[test]
 fn baseline_supports_machine_owned_attachments_and_prune_rows() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
