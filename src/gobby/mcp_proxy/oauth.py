@@ -113,7 +113,7 @@ class PersistentOAuthProvider(OAuthClientProvider):
                 redirect_uris=[AnyUrl(redirect_uri)],
                 grant_types=["authorization_code", "refresh_token"],
                 response_types=["code"],
-                token_endpoint_auth_method="none",
+                token_endpoint_auth_method="none",  # nosec B106 # RFC 7591 public value.
             ),
             storage=storage,
             redirect_handler=redirect_handler or needs_login,

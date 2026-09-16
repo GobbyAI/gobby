@@ -9,6 +9,8 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool).
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any

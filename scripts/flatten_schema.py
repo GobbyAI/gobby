@@ -31,7 +31,7 @@ import psycopg
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from gobby.storage.schema_contract import DATABASE_URL_ENV, EXPECTED_IDENTITY_ENV
+from gobby.storage.schema_contract import DATABASE_URL_ENV
 
 if __package__:
     from scripts.schema_diff import (
@@ -344,10 +344,9 @@ def gdaemon_identity(binary: Path) -> dict[str, Any]:
     return identity
 
 
-def _apply_source(binary: Path, database_url: str, identity: dict[str, Any]) -> None:
+def _apply_source(binary: Path, database_url: str) -> None:
     env = dict(os.environ)
     env[DATABASE_URL_ENV] = database_url
-    env[EXPECTED_IDENTITY_ENV] = json.dumps(identity)
     for action in ("apply", "verify"):
         _run_gdaemon(
             [str(binary), "schema", action],
@@ -415,7 +414,7 @@ def generate(
         )
     source_baseline = source_baseline_path.read_text(encoding="utf-8")
     with scratch_database(database_url, "source") as scratch_url:
-        _apply_source(source_gdaemon, scratch_url, identity)
+        _apply_source(source_gdaemon, scratch_url)
         schema_dump = _dump_executable_schema(scratch_url, pg_dump=pg_dump)
         seed_sql = canonicalize_seed_dump(_dump_seed_rows(scratch_url, pg_dump=pg_dump))
         normalized_ddl = _normalized_ddl(scratch_url, pg_dump=pg_dump)

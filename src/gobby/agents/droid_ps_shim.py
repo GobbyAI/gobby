@@ -75,7 +75,7 @@ def droid_ps_shim_dir() -> Path | None:
         staged = directory / f".ps.{os.getpid()}.tmp"
         try:
             shutil.copyfile(SYSTEM_PS, staged)
-            os.chmod(staged, 0o755)
+            os.chmod(staged, 0o755)  # nosec B103 # mirrors /bin/ps; user-owned home.
             subprocess.run(  # nosec B603 # fixed argv, local codesign, no shell.
                 [str(CODESIGN), "-f", "-s", "-", str(staged)],
                 check=True,

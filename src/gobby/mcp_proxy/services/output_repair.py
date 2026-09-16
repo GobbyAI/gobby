@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import pickle
+import pickle  # nosec B403 # trusted-payload IPC with a child of this process only.
 import re
 import subprocess
 import sys
@@ -613,7 +613,8 @@ def _repair_in_worker(
 
 
 def _repair_pickled(request: bytes) -> bytes:
-    result, output, index, null_policy = pickle.loads(request)
+    # nosec B301 # request is written by _dispatch_isolated_repair into an owner-only dir.
+    result, output, index, null_policy = pickle.loads(request)  # nosec B301
     repaired = _repair_in_worker(result, output, index, null_policy)
     return pickle.dumps(repaired, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -652,7 +653,8 @@ def _dispatch_isolated_repair(
             text=True,
         )
         response = response_path.read_bytes()
-    return cast(_RepairResult, pickle.loads(response))
+    # nosec B301 # response comes from the child spawned above, same owner-only dir.
+    return cast(_RepairResult, pickle.loads(response))  # nosec B301
 
 
 def _release_repair_worker_slot(future: asyncio.Future[_RepairResult]) -> None:
