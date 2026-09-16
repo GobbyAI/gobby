@@ -699,3 +699,76 @@ async def test_batch_wake_still_injects_an_empty_composer() -> None:
     assert results[0]["delivered"] is True
     assert batch_sender.await_args is not None
     assert [t.session_id for t in batch_sender.await_args.args[0]] == [WAKE_SESSION_ID]
+
+
+@pytest.mark.asyncio
+async def test_native_spawned_agent_wakes_through_its_terminal_row(
+    managed_chain: ManagedChain,
+) -> None:
+    """A gterm-hosted agent has no tmux keys, so its row is its only wake channel."""
+    pane_sender = AsyncMock()
+    sdk_resumer = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT, agent_depth=1),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        sdk_resumer=sdk_resumer,
+        terminal_manager=managed_chain.store,
+        composer_probe=_empty,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result == {"session_id": WAKE_SESSION_ID, "delivered": True, "method": "terminal"}
+    assert managed_chain.native.write_log == WAKE_SEQUENCE
+    assert managed_chain.tmux.write_log == []
+    pane_sender.assert_not_awaited()
+    sdk_resumer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_native_spawned_agent_wake_is_withheld_for_a_draft(
+    managed_chain: ManagedChain,
+) -> None:
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT, agent_depth=1),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=managed_chain.store,
+        composer_probe=_draft,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
+    assert managed_chain.native.write_log == []
+    assert dispatcher._last_live_wake == {}
+
+
+@pytest.mark.asyncio
+async def test_spawned_agent_without_a_managed_row_still_uses_its_tmux_session() -> None:
+    managed_sender = AsyncMock()
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(
+            {"tmux_session": "gobby-agent-abc", "tmux_pane": "%7"}, agent_depth=1
+        ),
+        ism_manager=MagicMock(),
+        tmux_sender=managed_sender,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=MemoryTerminalStore(),
+        composer_probe=_empty,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result == {"session_id": WAKE_SESSION_ID, "delivered": True, "method": "tmux"}
+    managed_sender.assert_awaited_once_with(
+        "gobby-agent-abc",
+        CONTINUE_WAKE_MESSAGE,
+        submit=True,
+        clear_before_submit=True,
+        cli_source=ANY,
+    )
+    pane_sender.assert_not_awaited()

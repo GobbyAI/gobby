@@ -2,10 +2,11 @@
 
 Routes wake messages based on session type after first persisting a durable
 InterSessionMessage:
-- Terminal agents (agent_depth > 0, terminal_context): tmux send-keys wake signal
+- Any session Gobby owns a live terminal row for: managed terminal wake through
+  that row, whatever its backend (tmux or native)
+- Terminal agents without a row (agent_depth > 0, terminal_context): tmux wake signal
 - SDK agents (agent_depth > 0, sdk_session_id): SDK resume wake signal
-- Interactive sessions (agent_depth 0): managed terminal wake when Gobby owns a
-  terminal row for the session, else a tmux pane wake signal
+- Interactive sessions without a row (agent_depth 0): tmux pane wake signal
 """
 
 from __future__ import annotations
@@ -305,24 +306,26 @@ class WakeDispatcher:
                 self._record_live_wake(session_id, session)
             return result
 
-        # Interactive session → nudge its terminal after durable message storage.
+        # tmux_pane and tmux_session come from tmux, so a native/gterm-hosted
+        # session never has either and gating on them skipped every native
+        # session, interactive or spawned. The live terminals row is the
+        # backend-neutral gate; the raw tmux keys and SDK resume stay the
+        # fallbacks for a session Gobby holds no row for, where there is no
+        # backend to resolve a runtime from.
+        terminal = await self._live_terminal_for_session(session_id)
+        if terminal is not None and self._tmux_sender is not None:
+            if not self._should_send_live_wake(session_id, session):
+                return self._live_wake_debounced_result(session_id, method="terminal")
+            return await self._send_managed_terminal_wake(
+                session_id,
+                session,
+                terminal,
+                self._tmux_sender,
+                priority=priority,
+            )
+
+        # Interactive session → nudge its tmux pane after durable message storage.
         if agent_depth == 0:
-            # tmux_pane comes from $TMUX_PANE, so a native/gterm-hosted session
-            # never has one and gating this branch on it skipped every native
-            # session. The live terminals row is the backend-neutral gate; the
-            # raw pane stays the fallback for a tmux session Gobby holds no row
-            # for, where there is no backend to resolve a runtime from.
-            terminal = await self._live_terminal_for_session(session_id)
-            if terminal is not None and self._tmux_sender is not None:
-                if not self._should_send_live_wake(session_id, session):
-                    return self._live_wake_debounced_result(session_id, method="terminal")
-                return await self._send_managed_terminal_wake(
-                    session_id,
-                    session,
-                    terminal,
-                    self._tmux_sender,
-                    priority=priority,
-                )
             if not terminal_context:
                 return self._live_wake_failure(
                     session_id,
@@ -415,11 +418,7 @@ class WakeDispatcher:
                 if current is not None:
                     session = current
                 blocked = await self._composer_blocks_wake(
-                    session_id,
-                    session,
-                    await self._live_terminal_for_session(session_id),
-                    method="tmux",
-                    priority=priority,
+                    session_id, session, None, method="tmux", priority=priority
                 )
                 if blocked is not None:
                     return blocked
