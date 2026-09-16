@@ -298,3 +298,26 @@ def test_expected_identity_reports_packaged_contract_violations(
         schema_contract.expected_schema_identity()
 
     assert isinstance(exc.value.__cause__, SchemaIdentityError)
+
+
+def test_plan_uses_candidate_binary_and_pins_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cutover proves an unpromoted build, so plan must run the binary it is given."""
+    line = "schema gobby plan: database v1, code v2, baseline_pending=false, pending=1 [2]\n"
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=line, stderr=""))
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setenv("GOBBY_EXPECTED_SCHEMA_IDENTITY", "{}")
+
+    stdout = schema_contract.plan_schema(
+        "postgresql://gobby:secret@database.example/gobby",
+        gdaemon=Path("/workspace/target/release/gdaemon"),
+    )
+
+    assert run.call_args.args[0] == ["/workspace/target/release/gdaemon", "schema", "plan"]
+    assert run.call_args.kwargs["env"]["GOBBY_DATABASE_URL"] == (
+        "postgresql://gobby:secret@database.example/gobby"
+    )
+    assert "GOBBY_EXPECTED_SCHEMA_IDENTITY" not in run.call_args.kwargs["env"]
+    assert stdout == line

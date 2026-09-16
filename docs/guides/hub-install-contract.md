@@ -31,6 +31,23 @@ staged files through new inodes, and writes the installed identity pin only
 after the complete set promotes. See
 [the cutover command](cli-commands.md#gobby-cutover).
 
+`gdaemon schema plan` is the read-only dry run both `gobby restart` and
+`gobby cutover` use to prove the start half before stopping or promoting
+anything. It performs the same lineage validation and pending-migration
+resolution `gdaemon schema apply` performs, but creates no schema, writes no
+receipts, and never takes the apply advisory lock. It deliberately does not
+verify the database identity: a database head behind the embedded head is the
+normal state of every migration-owing restart and of every cutover. It prints
+one line:
+
+```text
+schema gobby plan: database v437, code v438, baseline_pending=false, pending_migrations=1 [438]
+```
+
+Cutover additionally refuses to build from uncommitted schema inputs
+(`crates/gcore/assets/schema`, `crates/gcore/src/schema`, and the identity pin)
+unless `--allow-dirty` is passed.
+
 A destructive schema change uses `gobby hub-maintenance run schema-apply`.
 The campaign stops the daemon, opens a maintenance epoch, obtains a verified
 epoch-bound hub backup, applies the guarded schema change, verifies its

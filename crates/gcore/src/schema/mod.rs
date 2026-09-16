@@ -33,7 +33,7 @@ pub use gate::{
     StoreRecord, VerificationState, VerifiedBackupManifest, parse_backup_manifest,
 };
 pub use identity::{AssetIdentity, SchemaIdentity, SchemaIdentityContract, schema_identity};
-pub use runner::{ApplyReport, SchemaRunner};
+pub use runner::{ApplyReport, PlanReport, SchemaRunner};
 pub use sql_splitter::split_sql_statements;
 pub use sweep::sweep_test_schemas;
 pub use verify::{

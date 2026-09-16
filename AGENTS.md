@@ -137,6 +137,11 @@ would publish that branch's templates to the shared DB. `GOBBY_ALLOW_WORKTREE_DA
 overrides it for announced testing. `gobby stop`/`restart` also refuse while a
 restart-protected cron run (the nightly memory dream) is active: `--wait` defers
 until it finishes, `--force` interrupts it (it resumes after the next start).
+`restart` and `cutover` prove the start half first — worktree guard, installed
+set, schema identity, and a read-only `gdaemon schema plan` — and refuse before
+stopping or promoting anything when it would fail, leaving the running daemon
+alone. `cutover` also refuses to build from uncommitted schema inputs unless
+`--allow-dirty` is passed.
 
 ## Testing
 

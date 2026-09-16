@@ -61,6 +61,7 @@ def _database_returning(head: object) -> MagicMock:
     cursor = MagicMock()
     cursor.fetchone.return_value = {"head": head}
     database.transaction.return_value.__enter__.return_value.execute.return_value = cursor
+    database.conninfo = "postgresql://hub.example/gobby"
     return database
 
 
@@ -485,14 +486,31 @@ def _restart_preflight(
     *,
     installed: dict[str, object] | None,
     live_head: int,
+    plan_returncode: int = 0,
+    plan_stderr: str = "",
 ) -> list[str]:
-    """Stage a restart whose stop step records instead of running, and return that record."""
+    """Stage a restart whose stop step records instead of running, and return that record.
+
+    The ``subprocess.run`` stub dispatches on argv so the real ``plan_schema`` step runs:
+    ``schema version --json`` answers the identity probe and ``schema plan`` answers the
+    read-only plan. The plan step is never stubbed out wholesale.
+    """
     monkeypatch.setattr(
         schema_divergence,
         "resolve_native_bin",
         lambda name: None if installed is None else "/bin/gdaemon",
     )
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(installed)))
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/bin/gdaemon")
+
+    def dispatch_on_argv(args: Any, *_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
+        argv = [str(item) for item in args]
+        if "plan" in argv:
+            return subprocess.CompletedProcess(
+                args=argv, returncode=plan_returncode, stdout="", stderr=plan_stderr
+            )
+        return _completed(json.dumps(installed))
+
+    monkeypatch.setattr(subprocess, "run", dispatch_on_argv)
 
     @contextmanager
     def hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
@@ -500,7 +518,7 @@ def _restart_preflight(
 
     monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
-    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
 
     stopped: list[str] = []
 
@@ -586,3 +604,27 @@ def test_schema_apply_refusal_is_silent_without_a_readable_hub(
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(json.dumps(dict(expected))))
 
     assert schema_divergence.schema_apply_refusal(None) is None
+
+
+def test_restart_refuses_before_stopping_when_the_schema_plan_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only gdaemon computes the lineage verdict that took the daemon down on 09-15."""
+    expected = schema_contract.expected_schema_identity()
+    stopped = _restart_preflight(
+        monkeypatch,
+        installed=dict(expected),
+        live_head=int(expected["latest_version"]),
+        plan_returncode=1,
+        plan_stderr=(
+            "Error: unsupported PostgreSQL schema state: unrecognized schema lineage; "
+            "recreate from a verified backup"
+        ),
+    )
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert "Refusing to restart" in result.output
+    assert "unrecognized schema lineage" in result.output
+    assert stopped == [], "the daemon must still be running after a refusal"

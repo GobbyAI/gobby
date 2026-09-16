@@ -3192,6 +3192,55 @@ class TestSignalHandlerBehavior:
             for record in caplog.records
         )
 
+    def test_signal_handler_logs_shutdown_sender_when_recorded(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        """The sender line is additive: the pinned source line is unchanged."""
+        from gobby.runner_maintenance import setup_signal_handlers
+        from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
+
+        mock_loop = MagicMock()
+        captured_handler: Callable[[], None] | None = None
+
+        def capture_handler(sig: int, handler: Callable[[], None]) -> None:
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = handler
+
+        mock_loop.add_signal_handler = capture_handler
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.lifecycle.get_gobby_home", return_value=tmp_path),
+        ):
+            setup_signal_handlers(MagicMock())
+            write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+
+            assert captured_handler is not None
+            with caplog.at_level(logging.INFO, logger="gobby.runner_maintenance"):
+                captured_handler()
+
+        sender_logs = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.INFO and record.message.startswith("Shutdown sender:")
+        ]
+        source_logs = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.INFO and record.message.startswith("Shutdown source:")
+        ]
+        assert len(sender_logs) == 1
+        assert len(source_logs) == 1
+        assert source_logs[0].message == (
+            f"Shutdown source: source=cli_restart, intent=restart, sender_pid={os.getpid()}"
+        )
+        assert "argv=" in sender_logs[0].message
+        assert f"ppid={os.getppid()}" in sender_logs[0].message
+
     def test_signal_handler_recovers_thirty_second_restart_marker_without_consuming(
         self,
         tmp_path: Path,

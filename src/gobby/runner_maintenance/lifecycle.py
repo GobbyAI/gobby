@@ -110,6 +110,8 @@ def setup_signal_handlers(
                 shutdown_record = _read_signal_shutdown_record()
                 recorded_shutdown = shutdown_record
                 logger.info("Shutdown source: %s", format_shutdown_source(shutdown_record))
+                if (sender := shutdown_record.sender_detail) is not None:
+                    logger.info("Shutdown sender: %s", sender)
                 if shutdown_intent_callback is not None:
                     try:
                         shutdown_intent_callback(

@@ -151,3 +151,47 @@ fn destructive_apply_parses_newest_backup_before_connecting() -> anyhow::Result<
     assert!(!stderr.contains("do-not-leak"), "{stderr}");
     Ok(())
 }
+
+#[test]
+fn schema_help_exposes_plan() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "--help"])
+        .output()?;
+    let stdout = String::from_utf8(output.stdout.clone())?;
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout.contains("plan"), "{stdout}");
+    Ok(())
+}
+
+#[test]
+fn plan_has_no_dsn_argument() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args([
+            "schema",
+            "plan",
+            "--dsn",
+            "postgresql://public@example/gobby",
+        ])
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("unexpected argument '--dsn'"));
+    Ok(())
+}
+
+#[test]
+fn plan_connection_errors_redact_dsn_credentials() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "plan"])
+        .env(DATABASE_URL_ENV, SECRET_DSN)
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("failed to connect to the Gobby PostgreSQL hub"));
+    assert!(!stderr.contains("schema_user"));
+    assert!(!stderr.contains("do-not-leak"));
+    Ok(())
+}

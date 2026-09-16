@@ -421,3 +421,82 @@ fn destructive_apply_refuses_after_epoch_is_released() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn plan_reports_fresh_schema_without_creating_it() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_plan_fresh_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    admin.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
+        scratch.name
+    ))?;
+
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "plan", "--schema", &scratch.name])
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "gdaemon plan failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("baseline_pending=true"), "{stdout}");
+
+    let exists: bool = admin
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+            &[&scratch.name],
+        )?
+        .get(0);
+    assert!(!exists, "plan must not create the schema it reports on");
+    Ok(())
+}
+
+#[test]
+fn plan_after_apply_reports_no_pending() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_plan_applied_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    admin.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
+        scratch.name
+    ))?;
+
+    let applied = Command::cargo_bin("gdaemon")?
+        .args(["schema", "apply", "--schema", &scratch.name])
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(
+        applied.status.success(),
+        "gdaemon apply failed: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "plan", "--schema", &scratch.name])
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "gdaemon plan failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("pending_migrations=0"), "{stdout}");
+    assert!(stdout.contains("baseline_pending=false"), "{stdout}");
+    Ok(())
+}

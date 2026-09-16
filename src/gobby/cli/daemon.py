@@ -18,6 +18,7 @@ import httpx
 import psutil
 
 from gobby.agents.spawners.auth_env import has_auth_env
+from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.daemon_singleton import (
     admit_direct_start,
     admit_service_start,
@@ -704,27 +705,6 @@ def stop(
     sys.exit(0 if stopped else 1)
 
 
-def _schema_restart_refusal(ctx: click.Context) -> str | None:
-    """Report a divergence that would fail the start half of a restart, or None.
-
-    The stop half reads config without applying schema, so it now survives a gate that
-    the start half still fails. Without this check a restart would take the daemon down
-    and be unable to bring it back.
-    """
-    from gobby.cli.runtime import require_cli_database
-    from gobby.storage.schema_divergence import binary_set_apply_refusal, schema_apply_refusal
-
-    if refusal := binary_set_apply_refusal():
-        return refusal
-
-    try:
-        database = require_cli_database(ctx, apply_migrations=False)
-    except Exception:
-        logger.debug("Schema restart preflight could not open the hub", exc_info=True)
-        database = None
-    return schema_apply_refusal(database)
-
-
 @click.command()
 @click.option(
     "--verbose",
@@ -770,13 +750,9 @@ def restart(
         setup_logging(True)
 
     # Check before stopping: refusing after the stop would leave no daemon.
-    if refusal := worktree_daemon_refusal():
-        _step(refusal, error=True)
-        sys.exit(1)
-
-    if refusal := _schema_restart_refusal(ctx):
+    if refusal := restart_start_refusal(ctx):
         _step(f"Refusing to restart: {refusal}", error=True)
-        _step("The running daemon was left alone. Reinstall gdaemon from this checkout.")
+        _step("The running daemon was left alone.")
         sys.exit(1)
 
     if not _do_stop(

@@ -6,6 +6,7 @@ import errno
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 from collections.abc import Mapping
@@ -54,6 +55,19 @@ class ShutdownIntentRecord:
         if not isinstance(details, dict):
             return False
         return bool(details.get("drain_terminals"))
+
+    @property
+    def sender_detail(self) -> str | None:
+        """Describe the command that sent this shutdown, or None (#22403)."""
+        details = (self.raw or {}).get("details")
+        if not isinstance(details, dict):
+            return None
+        argv = details.get("sender_argv")
+        ppid = details.get("sender_ppid")
+        cwd = details.get("sender_cwd")
+        if argv is None or ppid is None or cwd is None:
+            return None
+        return f"argv={argv!r} ppid={ppid} cwd={cwd}"
 
 
 def coerce_shutdown_intent(value: str | ShutdownIntent | None) -> ShutdownIntent:
@@ -106,8 +120,16 @@ def write_shutdown_intent(
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
-    if details:
-        data["details"] = dict(details)
+    resolved_details = dict(details) if details else {}
+    if sender_pid is None:
+        # No explicit sender means this writer is the sender: every CLI stop path,
+        # the daemon's own lease-loss writer and the admin routes. Recording argv
+        # here attributes the next incident without transcript archaeology (#22403).
+        resolved_details["sender_argv"] = list(sys.argv)
+        resolved_details["sender_ppid"] = os.getppid()
+        resolved_details["sender_cwd"] = os.getcwd()
+    if resolved_details:
+        data["details"] = resolved_details
     for marker in (get_shutdown_source_path(home), get_shutdown_marker_path(home)):
         try:
             _write_marker_atomically(marker, data)
