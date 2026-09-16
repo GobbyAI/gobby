@@ -58,6 +58,11 @@ _COLUMNS = """
 # shape is a terminal review envelope rather than a bare verdict (#20866).
 INLINE_CRITERIA_VERDICT_KIND = "inline_criteria_verdict"
 
+# Marks the verdict a background validator submitted, captured on arrival while
+# the review is still `finalizing`. It is forensic only and carries a kind of
+# its own so the memo lookup above can never read it as a reusable verdict.
+SUBMITTED_VERDICT_KIND = "submitted_close_verdict"
+
 
 @dataclass(frozen=True, slots=True)
 class TaskCloseReview:
@@ -394,16 +399,41 @@ class TaskCloseReviewStore:
             ).fetchone()
         return _review_from_row(row) if row is not None else None
 
-    def claim_finalizing(self, review_id: str, run_id: str) -> TaskCloseReview | None:
-        """Claim verdict finalization, including a late verdict from a successful run."""
+    def claim_finalizing(
+        self,
+        review_id: str,
+        run_id: str,
+        *,
+        verdict: Mapping[str, Any] | None = None,
+    ) -> TaskCloseReview | None:
+        """Claim verdict finalization, including a late verdict from a successful run.
+
+        The claim clears `delivered_at` and overwrites `result_payload`. Both
+        are safe only because the eligibility predicate below admits just
+        `running` and the run-ended-without-verdict error, neither of which has
+        a delivered terminal payload to lose. Widening that predicate to a
+        status whose payload already reached its caller would silently erase it.
+
+        `verdict` records the submission as it arrived, which is forensic only
+        and never reapplied: an admissible verdict must be re-derived against
+        live fingerprints by a fresh `close_task`. Its value is the
+        distinction a restart otherwise erases — a row left `finalizing` with a
+        captured verdict means the submit reached the daemon and died inside
+        finalization, while one without means it was never sent (#22404).
+        """
         now = datetime.now(UTC)
+        captured = (
+            _json({"kind": SUBMITTED_VERDICT_KIND, "verdict": dict(verdict)})
+            if verdict is not None
+            else None
+        )
         with self.db.transaction() as conn:
             savepoint = conn.savepoint("task_close_review_claim_finalizing")
             try:
                 row = conn.execute(
                     f"""
                     UPDATE task_close_reviews
-                    SET status = 'finalizing', result_payload = NULL, error = NULL,
+                    SET status = 'finalizing', result_payload = %s::jsonb, error = NULL,
                         completed_at = NULL, delivered_at = NULL, updated_at = %s
                     WHERE id = %s AND agent_run_id = %s
                       AND (
@@ -412,7 +442,7 @@ class TaskCloseReviewStore:
                       )
                     RETURNING {_COLUMNS}
                     """,  # nosec B608 - static column fragment
-                    (now, review_id, run_id, VALIDATOR_RUN_ENDED_SUCCESS_ERROR),
+                    (captured, now, review_id, run_id, VALIDATOR_RUN_ENDED_SUCCESS_ERROR),
                 ).fetchone()
             except UniqueViolation as exc:
                 savepoint.rollback()
@@ -469,6 +499,49 @@ class TaskCloseReviewStore:
             error=error,
             eligible_statuses=("launching", "running"),
         )
+
+    def finish_orphaned_finalizing(
+        self,
+        review_id: str,
+        *,
+        expected_updated_at: datetime,
+        result_payload: Mapping[str, Any],
+        error: str,
+    ) -> TaskCloseReview | None:
+        """Release a `finalizing` review a daemon restart abandoned mid-submission.
+
+        Callers must gate this on daemon startup. `finish_run_ended` excludes
+        `finalizing` because `claim_finalizing` holds that status across
+        `commit_close`'s git subprocesses, so on a periodic tick the status is
+        reachable while a real submission is still running. Only at startup is
+        every `finalizing` row provably orphaned, because no in-process submit
+        survives a restart; without this the row holds
+        `uq_task_close_reviews_active_task` forever and every later
+        `close_task` for its task returns `agentic_review_pending`.
+
+        The compare-and-swap on `updated_at` makes a lost race a clean no-op:
+        `None` means some other transition already moved the row.
+        """
+        now = datetime.now(UTC)
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                f"""
+                UPDATE task_close_reviews
+                SET status = 'error', result_payload = %s::jsonb, error = %s,
+                    completed_at = %s, updated_at = %s
+                WHERE id = %s AND status = 'finalizing' AND updated_at = %s
+                RETURNING {_COLUMNS}
+                """,  # nosec B608 - static column fragment
+                (
+                    _json(result_payload),
+                    error,
+                    now,
+                    now,
+                    review_id,
+                    expected_updated_at,
+                ),
+            ).fetchone()
+        return _review_from_row(row) if row is not None else None
 
     def _finish(
         self,
@@ -611,6 +684,7 @@ def _review_from_row(row: object) -> TaskCloseReview:
 __all__ = [
     "ACTIVE_TASK_CLOSE_REVIEW_STATUSES",
     "INLINE_CRITERIA_VERDICT_KIND",
+    "SUBMITTED_VERDICT_KIND",
     "TERMINAL_TASK_CLOSE_REVIEW_STATUSES",
     "ActiveTaskCloseReviewStatus",
     "TaskCloseReview",

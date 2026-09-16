@@ -9,7 +9,7 @@ import pty
 import select
 import subprocess
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -1160,6 +1160,7 @@ class _Store:
         self.expected_task_updated_at: datetime | None = None
         self.finished_status: str | None = None
         self.claimed = False
+        self.claimed_verdict: dict[str, Any] | None = None
         self.restored = False
         self.unjudged_attempts = unjudged_attempts
 
@@ -1178,8 +1179,15 @@ class _Store:
     def get(self, _review_id: str) -> TaskCloseReview:
         return self.review
 
-    def claim_finalizing(self, _review_id: str, _run_id: str) -> TaskCloseReview:
+    def claim_finalizing(
+        self,
+        _review_id: str,
+        _run_id: str,
+        *,
+        verdict: Mapping[str, Any] | None = None,
+    ) -> TaskCloseReview:
         self.claimed = True
+        self.claimed_verdict = dict(verdict) if verdict is not None else None
         self.review = replace(self.review, status="finalizing")
         return self.review
 

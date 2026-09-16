@@ -136,7 +136,16 @@ class _AgentRunQueryMixin:
 
         Task-owned parked runs are relaunched by the dispatcher; these have no
         dispatch owner and are retried by the lifecycle monitor instead.
+
+        Task-close validators are excluded here in SQL rather than by the
+        caller: nothing rebinds `task_close_reviews.agent_run_id` to a
+        successor, so `_authenticate_submission` rejects any resumed validator
+        and the relaunch is pure waste. Filtering after the query would still
+        spend one of the `limit` candidate slots and burn the run's
+        `daemon_stop_resume_failure_count` budget (#22404).
         """
+        from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
+
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
         unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
@@ -150,6 +159,7 @@ class _AgentRunQueryMixin:
             f"""
             WHERE ar.task_id IS NULL
               AND ar.machine_id = %s
+              AND ar.agent_name IS DISTINCT FROM %s
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
               AND {unconsumed_sql}
@@ -162,7 +172,7 @@ class _AgentRunQueryMixin:
                       AND s.status NOT IN ('expired', 'deleted')
               )
             """,
-            (machine_id, max_age_hours),
+            (machine_id, TASK_CLOSE_VALIDATOR_AGENT, max_age_hours),
             order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )
