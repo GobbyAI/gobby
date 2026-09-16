@@ -37,6 +37,6 @@ rules:
     effects:
       - type: inject_context
         template: >-
-          Gobby task = deliverable; provider-native tracker = implementation substeps.
-          For multi-step work, initialize the native tracker now and keep every owned
-          finding there until it is fixed before this task closes.
+          Gobby task = deliverable; implementation substeps go in your CLI's native
+          tracker if it offers one, otherwise in your working plan. Track every owned
+          finding there until it is fixed, and name it in the close summary.

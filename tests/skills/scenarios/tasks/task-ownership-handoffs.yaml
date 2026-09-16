@@ -23,7 +23,7 @@ runs:
       - action: initialize_native_tracker
         text: The Gobby task owns the deliverable; this tracker owns implementation substeps.
       - action: record_finding
-        text: Add the discovered defect to the claimed task's native tracker.
+        text: Track the discovered defect with the claimed task's substeps in the native tracker or working plan.
       - action: fix_finding
         text: Fix and verify the defect before closing the same Gobby task.
       - action: set_handoff_compact

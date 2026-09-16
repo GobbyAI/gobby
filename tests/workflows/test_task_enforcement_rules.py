@@ -554,8 +554,10 @@ class TestNativeTrackerClaimNudge:
 
         assert response.context is not None
         assert "Gobby task = deliverable" in response.context
-        assert "provider-native tracker = implementation substeps" in response.context
+        assert "implementation substeps go in your CLI's native" in response.context
+        assert "otherwise in your working plan" in response.context
         assert "every owned finding" in response.context
+        assert "close summary" in response.context
 
 
 class TestRequireTaskBeforeEdit:

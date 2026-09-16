@@ -53,7 +53,7 @@ prompts:
     `end_agent_run` once its work is done, whether or not a step workflow is
     active. Every cooperative call supplies nonblank
     `current_state` and coordinator-facing `next_steps` derived from the native
-    tracker. `kill_agent` is for external targeted termination.
+    tracker or working plan. `kill_agent` is for external targeted termination.
 
     ## Skills
     Skills are managed by Gobby via the gobby-skills MCP server; the native

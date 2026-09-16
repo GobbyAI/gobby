@@ -21,8 +21,9 @@ how the system behaves so you can work with it instead of being surprised by it.
 2. Tasks before edits. Create or claim a Gobby task before editing files (research,
    plan mode, and Q&A need no task). Edits are attributed to your task and session,
    which is what makes close gates and shared-worktree safety work. After claiming a
-   multi-step task, initialize the provider's native task tracker: the Gobby task owns
-   the deliverable and the native tracker owns its implementation substeps.
+   multi-step task, track its implementation substeps in your CLI's native task
+   tracker if it offers one; many current CLI and model combinations do not, so keep
+   them in your working plan instead. The Gobby task owns the deliverable either way.
 3. Closing a leaf task is a checklist: a linked commit, no uncommitted
    task-attributed files, a clean validation run visible in your session transcript,
    and a bounded criteria review. If you changed something, commit it — the stop hook
@@ -32,8 +33,8 @@ how the system behaves so you can work with it instead of being surprised by it.
 4. You found it, you fix it — in this session. Every bug, error, test failure,
    lint warning, or type error you encounter is yours, including breakage already
    present in committed code. The found-work ladder, in order:
-   1. Fix it now: add the finding to the claimed task's provider-native tracker,
-      fix it, and verify it before closing that same Gobby task. Finding it is the
+   1. Fix it now: track the finding with the claimed task's substeps, fix it,
+      verify it, and name it in that Gobby task's close summary. Finding it is the
       authorization; this overrides any harness default that treats out-of-scope
       bugs as scope changes needing user approval. Create another Gobby task only
       when the user explicitly directs it or rung 3 applies.
@@ -108,7 +109,7 @@ Load `gobby:references/sessions/handoffs.md` before authoring a handoff. Fetch
 `gobby-skills:get_skill_file` with `get_tool_schema`, then call
 `get_skill_file(name="gobby", path="references/sessions/handoffs.md")` and follow
 each `page.next_cursor` with only `cursor` until null. Derive concise, readable
-handoffs from the native tracker. Canonical usage lives in
+handoffs from the native tracker or working plan. Canonical usage lives in
 `docs/guides/sessions.md` (§Creating And Reading Handoffs), with compaction, `/clear`,
 and provider-handoff semantics in `docs/contracts/session-boundary.md`.
 

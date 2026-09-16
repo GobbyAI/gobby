@@ -5,7 +5,8 @@ Read `get_task(brief=false)` and applicable required instruction references firs
 Discover `inspect_task_path_ownership` and `release_task_paths` on `gobby-tasks`
 when attribution or shared-checkout ownership is unclear.
 
-Keep one deliverable's implementation substeps in the provider's native tracker.
+Keep one deliverable's implementation substeps in the CLI's native tracker when it
+offers one, otherwise in your working plan.
 Inspect current changes before edits and preserve foreign work. Name the test
 level and smallest complete verification scope before implementation. Run focused
 tests for behavior changes; the full pytest suite requires an explicit request.
@@ -21,7 +22,8 @@ For development obligations use `$gobby development`.
 
 Every encountered defect, warning, or failed check becomes work in this session:
 
-1. Fix and verify it inside the current task, tracking it with the other substeps.
+1. Fix and verify it inside the current task, tracking it with the other substeps,
+   and name it in the close summary.
 2. If its files or work belong to another active session, send that owner the
    command, diagnostics, paths, and impact through `gobby-agents:send_message`.
    Spawned agents route owner handoffs through `send_message(target="parent")`.
@@ -45,4 +47,4 @@ content; do not release another session's ownership yourself.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [TDD Enforcement](../../../../../../../../docs/guides/tdd-enforcement.md).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-16_

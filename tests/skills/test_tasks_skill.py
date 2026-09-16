@@ -115,8 +115,10 @@ def test_creation_guidance_uses_structured_named_test_references() -> None:
 def test_claimed_task_owns_native_substeps_and_found_work() -> None:
     content = (SKILL_DIR / "implementation.md").read_text()
     assert "one deliverable's implementation substeps" in content
-    assert "provider's native tracker" in content
+    assert "CLI's native tracker when it" in content
+    assert "otherwise in your working plan" in content
     assert "Fix and verify it inside the current task" in content
+    assert "name it in the close summary" in content
     assert "another active session" in content
     assert "command, diagnostics, paths, and impact" in content
     assert "Preserve their files" in content

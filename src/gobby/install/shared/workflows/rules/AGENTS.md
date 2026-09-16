@@ -7,14 +7,14 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
 | `worker-safety` | `worker-safety/` | 56 | Block git push (global + worker-scoped), force push, destructive git/shell, unmanaged worktree/clone commands, direct provider launches, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
-| `tool-hygiene` | `tool-hygiene/` | 4 | Require `uv` and route memory operations through Gobby |
+| `tool-hygiene` | `tool-hygiene/` | 7 | Require `uv` and route memory operations through Gobby |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
-| `task-enforcement` | `task-enforcement/` | 19 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, and enforce valid task transitions |
-| `stop-gates` | `stop-gates/` | 7 | Require workflow completion and enforce the Found Work ladder before turn end |
-| `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
-| `memory-lifecycle` | `memory-lifecycle/` | 10 | Shadow relevance judging, initial-load recovery, reminders, claim-time search nudge, post-close review, plan-memory guards, turn sequencing, and tracking reset |
+| `task-enforcement` | `task-enforcement/` | 18 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, and enforce valid task transitions |
+| `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
+| `plan-mode` | `plan-mode/` | 7 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
+| `memory-lifecycle` | `memory-lifecycle/` | 9 | Shadow relevance judging, initial-load recovery, reminders, claim-time search nudge, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey through feedback, once per epoch for task closures no submission has covered |
-| `context-handoff` | `context-handoff/` | 7 | Compact/resume handoffs, task context, user profile, and pressure nudges |
+| `context-handoff` | `context-handoff/` | 14 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require the build/coordination reference for Gobby build work |
 | `code-index` | `code-index/` | 8 | Require the code-index/overview reference, redirect broad source reads to `gcode`, and fail open when gcode cannot serve the checkout |

@@ -18,7 +18,8 @@ the first result set is a complete project inventory.
 
 Task state projects ownership, ordered stages, closure, escalation, and blockers.
 It is not an editable status string. Claim before editing, track implementation
-substeps in the provider's native tracker, preserve other sessions' files, then
+substeps in the CLI's native tracker when it offers one (otherwise your working
+plan), preserve other sessions' files, then
 validate, commit, and close through the appropriate lifecycle tool.
 
 Task refs include project-local `#N`, dotted task paths, and UUIDs. Resolve the
@@ -37,4 +38,4 @@ to bypass a gate.
 
 Guide: [Task Management](../../../../../../../../docs/guides/tasks.md#agent-workflow).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-16_
