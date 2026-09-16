@@ -524,7 +524,7 @@ fn poll_framing_survives_adversarial_title_and_capture() {
     let numeric = (0..POLL_FIELD_COUNT)
         .map(|i| i.to_string())
         .collect::<Vec<_>>()
-        .join(" ");
+        .join("|");
     let title = format!("hi\n{numeric}\t\x1b[0m");
     let batch = format!(
         "{numeric}\nGTERM_TITLE_LEN={}\nGTERM_TITLE={title}screen-bytes",
@@ -534,6 +534,52 @@ fn poll_framing_survives_adversarial_title_and_capture() {
     assert_eq!(parsed.pid, 0);
     assert_eq!(parsed.title, title);
     assert_eq!(parsed.capture, "screen-bytes");
+}
+
+/// Headers as tmux 3.7b and tmux 3.4 expand the poll format for the same pane.
+/// tmux 3.4 (ubuntu-24.04) and 3.3a have no cursor_very_visible,
+/// bracket_paste_flag, cursor_shape, cursor_blinking or cursor_colour, so those
+/// expand empty; every other field must still land in its own slot.
+#[test]
+fn poll_header_keeps_field_positions_when_tmux_lacks_a_variable() {
+    let tmux_37b =
+        "4242|1789591973|80|24|3|5|1|1|0|0|0|1|1|0|0|0|1|1|0|0|0|23|1|default|0|none|1|0";
+    let tmux_34 = "4242|1789591973|80|24|3|5|1||0|0|0||1|0|0|0|1|1|0|0|0|23|1||||1|0";
+    for (header, very_visible, bracket_paste, colour) in
+        [(tmux_37b, true, true, "none"), (tmux_34, false, false, "")]
+    {
+        let batch = format!("{header}\nGTERM_TITLE_LEN=2\nGTERM_TITLE=shscreen");
+        let parsed = parse_poll_batch(&batch).unwrap_or_else(|| panic!("parse {header}"));
+        assert_eq!(
+            (parsed.pid, parsed.start_time, parsed.width, parsed.height),
+            (4242, 1_789_591_973, 80, 24),
+            "{header}"
+        );
+        assert_eq!((parsed.cursor_x, parsed.cursor_y), (3, 5), "{header}");
+        let modes = &parsed.modes;
+        assert!(modes.cursor_visible, "{header}");
+        assert_eq!(modes.cursor_very_visible, very_visible, "{header}");
+        assert_eq!(modes.bracket_paste, bracket_paste, "{header}");
+        assert!(
+            modes.mouse_standard && modes.mouse_sgr && modes.wrap,
+            "{header}"
+        );
+        assert!(!modes.mouse_button, "{header}");
+        assert!(!modes.origin, "{header}");
+        assert_eq!(
+            (modes.scroll_region_upper, modes.scroll_region_lower),
+            (0, 23),
+            "{header}"
+        );
+        assert!(modes.pane_in_mode, "{header}");
+        assert_eq!(modes.cursor_shape, 0, "{header}");
+        assert!(!modes.cursor_blinking, "{header}");
+        assert_eq!(modes.cursor_colour, colour, "{header}");
+        assert!(modes.mouse_utf8, "{header}");
+        assert!(!parsed.pane_dead, "{header}");
+        assert_eq!(parsed.title, "sh");
+        assert_eq!(parsed.capture, "screen");
+    }
 }
 
 #[test]
@@ -703,5 +749,5 @@ fn oversize_batch(width: u16, height: u16) -> String {
     while fields.len() < POLL_FIELD_COUNT {
         fields.push("0".into());
     }
-    format!("{}\nGTERM_TITLE_LEN=0\nGTERM_TITLE=x", fields.join(" "))
+    format!("{}\nGTERM_TITLE_LEN=0\nGTERM_TITLE=x", fields.join("|"))
 }

@@ -53,7 +53,10 @@ pub fn parse_poll_batch(batch: &str) -> Option<ParsedPoll> {
     let header_end = batch.find('\n')?;
     let header = &batch[..header_end];
     let rest = &batch[header_end + 1..];
-    let fields: Vec<&str> = header.split_whitespace().collect();
+    // `|`-separated so a variable this tmux lacks (tmux 3.4 has no
+    // cursor_shape, for one) expands empty in place instead of shifting the
+    // fields after it.
+    let fields: Vec<&str> = header.split('|').collect();
     if fields.len() < POLL_FIELD_COUNT {
         return None;
     }
@@ -362,7 +365,7 @@ fn apply_sgr(params: &str, fg: &mut u32, bg: &mut u32, modifier: &mut u16) {
 }
 
 pub fn numeric_format() -> &'static str {
-    "#{pid} #{start_time} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{cursor_very_visible} #{alternate_on} #{keypad_cursor_flag} #{keypad_flag} #{bracket_paste_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_any_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{wrap_flag} #{origin_flag} #{insert_flag} #{scroll_region_upper} #{scroll_region_lower} #{pane_in_mode} #{cursor_shape} #{cursor_blinking} #{cursor_colour} #{mouse_utf8_flag} #{pane_dead}"
+    "#{pid}|#{start_time}|#{pane_width}|#{pane_height}|#{cursor_x}|#{cursor_y}|#{cursor_flag}|#{cursor_very_visible}|#{alternate_on}|#{keypad_cursor_flag}|#{keypad_flag}|#{bracket_paste_flag}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_any_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{wrap_flag}|#{origin_flag}|#{insert_flag}|#{scroll_region_upper}|#{scroll_region_lower}|#{pane_in_mode}|#{cursor_shape}|#{cursor_blinking}|#{cursor_colour}|#{mouse_utf8_flag}|#{pane_dead}"
 }
 
 #[cfg(test)]
