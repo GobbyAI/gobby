@@ -2,8 +2,10 @@
 
 mod live;
 mod live_reader;
+mod live_workspace;
 mod projects;
 mod rest;
+mod workspace;
 mod ws;
 
 pub use live::{
@@ -11,6 +13,10 @@ pub use live::{
 };
 pub use projects::{
     Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
+};
+pub use workspace::{
+    LayoutAxis, LayoutNode, PaneRow, TabRow, WorkspaceError, WorkspaceErrorCode, WorkspaceEvent,
+    WorkspaceEventKind, WorkspaceOp, WorkspaceReply, WorkspaceRow, WorkspaceSnapshot,
 };
 pub use ws::{
     decode_message, encode_message, message_kind, route_key, RouteKey, WsCodecError, GOLDEN_NAMES,
@@ -50,6 +56,8 @@ pub enum DaemonError {
     ControlScopeIndeterminate,
     #[error("Daemon request timed out.")]
     Timeout,
+    #[error("Workspace op refused: {}", .0.reason)]
+    Workspace(WorkspaceError),
 }
 
 impl DaemonError {
@@ -74,6 +82,7 @@ impl DaemonError {
             Self::Unavailable { .. } | Self::GoingAway => 503,
             Self::ControlRequestInFlight | Self::ControlScopeIndeterminate => 409,
             Self::Timeout => 408,
+            Self::Workspace(_) => 400,
             Self::Protocol { detail } => detail
                 .strip_prefix("status=")
                 .and_then(|rest| rest.split(';').next())
@@ -93,6 +102,7 @@ impl DaemonError {
             Self::ControlRequestInFlight => "control_request_in_flight",
             Self::ControlScopeIndeterminate => "control_scope_indeterminate",
             Self::Timeout => "timeout",
+            Self::Workspace(_) => "workspace_error",
         }
     }
 
@@ -334,6 +344,8 @@ pub enum DaemonEvent {
         seq: u64,
         payload: Value,
     },
+    /// A `workspace_event` for the attached workspace.
+    Workspace(Box<WorkspaceEvent>),
     Message(Value),
     Disconnected {
         generation: Generation,
@@ -419,6 +431,16 @@ pub trait Daemon: Send + Sync {
     async fn notify(&self, msg: WsMessage) -> Result<(), DaemonError>;
     async fn reconnect(&self, observed: Generation) -> Result<Generation, DaemonError>;
     async fn close(&self, deadline: Instant) -> Result<(), DaemonError>;
+    /// `workspace_attach`: the node's workspace (its default when `workspace`
+    /// is `None`) under the lifecycle watermark; this socket then receives that
+    /// workspace's `workspace_event`s until it reconnects.
+    async fn attach_workspace(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<WorkspaceSnapshot, DaemonError>;
+    /// `workspace_op`: run one op; a `workspace_error` is `DaemonError::Workspace`.
+    async fn workspace_op(&self, op: WorkspaceOp) -> Result<WorkspaceReply, DaemonError>;
 }
 
 #[derive(Debug)]
@@ -444,6 +466,7 @@ struct ScriptedState {
     pty_mutations: u32,
     last_pty_write: Option<String>,
     last_paste_seq: Option<u64>,
+    workspace: Option<WorkspaceSnapshot>,
 }
 
 /// Deterministic in-memory daemon used by reducer tests.
@@ -484,6 +507,7 @@ impl ScriptedDaemon {
                 pty_mutations: 0,
                 last_pty_write: None,
                 last_paste_seq: None,
+                workspace: None,
             })),
             events,
         }
@@ -932,5 +956,17 @@ impl Daemon for ScriptedDaemon {
         state.closed = true;
         state.ws_connected = false;
         Ok(())
+    }
+
+    async fn attach_workspace(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<WorkspaceSnapshot, DaemonError> {
+        self.attach_workspace_scripted(node, workspace)
+    }
+
+    async fn workspace_op(&self, op: WorkspaceOp) -> Result<WorkspaceReply, DaemonError> {
+        self.workspace_op_scripted(op)
     }
 }

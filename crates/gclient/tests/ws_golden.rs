@@ -1,9 +1,14 @@
 //! 3.3.11 / 3.3.18 / 3.3.19 / 3.3.22 terminal-WS goldens.
 
+use futures_util::FutureExt;
 use gobby_client::daemon::{
-    decode_message, encode_message, GOLDEN_NAMES, TERMINAL_WS_SAFE_INTEGER_MAX,
+    decode_message, encode_message, Daemon, DaemonError, LayoutAxis, LayoutNode, ScriptedDaemon,
+    Snapshot, WorkspaceError, WorkspaceErrorCode, WorkspaceEvent, WorkspaceEventKind, WorkspaceOp,
+    WorkspaceSnapshot, GOLDEN_NAMES, TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 use gobby_client::Workspace;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -54,6 +59,133 @@ fn corpus_replays_from_canonical_manifest() {
         let encoded = encode_message(&decoded).unwrap_or_else(|e| panic!("{name} encode: {e}"));
         assert_eq!(encoded, raw, "{name} must round-trip byte-for-byte");
     }
+}
+
+/// Decode a workspace fixture into `T` and encode it back: the typed shape plus
+/// the fixture's `type`/`request_id` envelope must reproduce the fixture bytes.
+fn typed_fixture<T: DeserializeOwned + Serialize>(name: &str) -> T {
+    let raw = fs::read(golden_dir().join(name)).unwrap_or_else(|_| panic!("missing {name}"));
+    let message = decode_message(&raw).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let typed: T =
+        serde_json::from_value(message.clone()).unwrap_or_else(|e| panic!("{name} typed: {e}"));
+    let mut encoded = serde_json::to_value(&typed).expect("typed value encodes");
+    for envelope in ["type", "request_id"] {
+        if let Some(value) = message.get(envelope) {
+            encoded[envelope] = value.clone();
+        }
+    }
+    assert_eq!(
+        encode_message(&encoded).expect("encode typed"),
+        raw,
+        "{name} must round-trip byte-for-byte through its typed shape"
+    );
+    typed
+}
+
+fn leaf(pane_id: &str) -> LayoutNode {
+    LayoutNode::Pane {
+        pane_id: pane_id.into(),
+    }
+}
+
+/// 4.1.1: the snapshot, op, event, and error fixtures decode into typed rows,
+/// ops, and events. The outbound `workspace_attach` fixture is matched by
+/// `daemon_live.rs::workspace_attach_op_and_event_round_trip`.
+#[test]
+fn workspace_fixtures_decode_into_typed_rows_ops_and_events() {
+    let first = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    let second = "11111111-1111-4111-8111-111111111111";
+
+    let snapshot: WorkspaceSnapshot = typed_fixture("workspace_snapshot.json");
+    assert_eq!(
+        snapshot.workspace.id,
+        "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    );
+    assert_eq!(snapshot.workspace.node_ref, Some(1));
+    assert_eq!(
+        snapshot.snapshot,
+        Snapshot {
+            daemon_epoch: "00000000-0000-4000-8000-000000000000".into(),
+            seq: 0,
+        }
+    );
+    let [tab] = snapshot.tabs.as_slice() else {
+        panic!("one tab: {:?}", snapshot.tabs);
+    };
+    assert_eq!(tab.focused_pane_id.as_deref(), Some(second));
+    assert_eq!(
+        tab.layout,
+        LayoutNode::Split {
+            axis: LayoutAxis::Horizontal,
+            ratio: 0.5,
+            children: Box::new([leaf(first), leaf(second)]),
+        }
+    );
+    let refs = snapshot
+        .panes
+        .iter()
+        .map(|pane| (pane.id.as_str(), pane.reference, pane.owns_terminal))
+        .collect::<Vec<_>>();
+    assert_eq!(refs, [(first, 1, true), (second, 2, true)]);
+
+    let op: WorkspaceOp = typed_fixture("workspace_op.json");
+    assert_eq!(
+        op,
+        WorkspaceOp::PaneSplit {
+            pane: first.into(),
+            axis: LayoutAxis::Horizontal,
+            terminal_id: None,
+            node: None,
+        }
+    );
+
+    let event: WorkspaceEvent = typed_fixture("workspace_event.json");
+    assert_eq!(event.kind, WorkspaceEventKind::PaneAdded);
+    assert_eq!(event.workspace_id, snapshot.workspace.id);
+    assert_eq!(event.project_id.as_deref(), Some(tab.project_id.as_str()));
+    assert_eq!(
+        (event.daemon_epoch.as_str(), event.seq),
+        ("00000000-0000-4000-8000-000000000000", 1)
+    );
+    assert_eq!(event.workspace, None);
+    assert_eq!(event.tabs, snapshot.tabs);
+    assert_eq!(event.panes, snapshot.panes[1..]);
+
+    let error: WorkspaceError = typed_fixture("workspace_error.json");
+    assert_eq!(error.code, WorkspaceErrorCode::Busy);
+    assert!(error.reason.contains(first), "{}", error.reason);
+}
+
+/// The scripted double serves its `set_workspace` seed and records each request.
+#[test]
+fn scripted_daemon_serves_the_seeded_workspace() {
+    let daemon = ScriptedDaemon::new();
+    let unseeded = Daemon::attach_workspace(&daemon, None, None)
+        .now_or_never()
+        .expect("scripted attach settles immediately");
+    assert_eq!(unseeded, Err(DaemonError::NotFound));
+
+    let snapshot: WorkspaceSnapshot = typed_fixture("workspace_snapshot.json");
+    daemon.set_workspace(snapshot.clone());
+    let attached = Daemon::attach_workspace(&daemon, None, Some(&snapshot.workspace.id))
+        .now_or_never()
+        .expect("scripted attach settles immediately")
+        .expect("seeded workspace attaches");
+    assert_eq!(attached, snapshot);
+
+    let op: WorkspaceOp = typed_fixture("workspace_op.json");
+    let reply = Daemon::workspace_op(&daemon, op)
+        .now_or_never()
+        .expect("scripted op settles immediately")
+        .expect("scripted op replies");
+    assert_eq!(reply.op, "pane.split");
+    let sent = daemon.ws_sent();
+    assert_eq!(
+        daemon.ws_sent_types(),
+        ["workspace_attach", "workspace_attach", "workspace_op"]
+    );
+    assert_eq!(sent[1]["workspace"], snapshot.workspace.id.as_str());
+    assert_eq!(sent[2]["pane"], "ffffffff-ffff-4fff-8fff-ffffffffffff");
 }
 
 #[test]

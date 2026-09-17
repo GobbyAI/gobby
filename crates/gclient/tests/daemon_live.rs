@@ -5,7 +5,8 @@ use base64::Engine;
 use futures_util::FutureExt;
 use gobby_client::daemon::{
     encode_message, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, KillOutcome,
-    LiveDaemon, SpawnOutcome, SpawnRequest, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE,
+    LayoutAxis, LiveDaemon, SpawnOutcome, SpawnRequest, WorkspaceError, WorkspaceErrorCode,
+    WorkspaceEvent, WorkspaceOp, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE, SUBSCRIBED_EVENTS,
     TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 use gobby_client::Workspace;
@@ -2035,9 +2036,11 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
     )
     .await;
     assert!(!timed.is_finished());
-    tokio::time::sleep(CONTROL_REQUEST_DEADLINE + Duration::from_millis(50)).await;
     assert_eq!(
-        timed.await.expect("exact deadline task"),
+        timeout(CONTROL_REQUEST_DEADLINE + Duration::from_secs(1), timed)
+            .await
+            .expect("exact deadline elapses")
+            .expect("exact deadline task"),
         Err(DaemonError::Timeout)
     );
     assert_eq!(daemon.pending_counts().2, 0);
@@ -2346,6 +2349,249 @@ async fn service_restart_close_reports_going_away() {
     .await
     .expect("service-restart disconnect deadline");
     assert!(matches!(lost, DaemonError::GoingAway), "{lost:?}");
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}
+
+const ATTACHED_WORKSPACE: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const OTHER_WORKSPACE: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+fn last_ws_request(mock: &MockDaemon, kind: &str) -> serde_json::Value {
+    mock.requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .rfind(|body| body["type"] == kind)
+        .unwrap_or_else(|| panic!("no {kind} request"))
+}
+
+/// The golden `workspace_event` retargeted at `workspace_id` with `seq`.
+fn workspace_event(workspace_id: &str, seq: u64) -> serde_json::Value {
+    let mut event: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_event.json"
+    ))
+    .expect("workspace event fixture");
+    event["workspace_id"] = json!(workspace_id);
+    event["seq"] = json!(seq);
+    event
+}
+
+async fn next_workspace_event(events: &mut EventReceiver) -> WorkspaceEvent {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Workspace(event) = events.recv().await.expect("daemon event") {
+                break *event;
+            }
+        }
+    })
+    .await
+    .expect("workspace event deadline")
+}
+
+/// 4.1.2: attach, op, and typed event round trip on the live daemon, then again
+/// after a reconnect re-attaches. The mock pushes every event to every socket,
+/// so an event for another workspace reaching this one stands in for a delivery
+/// the daemon's parametric filter would not make: the reader must drop it, and
+/// the socket must never ask for the bare kind that would deliver it.
+#[tokio::test]
+async fn workspace_attach_op_and_event_round_trip() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let (initial, mut events) = daemon.subscribe();
+    assert!(!SUBSCRIBED_EVENTS.contains(&"workspace_event"));
+    let subscribed = last_ws_request(&mock, "subscribe");
+    assert!(
+        !subscribed["events"]
+            .as_array()
+            .expect("subscribed kinds")
+            .contains(&json!("workspace_event")),
+        "a bare workspace_event subscription delivers every workspace's events: {subscribed}"
+    );
+
+    let attached = daemon
+        .attach_workspace(None, None)
+        .await
+        .expect("attach workspace");
+    assert_fixture(
+        &last_ws_request(&mock, "workspace_attach"),
+        include_str!("../../../tests/fixtures/terminal_ws_golden/workspace_attach.json"),
+    );
+    assert_eq!(attached.workspace.id, ATTACHED_WORKSPACE);
+    assert_eq!(attached.snapshot.seq, 0);
+
+    let split = WorkspaceOp::PaneSplit {
+        pane: "ffffffff-ffff-4fff-8fff-ffffffffffff".into(),
+        axis: LayoutAxis::Horizontal,
+        terminal_id: None,
+        node: None,
+    };
+    let reply = daemon
+        .workspace_op(split.clone())
+        .await
+        .expect("workspace op");
+    assert_eq!(reply.op, "pane.split");
+    assert_fixture(
+        &last_ws_request(&mock, "workspace_op"),
+        include_str!("../../../tests/fixtures/terminal_ws_golden/workspace_op.json"),
+    );
+
+    mock.send_event_and_wait(workspace_event(OTHER_WORKSPACE, 1))
+        .await;
+    mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 1))
+        .await;
+    let expected: WorkspaceEvent =
+        serde_json::from_value(workspace_event(ATTACHED_WORKSPACE, 1)).expect("typed event");
+    assert_eq!(next_workspace_event(&mut events).await, expected);
+
+    // A refused op settles its waiter with the typed workspace_error.
+    mock.suppress_ws("workspace_op");
+    let refused = tokio::spawn({
+        let daemon = daemon.clone();
+        let split = split.clone();
+        async move { daemon.workspace_op(split).await }
+    });
+    poll_until(
+        Duration::from_secs(1),
+        || count_ws_requests(&mock, "workspace_op") == 2,
+        "refused op request",
+    )
+    .await;
+    let mut error: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_error.json"
+    ))
+    .expect("workspace error fixture");
+    error["request_id"] = last_ws_request(&mock, "workspace_op")["request_id"].clone();
+    mock.send_event_and_wait(error).await;
+    let refused = refused.await.expect("refused op task");
+    assert!(
+        matches!(
+            &refused,
+            Err(DaemonError::Workspace(WorkspaceError {
+                code: WorkspaceErrorCode::Busy,
+                ..
+            }))
+        ),
+        "{refused:?}"
+    );
+    mock.allow_ws("workspace_op");
+
+    mock.drop_websockets();
+    loop {
+        let event = timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("disconnect deadline")
+            .expect("disconnect event");
+        if matches!(event, DaemonEvent::Disconnected { .. }) {
+            break;
+        }
+    }
+    daemon
+        .reconnect(initial.generation)
+        .await
+        .expect("reconnect");
+    // The new socket has attached nothing until the re-attach.
+    mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 2))
+        .await;
+    daemon
+        .attach_workspace(None, Some(ATTACHED_WORKSPACE))
+        .await
+        .expect("re-attach workspace");
+    assert_eq!(count_ws_requests(&mock, "workspace_attach"), 2);
+    assert_eq!(
+        last_ws_request(&mock, "workspace_attach")["workspace"],
+        ATTACHED_WORKSPACE
+    );
+    daemon
+        .workspace_op(split)
+        .await
+        .expect("workspace op after reconnect");
+    mock.send_event_and_wait(workspace_event(OTHER_WORKSPACE, 3))
+        .await;
+    mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 3))
+        .await;
+    let after = next_workspace_event(&mut events).await;
+    assert_eq!(
+        (after.workspace_id.as_str(), after.seq),
+        (ATTACHED_WORKSPACE, 3)
+    );
+
+    // An attached workspace's event that does not decode is a protocol error, so
+    // the reconnect's re-attach re-reads the rows instead of missing the change.
+    mock.send_event(json!({
+        "type": "workspace_event",
+        "workspace_id": ATTACHED_WORKSPACE,
+        "seq": 4
+    }));
+    let lost = timeout(Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Disconnected { error, .. } =
+                events.recv().await.expect("daemon event")
+            {
+                break error;
+            }
+        }
+    })
+    .await
+    .expect("malformed event disconnect deadline");
+    assert!(matches!(lost, DaemonError::Protocol { .. }), "{lost:?}");
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}
+
+/// A cancelled attach forgets its request id, so its late reply cannot point
+/// the reader's filter at the workspace the caller abandoned.
+#[tokio::test]
+async fn abandoned_workspace_attach_cannot_retarget_the_filter() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let (_, mut events) = daemon.subscribe();
+    daemon
+        .attach_workspace(None, Some(ATTACHED_WORKSPACE))
+        .await
+        .expect("attach workspace");
+
+    mock.suppress_ws("workspace_attach");
+    let abandoned = tokio::spawn({
+        let daemon = daemon.clone();
+        async move { daemon.attach_workspace(None, Some(OTHER_WORKSPACE)).await }
+    });
+    poll_until(
+        Duration::from_secs(1),
+        || count_ws_requests(&mock, "workspace_attach") == 2,
+        "abandoned attach request",
+    )
+    .await;
+    abandoned.abort();
+    assert!(abandoned
+        .await
+        .expect_err("abandoned attach cancelled")
+        .is_cancelled());
+
+    let mut late: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
+    ))
+    .expect("workspace snapshot fixture");
+    late["request_id"] = last_ws_request(&mock, "workspace_attach")["request_id"].clone();
+    late["workspace"]["id"] = json!(OTHER_WORKSPACE);
+    mock.send_event_and_wait(late).await;
+    mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 1))
+        .await;
+    let delivered = next_workspace_event(&mut events).await;
+    assert_eq!(
+        (delivered.workspace_id.as_str(), delivered.seq),
+        (ATTACHED_WORKSPACE, 1)
+    );
 
     daemon
         .close(Instant::now() + Duration::from_secs(1))

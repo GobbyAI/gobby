@@ -805,6 +805,20 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "type": "subscribe_success",
             "events": request.get("events").cloned().unwrap_or_else(|| json!([])),
         })),
+        "workspace_attach" => {
+            let mut snapshot: Value = serde_json::from_str(include_str!(
+                "../../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
+            ))
+            .expect("workspace snapshot fixture");
+            snapshot["request_id"] = request.get("request_id").cloned().unwrap_or(Value::Null);
+            Some(snapshot)
+        }
+        "workspace_op" => Some(json!({
+            "type": "workspace_op",
+            "request_id": request.get("request_id"),
+            "op": request.get("op"),
+            "result": null,
+        })),
         _ => None,
     }
 }
