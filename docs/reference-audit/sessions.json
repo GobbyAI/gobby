@@ -832,6 +832,230 @@
       "audience": "agent",
       "server": "gobby-sessions",
       "tool": "send_keys"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.list_nodes"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "list_nodes"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.list_workspaces"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "list_workspaces"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.get_workspace"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "get_workspace"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.create_workspace"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "create_workspace"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.close_workspace"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "close_workspace"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.create_tab"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "create_tab"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.close_tab"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "close_tab"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.split_pane"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "split_pane"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.close_pane"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "close_pane"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.move_pane"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "move_pane"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.swap_panes"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "swap_panes"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.rename"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "rename"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.send_text"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "send_text"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.send_keys"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "send_keys"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.read_pane"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "read_pane"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.wait_for_pane_output"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "wait_for_pane_output"
     }
   ],
   "delegated_operations": {
@@ -894,6 +1118,12 @@
       "kind": "bounded-code-review",
       "command": "code-review skill; OCR delegate preview/rule; review_reference_identity read-only review",
       "result": "Initial16 files reviewed, zero skipped,100% coverage; shell quoting finding corrected. Additional two test-file follow-up reviewed before commit; final transcript is authoritative."
+    },
+    {
+      "id": "workspaces-registry",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_workspaces_registry.py tests/skills/test_reference_library.py tests/servers/routes/mcp/ tests/mcp_proxy/test_registries.py -q",
+      "result": "77 passed. Sixteen gobby-workspaces tools execute by ref through the WebSocket server's shared WorkspaceOps; wrapper sessions act as session:<id>, the local operator token as operator, and agent tokens without a session or unseeded calls are refused forbidden."
     }
   ],
   "discrepancies": [

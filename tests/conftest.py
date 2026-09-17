@@ -111,6 +111,34 @@ def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test outside the invoking agent's identity, as CI runs.
+
+    Spawned agent shells export their session, project, run token, and terminal ids,
+    which project resolution and daemon auth headers prefer over fixtures. Tests that
+    need one set it explicitly.
+    """
+    from gobby.agents import constants
+    from gobby.utils.local_token import GOBBY_MANAGED_EXECUTION_ID_ENV
+
+    for name in (
+        constants.GOBBY_SESSION_ID,
+        constants.GOBBY_PARENT_SESSION_ID,
+        constants.GOBBY_AGENT_RUN_ID,
+        constants.GOBBY_AGENT_API_TOKEN,
+        GOBBY_MANAGED_EXECUTION_ID_ENV,
+        constants.GOBBY_WORKFLOW_NAME,
+        constants.GOBBY_PROJECT_ID,
+        constants.GOBBY_AGENT_DEPTH,
+        constants.GOBBY_MAX_AGENT_DEPTH,
+        constants.GOBBY_PROMPT,
+        constants.GOBBY_PROMPT_FILE,
+        *constants.IDENTITY_ENV_VARS,
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _assert_postgres_pools_bounded() -> Iterator[None]:
     """Require each test to release every PostgreSQL pool it creates."""
     from gobby.storage.hub.postgres import _OPEN_DATABASES

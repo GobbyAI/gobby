@@ -200,6 +200,12 @@
           "when": "Diagnosing prompts or sending terminal input"
         },
         {
+          "name": "workspaces",
+          "description": "Arrange workspaces, tabs, and panes and drive pane terminals",
+          "path": "references/sessions/workspaces.md",
+          "when": "Opening, arranging, typing into, or watching workspace panes"
+        },
+        {
           "name": "waits",
           "description": "Wait for agent work and terminal conditions",
           "path": "references/sessions/waits.md",

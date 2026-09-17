@@ -170,7 +170,7 @@ class _ShellSpawn:
 
 
 @contextmanager
-def _storage_errors() -> Iterator[None]:
+def storage_errors() -> Iterator[None]:
     """Translate storage failures into typed op errors."""
     try:
         yield
@@ -267,7 +267,7 @@ class WorkspaceOps:
         self, actor: str, name: str = DEFAULT_WORKSPACE_NAME, *, node: str | None = None
     ) -> Workspace:
         """Return the node's workspace named ``name``, creating it when missing."""
-        with _storage_errors():
+        with storage_errors():
             machine = self._workspaces.resolve_node(node)
             _require_local(machine)
             workspace, created = self._workspaces.create(machine.id, name)
@@ -280,7 +280,7 @@ class WorkspaceOps:
         self, actor: str, workspace: str, name: str, *, node: str | None = None
     ) -> Workspace:
         target = _workspace_of(await self._enter(workspace, node), workspace)
-        with _storage_errors():
+        with storage_errors():
             renamed = self._workspaces.rename(target.id, name)
         await self._emit("workspace.renamed", renamed.id, workspace=renamed)
         return renamed
@@ -291,7 +291,7 @@ class WorkspaceOps:
         """Close every tab and the workspace, then kill the owned live terminals."""
         target = _workspace_of(await self._enter(workspace, node), workspace)
         doomed = self._closing(actor, self._workspaces.list_panes(target.id))
-        with _storage_errors():
+        with storage_errors():
             closed = self._workspaces.close(target.id)
         await self._emit("workspace.closed", closed.id, workspace=closed)
         await self._kill(doomed)
@@ -310,7 +310,7 @@ class WorkspaceOps:
         target = _workspace_of(await self._enter(workspace, node), workspace)
         tab_id = None if tab is None else _tab_of(self._resolve(tab, node), tab).id
         pane_id = None if pane is None else _pane_of(self._resolve(pane, node), pane)[1].id
-        with _storage_errors():
+        with storage_errors():
             hinted, focused = self._workspaces.set_focus_hints(
                 target.id, project_id=project_id, tab_id=tab_id, pane_id=pane_id
             )
@@ -332,7 +332,7 @@ class WorkspaceOps:
             workspace = (await self.workspace_create(actor, node=node)).id
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
-        with _storage_errors():
+        with storage_errors():
             return WorkspaceSnapshot(
                 node=target.node,
                 workspace=home,
@@ -360,7 +360,7 @@ class WorkspaceOps:
         pane_id = mint_pane_id()
         self._workspaces.mark_spawn_in_flight(pane_id)
         try:
-            with _storage_errors():
+            with storage_errors():
                 change = self._workspaces.create_tab(
                     home.id,
                     pane_id=pane_id,
@@ -378,7 +378,7 @@ class WorkspaceOps:
         self, actor: str, tab: str, title: str | None, *, node: str | None = None
     ) -> WorkspaceTab:
         target = _tab_of(await self._enter(tab, node), tab)
-        with _storage_errors():
+        with storage_errors():
             renamed = self._workspaces.rename_tab(target.id, title)
         await self._emit("tab.renamed", renamed.workspace_id, tabs=(renamed,))
         return renamed
@@ -401,7 +401,7 @@ class WorkspaceOps:
             if workspace is None
             else _workspace_of(self._resolve(workspace, node), workspace).id
         )
-        with _storage_errors():
+        with storage_errors():
             change = self._workspaces.move_tab(
                 moving.id, workspace_id=destination, position=position
             )
@@ -417,7 +417,7 @@ class WorkspaceOps:
         closing = _tab_of(target, tab)
         panes = self._workspaces.list_panes(target.workspace.id)
         doomed = self._closing(actor, [row for row in panes if row.tab_id == closing.id])
-        with _storage_errors():
+        with storage_errors():
             change = self._workspaces.close_tab(closing.id)
         await self._emit(
             "tab.closed",
@@ -452,7 +452,7 @@ class WorkspaceOps:
         pane_id = mint_pane_id()
         self._workspaces.mark_spawn_in_flight(pane_id)
         try:
-            with _storage_errors():
+            with storage_errors():
                 change = self._workspaces.add_pane(pane_id, beside=beside.id, axis=axis)
             added = await self._fill(
                 target.node, target.workspace, change.tabs[0], change.panes[0], source
@@ -467,7 +467,7 @@ class WorkspaceOps:
     ) -> WorkspaceTab:
         first = _pane_of(await self._enter(pane, node), pane)[1]
         second = _pane_of(self._resolve(other, node), other)[1]
-        with _storage_errors():
+        with storage_errors():
             tab = self._workspaces.swap_panes(first.id, second.id)
         await self._emit("pane.swapped", tab.workspace_id, tabs=(tab,))
         return tab
@@ -491,7 +491,7 @@ class WorkspaceOps:
         moving = _pane_of(target, pane)[1]
         destination = _tab_of(self._resolve(tab, node), tab)
         beside_id = None if beside is None else _pane_of(self._resolve(beside, node), beside)[1].id
-        with _storage_errors():
+        with storage_errors():
             change = self._workspaces.move_pane(
                 moving.id, tab_id=destination.id, beside=beside_id, axis=axis
             )
@@ -506,7 +506,7 @@ class WorkspaceOps:
         self, actor: str, pane: str, ratio: float, *, node: str | None = None
     ) -> WorkspaceTab:
         target = _pane_of(await self._enter(pane, node), pane)[1]
-        with _storage_errors():
+        with storage_errors():
             tab = self._workspaces.set_ratio(target.id, ratio)
         await self._emit("pane.resized", tab.workspace_id, tabs=(tab,))
         return tab
@@ -515,7 +515,7 @@ class WorkspaceOps:
         self, actor: str, pane: str, label: str | None, *, node: str | None = None
     ) -> WorkspacePane:
         target = await self._enter(pane, node)
-        with _storage_errors():
+        with storage_errors():
             renamed = self._workspaces.rename_pane(_pane_of(target, pane)[1].id, label)
         await self._emit("pane.renamed", target.workspace.id, panes=(renamed,))
         return renamed
@@ -533,7 +533,7 @@ class WorkspaceOps:
             return swept
         closing = _pane_of(self._resolve(pane, node), pane)[1]
         doomed = self._closing(actor, [closing])
-        with _storage_errors():
+        with storage_errors():
             change = self._workspaces.remove_pane(closing.id)
         await self._publish_removal(target.workspace.id, change)
         await self._kill(doomed)
@@ -654,7 +654,7 @@ class WorkspaceOps:
 
     def _resolve(self, reference: str, node: str | None) -> WorkspaceTarget:
         """Resolve a row this node may act on, refusing another node's before any sweep."""
-        with _storage_errors():
+        with storage_errors():
             target = self._workspaces.resolve_reference(reference, node=node)
         _require_local(target.node)
         return target
@@ -667,7 +667,7 @@ class WorkspaceOps:
         return target
 
     async def _sweep(self, workspace_id: str) -> LayoutChange:
-        with _storage_errors():
+        with storage_errors():
             change = self._workspaces.sweep_dead_panes(workspace_id)
         await self._publish_removal(workspace_id, change)
         return change
@@ -735,7 +735,7 @@ class WorkspaceOps:
             raise WorkspaceOpError(
                 "terminal_failed", "The native terminal runtime is unavailable"
             ) from exc
-        with _storage_errors():
+        with storage_errors():
             if worktree_id is None:
                 return _ShellSpawn(
                     runtime, require_root(self._workspaces.db, project_id, workspace.machine_id)
@@ -773,7 +773,7 @@ class WorkspaceOps:
         holder = self._workspaces.get_pane_for_terminal(terminal_id)
         if holder is None:
             return
-        with _storage_errors():
+        with storage_errors():
             target = self._workspaces.resolve_reference(holder.id)
         tab, pane = _pane_of(target, holder.id)
         raise WorkspaceOpError(
