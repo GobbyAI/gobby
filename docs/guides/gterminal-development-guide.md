@@ -133,9 +133,10 @@ is currently active. Inspect installed worktree/task rows before acting on it.
   flags, exit codes, and stale-socket start recovery for that host are in
   [CLI commands — gterm host](cli-commands.md#gterm-host). The #20805
   no-op-resize guard lives in `TmuxPTYBridge.resize` for tmux rows and in
-  `src/gobby/servers/websocket/terminal_ws.py::_handle_terminal_resize` for native
-  rows. The current gclient renders tmux rows through a gterm host observer
-  (see *Client status*).
+  `src/gobby/servers/websocket/terminal_sizing.py::_apply_terminal_sizing` for
+  native rows; a native `terminal_resize` also moves the sender's host viewport
+  to the new grid so its frames repaint at that size. The current gclient
+  renders tmux rows through a gterm host observer (see *Client status*).
 
 ## Sandboxed validation by operating system
 

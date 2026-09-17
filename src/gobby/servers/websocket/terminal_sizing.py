@@ -39,6 +39,11 @@ class TerminalSizingMixin:
         record = self._leases().get(attachment_id)
         if record is None:
             return
+        # The sender's own grid changed whether or not it owns the PTY size;
+        # host frames for this attachment must render at the new grid, so the
+        # viewport follows the resize instead of staying at the rendezvous size.
+        if record.geometry is not None:
+            await self._sync_attachment_viewport(attachment_id, *record.geometry)
         if not admitted.applied:
             await self._send_json(
                 websocket,
@@ -85,14 +90,17 @@ class TerminalSizingMixin:
         if not isinstance(attachment_id, str):
             return
         try:
-            rows, cols = self._leases().set_viewport(
-                attachment_id, data.get("rows"), data.get("cols")
-            )
+            await self._sync_attachment_viewport(attachment_id, data.get("rows"), data.get("cols"))
         except (KeyError, InvalidTerminalDimensionsError):
             await self._send_json(
                 websocket, {"type": "terminal_error", "code": "invalid_dimensions"}
             )
-            return
+
+    async def _sync_attachment_viewport(
+        self, attachment_id: str, rows: object, cols: object
+    ) -> None:
+        """Record the attachment's viewport and push it to its proxy frame."""
+        rows, cols = self._leases().set_viewport(attachment_id, rows, cols)
         frame = self._proxy().frame_for(attachment_id)
         setter = getattr(frame, "set_viewport", None)
         if callable(setter):

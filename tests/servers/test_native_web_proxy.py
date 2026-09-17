@@ -538,7 +538,7 @@ async def test_web_attach_native_terminal(
             "cols": 80,
         },
     )
-    await _until(lambda: frame.viewports == [(24, 80)])
+    await _until(lambda: frame.viewports == [(30, 100), (24, 80)])
     await _send(
         harness.server,
         ws,
@@ -1450,3 +1450,48 @@ async def test_tmux_semantic_proxy_uses_host_frames(
         await harness.server._cleanup_tmux_client(ws)
 
     await harness.server._cleanup_tmux_client(semantic_ws)
+
+
+@pytest.mark.asyncio
+async def test_resize_moves_only_the_resizing_attachment_viewport(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A grid change after rendezvous re-renders that viewer's host frames at the new grid."""
+    harness = _harness(temp_db, sample_project)
+    a = MockWebSocket()
+    b = MockWebSocket()
+    att_a = await _attach(harness, a, harness.native_row, request_id="ra")
+    att_b = await _attach(harness, b, harness.native_row, request_id="rb")
+    frame_a, frame_b = harness.frame_list[-2], harness.frame_list[-1]
+    for ws, attachment, rows, cols in ((a, att_a, 24, 80), (b, att_b, 40, 120)):
+        await _send(
+            harness.server,
+            ws,
+            {
+                "type": "terminal_set_viewport",
+                "terminal_id": harness.native_row.id,
+                "attachment_id": attachment,
+                "rows": rows,
+                "cols": cols,
+            },
+        )
+    await _until(lambda: frame_a.viewports == [(24, 80)] and frame_b.viewports == [(40, 120)])
+
+    await _send(
+        harness.server,
+        a,
+        {
+            "type": "terminal_resize",
+            "terminal_id": harness.native_row.id,
+            "attachment_id": att_a,
+            "rows": 30,
+            "cols": 90,
+        },
+    )
+    await _until(lambda: harness.native_rt.resize_calls == [(30, 90)])
+
+    leases = harness.server._leases()
+    assert frame_a.viewports == [(24, 80), (30, 90)]
+    assert leases.viewport(att_a) == (30, 90)
+    assert frame_b.viewports == [(40, 120)]
+    assert leases.viewport(att_b) == (40, 120)
