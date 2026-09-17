@@ -163,11 +163,11 @@ def _service(
     )
 
 
-def test_build_results_keeps_semantic_primary_even_when_rrf_applied() -> None:
-    # Regression guard for #17105: a high-similarity semantic hit must outrank a
-    # higher-RRF graph-only hit even when RRF is applied. RRF/graph/keyword lists
-    # expand recall and break ties; they must never displace a strong semantic result
-    # from the top-K (making ranking_score primary regressed the default search path).
+def test_build_results_keeps_top_semantic_hit_first_when_rrf_applied() -> None:
+    # Regression guard for #17105: the highest-similarity semantic hit keeps first
+    # place over a higher-RRF graph-only hit even when RRF is applied. The fused order
+    # can lift a hit as far as second; it never takes the top slot from the best
+    # semantic match (making ranking_score primary regressed the default search path).
     service = _service(["semantic", "graph"])
 
     results = service._build_results(
@@ -189,10 +189,37 @@ def test_build_results_keeps_semantic_primary_even_when_rrf_applied() -> None:
         limit=2,
     )
 
-    # Semantic-first: the 0.99-similarity hit beats the higher-RRF (0.05) graph-only hit.
+    # The 0.99-similarity hit leads; the higher-RRF (0.05) graph-only hit follows it.
     assert [mem.id for mem in results] == ["semantic", "graph"]
     assert [mem.ranking_mode for mem in results] == ["rrf", "rrf"]
     assert results[0].search_via == "semantic"
+
+
+def test_build_results_lifts_the_top_fused_hit_to_second() -> None:
+    # #22410: a memory every search confirmed ranked last of eight on similarity alone.
+    # The fused order alternates with the similarity order, so its leader lands second,
+    # ahead of a higher-similarity hit that only the semantic search found.
+    service = _service(["similar", "middling", "confirmed"])
+
+    results = service._build_results(
+        merged_ids=["confirmed", "middling", "similar"],
+        ranking_score_map={"similar": 0.015, "middling": 0.016, "confirmed": 0.048},
+        qdrant_score_map={"similar": 0.80, "middling": 0.70, "confirmed": 0.60},
+        qdrant_set={"similar", "middling", "confirmed"},
+        keyword_set={"confirmed"},
+        graph_set={"confirmed"},
+        rrf_applied=True,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+        limit=3,
+    )
+
+    assert [mem.id for mem in results] == ["similar", "confirmed", "middling"]
 
 
 def test_build_results_graph_only_hit_displaces_weak_semantic_via_synthetic_similarity() -> None:
@@ -222,9 +249,9 @@ def test_build_results_graph_only_hit_displaces_weak_semantic_via_synthetic_simi
         limit=2,
     )
 
-    # strong-semantic (0.95) keeps slot 1; the graph-only synthetic (0.72) outranks the
-    # weak semantic hit (0.10) for slot 2. The higher-similarity semantic hit is never
-    # displaced -- both are cosines and the larger wins.
+    # strong-semantic (0.95) keeps slot 1; the graph-only hit takes slot 2 from the weak
+    # semantic hit (0.10) on both orders: its synthetic cosine (0.72) and its fused score
+    # are each the larger. The top-similarity hit is never displaced.
     assert [mem.id for mem in results] == ["strong-semantic", "graph-only"]
     assert results[0].search_via == "semantic"
     assert results[0].ranking_mode == "rrf"
@@ -234,10 +261,10 @@ def test_build_results_graph_only_hit_displaces_weak_semantic_via_synthetic_simi
     assert abs(results[1].similarity - 0.72) < 1e-9
 
 
-def test_build_results_graph_only_hit_never_outranks_higher_similarity_semantic() -> None:
+def test_build_results_graph_only_hit_never_outranks_the_top_similarity_semantic() -> None:
     # Invariant guard: even a maximally confident graph-only hit (entity cosine 1.0 ->
-    # synthetic 0.9) must sit below a higher-similarity semantic hit. With room for all
-    # three it slots strictly by its synthetic cosine: below the 0.95 hit, above the 0.40.
+    # synthetic 0.9) with the highest fused score must sit below the top-similarity
+    # semantic hit. With room for all three it lands below the 0.95 hit, above the 0.40.
     service = _service(["top-semantic", "low-semantic", "graph-only"])
 
     results = service._build_results(
@@ -353,7 +380,7 @@ async def test_qdrant_keyword_search_propagates_keyword_cancellation() -> None:
         )
 
 
-def test_build_results_preserves_semantic_primary_order_without_rrf() -> None:
+def test_build_results_leads_with_the_similarity_order_without_rrf() -> None:
     service = _service(["low-semantic", "high-semantic", "keyword"])
 
     results = service._build_results(

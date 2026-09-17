@@ -202,7 +202,7 @@ for the authoritative signature before calling a tool.
 
 | Tool | Purpose |
 | --- | --- |
-| `create_memory` | Store a memory. Requires `content` and `rationale`; accepts optional `memory_type`, `tags`, `supersedes`, and `session_id`. Returns the five nearest existing memories (`similar_existing`, undecayed score) and auto-supersedes any at raw cosine >= 0.9. |
+| `create_memory` | Store a memory. Requires `content` and `rationale`; accepts optional `memory_type`, `tags`, `supersedes`, and `session_id`. Returns the top five search results for the new content (`similar_existing`, undecayed score) and auto-supersedes any at raw cosine >= 0.9. |
 | `search_memories` | Hybrid search with `query`, `limit`, `min_score` (undecayed axis), and tag filters. Hits carry `rationale`, `similarity`, `raw_semantic_score`, `undecayed_similarity`, provenance, and `collapsed_duplicates`; `diagnostics` reports candidates and the score range. |
 | `list_memories` | List project-scoped memories with optional `memory_type`, `limit`, and tag filters. |
 | `get_memory` | Read one memory by ID. |
@@ -441,6 +441,20 @@ Search uses the best available local infrastructure:
    and is the fallback when vectors are unavailable.
 4. Result metadata can include `similarity`, `search_via`, `ranking_score`,
    `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
+
+Results are ordered by interleaving two rankings of the candidate pool,
+similarity first: undecayed similarity, and the fused score (`ranking_score`).
+Each hit keeps the earlier of its two slots, so the best semantic match stays
+first, the hit the searches most agree on comes second, and a memory that
+several searches confirm can outrank one with higher similarity. Temporal decay
+only breaks ties between otherwise equal hits. Hits no search could score come
+last. A graded cohort of 24 queries
+(`tests/memory/fixtures/ranking_cohort.json`) selected this order over
+similarity alone, the fused score alone, and three weighted blends;
+`tests/memory/test_ranking_policy.py` holds the selection rule and fails if the
+shipped order is not its winner. The fused score depends on `limit`, because
+each search fetches a window proportional to it, so the same memory can rank
+differently at different limits.
 
 `search_memories` supports an explicit `min_score` threshold. Agents search on
 demand; no rule injects memories automatically. The tool returns

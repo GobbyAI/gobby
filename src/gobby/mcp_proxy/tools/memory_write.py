@@ -208,8 +208,8 @@ def register_memory_write_tools(
                 ``supersedes:<id>`` provenance on the resulting memory. Use this for
                 durable decisions, removals, and replacements. Near-duplicates
                 (raw cosine >= 0.9) are superseded automatically and reported in
-                ``auto_superseded``; ``similar_existing`` lists the five nearest
-                neighbours with their undecayed similarity so the writer can judge
+                ``auto_superseded``; ``similar_existing`` lists the top five search
+                results with their undecayed similarity so the writer can judge
                 overlap the automatic threshold missed.
             session_id: Session ID that created this memory (accepts #N, N, UUID, or
                 prefix); defaults to the calling session's context

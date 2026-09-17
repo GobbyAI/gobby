@@ -533,7 +533,7 @@ class TestCreateMemory:
             fourth_id,
             fifth_duplicate_id,
         ]
-        # similar_existing reports the undecayed score, the axis search ranks on.
+        # similar_existing reports the undecayed score, the axis min_score reads.
         assert result["similar_existing"][0]["similarity"] == pytest.approx(0.95)
         assert result["similar_existing"][0]["raw_semantic_score"] == 0.95
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs

@@ -12,9 +12,9 @@ _GRAPH_EXPANSION_ENTITY_SEED_LIMIT = 8
 # Recall expander (#17104): a memory the vector index missed, surfaced by an entity it
 # mentions that matched the query, enters the similarity axis at its entity-match cosine
 # discounted by this factor. The discount reflects the indirection (entity match, not a
-# direct document match) and keeps graph-only hits conservative, so a strong real
-# semantic hit always outranks them. Both values are cosines, so the larger always wins
-# and semantic-first is preserved for every hit carrying a real similarity score.
+# direct document match) and keeps graph-only hits conservative on the similarity order:
+# both values are cosines, so the larger wins there and the top real semantic hit always
+# leads. The fused order can still lift a graph-only hit behind it (``order_results``).
 _GRAPH_SYNTHETIC_SIM_DISCOUNT = 0.9
 # A CO_OCCURS-traversed memory is one structural hop removed from a direct entity match,
 # so its synthetic confidence is the seed entity cosine attenuated by this factor.

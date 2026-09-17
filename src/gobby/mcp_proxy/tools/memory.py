@@ -152,6 +152,9 @@ def create_memory_registry(
             "filtering. Scores are for the agent's judgment: raw cosine on the live "
             "corpus sits in a narrow band (p10 0.62 / p50 0.69 / p90 0.75), so read "
             "each hit's rationale and content rather than expecting a bimodal score. "
+            "Results alternate two orders, similarity first: undecayed similarity, "
+            "and the fused score of the three searches. A hit several searches "
+            "confirm can therefore outrank one with higher similarity. "
             "Near-duplicate hits are folded into the best-ranked one "
             "(collapsed_duplicates)."
         ),
@@ -172,9 +175,10 @@ def create_memory_registry(
             query: Search query string
             limit: Maximum number of memories to return
             min_score: Optional floor (0.0-1.0) on the undecayed similarity —
-                cosine times source boost with the age penalty removed, the same
-                axis results are ranked on. 0.0 (default) returns the top ``limit``
-                by rank; the scores are there for judgment, not admission.
+                cosine times source boost with the age penalty removed, the
+                similarity axis results are ordered on. 0.0 (default) returns the
+                top ``limit`` by rank; the scores are there for judgment, not
+                admission.
             tags_all: Memory must have ALL of these tags
             tags_any: Memory must have at least ONE of these tags
             tags_none: Memory must have NONE of these tags

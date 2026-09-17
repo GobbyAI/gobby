@@ -11,6 +11,7 @@ from gobby.memory.services._search_constants import (
     _NEAR_DUPLICATE_COSINE,
     _USER_SOURCE_BOOST,
 )
+from gobby.memory.services._search_ranking import HitScores, order_results
 from gobby.storage.memories import LocalMemoryManager, Memory
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
@@ -39,7 +40,7 @@ def build_results(
     duplicate_cosine: float = _NEAR_DUPLICATE_COSINE,
 ) -> list[Memory]:
     """Hydrate ranked IDs into active memories and apply search metadata."""
-    scored: list[tuple[Memory, float, float | None, float | None]] = []
+    scored: list[tuple[Memory, HitScores]] = []
     scope = ALL_MEMORIES if project_id is None else MemoryScope.project_visible(project_id)
     memories_by_id = {mem.id: mem for mem in storage.get_memories(merged_ids, scope=scope)}
 
@@ -135,22 +136,14 @@ def build_results(
         else:
             mem.ranking_mode = "nonsemantic_fallback"
 
-        scored.append((mem, mem.ranking_score, similarity, undecayed))
+        scored.append((mem, HitScores(undecayed, similarity, mem.ranking_score)))
 
-    # Semantic-first ordering on the cosine axis. RRF is only a tiebreak; making it
-    # primary regressed the default graph_search=True path in #17105. The primary
-    # key is the undecayed score -- the same axis the floor above reads -- so age
-    # orders otherwise-equal hits and never buries a stronger match (#21010).
-    scored.sort(
-        key=lambda item: (
-            item[2] is not None,
-            item[3] if item[3] is not None else float("-inf"),
-            item[2] if item[2] is not None else float("-inf"),
-            item[1],
-        ),
-        reverse=True,
-    )
-    ordered = [mem for mem, _, _, _ in scored]
+    # The similarity and fused orders interleaved, similarity first. Fused alone as
+    # the primary key regressed the default graph_search=True path in #17105, and
+    # similarity alone buried hits that several searches confirmed (#22410).
+    # Similarity is the undecayed score -- the same axis the floor above reads -- so
+    # age orders otherwise-equal hits and never buries a stronger match (#21010).
+    ordered = [mem for mem, _ in order_results(scored, lambda item: item[1])]
     if candidate_vectors:
         ordered = collapse_near_duplicates(ordered, candidate_vectors, duplicate_cosine)
     return ordered[:limit]

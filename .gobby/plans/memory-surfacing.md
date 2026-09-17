@@ -224,6 +224,25 @@ Targets:
   5. Record `surface_min_score` in the fixture: the largest value, rounded down to two decimals,
      at which at least 90% of A-grade hits in the re-collected cohort have undecayed similarity
      at or above it. Deliverable 2.1 consumes it.
+- Executed differently, recorded 2026-09-17 in session gobby#13699. The Acceptance lines and
+  the manifest keep their approved wording; tasks #22490 and #22491 carry the updated criteria.
+  - The rule selected `interleave`, which depends on each hit's rank in two orders and so cannot
+    be a per-hit key. Step 1's `result_sort_key` shipped as the list-level
+    `order_results(hits, scores)` with the `HitScores` tuple, in the same module. Criteria 1.2.1
+    and 1.3.2 name that symbol, and 1.3's replay orders rows through it.
+  - Step 2's pool was unfaithful as written. `build_results` orders the whole merged pool (75 to
+    108 ids at `limit=20`) and the tool returns only its top 20, so a fused-aware candidate can
+    lift a hit the tool never returned. Each query's fixture pool is therefore the returned top
+    20 plus every other pool member some candidate could lift into a top 5. Pool membership and
+    fused scores come from the recall signal log entry of the same search; a missing similarity
+    comes from the same query re-run with `tags_all` set to that memory's tags. The fixture's
+    `source` field states this.
+  - The fused score depends on `limit` (each search fetches `2 * limit`); similarity does not.
+    The rule was applied at `limit=20` as planned. `interleave` also holds A@3 20 of 24 at
+    limits 10 and 5.
+  - New hits were graded by Opus subagents blind to scores (grader `opus-subagent`), not by this
+    session. 46 hidden re-grades of Appendix A1 pairs agreed on A versus not-A in 39 cases, all
+    differences one grade apart.
 - Decay stays off the primary ordering under every candidate, which preserves the #21010
   decision. `min_score` stays on the undecayed axis.
 - Update memory `d2ae6cc2` (the search score contract) through `gobby-memory:update_memory` once

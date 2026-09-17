@@ -1,0 +1,4795 @@
+{
+ "source": "gobby-memory:search_memories at limit=20 with no tag filter, collected 2026-09-17 after #22489 (verbatim query embedding) was live and embeddings were reindexed. Each query's hits are the returned top 20 by similarity plus every other member of the search's merged pool (recall signal log) that a candidate ordering could lift into a top 5. fused is that search's logged score; it depends on the limit, similarity does not.",
+ "grades": {
+  "A": "directly answers the need",
+  "B": "useful related context",
+  "C": "same topic, not useful",
+  "D": "irrelevant"
+ },
+ "policy": "interleave",
+ "surface_min_score": 0.65,
+ "queries": [
+  {
+   "id": "H1",
+   "style": "intent",
+   "query": "I'll spawn a droid worker and wait for its SessionEnd hook to confirm teardown",
+   "need": "whether Droid emits a SessionEnd Gobby treats as conclusive teardown, and what releases the run's resources",
+   "hits": [
+    {
+     "id": "97ca4732-fe2f-5928-b31a-f5d468d64447",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7425713,
+     "decayed": 0.4512013896015948,
+     "fused": 0.030886196246139225,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "717b9191-46e9-580c-a33b-62e2aab5c2e7",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7218971000000001,
+     "decayed": 0.6060179481870063,
+     "fused": 0.031754032258064516,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fdc7fb5c-22ea-58ce-903b-a30cffe121a7",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7109878,
+     "decayed": 0.22313677674072796,
+     "fused": 0.026862026862026864,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b9eb3e98-6a1c-5401-bd83-8cf432aae358",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7077477,
+     "decayed": 0.5170694146403148,
+     "fused": 0.029513888888888888,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "91afd454-24b0-5448-80a2-9aeddbfd342a",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.70325804,
+     "decayed": 0.025840546907509154,
+     "fused": 0.04304525329193261,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "ac7eb132-563b-5005-bde1-23fa9dd9518f",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7008687,
+     "decayed": 0.6846047721049859,
+     "fused": 0.03131881575727918,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "46fa1b6a-cf6b-55bf-9c7e-edf6c0b879c5",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.69838303,
+     "decayed": 0.4529973326739443,
+     "fused": 0.024696835255841466,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b580a16f-4c0a-5aa1-acbf-b2ec304b6298",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6960047,
+     "decayed": 0.1658032006000769,
+     "fused": 0.044616596638655456,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c4b613c1-bd11-5a66-a140-56c6486633b1",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6895902,
+     "decayed": 0.44745629925961944,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "578b8217-c863-5b61-b5d4-e7c945210202",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.68934023,
+     "decayed": 0.6804440189666208,
+     "fused": 0.024758454106280192,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "515aabd1-db20-53d1-98c3-2466f7e4a780",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.68315226,
+     "decayed": 0.5604938432942693,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b079542b-bb61-5e5b-9e01-cc6851e3852b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6817275,
+     "decayed": 0.09095478114846339,
+     "fused": 0.025278219395866455,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c4ac48f5-0483-5a45-b75b-3b39521cb66b",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6798124,
+     "decayed": 0.2788243014696884,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2b29a00d-cfb1-5394-8ec3-8d8117492234",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67570895,
+     "decayed": 0.41013913233495275,
+     "fused": 0.027046783625730993,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "b7bca643-971a-5d99-9b70-6b29bce7d0f1",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.67492884,
+     "decayed": 0.031895571683249864,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "37e81439-8c1a-54a6-b832-d80770e1aea5",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6742287,
+     "decayed": 0.6384763648954108,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "3f3ad43b-fc2c-588e-9959-8f6abb3b0210",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6740964,
+     "decayed": 0.40566936385127433,
+     "fused": 0.02389418290428104,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "76d48fe4-018f-5117-b81c-a34f0359187d",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.67074174,
+     "decayed": 0.1479454232349876,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "6ef4d4bf-99a0-5776-b6cf-17b80a820bfb",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6704425,
+     "decayed": 0.4034719170597862,
+     "fused": 0.02345679012345679,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "1620900c-9eee-5e95-9d42-a5f9c94ad94b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6672367,
+     "decayed": 0.08125124390717618,
+     "fused": 0.012195121951219513,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4a67bde7-de86-540d-b0ad-0fa73ce71e02",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69993395,
+     "decayed": 0.3965092072714372,
+     "fused": 0.04121719609829747,
+     "search_via": null
+    },
+    {
+     "id": "abaf1e36-4fdd-5f48-aea5-68636d443e9d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7033864,
+     "decayed": 0.6475992261574555,
+     "fused": 0.028205128205128206,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "H2",
+   "style": "intent",
+   "query": "I'm about to inject additionalContext into a Codex PostToolUse hook response and need to know the character budget before it gets truncated",
+   "need": "the additionalContext budget and overflow behavior for Codex, and which Codex channels the model reads",
+   "hits": [
+    {
+     "id": "677e9367-55be-5290-9e67-db4766e8ed20",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7164832,
+     "decayed": 0.7144008468893431,
+     "fused": 0.03278688524590164,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1dc55056-8f59-52bf-aaa4-01592bd781e9",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.68338037,
+     "decayed": 0.49963064627318227,
+     "fused": 0.016129032258064516,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1874988a-8176-5ced-a521-f8863906e2e4",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6789961,
+     "decayed": 0.40391511726827045,
+     "fused": 0.028068137824235385,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "cf0ec085-5360-58b2-a4a6-8903fc342a87",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.67784804,
+     "decayed": 0.4032474566449236,
+     "fused": 0.03125,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "d39ec121-e528-5b40-9919-4df008d2dacb",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.67473793,
+     "decayed": 0.4014156646670664,
+     "fused": 0.015384615384615385,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c90a6610-3f28-5379-8376-9d43e07e081d",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.66920304,
+     "decayed": 0.02175738994511159,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b16c17c5-e881-556e-bf8c-48e01ec765cd",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6675273,
+     "decayed": 0.4996161198715937,
+     "fused": 0.039622208390169826,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c7261840-76c3-550e-8842-6e536c637c9a",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.664127,
+     "decayed": 0.23171735490060366,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0836566c-4205-5928-abed-fded0881aac6",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6584994999999999,
+     "decayed": 0.5648403657300286,
+     "fused": 0.026992753623188405,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "be705e0d-0d03-54da-b552-aef6165a7df1",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65811,
+     "decayed": 0.06498872822784742,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "71ecb55a-5939-5191-82d5-e9613f0dea30",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65803325,
+     "decayed": 0.5147791416754023,
+     "fused": 0.027598020555767037,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "67b7c348-668b-5f2e-8958-d373098891d0",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.65796775,
+     "decayed": 0.007574179694622135,
+     "fused": 0.028381642512077296,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "89f8093c-ac0b-5ae1-abac-9bfc0d95db33",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.65739757,
+     "decayed": 0.4901720486722609,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "089e1881-ebac-550a-84d5-dbf7c8c387ca",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6567366,
+     "decayed": 0.09826426235326044,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c86a5d48-8e51-5e68-bf1e-0c5ce3538fc9",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65529585,
+     "decayed": 0.188033992560208,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "43c14fd7-eca6-5ca5-a7fa-024116d8f851",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6536615,
+     "decayed": 0.39689277911022497,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "002c13ae-178f-5a21-a848-85cd7a99aaa2",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.64963436,
+     "decayed": 0.5580385355042037,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "d4599924-3d65-5499-9836-47a9c5518bf5",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.64889747,
+     "decayed": 0.19338806017623342,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "bf4b948c-76e8-536e-9dec-100d5b3c1dd7",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6479393,
+     "decayed": 0.38437543571184524,
+     "fused": 0.025158227848101268,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "ece0a1e9-fb2c-5e85-8ac4-1e84465ac906",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6468732,
+     "decayed": 0.6379483777355126,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "02c82d64-1c81-5c66-b875-26d18fc4f50b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.63798016,
+     "decayed": 0.4804426921499954,
+     "fused": 0.03611156000861883,
+     "search_via": null
+    },
+    {
+     "id": "7a601bfd-c0a6-5ec1-834b-3c3597c52563",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.63593674,
+     "decayed": 0.44018745212341304,
+     "fused": 0.03765681003584229,
+     "search_via": null
+    },
+    {
+     "id": "e538b2b3-1e86-5736-bb2a-09c0629338e7",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.5950046,
+     "decayed": 0.24410891074107702,
+     "fused": 0.029910714285714284,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "H3",
+   "style": "keyword",
+   "query": "grok denied tool call additionalContext dropped",
+   "need": "Grok discards additionalContext on a denied PreToolUse, so context must be re-queued",
+   "hits": [
+    {
+     "id": "e7f747b1-8257-58fa-83aa-f5d5b92e2f99",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.76403064,
+     "decayed": 0.46025915471951717,
+     "fused": 0.04253074617960922,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "7285554f-dac7-5bf1-baba-67901e531abc",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7622253,
+     "decayed": 0.7344067605922632,
+     "fused": 0.046342571558382555,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "a39d0411-8671-505e-964e-c5768cdf606d",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7270128,
+     "decayed": 0.08369842493245194,
+     "fused": 0.029030910609857977,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "4fac2a88-117e-52ad-9215-dba8837bf3ac",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.71966916,
+     "decayed": 0.6835916761093644,
+     "fused": 0.04447514528850145,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "039316e6-680e-5568-9f93-aedb28b6d9d5",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.71958894,
+     "decayed": 0.46618984973445016,
+     "fused": 0.04076775714706749,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "92088eed-0699-54ab-86e4-f33303e10158",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7188567499999999,
+     "decayed": 0.6829043472447811,
+     "fused": 0.046037711397654384,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c444b26a-c4bb-5aa5-928a-9239865521d8",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7039928,
+     "decayed": 0.16756384667134458,
+     "fused": 0.04295916729715478,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "2ecbc6f6-b32e-5511-85eb-b471906a48d2",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.70077085,
+     "decayed": 0.6678254422327137,
+     "fused": 0.04158475061111978,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "e8c49be1-ddcd-5dce-a62d-21229b74e165",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.69649065,
+     "decayed": 0.4404288115697299,
+     "fused": 0.036473429951690825,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "5252a7f8-c403-5eea-8dec-a573f2dd6ae2",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6874965,
+     "decayed": 0.15205633744244307,
+     "fused": 0.026050420168067225,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "cda2f50a-db52-5c5e-813a-795712a6e093",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67912424,
+     "decayed": 0.45220731538856057,
+     "fused": 0.0381808925844222,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "7ce4e111-4ab0-5d61-b880-6ee4ef4ede01",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6765088,
+     "decayed": 0.4013211145240484,
+     "fused": 0.02398989898989899,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "7b15d33a-d5ac-5321-b7df-f514abf24d5d",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.67382693,
+     "decayed": 0.6391199399392231,
+     "fused": 0.04036529680365297,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "a4261f14-e790-5bb8-a567-b01f3ad9c287",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.66707546,
+     "decayed": 0.2123208693288127,
+     "fused": 0.024624624624624628,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "677e9367-55be-5290-9e67-db4766e8ed20",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6667713,
+     "decayed": 0.6648329899871365,
+     "fused": 0.04465214909061251,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "437ae4e9-827d-5f28-b6d2-59a225953e5f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.66151804,
+     "decayed": 0.6585469659016596,
+     "fused": 0.043488777089783284,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "a233f4a3-f60f-53a3-aed3-883c8a0d4b1f",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.660998,
+     "decayed": 0.13114307773605993,
+     "fused": 0.027912386121341344,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1a33ac83-26af-58c2-ba48-878f3e629e0e",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6599995,
+     "decayed": 0.6263269014977336,
+     "fused": 0.037961933310770524,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "95f63a99-2811-530b-84c0-f37512af0d1d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65932703,
+     "decayed": 0.3922472591418369,
+     "fused": 0.03822640966628309,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "495523fb-4f76-5a37-ba82-12e60b872020",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.65840137,
+     "decayed": 0.3905476077084834,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    }
+   ]
+  },
+  {
+   "id": "H4",
+   "style": "intent",
+   "query": "I'm wiring ghook envelope delivery to the daemon and want to make sure hook events are not lost when the daemon is down or slow",
+   "need": "ghook retain-versus-dequeue rules and status codes",
+   "hits": [
+    {
+     "id": "71ecb55a-5939-5191-82d5-e9613f0dea30",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.79800856,
+     "decayed": 0.6242810641347242,
+     "fused": 0.04344022624868181,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "de3911bd-52f3-57fc-a0c7-40723338f0e4",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.776161,
+     "decayed": 0.3828267752382613,
+     "fused": 0.04210305823209049,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c3abb06e-39a0-534f-a42a-787607b88094",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7528628,
+     "decayed": 0.4467695192365603,
+     "fused": 0.03848480449090205,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "24214c83-8957-5c4e-872c-ea66f9e0e5ec",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.74484825,
+     "decayed": 0.48860926821780665,
+     "fused": 0.036923289339526454,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "d9df129f-28db-5f70-8397-208ad9d2bbfb",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.74010706,
+     "decayed": 0.6502910827294064,
+     "fused": 0.030090497737556562,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "46fa1b6a-cf6b-55bf-9c7e-edf6c0b879c5",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7321352,
+     "decayed": 0.4748895307450515,
+     "fused": 0.026021080368906456,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "fa9ff965-af00-539e-87eb-0ca484c3381d",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.73035425,
+     "decayed": 0.22058029574231688,
+     "fused": 0.03131881575727918,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "f091327c-8ead-540a-99d2-453b0462e443",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7275801,
+     "decayed": 0.6541534319653532,
+     "fused": 0.04435015112764473,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "1a2a5733-5a10-56b0-ad9f-95a2ba3b0db0",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7249525999999998,
+     "decayed": 0.5512209488223706,
+     "fused": 0.04338619624613922,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c4ac48f5-0483-5a45-b75b-3b39521cb66b",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.7231902,
+     "decayed": 0.29661520782913786,
+     "fused": 0.0404147465437788,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "ec2dc36a-d31c-5037-ac2f-aa69b91a7cfd",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7203354,
+     "decayed": 0.5262276195273777,
+     "fused": 0.04041829637193889,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "5881108a-4c12-5ca9-bd8d-34e1a5b0624d",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.71505374,
+     "decayed": 0.49628860922715706,
+     "fused": 0.04076775714706749,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "53ad2839-d3fa-5627-b188-2b93c019afca",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7041559,
+     "decayed": 0.22013643828973437,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e7f747b1-8257-58fa-83aa-f5d5b92e2f99",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.70062715,
+     "decayed": 0.4220641042032103,
+     "fused": 0.03676620168555653,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "7285554f-dac7-5bf1-baba-67901e531abc",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6993432,
+     "decayed": 0.6738193178230685,
+     "fused": 0.028958333333333336,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "39da537f-e334-5cf6-a73e-16d82d62da45",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6990557,
+     "decayed": 0.5601866626116875,
+     "fused": 0.027443609022556388,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "d66ab655-293a-5042-8b95-64f3e54eb461",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.69899535,
+     "decayed": 0.4157873737015039,
+     "fused": 0.03855068399368177,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "37134df8-de53-5bcc-8bd4-3ab841fcd609",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69177485,
+     "decayed": 0.24709546839031477,
+     "fused": 0.02690501986276634,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ab46f550-e012-5693-9eba-e14502624d3f",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.69165504,
+     "decayed": 0.5546005698070633,
+     "fused": 0.026742734890354787,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "2e0ccb48-0235-5040-b648-9a3e292b37c5",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6898548,
+     "decayed": 0.4094853685759156,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "62af8b42-c4c5-5079-b078-cdb850b735fa",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6831318,
+     "decayed": 0.5730998291507118,
+     "fused": 0.039293480672791016,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "H5",
+   "style": "keyword",
+   "query": "PreCompact hook ACP PreCompress event mapping",
+   "need": "how PreCompact is named and aliased across providers",
+   "hits": [
+    {
+     "id": "ebe4a8c3-f561-5849-9047-bac781d7d53b",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.70292246,
+     "decayed": 0.09855347147120361,
+     "fused": 0.03252247488101534,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b1aad18e-519e-5b78-8cba-a02d34352c06",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.69471765,
+     "decayed": 0.24812277452839854,
+     "fused": 0.04701522850420375,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "e527586b-636a-54be-b1a2-0ea6b73cf290",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.68489325,
+     "decayed": 0.28096598172887804,
+     "fused": 0.043894365472710875,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "df805fe8-1c65-5166-b286-4c79f167e938",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6727467,
+     "decayed": 0.09979151441294945,
+     "fused": 0.03918375831485588,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "69c97104-1168-53a1-ac56-5e70c6dec490",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6642504,
+     "decayed": 0.37643616008965947,
+     "fused": 0.040447272026219394,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "91afd454-24b0-5448-80a2-9aeddbfd342a",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.66287684,
+     "decayed": 0.024356717622407292,
+     "fused": 0.04690554740957967,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "04ae2792-6577-5985-8d4f-3d3967ebc9f9",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6597450000000001,
+     "decayed": 0.517050934660789,
+     "fused": 0.026973565905412694,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "347b5968-ee60-5192-b151-db67fc0d8fd2",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6544015,
+     "decayed": 0.3708546569616062,
+     "fused": 0.039457601222307105,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "95f63a99-2811-530b-84c0-f37512af0d1d",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.65192837,
+     "decayed": 0.38784508504677667,
+     "fused": 0.028381642512077296,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1b776ce9-48b4-547b-835d-d967bff80216",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.64355344,
+     "decayed": 0.38243475307472946,
+     "fused": 0.04201600868267535,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "adee6f7c-233e-50e8-9e5b-309e0260feb9",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6415831,
+     "decayed": 0.3805857086170372,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "eaffb652-9ac3-5fc7-8e7d-75a8c13c8e44",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6403075,
+     "decayed": 0.20045548186834938,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "cd65c8dc-7503-500d-9258-ccda5cae4976",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.63760847,
+     "decayed": 0.0075115742207468635,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "46fa1b6a-cf6b-55bf-9c7e-edf6c0b879c5",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.63606185,
+     "decayed": 0.41257246067498565,
+     "fused": 0.02415181138585394,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "78df2b87-9fef-5e6d-be39-85abf3121617",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.62892574,
+     "decayed": 0.42883793746332016,
+     "fused": 0.0396901913184209,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "77a35749-e7b7-5405-b767-a42af085bd81",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6226005,
+     "decayed": 0.1949121277692778,
+     "fused": 0.03747266043091814,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "677e9367-55be-5290-9e67-db4766e8ed20",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6211282,
+     "decayed": 0.6193216829595019,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "46ebacea-ae13-51f9-8477-4e7b73b514c2",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.62064207,
+     "decayed": 0.36916887665320114,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0f316371-fcac-539b-b730-22a75301798a",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6158737,
+     "decayed": 0.1374967336085227,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1a2a5733-5a10-56b0-ad9f-95a2ba3b0db0",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.61542225,
+     "decayed": 0.4679386046892095,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    }
+   ]
+  },
+  {
+   "id": "H6",
+   "style": "intent",
+   "query": "I need to read a session's transcript JSONL file and detect which provider CLI wrote it before parsing the turns",
+   "need": "how Gobby decides a transcript's provider, and whether hand-rolled parsing is sanctioned",
+   "hits": [
+    {
+     "id": "f97e7e37-3c45-5904-9877-a4793afc8668",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7423203,
+     "decayed": 0.5517503240670504,
+     "fused": 0.03252247488101534,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b921d898-3553-5ae3-88dd-4f295c8fe011",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.71365625,
+     "decayed": 0.463927758290022,
+     "fused": 0.028177225029148854,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "3daa6a5d-83e5-551e-97da-b102beaee919",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7051382,
+     "decayed": 0.41902658454556285,
+     "fused": 0.015873015873015872,
+     "search_via": "semantic"
+    },
+    {
+     "id": "67216ada-e8f7-5b3c-84a8-bb0f0e7ef977",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7047464,
+     "decayed": 0.4180476478125663,
+     "fused": 0.02797067901234568,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "578b8217-c863-5b61-b5d4-e7c945210202",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6982198,
+     "decayed": 0.6892070073214749,
+     "fused": 0.030536130536130537,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "9d8d7be3-cad1-57cc-b9ee-269baae59c69",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.695464,
+     "decayed": 0.5275802957273744,
+     "fused": 0.04603771139765438,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "ec9f9b9e-c43c-5fde-9020-4f896c490ac7",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6944504,
+     "decayed": 0.24841406488708923,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1135dd46-3e2f-5343-8569-0450bcb2ed84",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6918097,
+     "decayed": 0.6367150187664873,
+     "fused": 0.030834914611005692,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "0a3068be-22e1-521d-b299-6680519b4232",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6901222,
+     "decayed": 0.4147413836123123,
+     "fused": 0.014492753623188406,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c9f5467c-ef08-5ee5-84b7-e68914ba96ee",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6875115,
+     "decayed": 0.15427415701205238,
+     "fused": 0.02857142857142857,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "9cbef626-2908-5ea2-b27b-ac9601f8f474",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.68740857,
+     "decayed": 0.43090260799062546,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "cace873a-cf2d-5735-9653-b1cb5a9ad6da",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6873138,
+     "decayed": 0.15379149456895752,
+     "fused": 0.025383141762452106,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "6310500c-02fc-5d5f-a8e3-627af9794929",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6825558,
+     "decayed": 0.49904999583106835,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "60b62b71-1fd1-5263-b77d-dffc743dbf33",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.68242323,
+     "decayed": 0.44426566533889134,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "a3269896-6993-5b3a-a54a-c741fe0bf05b",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.68184453,
+     "decayed": 0.010328665729346846,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "583c7ab1-a471-57b6-8774-63c0ab84fc76",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.68014556,
+     "decayed": 0.6766625266843946,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "bb88eea1-c86b-5d15-9461-73367b717cac",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6800097,
+     "decayed": 0.05122680896205953,
+     "fused": 0.024891774891774892,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "6d46835a-36b4-549d-9fc0-8663ec4c900f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6784997,
+     "decayed": 0.21232022613571686,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "7ce4e111-4ab0-5d61-b880-6ee4ef4ede01",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6761082,
+     "decayed": 0.40108273205308703,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "93be9b83-9f20-5b83-9d00-61f690dc0384",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.67385477,
+     "decayed": 0.39968106565188943,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "9519800c-2c52-561b-8e95-ececf0705b2e",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.66733515,
+     "decayed": 0.6323355194585057,
+     "fused": 0.027777777777777776,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "H7",
+   "style": "keyword",
+   "query": "AGY antigravity adapter hook integration",
+   "need": "AGY's native hook events and its fail-open contract",
+   "hits": [
+    {
+     "id": "02a919ca-ed1a-5e49-a4d5-3d72c67ae8d7",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7209583,
+     "decayed": 0.7110641873251121,
+     "fused": 0.045965088632953,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "374f608d-19c5-514e-8f14-08dc13872620",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6758151,
+     "decayed": 0.6665494352566996,
+     "fused": 0.048651507139079855,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "9d5aa860-b4a7-5597-92cd-c97a2d643d0f",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6392445,
+     "decayed": 0.37987458903878496,
+     "fused": 0.04712301587301587,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "7e08a956-fa43-5977-ae69-6654716e35ff",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6219004,
+     "decayed": 0.14892086013460282,
+     "fused": 0.015625,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c2a3fe82-d59d-5287-88a8-6f86f6f2a1a5",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6174572,
+     "decayed": 0.4098057998116454,
+     "fused": 0.040155422011962094,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "cda2f50a-db52-5c5e-813a-795712a6e093",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.5967696,
+     "decayed": 0.39736908457943,
+     "fused": 0.043935253310910236,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "cc95987b-22ed-5f5b-ae30-109260b98d44",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.5967374,
+     "decayed": 0.2034611541581845,
+     "fused": 0.039275170742454284,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "46fa1b6a-cf6b-55bf-9c7e-edf6c0b879c5",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.59205663,
+     "decayed": 0.3840287989865749,
+     "fused": 0.03818212844797114,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "b1aad18e-519e-5b78-8cba-a02d34352c06",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.5893957,
+     "decayed": 0.21050621242974574,
+     "fused": 0.02857142857142857,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "87612053-b4fd-522a-9569-1273bf87683d",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.58932936,
+     "decayed": 0.38753771671693166,
+     "fused": 0.0381808925844222,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "a39d0411-8671-505e-964e-c5768cdf606d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.58467865,
+     "decayed": 0.06731184524302691,
+     "fused": 0.02419816723940435,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "24214c83-8957-5c4e-872c-ea66f9e0e5ec",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.5814453,
+     "decayed": 0.3814187168160828,
+     "fused": 0.028850145288501453,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "91afd454-24b0-5448-80a2-9aeddbfd342a",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.5778706,
+     "decayed": 0.02123323533540233,
+     "fused": 0.028438886647841874,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "6310500c-02fc-5d5f-a8e3-627af9794929",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.5737848,
+     "decayed": 0.4195220234833748,
+     "fused": 0.0396901913184209,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "3b48eb5b-1b1b-5f4a-835a-22f96b1b576f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.5709193,
+     "decayed": 0.37482696282669875,
+     "fused": 0.035700954513944436,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "e4904c4b-426e-5403-ab7a-f830dcdde232",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.57017463,
+     "decayed": 0.4157209015646864,
+     "fused": 0.040717307383974055,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "77a59828-acc7-5eca-b0a8-4d0a7f1490cc",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.5690526,
+     "decayed": 0.4888790119710899,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b921d898-3553-5ae3-88dd-4f295c8fe011",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.56829655,
+     "decayed": 0.36943338146936944,
+     "fused": 0.04466027597918165,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "95f63a99-2811-530b-84c0-f37512af0d1d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.5675929,
+     "decayed": 0.3376719795272417,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e7f747b1-8257-58fa-83aa-f5d5b92e2f99",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.56754386,
+     "decayed": 0.3418929316319098,
+     "fused": 0.012345679012345678,
+     "search_via": "semantic"
+    },
+    {
+     "id": "533683a6-7209-5234-b2b1-0c9fb256c633",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.6215456,
+     "decayed": 0.41400471118432064,
+     "fused": 0.04592074592074592,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "T1",
+   "style": "intent",
+   "query": "I'm about to close this task and the close gate keeps rejecting it even though I ran the validation commands",
+   "need": "what makes a validation command get credited by the close gate",
+   "hits": [
+    {
+     "id": "fa4194a1-87ed-5637-aef3-be723eb1e2ad",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7516484,
+     "decayed": 0.48248385789416515,
+     "fused": 0.046035988394528854,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "108cfcf4-d307-5667-97ae-79804832d24e",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.74726444,
+     "decayed": 0.599848268027855,
+     "fused": 0.03128054740957967,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "31a73e88-a2fd-5504-bb23-ef0f0130032c",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7451299,
+     "decayed": 0.6572233160548129,
+     "fused": 0.028693528693528692,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "3d4ad376-fd1c-5488-84ff-55958f646ee1",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.74492943,
+     "decayed": 0.7152684384992377,
+     "fused": 0.032018442622950824,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c37771cd-b3e1-5232-b692-6a6bdcf0ba7f",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.74461466,
+     "decayed": 0.6245957434711277,
+     "fused": 0.04330582402871559,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "da7571f4-dd2f-51d6-88c6-6c61564380c4",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7445202999999999,
+     "decayed": 0.5539770194899971,
+     "fused": 0.04690554740957967,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "90a44391-42fb-542f-b63e-67cea68371b0",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7382082,
+     "decayed": 0.7378346978030645,
+     "fused": 0.030798389007344232,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "bada0783-fb95-5205-a9c2-430c4addfaee",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.71909994,
+     "decayed": 0.5628177817937846,
+     "fused": 0.025362318840579712,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "8e310ccd-55c8-5c78-9a14-35e7a7f43f78",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7174231,
+     "decayed": 0.5238849149474406,
+     "fused": 0.027443609022556388,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "bc42aff1-222f-53f2-b2c9-01f691e2f882",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.71492815,
+     "decayed": 0.6963166879555411,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "378504e1-adff-5611-ad48-adfc2e42ca11",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7062597,
+     "decayed": 0.5097889528552081,
+     "fused": 0.02817460317460317,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fa166712-2690-579d-987d-cef779ab8216",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.69569886,
+     "decayed": 0.21795883819649148,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e2ba43fd-e1f3-5b1d-b5a2-ee94d02e94c1",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6907687,
+     "decayed": 0.04098119664967444,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "02cf179a-7e00-568f-8931-438729b96f6b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6901282,
+     "decayed": 0.5702619447996448,
+     "fused": 0.04238500380438542,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "387d1561-14fc-5b1b-a52d-b07f6b369d95",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.68968046,
+     "decayed": 0.35641388832738696,
+     "fused": 0.024922600619195046,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "cfaee405-4de6-5d6f-85d0-312704fede66",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.68801755,
+     "decayed": 0.005897377445554872,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "d7f65147-3291-54ad-aa38-54757c419c49",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6852783,
+     "decayed": 0.4065382334268948,
+     "fused": 0.027313266443701224,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "124fb7fd-b785-551a-b3c9-3faf4260cbf5",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6850061,
+     "decayed": 0.6086440354665841,
+     "fused": 0.02804284323271665,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fdfde007-d098-57e2-8dd2-6f55092f16f1",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.681667,
+     "decayed": 0.1541455887702384,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1d9eef46-f85d-534b-93cf-73342d7ef3f1",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.67674005,
+     "decayed": 0.06660502379439018,
+     "fused": 0.012345679012345678,
+     "search_via": "semantic"
+    },
+    {
+     "id": "94c5736d-9e77-5e56-a85a-6fbeb8c12d63",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.7266444,
+     "decayed": 0.6685731917962117,
+     "fused": 0.04283088235294118,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "T2",
+   "style": "intent",
+   "query": "I'm going to spawn three worker agents into separate git worktrees and merge their branches back into the parent when they finish",
+   "need": "isolation-selection rules and the authoritative branch-landing tool",
+   "hits": [
+    {
+     "id": "c3f5e1b9-2ffc-5a37-b3e2-d17659bf68a6",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7593920000000001,
+     "decayed": 0.6375088135325353,
+     "fused": 0.02889344262295082,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "437e8c2b-3184-5784-962c-2bfaaceacf03",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.75544673,
+     "decayed": 0.5198393728804893,
+     "fused": 0.048651507139079855,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "d5da342e-b57e-528f-8e6d-d9b4f16f5fe6",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7526794699999999,
+     "decayed": 0.2687554037599299,
+     "fused": 0.029957522915269395,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "e93893f1-3fb3-56ae-8228-31c3aa83e6a0",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7415807,
+     "decayed": 0.23020774507435426,
+     "fused": 0.015625,
+     "search_via": "semantic"
+    },
+    {
+     "id": "22fc3869-ff2f-57b8-8583-c01430d22271",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7395556,
+     "decayed": 0.4594324561667876,
+     "fused": 0.029083245521601686,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ddc7fc76-76bc-5b60-834f-5a251d86e667",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7347047,
+     "decayed": 0.16612254335277504,
+     "fused": 0.02813852813852814,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c6eff715-c4e9-5f41-a243-a39763175ad6",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.73279727,
+     "decayed": 0.02409196836477943,
+     "fused": 0.027583600982429624,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "82d1699f-d8d4-5c15-8f3b-90aae069d661",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.730178,
+     "decayed": 0.22874829723326726,
+     "fused": 0.031099324975891997,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ad6c2edc-1af0-5006-8fa4-5efa48cceb0b",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.72938526,
+     "decayed": 0.07692040489807572,
+     "fused": 0.014492753623188406,
+     "search_via": "semantic"
+    },
+    {
+     "id": "d3217ac4-a4db-5a6b-8106-f0795850a3ec",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7264256500000001,
+     "decayed": 0.16250091902620267,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4ebc68e8-f580-5ef0-8185-fd91c2a3ce7f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7250195,
+     "decayed": 0.31054355229051706,
+     "fused": 0.029236022193768675,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "e32c0c31-e3df-5a59-8f63-0d24199d21bf",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7249216,
+     "decayed": 0.22720625996994623,
+     "fused": 0.027777777777777776,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "d31e7115-3849-5c36-a70d-8031198f2573",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7220301599999999,
+     "decayed": 0.5403532482707197,
+     "fused": 0.0261986301369863,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "be54b416-6c4e-5ae2-ab41-33479c9fa792",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7115607,
+     "decayed": 0.4221083024599578,
+     "fused": 0.025708635464733027,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b33adcc1-fed9-5396-8804-e550983a1e35",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.71081334,
+     "decayed": 0.537912731327635,
+     "fused": 0.023434343434343436,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f166c746-288f-5f7e-9ae0-c72c4839763e",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7095778,
+     "decayed": 0.4209332562083917,
+     "fused": 0.024146905725853096,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "30597902-10fc-5e4f-a2a9-0406bddf6f11",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7083344,
+     "decayed": 0.00839748615234452,
+     "fused": 0.024098124098124098,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "d9dd3d09-f061-5046-bad8-78b4bbc39f22",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.70723677,
+     "decayed": 0.027130813442029507,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "62d0fd1a-d01f-5451-8f59-8120f654de99",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7063448,
+     "decayed": 0.42892653369232053,
+     "fused": 0.024706420619185605,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "313719f1-6c33-5b8b-b1b2-a996699adcd7",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7060429,
+     "decayed": 0.45250067397033034,
+     "fused": 0.023863636363636365,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "d44bb52c-606a-5137-b349-1aadd47d539a",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.69843143,
+     "decayed": 0.46507481405786055,
+     "fused": 0.042885538234375443,
+     "search_via": null
+    },
+    {
+     "id": "f4cac245-10e8-5386-9bfe-1af393297aea",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6733497,
+     "decayed": 0.3994594570688779,
+     "fused": 0.028782894736842105,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "T3",
+   "style": "keyword",
+   "query": "stage manifest ordering gobby build dispatch stages",
+   "need": "how the current stage is resolved and when stage rows exist",
+   "hits": [
+    {
+     "id": "ece78b09-e3ef-5e26-99f2-a8786a8cd408",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.80832833,
+     "decayed": 0.48034651288224905,
+     "fused": 0.03131881575727918,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "bfabc795-163a-5f1e-9b18-e539d15abf2c",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7486518,
+     "decayed": 0.04556926475736946,
+     "fused": 0.02928692699490662,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "60428679-2a08-5ab2-9070-34c05b88527c",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7265494,
+     "decayed": 0.43087138553855237,
+     "fused": 0.03125763125763126,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "4644eba6-a35f-5d14-bf1d-d3713f62d9a2",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.72143465,
+     "decayed": 0.4286824759517564,
+     "fused": 0.015625,
+     "search_via": "semantic"
+    },
+    {
+     "id": "7019fb57-f9a8-5ac1-a1c0-7deb5fecf1dc",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.71865106,
+     "decayed": 0.42704750974051414,
+     "fused": 0.027884615384615386,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ee31bd59-9d14-5afd-a607-21bbc7b12ee6",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7141866,
+     "decayed": 0.47572441157520134,
+     "fused": 0.030776515151515152,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "adc3f5a2-03ed-50a2-bd2e-824e4f5c7288",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.70941937,
+     "decayed": 0.4208447594079991,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4e95be13-1a89-5c0e-a8f1-15df52ce8180",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7082075,
+     "decayed": 0.4208444978582898,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4d0d0325-0270-531c-b66e-50cbb734a541",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.70291626,
+     "decayed": 0.028688280892162403,
+     "fused": 0.02877846790890269,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ad72c465-6dea-51fb-a012-81ab07be25a2",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6995046,
+     "decayed": 0.025141293614330984,
+     "fused": 0.02694394213381555,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "3d3b86b7-422b-56bf-b33d-48739ddd69e4",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6979445,
+     "decayed": 0.6093870356635414,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f3cd21e6-c3ef-5e74-bcc8-6d82e7231b59",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.69656754,
+     "decayed": 0.4131794493981681,
+     "fused": 0.043980961648826006,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "9db092a6-cf3d-5013-9d8f-2f052098b6a1",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6959331,
+     "decayed": 0.04770389699355795,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "58c3d6b2-1b4f-50c0-a9e5-111b65c46957",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6951407,
+     "decayed": 0.03140854965489629,
+     "fused": 0.028665028665028666,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1281d55d-24df-5f2a-b91c-5fbb7f894431",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69473153,
+     "decayed": 0.4121037797393906,
+     "fused": 0.023537414965986395,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1128187a-61ac-527d-933a-09fa8c11e343",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69046,
+     "decayed": 0.3822297947790012,
+     "fused": 0.02786377708978328,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ea9b0b97-e149-5289-bbc0-13ac480823cf",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6859138,
+     "decayed": 0.03098134929247139,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "91be0895-9cd5-5231-81dd-6bb8749778f9",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.68523103,
+     "decayed": 0.030042012277430842,
+     "fused": 0.024184149184149184,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f2bfb9c6-98f6-5fee-b3ce-36608f65ed2d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6846745,
+     "decayed": 0.4068487481431127,
+     "fused": 0.02804284323271665,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "944d831c-4c12-5f2b-9fd8-a51f20d27811",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.6837223,
+     "decayed": 0.027830970581465907,
+     "fused": 0.028373015873015873,
+     "search_via": "semantic|keyword"
+    }
+   ]
+  },
+  {
+   "id": "T4",
+   "style": "keyword",
+   "query": "commit guard task tag in commit message enforcement",
+   "need": "the tag format that auto-links a commit and what guard can block it",
+   "hits": [
+    {
+     "id": "1e96fbc3-3b6d-57ff-8ada-38abdfbf2118",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6851388,
+     "decayed": 0.043069752238215325,
+     "fused": 0.01639344262295082,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f1a6ffa7-bf2c-5081-a707-365f0f42a86a",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6743142,
+     "decayed": 0.2111938340061823,
+     "fused": 0.016129032258064516,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2288f282-6202-5b77-b4b5-65c03f99b11b",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6739169,
+     "decayed": 0.21175108047718014,
+     "fused": 0.032266458495966696,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "7df22c7b-7bc5-5f19-8952-8babd11e31f4",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6642097000000001,
+     "decayed": 0.07222640801901596,
+     "fused": 0.031754032258064516,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "e46a2704-6e39-5c2c-b4fa-67b06a5a26ee",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6631725999999999,
+     "decayed": 0.5317686182684295,
+     "fused": 0.03076923076923077,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "bada0783-fb95-5205-a9c2-430c4addfaee",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6549219,
+     "decayed": 0.5125868816226021,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "7082f568-c99d-5698-9080-a5440abf4974",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6508270499999999,
+     "decayed": 0.1429918227577678,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f5e40789-53ce-53ae-97f0-54d7496a202c",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6436574,
+     "decayed": 0.07475483246571091,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1906132b-f7e9-5805-b420-462a38987f85",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6413988,
+     "decayed": 0.14484795057184685,
+     "fused": 0.014492753623188406,
+     "search_via": "semantic"
+    },
+    {
+     "id": "7ed219fc-a15f-5ff6-a981-e11ea9ee7fbf",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.64095634,
+     "decayed": 0.1987425295265864,
+     "fused": 0.030158730158730156,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1926de7c-d284-5c25-a11f-b9b0fb74dc24",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.63334596,
+     "decayed": 0.22091735159592607,
+     "fused": 0.029236022193768675,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "a7161dc4-bbca-5af2-bf01-5a98b0967b14",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.62844175,
+     "decayed": 0.06205893714800471,
+     "fused": 0.02487789987789988,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "089e1881-ebac-550a-84d5-dbf7c8c387ca",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6279792,
+     "decayed": 0.09396099013651772,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "df204fd5-ab90-5eb6-a04d-18b84d03bd1f",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.62736046,
+     "decayed": 0.03861623188990302,
+     "fused": 0.028438886647841874,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "21f66016-69c4-5278-a467-d202a6f3223e",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.62691885,
+     "decayed": 0.04947191559870905,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "28554f8c-9984-5b33-bdfd-1259a32b6070",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6268194,
+     "decayed": 0.06128199113308059,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "74dd5c00-c4a6-5094-ac7b-c1bf728d93e3",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6250135,
+     "decayed": 0.048034468084481245,
+     "fused": 0.025645240835114255,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "e2ba43fd-e1f3-5b1d-b5a2-ee94d02e94c1",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6234726,
+     "decayed": 0.03698867493710481,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e459e266-fde2-547f-a7c4-11dc1f8f8869",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.62339324,
+     "decayed": 0.48837931228450954,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "81a9d189-56bd-5fbe-8a05-8ae949ae52c4",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6231498,
+     "decayed": 0.06830097525111033,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "35bee2e3-0809-585d-a50e-8dda05240567",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.5909089,
+     "decayed": 0.5854761857483748,
+     "fused": 0.027212143650499815,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "T5",
+   "style": "intent",
+   "query": "I want to write a new workflow rule that blocks the Stop event and injects context back to the agent until it records validation evidence",
+   "need": "semantics of block and inject_context on Stop, and how stop gates decide they have evidence",
+   "hits": [
+    {
+     "id": "fa4194a1-87ed-5637-aef3-be723eb1e2ad",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.72348696,
+     "decayed": 0.4644061972890862,
+     "fused": 0.0479384003974168,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "be05ea84-1ff4-56af-90ea-087fbc650487",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.7139126999999998,
+     "decayed": 0.08092590575548671,
+     "fused": 0.016129032258064516,
+     "search_via": "semantic"
+    },
+    {
+     "id": "d7f65147-3291-54ad-aa38-54757c419c49",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7100926,
+     "decayed": 0.42125847454212917,
+     "fused": 0.042026862026862025,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "82bd8935-7649-5983-a308-b0984193f461",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.70827234,
+     "decayed": 0.0733413342281203,
+     "fused": 0.026263297872340427,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "7ecd350b-0dc0-5a32-ab6c-b3a3f9e09110",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7061943,
+     "decayed": 0.04733475097076844,
+     "fused": 0.015384615384615385,
+     "search_via": "semantic"
+    },
+    {
+     "id": "11f60ab7-b5f1-5914-92ae-0c60370a1ebe",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7061525600000002,
+     "decayed": 0.6337193711126133,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "90a44391-42fb-542f-b63e-67cea68371b0",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7046671,
+     "decayed": 0.7043093485853924,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "313fd4aa-d7a2-53bc-a1ac-abf20c0c1051",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7016843,
+     "decayed": 0.5247167031549835,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "6964f5e5-eb3b-5ffd-a21c-c8a453694a56",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6945107,
+     "decayed": 0.6392724685500332,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0467ec3c-a4ed-5f2c-b0e7-7010977fc120",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.69444954,
+     "decayed": 0.4218365882208765,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b1d3ea6e-2416-5f14-8e7d-cab840565344",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6944251,
+     "decayed": 0.6003345527308979,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "637ed1e5-2805-57c6-a10b-251245587b27",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.69208395,
+     "decayed": 0.6037520900417507,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e060758f-a9ac-5e14-83d2-17ec11d9ea3f",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6903760999999999,
+     "decayed": 0.5921824826593527,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "86465722-9d26-55ce-9425-abd65061862b",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6896635,
+     "decayed": 0.4186728683265836,
+     "fused": 0.029116045245077504,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "54966f3a-1328-5bbf-9d5a-438ce1fe128c",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6887224,
+     "decayed": 0.652292603409597,
+     "fused": 0.02921395544346364,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "ec2dc36a-d31c-5037-ac2f-aa69b91a7cfd",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6879434,
+     "decayed": 0.5025622439893094,
+     "fused": 0.027583600982429624,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ea69717c-7e0e-5bf1-b6a3-063a8d4373f1",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.68786687,
+     "decayed": 0.0058961152175255665,
+     "fused": 0.027884615384615386,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "3d07c6dd-25f7-5e55-bbd5-e5a548b91799",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6836865,
+     "decayed": 0.4663266843960567,
+     "fused": 0.012345679012345678,
+     "search_via": "semantic"
+    },
+    {
+     "id": "92602ff9-63b6-5bf8-9234-8cafcc250ca0",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6827409,
+     "decayed": 0.2071796097337867,
+     "fused": 0.012195121951219513,
+     "search_via": "semantic"
+    },
+    {
+     "id": "274dc6fd-468f-53c1-a235-87b40e142dc0",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6813164,
+     "decayed": 0.37642162023109743,
+     "fused": 0.012048192771084338,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2b29a00d-cfb1-5394-8ec3-8d8117492234",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67260075,
+     "decayed": 0.4082057626796852,
+     "fused": 0.03360079960689717,
+     "search_via": null
+    },
+    {
+     "id": "6b71a729-8a52-506c-a0de-e3d868856764",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6672159,
+     "decayed": 0.3447814583549978,
+     "fused": 0.03419398062255205,
+     "search_via": null
+    },
+    {
+     "id": "94c5736d-9e77-5e56-a85a-6fbeb8c12d63",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6962654,
+     "decayed": 0.6405553478413875,
+     "fused": 0.029910714285714284,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "T6",
+   "style": "intent",
+   "query": "I'm about to expand my approved plan file into child leaf tasks under an epic and start dispatching them",
+   "need": "the ordered expansion procedure, accepted categories, and whether dispatch may follow",
+   "hits": [
+    {
+     "id": "c9629485-9d69-52b9-b038-14ff123eb286",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.71139294,
+     "decayed": 0.6078153122674385,
+     "fused": 0.03278688524590164,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ad72c465-6dea-51fb-a012-81ab07be25a2",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7060556,
+     "decayed": 0.025376716380887367,
+     "fused": 0.03128054740957967,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "4430ab84-a499-5fdf-8a56-d65217e4836b",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6925912,
+     "decayed": 0.4107906187788185,
+     "fused": 0.04559979182930003,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "4644eba6-a35f-5d14-bf1d-d3713f62d9a2",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.68113995,
+     "decayed": 0.40473854390621594,
+     "fused": 0.029513888888888888,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "4a2f4e60-f4d5-51a2-bedf-69637a15ed56",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6808419,
+     "decayed": 0.22668062838908562,
+     "fused": 0.03125763125763126,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f950ecb4-cf0f-54bb-b840-cc858f42633a",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6782905,
+     "decayed": 0.4023720119439326,
+     "fused": 0.027346637102734665,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f3cd21e6-c3ef-5e74-bcc8-6d82e7231b59",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.6777493,
+     "decayed": 0.4020166464867469,
+     "fused": 0.025451688923802042,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "8f00d9fe-4277-5288-a04a-ce5811388f22",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67236805,
+     "decayed": 0.1848583882302316,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f3e64ab4-c53e-53ac-9c80-48488d182d55",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6710527,
+     "decayed": 0.3980790944762261,
+     "fused": 0.024492753623188406,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "0267f262-3c58-5ef1-9b7b-a931af2926c0",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6644153,
+     "decayed": 0.31279727507488403,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "6a8030fa-ca4a-5fdf-8e81-563c70613093",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.66367936,
+     "decayed": 0.23691570696595515,
+     "fused": 0.03021353930031804,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "6c1cce47-994c-5330-8c99-c1e5e307c786",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.66215605,
+     "decayed": 0.39388779792645034,
+     "fused": 0.02797339593114241,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "8e975a96-ffe8-5832-aee6-7a28c08d5a87",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65798366,
+     "decayed": 0.5226672503640994,
+     "fused": 0.026856524873828405,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "e070a542-1ce5-5f55-9bf9-68c532c66e36",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65736765,
+     "decayed": 0.21408146477856335,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "628d740f-ba80-561a-9264-023efc3c0c0b",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6572164,
+     "decayed": 0.40886653310952153,
+     "fused": 0.02782608695652174,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "292b458c-ae73-54c3-8ecd-73aa5a6b30ed",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.64905334,
+     "decayed": 0.6461558246924615,
+     "fused": 0.02402745995423341,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "21799deb-59b5-5a45-886b-0f7ae00751eb",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6483413,
+     "decayed": 0.15390031054683095,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "5861ffb3-fd8d-57a4-8fb8-1b2a0247d94d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6468493,
+     "decayed": 0.17642955112691175,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "59385f3f-e819-5c0d-bfdf-c9a7fe914451",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.64344716,
+     "decayed": 0.20149680129834385,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "69599b16-a4ab-5567-a209-402e5e7602b7",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.64183986,
+     "decayed": 0.21370415131395548,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "96abd67e-74df-5661-8546-3d72bec7e2c1",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.63473654,
+     "decayed": 0.6344079105812989,
+     "fused": 0.03897058823529412,
+     "search_via": null
+    },
+    {
+     "id": "b45ae9da-cce0-5bdb-b91d-6948aa7ef3b1",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6274638,
+     "decayed": 0.17163775098296372,
+     "fused": 0.03987944539397319,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "T7",
+   "style": "keyword",
+   "query": "cross-session message delivery between agent sessions send_message inbox",
+   "need": "send_message target and authorization rules and when a message reaches the model",
+   "hits": [
+    {
+     "id": "e8d7cb8a-5292-5f61-babf-4340c14ade78",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.77621496,
+     "decayed": 0.6666009681322295,
+     "fused": 0.03278688524590164,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "d883cafa-100f-5e90-8330-c50dd88fd9e9",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7454737,
+     "decayed": 0.7072065219401017,
+     "fused": 0.04762704813108039,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "8b5835e9-4ccf-5bdb-ab04-cbad7eae456b",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7272272,
+     "decayed": 0.6624083491058544,
+     "fused": 0.04599076949620428,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "b16c17c5-e881-556e-bf8c-48e01ec765cd",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7204618,
+     "decayed": 0.5392322025770468,
+     "fused": 0.032018442622950824,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "f257e8c9-8c11-5641-a297-f583266f3d62",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.71917474,
+     "decayed": 0.22505960117067325,
+     "fused": 0.030309988518943745,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "d4b1ccc8-6326-5877-881a-7bd634ebfe17",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.71347266,
+     "decayed": 0.1590815357678106,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "cc4cb25a-ba58-541e-bd9e-457824f11823",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.70025456,
+     "decayed": 0.5741450352422757,
+     "fused": 0.03937379293158536,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c678180b-dab0-5bb1-9ce4-7e859169a27e",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6998738,
+     "decayed": 0.41513918860594873,
+     "fused": 0.03983533711992259,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "01307e9d-16b1-5d6e-9def-a6839c734656",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6847195,
+     "decayed": 0.39713635169276756,
+     "fused": 0.027313266443701224,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "3cf7db95-8b92-5285-9433-217c4b6a264e",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6819893,
+     "decayed": 0.1494589871158018,
+     "fused": 0.02459499263622975,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "0807d692-8001-5e22-9b7e-0b874628c952",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67648363,
+     "decayed": 0.22557139627841802,
+     "fused": 0.027783137179239824,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "5abd4207-6c51-5f9d-bf52-343930e7e36b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67483926,
+     "decayed": 0.11092029078800555,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "93c6939b-b5d5-59fa-bf91-a448ffe5f6d0",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.664281,
+     "decayed": 0.1475374383052276,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e91f3eb2-8995-53be-baf9-28c3a55da7f7",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.66150624,
+     "decayed": 0.6089082511572791,
+     "fused": 0.0288981288981289,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "f71268af-ddfe-5c20-83ed-843db5e03016",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.66107893,
+     "decayed": 0.6469264412885115,
+     "fused": 0.02684684684684685,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "2570506d-26e1-520a-9bc8-e8b7c7426bdf",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6578294,
+     "decayed": 0.41881878037155634,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0d981e67-67b7-5434-bb6e-82746d7a3bbb",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6561327,
+     "decayed": 0.07262203423417338,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f97e7e37-3c45-5904-9877-a4793afc8668",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65569186,
+     "decayed": 0.4873596686987716,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "183aca31-361f-5333-8f93-a49eb3e215ea",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65424186,
+     "decayed": 0.3880856971849982,
+     "fused": 0.024152480721664482,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "12e83d60-f3da-5272-9113-8adc72d533da",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6530727,
+     "decayed": 0.03086264186846417,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    }
+   ]
+  },
+  {
+   "id": "I1",
+   "style": "intent",
+   "query": "I changed gobby-core so I'll rebuild gcode and copy the new binary into ~/.gobby/bin",
+   "need": "installing a rebuilt binary is a staged, signed, whole-set promotion with an identity stamp",
+   "hits": [
+    {
+     "id": "8303e661-6a0b-5296-b050-43cb694aa2e9",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.8252125,
+     "decayed": 0.7580617232478878,
+     "fused": 0.03278688524590164,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "18e85f24-2a7e-5e63-b605-58468b7d007e",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7930199,
+     "decayed": 0.6066528745312468,
+     "fused": 0.04443844214642177,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "ba45d7a1-6ef6-57da-be5d-7c5dda924e70",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.78663385,
+     "decayed": 0.46659849643614887,
+     "fused": 0.046451914098972924,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "b8048fc3-566c-5cff-9e8b-2c043884d666",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.78525114,
+     "decayed": 0.7430533191914664,
+     "fused": 0.046724324975892004,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c81175e4-8228-5867-bfff-09f23312da6d",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.783738,
+     "decayed": 0.3527464239195009,
+     "fused": 0.015384615384615385,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1c3d3c89-6cf9-5c89-b3d3-7e91dcf1f5a2",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7837124,
+     "decayed": 0.5993628835922693,
+     "fused": 0.04164724164724165,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "90a67a22-7758-52e6-a8a6-e3073b566f13",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.782181,
+     "decayed": 0.5991888993637613,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "ae51ebe3-e9ef-54cc-8295-dab9e237fcd9",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7784432,
+     "decayed": 0.6535691485558893,
+     "fused": 0.027205882352941177,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "ce5c5559-ecff-5cc4-8b36-8975e450c964",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7776002,
+     "decayed": 0.2437067284914651,
+     "fused": 0.030621785881252923,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1cf6feb6-d7a2-58aa-ad2c-c5132f1cf7a3",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.76945007,
+     "decayed": 0.5837591922663621,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "34f6314e-41b4-5f9a-aaa5-e0ef4a1b035a",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7592356,
+     "decayed": 0.10702046319752083,
+     "fused": 0.026279628993473032,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "64442781-9a8e-59ba-9a59-f82021f09326",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7522991,
+     "decayed": 0.4462365780820725,
+     "fused": 0.03680664687736453,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "959d8494-f381-5e04-b42c-a99d3cad0114",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7497534,
+     "decayed": 0.6436234223142033,
+     "fused": 0.024809741248097414,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "57f76b4a-541c-58ed-8c0c-31ae071b76bc",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.74542487,
+     "decayed": 0.5702048804303069,
+     "fused": 0.027402402402402402,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "2d8f9401-07b5-599a-b171-9d36422e4918",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7399552,
+     "decayed": 0.276974693410611,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "a8824b52-02bc-57ba-925b-3a6e5d586e9a",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7365351000000001,
+     "decayed": 0.5587911341566156,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "47019dba-42ca-559f-8562-f51e204d36d2",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7336428,
+     "decayed": 0.4362089964549209,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "93688c49-da3b-53fb-a83b-cf6953c68b5f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7333895,
+     "decayed": 0.56116149803115,
+     "fused": 0.0418303929970947,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "d2fdf54c-66d7-50df-a188-6b35e3f4b963",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.73336446,
+     "decayed": 0.3377774948144134,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "dcbf8a41-6e75-5eb0-bffa-12f07d0b7458",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.73238736,
+     "decayed": 0.5869367161263757,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "6ef1d89c-0853-5b5d-a7c6-8a1513e60933",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.73214924,
+     "decayed": 0.5598004776676525,
+     "fused": 0.040470679012345676,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "I2",
+   "style": "intent",
+   "query": "I'm about to restart the gobby daemon after changing the database schema so the new code takes effect",
+   "need": "restart after a schema change is gated by schema identity and must be announced and timed",
+   "hits": [
+    {
+     "id": "f71268af-ddfe-5c20-83ed-843db5e03016",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.778001,
+     "decayed": 0.7613448266900937,
+     "fused": 0.03252247488101534,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1feddefc-eeba-51c9-a113-869431f63b49",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.77607673,
+     "decayed": 0.5935811206153915,
+     "fused": 0.016129032258064516,
+     "search_via": "semantic"
+    },
+    {
+     "id": "57f76b4a-541c-58ed-8c0c-31ae071b76bc",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.77075577,
+     "decayed": 0.5895812249774467,
+     "fused": 0.029030910609857977,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fcb9361f-c3f0-5657-9914-c667b7decd35",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.76391566,
+     "decayed": 0.7235278817809978,
+     "fused": 0.03125,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f71dbc04-cc57-5905-a205-961dee65a096",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.76150143,
+     "decayed": 0.238537239647617,
+     "fused": 0.015384615384615385,
+     "search_via": "semantic"
+    },
+    {
+     "id": "8303e661-6a0b-5296-b050-43cb694aa2e9",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7582242500000002,
+     "decayed": 0.6965242628371571,
+     "fused": 0.031024531024531024,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "49cf2d3f-36a1-50a6-b079-497d1a42a2b0",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7548377,
+     "decayed": 0.3557568406174443,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c77512d6-5f19-521f-8979-49232f39df3f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7541659,
+     "decayed": 0.4582548773291994,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "91ec3d77-00ef-5fb6-993d-97b4dc20c80e",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7513623,
+     "decayed": 0.48681139938915713,
+     "fused": 0.026120660599932594,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "921f56c4-8773-58ce-b7fd-25e8d1a628eb",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7483499,
+     "decayed": 0.02461123672851712,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "556a153f-107c-5e3a-9340-cd50e2489219",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.7480757,
+     "decayed": 0.5722129198221765,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "728c2ca0-aab0-5fe3-9266-8d4701bb1391",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.74725664,
+     "decayed": 0.6098877668887882,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "20386752-0a1a-5001-af52-90a96ec7ac34",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7469134,
+     "decayed": 0.33835934466348194,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2818e2a2-d39c-5b3c-ac8b-6a98c881720d",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.74517137,
+     "decayed": 0.6112693026249933,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b112c78f-2afd-5804-9ae0-6407be99cc87",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.74492,
+     "decayed": 0.6399559427983016,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "aa8f3cf6-c66a-5a73-849e-a96847a3d62f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.74393666,
+     "decayed": 0.5071970813222151,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2bda7181-cecf-5514-bcaa-acc54eda2832",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.74010026,
+     "decayed": 0.09426347914438377,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "88c0810e-c04b-5f6c-ad83-8f46c1ee9837",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.73920965,
+     "decayed": 0.3565723568855829,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "eb61aee9-58be-5d93-9997-45d44169886b",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7388035,
+     "decayed": 0.3481998131500731,
+     "fused": 0.026547116736990152,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "9ca82b73-900d-57f1-8f5c-c5694a1ac14e",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.73770845,
+     "decayed": 0.7365915308761095,
+     "fused": 0.023138297872340424,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ddda30b5-af9c-5a0b-b243-e529c2737e56",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.72672576,
+     "decayed": 0.5016955423844327,
+     "fused": 0.02603648424543947,
+     "search_via": null
+    },
+    {
+     "id": "ef41bb87-05f5-59f8-be63-0f483bcc749c",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.683188,
+     "decayed": 0.40529861699318137,
+     "fused": 0.025122549019607844,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "I3",
+   "style": "intent",
+   "query": "I'm adding a new field to the Gobby config models and registry, so I need to update the runtime config contract",
+   "need": "a new config field must be registered and the contract carrier regenerated",
+   "hits": [
+    {
+     "id": "cf04e425-4119-5d2d-adcd-367e097ebd05",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.76201123,
+     "decayed": 0.45208075570022677,
+     "fused": 0.04351148587002633,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "aa8f3cf6-c66a-5a73-849e-a96847a3d62f",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.751751,
+     "decayed": 0.5125244664408816,
+     "fused": 0.016129032258064516,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f08120b7-20ec-5d91-8d4a-81e2deada4b2",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.73733443,
+     "decayed": 0.1757658524869631,
+     "fused": 0.026625704045058884,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "9490ccb8-2905-5b07-92d3-c82895951efa",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.73200345,
+     "decayed": 0.5137098832432826,
+     "fused": 0.03125,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "e92cc5f9-f2f1-599b-bf6c-e94cdeb338e9",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.72910863,
+     "decayed": 0.29686307964267167,
+     "fused": 0.04738666351569577,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "47019dba-42ca-559f-8562-f51e204d36d2",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.72708863,
+     "decayed": 0.4323116340117399,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "40e24d9e-ec19-5a89-8eee-b9f10af92fe3",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.72624946,
+     "decayed": 0.22740754866870747,
+     "fused": 0.014925373134328358,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2818e2a2-d39c-5b3c-ac8b-6a98c881720d",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.722511,
+     "decayed": 0.5926805726808452,
+     "fused": 0.028991596638655463,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "224a6d9c-2910-5e2b-b080-ca3aa7a0d0c1",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7087362,
+     "decayed": 0.4211670578101266,
+     "fused": 0.041549030679465464,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "648551a2-c6dc-5e89-9d88-9f7b994a3b9a",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7079761,
+     "decayed": 0.46169210223825563,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "baf98cb8-5df7-5c76-84e7-abe6c88f5aee",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.70679253,
+     "decayed": 0.5408793796757966,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "959d8494-f381-5e04-b42c-a99d3cad0114",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7065044,
+     "decayed": 0.6064959127294052,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "a894afae-2634-558d-a5a7-a4178a68ce0c",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.70475924,
+     "decayed": 0.0634126797722322,
+     "fused": 0.024007908487501763,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "8303e661-6a0b-5296-b050-43cb694aa2e9",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7041809,
+     "decayed": 0.646878359898139,
+     "fused": 0.02702702702702703,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "2dd75446-6888-5014-9514-31ea1c4cd142",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.70271957,
+     "decayed": 0.41688169803519465,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b38881b5-16d8-5a9c-a07a-58659dfe0f9d",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.70137024,
+     "decayed": 0.3623366217995887,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "9c039008-5299-574f-91b6-f3b322d3e348",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6987137,
+     "decayed": 0.41435701153566595,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "32d643c5-4797-598c-bd34-fb24d3a1fa5c",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6986126,
+     "decayed": 0.04920911559594655,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f146cafe-bb35-5dd5-9718-bbebe266455f",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6980609999999999,
+     "decayed": 0.5995603959260528,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4430ab84-a499-5fdf-8a56-d65217e4836b",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.69802564,
+     "decayed": 0.4140132315032118,
+     "fused": 0.02638888888888889,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "2d91fee5-40f8-587f-9a1b-9931fa187432",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.697521,
+     "decayed": 0.5290476721135764,
+     "fused": 0.027579737335834898,
+     "search_via": null
+    },
+    {
+     "id": "ec78e992-345b-5739-b6b0-ffdd7acc9927",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69158006,
+     "decayed": 0.0681573851326828,
+     "fused": 0.038199508560558024,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "I4",
+   "style": "intent",
+   "query": "I'm going to run the pytest suite locally on this machine while the real daemon and hub database are running",
+   "need": "local pytest must use an isolated database and is protected from the live hub",
+   "hits": [
+    {
+     "id": "8264a7bb-02ff-5860-8646-3a9a24f93a9f",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.731205,
+     "decayed": 0.4337311566666393,
+     "fused": 0.03028233151183971,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c6f40bcd-3221-5016-98d7-c106066e8b40",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.72551155,
+     "decayed": 0.6047075486668927,
+     "fused": 0.03252247488101534,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "224a3d8e-e261-55c0-9493-e4c6f297e045",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.70560384,
+     "decayed": 0.4843989167238537,
+     "fused": 0.029709507042253523,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b5b528fc-a115-5add-afd9-6926325f15a4",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7028465,
+     "decayed": 0.005764247153333629,
+     "fused": 0.030309988518943745,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f1289299-d55b-5e99-a774-36760c639a0d",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.687809,
+     "decayed": 0.40874890607404224,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "a02233a2-2d8f-5004-89c6-5a2d6bcd7a09",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6840136,
+     "decayed": 0.49490506940865897,
+     "fused": 0.02512945476698142,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b65f5887-1a37-5c92-b901-6d7b206cc260",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.67661786,
+     "decayed": 0.08804309067447277,
+     "fused": 0.02661064425770308,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c0f5e657-64dd-5a66-9c13-651182576de4",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.67478704,
+     "decayed": 0.1728432765999167,
+     "fused": 0.027650648360030512,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f42307b4-6890-59fc-8faf-708ee1db3240",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6743406,
+     "decayed": 0.43714913857610216,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "aa72a7df-c4d3-5a9e-ab35-b0382673b85a",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.67361677,
+     "decayed": 0.3995645617133276,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f146cafe-bb35-5dd5-9718-bbebe266455f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67033947,
+     "decayed": 0.5757503381010439,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c762df81-35bd-5ff0-9d26-c718c4655ada",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.668869,
+     "decayed": 0.40612348643958557,
+     "fused": 0.026356857985087564,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "70099c0b-1e5e-5577-bc75-dea113908cd9",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.66625375,
+     "decayed": 0.3951055977858283,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e5344602-da97-5cfb-a2a3-71524e83b26d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.66318357,
+     "decayed": 0.3934696020457556,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "aa8f3cf6-c66a-5a73-849e-a96847a3d62f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6606338,
+     "decayed": 0.45040294836413847,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "728c2ca0-aab0-5fe3-9266-8d4701bb1391",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.659384,
+     "decayed": 0.5381684009999328,
+     "fused": 0.02475171886936593,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "167b8199-f045-57ca-a90f-588f41e3172f",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.65842295,
+     "decayed": 0.39056750706773197,
+     "fused": 0.02292152292152292,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "aa303449-a4ba-5897-b3c7-a8d38b8b3e4e",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.65797895,
+     "decayed": 0.408897030679437,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "d3ff0753-f347-5e5c-89e3-99ec7a0724d9",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6571958,
+     "decayed": 0.5859797665918259,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b3cb09c1-cabb-53ea-ac03-972638de3edd",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6566611,
+     "decayed": 0.20666776676382195,
+     "fused": 0.012345679012345678,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1feddefc-eeba-51c9-a113-869431f63b49",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7100283500000001,
+     "decayed": 0.5428639626305102,
+     "fused": 0.030158730158730156,
+     "search_via": null
+    },
+    {
+     "id": "631f26d3-e1c2-58e3-aa73-7f5df0cf468d",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.579219,
+     "decayed": 0.5780953060820586,
+     "fused": 0.03057889822595705,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "I5",
+   "style": "keyword",
+   "query": "MCP proxy schema lease progressive tool discovery",
+   "need": "what a schema lease covers, what grants one, and who is exempt",
+   "hits": [
+    {
+     "id": "0b4c62d6-c738-5c1e-8997-069517dc3566",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7844530999999999,
+     "decayed": 0.5843455002191807,
+     "fused": 0.03278688524590164,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "1e3259fa-7530-56fd-bd05-1d30086e0838",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7458575,
+     "decayed": 0.44242198348446393,
+     "fused": 0.030834914611005692,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "ff600a62-12f6-5068-a25d-79bab7296408",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6948612,
+     "decayed": 0.1622963727936391,
+     "fused": 0.03149801587301587,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c13ec7d9-c1f6-5202-b417-07efef639b55",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.6788671999999999,
+     "decayed": 0.5056935232854237,
+     "fused": 0.031754032258064516,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "06635b3c-0baa-52de-81cf-08117854d945",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.67571074,
+     "decayed": 0.4103223440759077,
+     "fused": 0.0288981288981289,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "f0c7093f-def2-541e-b5a4-208d9be621b1",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.66792506,
+     "decayed": 0.60064090316874,
+     "fused": 0.015151515151515152,
+     "search_via": "semantic"
+    },
+    {
+     "id": "95c19455-e610-58db-a1a2-f70dcee6c879",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.66765577,
+     "decayed": 0.4685513759082297,
+     "fused": 0.029211087420042643,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "3981bf02-1e4b-5b90-a715-82111c1d6b79",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.66015834,
+     "decayed": 0.4100937962517051,
+     "fused": 0.029857397504456328,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "52ea92c2-9849-5a8b-afb4-aaa28464f3f3",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.654789,
+     "decayed": 0.5623616251616786,
+     "fused": 0.014492753623188406,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4d03509a-57f8-5b48-aee0-ba6b4eaa34c6",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6537471,
+     "decayed": 0.4339694539320521,
+     "fused": 0.04163235138844895,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "df9a7ca1-260b-5aeb-bd69-2e4aad071628",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.65108496,
+     "decayed": 0.5591803602689099,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "707a1909-aed7-565d-a011-94613bcec5ce",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6491039,
+     "decayed": 0.2419837734992653,
+     "fused": 0.02758751902587519,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "3d8fee9e-d616-5d89-a336-fd7cea4d3302",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6475784,
+     "decayed": 0.4263632759374591,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "df204fd5-ab90-5eb6-a04d-18b84d03bd1f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6444746,
+     "decayed": 0.03966953871324364,
+     "fused": 0.027598020555767037,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "de6f17ed-5d02-5455-9bbc-4ec267692673",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6418488,
+     "decayed": 0.4688410895004055,
+     "fused": 0.02871794871794872,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "728c2ca0-aab0-5fe3-9266-8d4701bb1391",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6379988,
+     "decayed": 0.5207142142009856,
+     "fused": 0.02452153110047847,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "7b2637bb-6eb6-59bf-bfe7-59078277c51b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6369876,
+     "decayed": 0.4149181132548852,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c6432d0d-9fed-5635-ab5e-a50daa0d8e37",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.63571143,
+     "decayed": 0.4735463322440493,
+     "fused": 0.044139328577792,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "adedd970-018a-5d6e-a379-65a014f188f3",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6351198,
+     "decayed": 0.37778411552728325,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "adee6f7c-233e-50e8-9e5b-309e0260feb9",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6317096,
+     "decayed": 0.3747265718916203,
+     "fused": 0.023369565217391305,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "437ae4e9-827d-5f28-b6d2-59a225953e5f",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.6243808,
+     "decayed": 0.6214931681128529,
+     "fused": 0.037214362613534696,
+     "search_via": null
+    },
+    {
+     "id": "69d8e5b2-4a57-5333-98a9-9ce98bd21295",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.62053525,
+     "decayed": 0.46218324456732857,
+     "fused": 0.04054901215805471,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "I6",
+   "style": "keyword",
+   "query": "tool result offloading result_id get_tool_result threshold",
+   "need": "when a result is offloaded, when it is not stored, and how to page it back",
+   "hits": [
+    {
+     "id": "fec5d734-5d7f-54f4-a9c0-1c6fee9136cb",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7762251,
+     "decayed": 0.5939500992304371,
+     "fused": 0.047169957774465976,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "a4261f14-e790-5bb8-a567-b01f3ad9c287",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7202321,
+     "decayed": 0.22923811019402512,
+     "fused": 0.016129032258064516,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c6432d0d-9fed-5635-ab5e-a50daa0d8e37",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7192225,
+     "decayed": 0.5357541228778459,
+     "fused": 0.04839549075403121,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "e08ff442-7748-5380-a2fa-7ac08fdcee9f",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7186134,
+     "decayed": 0.3519808127327739,
+     "fused": 0.04814747488101534,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "480ac804-52da-5e93-b954-65ee5a182774",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7105341,
+     "decayed": 0.10623259457031606,
+     "fused": 0.03125763125763126,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "9894f619-ba07-5705-b2af-634a9e6a6020",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.70497394,
+     "decayed": 0.4182189400148623,
+     "fused": 0.04462063757838406,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "02c11027-63c6-5080-bd2f-b6a4e7300057",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7033284,
+     "decayed": 0.1940556360598809,
+     "fused": 0.03007688828584351,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "7a601bfd-c0a6-5ec1-834b-3c3597c52563",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7000044,
+     "decayed": 0.4845749054757419,
+     "fused": 0.04421977124183006,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "49ab32eb-2e1a-5c19-a90f-781e817fa691",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6949908,
+     "decayed": 0.34264398800282625,
+     "fused": 0.029418126757516764,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "0f8bd0d2-183b-5721-862d-b0be3ee13842",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.68886226,
+     "decayed": 0.6524231881061145,
+     "fused": 0.028370221327967807,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "6964f5e5-eb3b-5ffd-a21c-c8a453694a56",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6885342,
+     "decayed": 0.6337692143258294,
+     "fused": 0.03811196699648693,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "f4e99605-1994-5f22-bb5e-224a7db22d9f",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.68735653,
+     "decayed": 0.24695994616688144,
+     "fused": 0.02976190476190476,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "c444b26a-c4bb-5aa5-928a-9239865521d8",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.68462634,
+     "decayed": 0.16295299043283024,
+     "fused": 0.023698630136986303,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "d39ec121-e528-5b40-9919-4df008d2dacb",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.68039715,
+     "decayed": 0.4047790423670469,
+     "fused": 0.024039829302987197,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "236e05cc-e24d-50f8-a5b4-9c7780f57bfe",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.67965883,
+     "decayed": 0.10164650556692725,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "11f60ab7-b5f1-5914-92ae-0c60370a1ebe",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6778662,
+     "decayed": 0.60833245433349,
+     "fused": 0.025978407557354925,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "adee6f7c-233e-50e8-9e5b-309e0260feb9",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6743617,
+     "decayed": 0.4000273722361421,
+     "fused": 0.023296291337528453,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "1d0b47af-0a11-5aa0-80ed-988f5746eb08",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6739061,
+     "decayed": 0.6263420430308462,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "3de105fa-bbfe-5c6f-8eec-7eefa5afadb6",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6738289,
+     "decayed": 0.012659616184479177,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "94901c12-bf71-572d-a424-7d14fc6a17e2",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.67322236,
+     "decayed": 0.5942286294007316,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    }
+   ]
+  },
+  {
+   "id": "I7",
+   "style": "keyword",
+   "query": "PostgreSQL hub migration numbering and schema head",
+   "need": "where hub schema lives, who may apply DDL, and how to choose the next migration number",
+   "hits": [
+    {
+     "id": "b112c78f-2afd-5804-9ae0-6407be99cc87",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7792855,
+     "decayed": 0.6694776405469686,
+     "fused": 0.04428113811946486,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "f1a2fbbf-c223-5caa-9b55-428af317b06d",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.76359934,
+     "decayed": 0.7232650494724434,
+     "fused": 0.04787506400409626,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "9839a0b7-f5fc-5fd9-ba80-1f44c0482d17",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7475103,
+     "decayed": 0.5672561268677616,
+     "fused": 0.029957522915269395,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c6f40bcd-3221-5016-98d7-c106066e8b40",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7337827700000001,
+     "decayed": 0.6116006788994821,
+     "fused": 0.02580128205128205,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "f4ea9539-a786-57e2-ba9d-c34e6453033c",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7187814,
+     "decayed": 0.42637131208168694,
+     "fused": 0.027056277056277056,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "2cc64106-c0f4-5955-b247-9c1e635e9e10",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7152494,
+     "decayed": 0.19047042249171617,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "25a60724-ea7b-5b93-a0f7-760af38310c5",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.71474195,
+     "decayed": 0.22377743321378918,
+     "fused": 0.014492753623188406,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b6416695-a111-5141-b5aa-366093005787",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.71414566,
+     "decayed": 0.43611765074481623,
+     "fused": 0.027984344422700584,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "793053e3-177a-5e55-9c36-f66bd6e97f65",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7102929,
+     "decayed": 0.3344259604154966,
+     "fused": 0.026742734890354787,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fc668c97-d83a-5ce7-b57a-8042cbde2f1b",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7058288,
+     "decayed": 0.5656911474269183,
+     "fused": 0.03961489898989899,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "a9699646-62f9-5a77-ba0c-b517d84447b8",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.6972442,
+     "decayed": 0.6877128063746252,
+     "fused": 0.02546333601933924,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "dcee3fb0-9c92-5742-a202-d2f0c7d0af88",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6946033,
+     "decayed": 0.2073309031954722,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "4be744d3-0eb5-51af-ad86-419b9a050a89",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.69433224,
+     "decayed": 0.35888224634322924,
+     "fused": 0.02946236559139785,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "51bb9f4f-05ca-5ac4-8f3a-79c007bcd20c",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69351876,
+     "decayed": 0.22053614622931392,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "40d26a78-c737-5768-83e3-6fd98eb95a04",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.685448,
+     "decayed": 0.4670173375810451,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "bc14bfbf-9c28-5a99-8776-d17dee32b4cc",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6853771,
+     "decayed": 0.4065468859811845,
+     "fused": 0.023458810692853244,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "6617ed92-f5cd-54fb-8920-127fd080c985",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.68528944,
+     "decayed": 0.6545642662901509,
+     "fused": 0.026547116736990152,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "70099c0b-1e5e-5577-bc75-dea113908cd9",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.68465656,
+     "decayed": 0.4060183665155843,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0b0d8b22-382b-534e-a4e9-e72e04d2f729",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6830624,
+     "decayed": 0.24389659825578072,
+     "fused": 0.012195121951219513,
+     "search_via": "semantic"
+    },
+    {
+     "id": "998e3888-3dde-5858-8549-2f31003026eb",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.67633677,
+     "decayed": 0.2086709486715152,
+     "fused": 0.012048192771084338,
+     "search_via": "semantic"
+    },
+    {
+     "id": "65f6e128-5eef-58d4-a2ab-7bd7f857a35e",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.7371307000000001,
+     "decayed": 0.5589472467903682,
+     "fused": 0.030330882352941176,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "M1",
+   "style": "keyword",
+   "query": "droid SessionEnd hook teardown enqueue-only exit code",
+   "need": "why spawned droid runs produce no SessionEnd teardown (the #22410 evidence case)",
+   "hits": [
+    {
+     "id": "97ca4732-fe2f-5928-b31a-f5d468d64447",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7293819,
+     "decayed": 0.4431829071333802,
+     "fused": 0.03131881575727918,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "717b9191-46e9-580c-a33b-62e2aab5c2e7",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.69598615,
+     "decayed": 0.5842605166329823,
+     "fused": 0.0304147465437788,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "91afd454-24b0-5448-80a2-9aeddbfd342a",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.69363433,
+     "decayed": 0.025486683527698402,
+     "fused": 0.046671404880360104,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c4b613c1-bd11-5a66-a140-56c6486633b1",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.68896395,
+     "decayed": 0.4470455695114651,
+     "fused": 0.028612012987012988,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "b580a16f-4c0a-5aa1-acbf-b2ec304b6298",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.6881971,
+     "decayed": 0.16394165960171578,
+     "fused": 0.04509412242686891,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "46fa1b6a-cf6b-55bf-9c7e-edf6c0b879c5",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.68508476,
+     "decayed": 0.4443672307979759,
+     "fused": 0.029857397504456328,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fdc7fb5c-22ea-58ce-903b-a30cffe121a7",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6693947,
+     "decayed": 0.21008112174913,
+     "fused": 0.02821939586645469,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "002c13ae-178f-5a21-a848-85cd7a99aaa2",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.66857886,
+     "decayed": 0.574306542256403,
+     "fused": 0.04675081813931744,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "0f316371-fcac-539b-b730-22a75301798a",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6631587,
+     "decayed": 0.14805225456652946,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b9eb3e98-6a1c-5401-bd83-8cf432aae358",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.66315234,
+     "decayed": 0.484484001776355,
+     "fused": 0.027417840375586856,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "9220d1a0-6d9b-584c-9a1f-6542cff8cdea",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6584593,
+     "decayed": 0.22379716696369337,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1f2c14aa-78bd-5081-9b88-baede3bd6b9a",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65699136,
+     "decayed": 0.17388416096669135,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "7a3fa61b-c5c2-5a79-9cfb-7316d1558a44",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6568876,
+     "decayed": 0.6151368574759224,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "b079542b-bb61-5e5b-9e01-cc6851e3852b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6568434,
+     "decayed": 0.0876339347763711,
+     "fused": 0.025503573749187783,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "039316e6-680e-5568-9f93-aedb28b6d9d5",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.65567225,
+     "decayed": 0.4247773419447064,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c3abb06e-39a0-534f-a42a-787607b88094",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6486142,
+     "decayed": 0.3849023479043851,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "8886954c-9f0f-55ec-b969-fced7df3143f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6481644,
+     "decayed": 0.496367811966813,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "2e0ccb48-0235-5040-b648-9a3e292b37c5",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6463294,
+     "decayed": 0.3836463053542014,
+     "fused": 0.023026315789473686,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "fa9ff965-af00-539e-87eb-0ca484c3381d",
+     "grade": "A",
+     "grader": "opus-subagent",
+     "undecayed": 0.64226025,
+     "decayed": 0.19397269891700272,
+     "fused": 0.012345679012345678,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f4e24cdb-8756-5b7e-8f9a-0e0f3d3c7fda",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6417432,
+     "decayed": 0.21851690341719457,
+     "fused": 0.02690100430416069,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "4a67bde7-de86-540d-b0ad-0fa73ce71e02",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.65871394,
+     "decayed": 0.37314309391116235,
+     "fused": 0.0411010325393887,
+     "search_via": null
+    },
+    {
+     "id": "71ecb55a-5939-5191-82d5-e9613f0dea30",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6162306,
+     "decayed": 0.4818955223512878,
+     "fused": 0.029030910609857977,
+     "search_via": null
+    }
+   ]
+  },
+  {
+   "id": "M2",
+   "style": "keyword",
+   "query": "memory search result ordering fused RRF score versus cosine similarity sort key",
+   "need": "the score-axis contract for memory search ordering",
+   "hits": [
+    {
+     "id": "d2ae6cc2-e0cd-5898-a286-9708f7514106",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7886349,
+     "decayed": 0.4690808429633384,
+     "fused": 0.04817150063051703,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "edd1e453-d68a-5933-83f3-62d9d1488782",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.698475,
+     "decayed": 0.4763284006725334,
+     "fused": 0.0304147465437788,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "63498675-0936-50de-9baf-cb4f8a9154a7",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.68320096,
+     "decayed": 0.4150383402644972,
+     "fused": 0.03149801587301587,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "7fdb369c-294d-5a2e-9ba0-9a1e963a49b4",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.6756192,
+     "decayed": 0.21478192840267984,
+     "fused": 0.031754032258064516,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "92e7346d-8f29-5cb4-a335-bb295700747b",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.65566516,
+     "decayed": 0.39809489046518964,
+     "fused": 0.015384615384615385,
+     "search_via": "semantic"
+    },
+    {
+     "id": "6a85ec83-d01b-58af-b071-9be20c61fa9c",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.65284216,
+     "decayed": 0.45813069913143595,
+     "fused": 0.044290028665028666,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "c9b68310-cadd-5426-a554-46d3df181958",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6526573,
+     "decayed": 0.3076276867112181,
+     "fused": 0.030798389007344232,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "49525dbc-70a6-5c49-9f6d-192a29b59ead",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.64752936,
+     "decayed": 0.38421631763925324,
+     "fused": 0.014705882352941176,
+     "search_via": "semantic"
+    },
+    {
+     "id": "86fa0615-b177-5536-b62d-164408a09851",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6464572,
+     "decayed": 0.3836061654365429,
+     "fused": 0.04039695694674657,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "12be4c5b-88c9-5cff-a860-910e48c1e2aa",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.6459638,
+     "decayed": 0.1318612480110217,
+     "fused": 0.030679156908665108,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "fa01817a-e7a6-5955-b11a-37e265c5fd38",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6353786,
+     "decayed": 0.15108224210379523,
+     "fused": 0.014084507042253521,
+     "search_via": "semantic"
+    },
+    {
+     "id": "e6f8d94c-5ffa-5194-9efa-4c77c91bdf8b",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6342998,
+     "decayed": 0.48542441476495235,
+     "fused": 0.028814262023217248,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "0ddeaec0-9889-5386-a5d5-0e7696411300",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6300611,
+     "decayed": 0.14978858542347226,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "7540057f-2e82-5db2-810a-5ff831c4d1b4",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6273704,
+     "decayed": 0.14867382971280765,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "a71672de-4bb3-5277-b692-c903073396f1",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.624696,
+     "decayed": 0.07649095986670512,
+     "fused": 0.013333333333333334,
+     "search_via": "semantic"
+    },
+    {
+     "id": "75ea12d1-5b68-54ad-9d43-ef662665b635",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6244432,
+     "decayed": 0.5241568176047066,
+     "fused": 0.027242401779095628,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "b9df33c7-18df-585b-b14d-5d6330d1c773",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.62359554,
+     "decayed": 0.14964718450587808,
+     "fused": 0.012987012987012988,
+     "search_via": "semantic"
+    },
+    {
+     "id": "432fe22d-ada5-53e2-8c57-0541ece7cc18",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6183243,
+     "decayed": 0.6179078977135536,
+     "fused": 0.04013377926421405,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "d61d9d57-94b2-5591-bd89-51d7d8b44bb2",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.6167937,
+     "decayed": 0.045440829213213595,
+     "fused": 0.027364110201042444,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "7ec52444-951e-5331-ab45-87c29163feff",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6165031,
+     "decayed": 0.3667870158669813,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    }
+   ]
+  },
+  {
+   "id": "M3",
+   "style": "intent",
+   "query": "rule mcp_call inject_result delivers tool result into agent context additionalContext which hook events",
+   "need": "how an inline mcp_call result reaches agent context and which hook events carry it",
+   "hits": [
+    {
+     "id": "adee6f7c-233e-50e8-9e5b-309e0260feb9",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.827613,
+     "decayed": 0.4909342091092719,
+     "fused": 0.01639344262295082,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0f8bd0d2-183b-5721-862d-b0be3ee13842",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7401069,
+     "decayed": 0.7009557912862823,
+     "fused": 0.03200204813108039,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "d82cd5f1-e40d-5456-a940-9099db4cca95",
+     "grade": "B",
+     "grader": "planning-cohort",
+     "undecayed": 0.7367795,
+     "decayed": 0.011237938068324717,
+     "fused": 0.03200204813108039,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c6432d0d-9fed-5635-ab5e-a50daa0d8e37",
+     "grade": "C",
+     "grader": "planning-cohort",
+     "undecayed": 0.7345285,
+     "decayed": 0.5471546404805899,
+     "fused": 0.04407051282051282,
+     "search_via": "semantic|graph|keyword"
+    },
+    {
+     "id": "e21978ee-2f13-5664-980f-010f3c772052",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7317366999999999,
+     "decayed": 0.16708879814196187,
+     "fused": 0.026373626373626377,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "04ae2792-6577-5985-8d4f-3d3967ebc9f9",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7280924,
+     "decayed": 0.5706110124644805,
+     "fused": 0.02749719416386083,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "c13ec7d9-c1f6-5202-b417-07efef639b55",
+     "grade": "D",
+     "grader": "planning-cohort",
+     "undecayed": 0.7267517,
+     "decayed": 0.5413617910286581,
+     "fused": 0.025342039800995024,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "677e9367-55be-5290-9e67-db4766e8ed20",
+     "grade": "A",
+     "grader": "planning-cohort",
+     "undecayed": 0.7177013,
+     "decayed": 0.7156080249770199,
+     "fused": 0.031099324975891997,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "480ac804-52da-5e93-b954-65ee5a182774",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7175087,
+     "decayed": 0.107275170542226,
+     "fused": 0.02919863597612958,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "16783cb6-9d8b-5855-8175-f6dad69a3003",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7174621,
+     "decayed": 0.033905340209423,
+     "fused": 0.014285714285714285,
+     "search_via": "semantic"
+    },
+    {
+     "id": "14d84ab8-fc4b-5fc8-a995-3ebbf9751275",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.7173741,
+     "decayed": 0.42553625988936855,
+     "fused": 0.024393785392768985,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "e91f3eb2-8995-53be-baf9-28c3a55da7f7",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.71469367,
+     "decayed": 0.6578636930828706,
+     "fused": 0.013888888888888888,
+     "search_via": "semantic"
+    },
+    {
+     "id": "1e3259fa-7530-56fd-bd05-1d30086e0838",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.70752376,
+     "decayed": 0.4196824848766489,
+     "fused": 0.0136986301369863,
+     "search_via": "semantic"
+    },
+    {
+     "id": "956957d3-a69e-5339-9c1b-374bdd96ab0d",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.7065052,
+     "decayed": 0.24103135239374082,
+     "fused": 0.013513513513513514,
+     "search_via": "semantic"
+    },
+    {
+     "id": "d8531116-1782-5b51-8e71-ea932a354d7f",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.7047507,
+     "decayed": 0.42722337965750595,
+     "fused": 0.029726775956284153,
+     "search_via": "semantic|graph"
+    },
+    {
+     "id": "abb90581-68e7-5427-a26a-38b3bec3e4cb",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.70331824,
+     "decayed": 0.022215654599922707,
+     "fused": 0.013157894736842105,
+     "search_via": "semantic"
+    },
+    {
+     "id": "cfaee405-4de6-5d6f-85d0-312704fede66",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.6979925,
+     "decayed": 0.005982836763879241,
+     "fused": 0.02668564312399929,
+     "search_via": "semantic|keyword"
+    },
+    {
+     "id": "11f60ab7-b5f1-5914-92ae-0c60370a1ebe",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.69641185,
+     "decayed": 0.6249745586348145,
+     "fused": 0.01282051282051282,
+     "search_via": "semantic"
+    },
+    {
+     "id": "f4e99605-1994-5f22-bb5e-224a7db22d9f",
+     "grade": "C",
+     "grader": "opus-subagent",
+     "undecayed": 0.694781,
+     "decayed": 0.24962700802848703,
+     "fused": 0.012658227848101266,
+     "search_via": "semantic"
+    },
+    {
+     "id": "0258dd08-78dd-5c72-9a26-35b6af2994f6",
+     "grade": "D",
+     "grader": "opus-subagent",
+     "undecayed": 0.6945079,
+     "decayed": 0.42201250470237106,
+     "fused": 0.0125,
+     "search_via": "semantic"
+    },
+    {
+     "id": "c6edaee8-c9ec-5ca1-9666-f850d66f88b5",
+     "grade": "B",
+     "grader": "opus-subagent",
+     "undecayed": 0.685118,
+     "decayed": 0.5101959040218034,
+     "fused": 0.04177721919657404,
+     "search_via": null
+    }
+   ]
+  }
+ ]
+}
