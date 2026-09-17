@@ -529,9 +529,9 @@ def is_validation_command(command: Any) -> bool:
     return _config_is_validation_command(command)
 
 
-def wrapped_validation_command(command: Any) -> str | None:
+def wrapped_validation_command(command: Any, project_path: str | None = None) -> str | None:
     """Expose the close gate's credit verdict to before-tool rule conditions."""
-    return _tasks_wrapped_validation_command(command)
+    return _tasks_wrapped_validation_command(command, project_path)
 
 
 def is_task_complete(task: Any) -> bool:

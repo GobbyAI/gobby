@@ -413,6 +413,13 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         raise ValueError(f"Unsupported expression type: {type(node).__name__}")
 
 
+def _get_project_path(context: dict[str, Any]) -> str | None:
+    """Return the rule context's project checkout path when it carries one."""
+    project = context.get("project")
+    path = project.get("path") if isinstance(project, Mapping) else None
+    return path if isinstance(path, str) and path else None
+
+
 def _get_variables(context: dict[str, Any]) -> dict[str, Any]:
     """Extract variables dict from context, handling both dict and SimpleNamespace."""
     variables = context.get("variables", context.get("vars", {}))
@@ -560,7 +567,9 @@ def build_condition_helpers(
             "tdd_gate_open": tdd_gate_open,
             "is_gobby_build_command": is_gobby_build_command,
             "is_validation_command": is_validation_command,
-            "wrapped_validation_command": wrapped_validation_command,
+            "wrapped_validation_command": lambda command: wrapped_validation_command(
+                command, _get_project_path(ctx)
+            ),
             "paths_written_this_turn": lambda paths: paths_written_this_turn(
                 paths, _get_variables(ctx).get("turn_written_paths")
             ),
