@@ -491,8 +491,11 @@ class WorkspaceManager:
             raise WorkspaceNotFoundError(f"No workspace, tab, or pane has id {row_id}")
         return WorkspaceTarget(node, workspace, tab, pane)
 
-    def create(self, machine_id: str, name: str = DEFAULT_WORKSPACE_NAME) -> Workspace:
-        """Return the node's workspace named ``name``, creating it with the lowest free ``w#``."""
+    def create(self, machine_id: str, name: str = DEFAULT_WORKSPACE_NAME) -> tuple[Workspace, bool]:
+        """Return the node's workspace named ``name`` and whether this call created it.
+
+        A missing workspace is created with the lowest free ``w#``.
+        """
         machine_id, clean_name = _uuid(machine_id), _workspace_name(name)
         with self.db.transaction() as conn:
             _lock_rows(conn, "machines", machine_id)
@@ -500,6 +503,7 @@ class WorkspaceManager:
                 "SELECT * FROM workspaces WHERE machine_id = %s AND name = %s",
                 (machine_id, clean_name),
             ).fetchone()
+            created = row is None
             if row is None:
                 row = conn.execute(
                     "INSERT INTO workspaces (id, machine_id, ref, name) VALUES (%s, %s, %s, %s) "
@@ -511,7 +515,7 @@ class WorkspaceManager:
                         clean_name,
                     ),
                 ).fetchone()
-        return Workspace.from_row(_required(row, f"Workspace {clean_name!r}"))
+        return Workspace.from_row(_required(row, f"Workspace {clean_name!r}")), created
 
     def list_for_node(self, machine_id: str) -> list[Workspace]:
         rows = self.db.fetchall(

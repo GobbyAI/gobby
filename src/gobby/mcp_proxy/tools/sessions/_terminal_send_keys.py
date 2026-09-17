@@ -94,7 +94,12 @@ def _authorize_send_keys_target(
             "error_code": "send_keys_caller_not_found",
         }
     caller = scope.caller
-    assert caller is not None
+    if caller is None:
+        return None, {
+            "success": False,
+            "error": f"Send_keys caller session {caller_ref} not found",
+            "error_code": "send_keys_caller_not_found",
+        }
 
     try:
         target_id = session_manager.resolve_session_reference(session_ref, caller.project_id)

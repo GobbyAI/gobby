@@ -83,12 +83,13 @@ def test_refs_are_lowest_free_and_reused(
     node = manager.resolve_node(None)
     project_id = sample_project["id"]
 
-    default = manager.create(node.id)
-    scratch = manager.create(node.id, "scratch")
-    assert (default.name, default.ref, scratch.ref) == ("default", 1, 2)
-    assert manager.create(node.id).id == default.id
+    default, created = manager.create(node.id)
+    scratch, _created = manager.create(node.id, "scratch")
+    assert created and (default.name, default.ref, scratch.ref) == ("default", 1, 2)
+    existing, created_again = manager.create(node.id)
+    assert (existing.id, created_again) == (default.id, False)
     manager.close(default.id)
-    assert manager.create(node.id, "notes").ref == 1
+    assert manager.create(node.id, "notes")[0].ref == 1
 
     first = manager.create_tab(scratch.id, pane_id=_pane_id(), project_id=project_id)
     second = manager.create_tab(scratch.id, pane_id=_pane_id(), project_id=project_id)
@@ -113,7 +114,7 @@ def test_workspace_manager_resolves_every_reference_form(
     manager: WorkspaceManager, sample_project: dict[str, Any]
 ) -> None:
     node = manager.resolve_node(None)
-    workspace = manager.create(node.id, "main")
+    workspace, _created = manager.create(node.id, "main")
     created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=sample_project["id"])
     tab, pane = created.tabs[0], created.panes[0]
     node_ref = f"n{node.ref}"
@@ -144,7 +145,7 @@ def test_pane_and_tab_mutations_rewrite_layouts(
 ) -> None:
     node = manager.resolve_node(None)
     project_id = sample_project["id"]
-    workspace = manager.create(node.id)
+    workspace, _created = manager.create(node.id)
     created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=project_id)
     tab, root = created.tabs[0], created.panes[0]
     assert tab.layout == _leaf(root.id)
@@ -172,7 +173,7 @@ def test_pane_and_tab_mutations_rewrite_layouts(
     assert [row.layout for row in removed.tabs] == [_leaf(root.id)]
     assert manager.set_pane_terminal(other.id, terminal.id, owns_terminal=True) is None
 
-    target = manager.create(node.id, "target")
+    target, _created = manager.create(node.id, "target")
     existing = manager.create_tab(target.id, pane_id=_pane_id(), project_id=project_id).tabs[0]
     moved = manager.move_tab(tab.id, workspace_id=target.id, position=0)
     moved_tab = next(row for row in moved.tabs if row.id == tab.id)
@@ -189,7 +190,7 @@ def test_workspace_rename_focus_hints_and_close(
     manager: WorkspaceManager, sample_project: dict[str, Any]
 ) -> None:
     node = manager.resolve_node(None)
-    workspace = manager.create(node.id)
+    workspace, _created = manager.create(node.id)
     manager.create(node.id, "taken")
     created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=sample_project["id"])
     tab, pane = created.tabs[0], created.panes[0]
@@ -247,7 +248,7 @@ def test_sweep_dead_panes_prunes_layouts(
 ) -> None:
     terminals = TerminalManager(temp_db)
     project_id = sample_project["id"]
-    workspace = manager.create(manager.resolve_node(None).id)
+    workspace, _created = manager.create(manager.resolve_node(None).id)
 
     live = _terminal(terminals, project_id, live=True)
     exited = _terminal(terminals, project_id, live=True)

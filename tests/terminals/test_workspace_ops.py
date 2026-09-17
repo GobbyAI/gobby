@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import itertools
 import uuid
-from collections.abc import Awaitable, Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
+from psycopg import OperationalError
 
 from gobby.agents.constants import (
     GOBBY_NODE_ID,
@@ -34,7 +36,14 @@ from gobby.storage.terminals import (
     native_locator_key,
     tmux_locator_key,
 )
-from gobby.storage.workspaces import LayoutChange, WorkspaceManager, layout_pane_ids
+from gobby.storage.workspaces import (
+    LayoutChange,
+    WorkspaceManager,
+    WorkspaceNotFoundError,
+    layout_pane_ids,
+)
+from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.terminals.actor_scope import ActorScope
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import PreparedSpawn, TerminalRuntimeRegistry, TerminalSpawnRequest
 from gobby.terminals.workspace_ops import WorkspaceEvent, WorkspaceOpError, WorkspaceOps
@@ -46,6 +55,7 @@ from tests.terminals.fakes import FakeRuntime, runtime_registry
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
+REMOTE_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000002"
 OPERATOR = "operator"
 ERROR_CODES = {"not_found", "invalid_ref", "invalid_op", "terminal_failed", "busy", "forbidden"}
 _TMUX_PANE_NUMBERS = itertools.count(1)
@@ -372,20 +382,22 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     spawns = h.native.create_calls
 
     for actor in ("nobody", f"session:{outsider.id}", f"session:{autonomous.id}"):
-        refused: list[Coroutine[Any, Any, object]] = [
-            h.ops.pane_read(actor, pane.id),
-            h.ops.pane_send_text(actor, pane.id, "ls", submit=True),
-            h.ops.pane_send_keys(actor, pane.id, "enter", literal=False),
-            h.ops.pane_wait_for_output(actor, pane.id, "x", timeout_seconds=0),
-            h.ops.pane_split(actor, pane.id, "horizontal"),
-            h.ops.tab_create(actor, workspace.id, h.project_id),
-            h.ops.tab_create(actor, workspace.id, h.project_id, terminal_id=agent.id),
-            h.ops.pane_close(actor, pane.id),
-            h.ops.tab_close(actor, tab.id),
-            h.ops.workspace_close(actor, workspace.id),
+        # Each op's coroutine is built inside its own _raises call, so a failed
+        # assertion leaves no un-awaited coroutine behind.
+        refused: list[Callable[[], Awaitable[object]]] = [
+            partial(h.ops.pane_read, actor, pane.id),
+            partial(h.ops.pane_send_text, actor, pane.id, "ls", submit=True),
+            partial(h.ops.pane_send_keys, actor, pane.id, "enter", literal=False),
+            partial(h.ops.pane_wait_for_output, actor, pane.id, "x", timeout_seconds=0),
+            partial(h.ops.pane_split, actor, pane.id, "horizontal"),
+            partial(h.ops.tab_create, actor, workspace.id, h.project_id),
+            partial(h.ops.tab_create, actor, workspace.id, h.project_id, terminal_id=agent.id),
+            partial(h.ops.pane_close, actor, pane.id),
+            partial(h.ops.tab_close, actor, tab.id),
+            partial(h.ops.workspace_close, actor, workspace.id),
         ]
         for operation in refused:
-            await _raises("forbidden", operation)
+            await _raises("forbidden", operation())
     assert h.native.create_calls == spawns
     assert h.native.write_log == [] and h.native.terminated_host_ids == []
     assert [row.id for row in h.workspaces.list_panes(workspace.id)] == [pane.id]
@@ -518,3 +530,280 @@ async def test_ops_publish_events_and_raise_typed_errors(harness: _Harness) -> N
     )
     assert [event["kind"] for event in h.events[published:]] == ["pane.removed", "tab.removed"]
     assert {failure.code for failure in failures} == ERROR_CODES
+
+
+async def test_split_spawn_timeout_rolls_back_and_leaves_workspace_closable(
+    harness: _Harness,
+) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    panes = [row.id for row in h.workspaces.list_panes(workspace.id)]
+
+    # A wedged host never answers the spawn; the bounded wait fails the split.
+    h.native.spawn_hold = asyncio.Event()
+    with patch("gobby.terminals.workspace_ops.PANE_SPAWN_TIMEOUT_SECONDS", 0.05):
+        wedged = await _raises(
+            "terminal_failed",
+            asyncio.wait_for(h.ops.pane_split(OPERATOR, first.id, "horizontal"), timeout=1.0),
+        )
+    assert "spawn timed out" in str(wedged)
+    minted = h.native.last_request
+    assert minted is not None
+    assert [row.id for row in h.workspaces.list_panes(workspace.id)] == panes
+    assert h.events[-1]["kind"] == "pane.removed"
+
+    # The rolled-back pane is no longer in flight, so the workspace closes.
+    closed = await h.ops.workspace_close(OPERATOR, workspace.id)
+    assert closed.id == workspace.id
+
+    # Once the host answers, the timeout cleanup kills the late spawn.
+    h.native.terminate_host_started.clear()
+    h.native.spawn_hold.set()
+    await asyncio.wait_for(h.native.terminate_host_started.wait(), timeout=1.0)
+    assert ("ht-1", str(minted.terminal_id)) in h.native.terminated_host_ids
+
+
+async def test_close_ops_kill_owned_terminals_and_release_adopted_ones(
+    harness: _Harness,
+) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    external = _live_terminal(h.terminals, h.project_id, "native")
+    agent = _live_terminal(h.terminals, h.project_id, "tmux")
+
+    closing = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    first = closing.panes[0]
+    second = (await h.ops.pane_split(OPERATOR, first.id, "horizontal")).panes[0]
+    await h.ops.pane_split(OPERATOR, first.id, "vertical", terminal_id=external.id)
+    await h.ops.tab_close(OPERATOR, closing.tabs[0].id)
+
+    kept = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    third = kept.panes[0]
+    await h.ops.pane_split(OPERATOR, third.id, "horizontal", terminal_id=agent.id)
+    await h.ops.workspace_close(OPERATOR, workspace.id)
+
+    for owned_pane in (first, second, third):
+        owned = h.terminals.get(str(owned_pane.terminal_id))
+        assert owned is not None and owned.state == "exited"
+        assert ("ht-1", owned.id) in h.native.terminated_host_ids
+    for adopted in (external, agent):
+        released = h.terminals.get(adopted.id)
+        assert released is not None and released.state == "live"
+    assert all(host_epoch != "adopted" for _host, host_epoch in h.native.terminated_host_ids)
+    assert h.tmux.killed_ids == set()
+
+    # A kill that fails after the rows are gone orphans the terminal, so it stays
+    # listed and killable instead of live behind no pane.
+    retry = await h.ops.workspace_create(OPERATOR, "retry")
+    failing = (await h.ops.tab_create(OPERATOR, retry.id, h.project_id)).panes[0]
+    h.native.terminate_host_failures = [ConnectionError("gterm host unavailable")]
+    await h.ops.pane_close(OPERATOR, failing.id)
+    assert h.workspaces.list_panes(retry.id) == []
+    orphaned = h.terminals.get(str(failing.terminal_id))
+    assert orphaned is not None and orphaned.state == "orphaned"
+
+
+async def test_cross_workspace_pane_move_publishes_each_workspace_its_own_rows(
+    harness: _Harness,
+) -> None:
+    h = harness
+    home = await h.ops.workspace_create(OPERATOR, "home")
+    away = await h.ops.workspace_create(OPERATOR, "away")
+    staying = (await h.ops.tab_create(OPERATOR, home.id, h.project_id)).panes[0]
+    moving = (await h.ops.pane_split(OPERATOR, staying.id, "horizontal")).panes[0]
+    destination = await h.ops.tab_create(OPERATOR, away.id, h.project_id)
+    away_tab, away_pane = destination.tabs[0], destination.panes[0]
+
+    def published() -> list[tuple[str, str, list[str], list[str]]]:
+        return [
+            (
+                event["kind"],
+                event["workspace_id"],
+                [row["id"] for row in event["tabs"]],
+                [row["id"] for row in event["panes"]],
+            )
+            for event in h.events
+        ]
+
+    h.events.clear()
+    await h.ops.pane_move(OPERATOR, moving.id, away_tab.id, beside=away_pane.id)
+    assert published() == [
+        ("pane.moved", away.id, [away_tab.id], [moving.id]),
+        ("pane.moved", home.id, [staying.tab_id], [moving.id]),
+    ]
+
+    # Moving the last pane away removes the emptied tab from its workspace only.
+    h.events.clear()
+    await h.ops.pane_move(OPERATOR, staying.id, away_tab.id, beside=moving.id)
+    assert published() == [
+        ("pane.moved", away.id, [away_tab.id], [staying.id]),
+        ("pane.moved", home.id, [], [staying.id]),
+        ("tab.removed", home.id, [staying.tab_id], []),
+    ]
+
+
+async def test_workspace_create_announces_only_a_new_row(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR, "announced")
+    assert [event["kind"] for event in h.events] == ["workspace.created"]
+    pane = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    assert h.terminals.mark_exited(str(pane.terminal_id)) is not None
+
+    h.events.clear()
+    existing = await h.ops.workspace_create(OPERATOR, "announced")
+    assert existing.id == workspace.id
+    assert [event["kind"] for event in h.events] == ["pane.removed", "tab.removed"]
+
+
+async def test_rollback_retries_a_concurrent_move_and_types_storage_failures(
+    harness: _Harness,
+) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    panes = [row.id for row in h.workspaces.list_panes(workspace.id)]
+    remove_pane = h.workspaces.remove_pane
+    attempts: list[str] = []
+
+    def moved_once(pane_id: str) -> LayoutChange:
+        attempts.append(pane_id)
+        if len(attempts) == 1:
+            raise WorkspaceNotFoundError("A pane moved to another tab concurrently; retry")
+        return remove_pane(pane_id)
+
+    h.native.fail_spawn = True
+    with patch.object(h.workspaces, "remove_pane", side_effect=moved_once):
+        await _raises("terminal_failed", h.ops.pane_split(OPERATOR, first.id, "horizontal"))
+    assert len(attempts) == 2 and len(set(attempts)) == 1
+    assert [row.id for row in h.workspaces.list_panes(workspace.id)] == panes
+
+    # A storage failure during the rollback is still a typed terminal_failed; the
+    # unbound pane it leaves is no longer in flight, so the next op's sweep prunes it.
+    with patch.object(h.workspaces, "remove_pane", side_effect=OperationalError("db gone")):
+        lost = await _raises("terminal_failed", h.ops.pane_split(OPERATOR, first.id, "horizontal"))
+    assert "db gone" in str(lost)
+    assert len(h.workspaces.list_panes(workspace.id)) == len(panes) + 1
+    await h.ops.pane_rename(OPERATOR, first.id, "main")
+    assert [row.id for row in h.workspaces.list_panes(workspace.id)] == panes
+
+
+async def test_remote_workspace_refuses_mutations_and_is_never_swept(harness: _Harness) -> None:
+    h = harness
+    remote = LocalMachineManager(h.db).upsert_seen(
+        REMOTE_MACHINE_ID, TEST_USER_ID, hostname="remote-node"
+    )
+    assert remote.ref is not None
+    workspace, _created = h.workspaces.create(remote.id, "remote")
+    # The remote node's split is mid-spawn: the pane has no terminal yet and only
+    # that node's daemon holds it in flight.
+    spawning = h.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+    )
+    tab, pane = spawning.tabs[0], spawning.panes[0]
+    local = await h.ops.workspace_create(OPERATOR)
+    local_created = await h.ops.tab_create(OPERATOR, local.id, h.project_id)
+    local_tab, local_pane = local_created.tabs[0], local_created.panes[0]
+    h.events.clear()
+    spawns = h.native.create_calls
+
+    refused: list[Callable[[], Awaitable[object]]] = [
+        partial(h.ops.workspace_create, OPERATOR, "remote", node="remote-node"),
+        partial(h.ops.workspace_rename, OPERATOR, f"n{remote.ref}:w{workspace.ref}", "renamed"),
+        partial(h.ops.workspace_close, OPERATOR, workspace.id),
+        partial(
+            h.ops.workspace_set_focus_hints,
+            OPERATOR,
+            workspace.id,
+            project_id=h.project_id,
+            tab=tab.id,
+            pane=pane.id,
+        ),
+        partial(h.ops.tab_create, OPERATOR, workspace.id, h.project_id),
+        partial(h.ops.tab_rename, OPERATOR, tab.id, "renamed"),
+        partial(h.ops.tab_move, OPERATOR, tab.id, 0),
+        partial(h.ops.tab_close, OPERATOR, tab.id),
+        partial(h.ops.pane_split, OPERATOR, pane.id, "horizontal"),
+        partial(h.ops.pane_swap, OPERATOR, pane.id, pane.id),
+        partial(h.ops.pane_resize, OPERATOR, pane.id, 0.4),
+        partial(h.ops.pane_rename, OPERATOR, pane.id, "renamed"),
+        partial(h.ops.pane_close, OPERATOR, pane.id),
+        partial(h.ops.pane_read, OPERATOR, pane.id),
+        partial(h.ops.pane_send_text, OPERATOR, pane.id, "ls"),
+        # A local row cannot be moved into another node's workspace either.
+        partial(h.ops.pane_move, OPERATOR, local_pane.id, tab.id),
+        partial(h.ops.tab_move, OPERATOR, local_tab.id, 0, workspace=workspace.id),
+    ]
+    for operation in refused:
+        refusal = await _raises("invalid_op", operation())
+        assert f"n{remote.ref}" in str(refusal)
+    assert [row.id for row in h.workspaces.list_panes(workspace.id)] == [pane.id]
+    assert [row.id for row in h.workspaces.list_tabs(local.id)] == [local_tab.id]
+    assert h.native.create_calls == spawns
+    assert h.events == []
+
+
+async def test_worktree_tabs_and_splits_spawn_in_the_worktree_checkout(
+    harness: _Harness,
+) -> None:
+    h = harness
+    worktrees = LocalWorktreeManager(h.db)
+    worktree = worktrees.create(h.project_id, "workspace-ops", "/private/tmp/workspace-ops-wt")
+    workspace = await h.ops.workspace_create(OPERATOR)
+
+    created = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, worktree_id=worktree.id)
+    assert created.tabs[0].worktree_id == worktree.id
+    tab_request = h.native.last_request
+    assert tab_request is not None and tab_request.cwd == worktree.worktree_path
+    await h.ops.pane_split(OPERATOR, created.panes[0].id, "vertical")
+    split_request = h.native.last_request
+    assert split_request is not None and split_request is not tab_request
+    assert split_request.cwd == worktree.worktree_path
+
+    # An unknown worktree, or one of another project, is not_found before any row or spawn.
+    outsider = LocalProjectManager(h.db).create(name="workspace-ops-worktree-owner")
+    foreign = worktrees.create(outsider.id, "foreign", "/private/tmp/workspace-ops-foreign")
+    spawns, panes = h.native.create_calls, len(h.workspaces.list_panes(workspace.id))
+    for worktree_id in (str(uuid.uuid4()), foreign.id):
+        await _raises(
+            "not_found",
+            h.ops.tab_create(OPERATOR, workspace.id, h.project_id, worktree_id=worktree_id),
+        )
+    assert h.native.create_calls == spawns
+    assert len(h.workspaces.list_panes(workspace.id)) == panes
+
+
+async def test_adopt_race_on_the_unique_index_raises_busy(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    agent = _live_terminal(h.terminals, h.project_id, "tmux")
+    held = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, terminal_id=agent.id)
+    holder_tab, holder = held.tabs[0], held.panes[0]
+    layouts = {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)}
+
+    # The adopt check sees no holder, as if the winning adopt had not committed yet,
+    # so the partial unique index is what refuses the second binding.
+    winner = h.workspaces.get_pane_for_terminal(agent.id)
+    with patch.object(h.workspaces, "get_pane_for_terminal", side_effect=[None, winner]):
+        raced = await _raises(
+            "busy", h.ops.pane_split(OPERATOR, holder.id, "horizontal", terminal_id=agent.id)
+        )
+    assert _pane_ref(h, workspace.ref, holder_tab.ref, holder.ref) in str(raced)
+    assert [row.id for row in h.workspaces.list_panes(workspace.id)] == [holder.id]
+    assert {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)} == layouts
+    assert h.events[-1]["kind"] == "pane.removed"
+
+
+async def test_send_keys_scope_without_a_caller_is_caller_not_found(harness: _Harness) -> None:
+    h = harness
+    caller = _session(h, "scopeless", h.project_id)
+    with (
+        session_context_for_test(caller.id),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.resolve_actor_scope",
+            return_value=ActorScope(h.sessions),
+        ),
+    ):
+        target_id, error = _authorize_send_keys_target(caller.id, h.sessions)
+    assert target_id is None
+    assert (error or {}).get("error_code") == "send_keys_caller_not_found"
