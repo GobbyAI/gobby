@@ -91,6 +91,12 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "qwen mcp --help",
         "agy help mcp",
         "claude auth status",
+        "claude mcp add --help",
+        "codex mcp list --help",
+        "grok models --help",
+        "claude auth login --help",
+        "claude help",
+        "qwen help",
         "env A=b /opt/bin/codex login status",
         "command -- codex --help",
         "codex --help && claude auth status",
@@ -141,6 +147,11 @@ def test_administration_and_documentation(command: str) -> None:
         "qwen help mcp",
         "grok agent prompt --help",
         "agy mcp unknown --help",
+        # A prompt cannot pose as a help word: unknown words end the path, and
+        # a leaf subcommand takes a prompt, not `help`.
+        "claude please help",
+        "codex exec help",
+        "claude mcp add --scope user --help",
     ],
 )
 def test_help_does_not_exempt_launch_operands(command: str) -> None:
@@ -205,7 +216,6 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "grok auth status",
         "qwen auth status",
         "agy auth status",
-        "qwen help",
         "qwen -V",
         "claude -V",
         "GOBBY_ALLOW_DIRECT_PROVIDER=1 codex",

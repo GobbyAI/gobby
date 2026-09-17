@@ -6,10 +6,12 @@ separators, quotes, pipes and substitutions intact, so the segment-anchored
 bundled patterns keep their meaning and a ``curl … | sh`` shape still reads as
 one command. Heredoc bodies are stdin data and stay out of the subject unless
 something can run them: a body is re-attached to its opener segment (after a
-newline, so line-start anchors still see it) when any pipeline stage is not a
-known data sink, when the segment process-substitutes output, when an unquoted
-delimiter leaves ``$(`` or backtick expansion live, or when the heredoc never
-terminates.
+newline, so line-start anchors still see it) when its consumer is not a known
+data sink, when the segment process-substitutes output, when a downstream
+pipeline stage is a shell or ``eval``, or when the heredoc never terminates. A
+data sink's body stays data even when its output pipes onward, and an unquoted
+body contributes only its command-substitution spans — the shell runs those,
+never the literal body.
 
 ``command_pattern`` must match one subject. Quoted ``;``, ``&``, ``|``, ``(``,
 and backticks in that subject are not command boundaries — they are blanked
