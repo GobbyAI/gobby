@@ -41,6 +41,7 @@ REDIRECT_RULES = frozenset(
         "require-c-skill",
         "require-claimed-task-extra-skills",
         "require-code-index-skill",
+        "require-code-review-self-review",
         "require-code-review-skill",
         "require-commit-before-status",
         "require-cpp-skill",

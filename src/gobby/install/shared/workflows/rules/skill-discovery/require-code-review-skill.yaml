@@ -2,7 +2,7 @@ tags: [skill-discovery, context, gobby, default]
 
 rules:
   require-code-review-skill:
-    description: "Block the first repository commit until the code-review skill is loaded"
+    description: "Block a review-gated Git operation until the code-review skill is loaded"
     event: before_tool
     enabled: true
     priority: 30
@@ -12,12 +12,89 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        # Same command-position git commit anchor as
-        # task-enforcement/require-task-before-commit. mask_quoted keeps a
-        # commit message or echo that mentions git from tripping it.
+        # Same command-position Git anchor as
+        # task-enforcement/require-task-before-commit, widened to every
+        # subcommand that records reviewable content. mask_quoted keeps a commit
+        # message or echo that mentions Git from tripping it, which is also what
+        # makes the --abort/--quit lookahead safe: the message is blanked before
+        # the pattern runs. Kept in sync with _REVIEW_GATED_GIT_SUBCOMMANDS in
+        # src/gobby/workflows/condition_helpers.py.
         mask_quoted: true
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+commit\\b"
+        command_pattern: &review_gated_git "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(?:commit|merge|cherry-pick|revert)(?![\\w-])(?!(?:\\s+-\\S+)*\\s+--(?:abort|quit)(?![\\w-]))"
         reason: |
           {{ skill_fetch_directive("code-review") }}
           Then run its pre-commit self-review on the staged changes, fix every
-          critical or high finding, and retry the commit.
+          critical or high finding, and retry the command.
+
+  require-code-review-self-review:
+    description: "Block each later review-gated Git operation until a fresh ocr rule review"
+    event: before_tool
+    enabled: true
+    priority: 30
+    # The skill-load gate above covers the first operation of an epoch. This one
+    # covers every later operation, so a single get_skill no longer buys a whole
+    # session of ungated commits and merges.
+    when: >
+      skill_loaded('code-review')
+      and not variables.get('code_review_fresh')
+      and source != 'pipeline'
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: *review_gated_git
+        reason: |
+          The code-review skill is loaded, but no `ocr delegate rule` review has
+          run since the last commit or merge. Run its pre-commit self-review on
+          the staged changes:
+
+          1. `ocr delegate preview --format json`, then intersect
+             `reviewable_files` with `git diff --cached --name-only`.
+          2. `ocr delegate rule --format json <staged reviewable paths>`.
+          3. Judge each path with `git diff --cached -- <path>`.
+
+          Fix every critical or high finding, stage the fix, and retry the
+          command. Run the review in its own call: a review chained onto the Git
+          operation is still blocked here, because the findings have to reach you
+          before the commit does.
+
+  track-ocr-review-freshness:
+    description: "Record that an ocr rule review covered the current staged work"
+    event: after_tool
+    enabled: true
+    priority: 30
+    # Grants only on a demonstrated success: an indeterminate ocr outcome
+    # proves nothing was reviewed, and leaving the gate closed is the safe
+    # direction.
+    when: >
+      event.data.get('tool_name') == 'Bash'
+      and tool_call_succeeded()
+      and shell_command_runs_ocr_review(tool_input.get('command'))
+    effects:
+      - type: set_variable
+        variable: code_review_fresh
+        value: true
+
+  clear-ocr-review-freshness:
+    description: "Spend the ocr review freshness unless the Git operation failed"
+    event: after_tool
+    enabled: true
+    # Evaluates after track-ocr-review-freshness so that if one call both
+    # reviews and commits, the commit still spends the review.
+    priority: 31
+    # Spends on anything but a demonstrated failure, rather than on
+    # tool_call_succeeded(), which reports an indeterminate outcome as False.
+    # A failed operation leaves the staged tree alone, so the review still
+    # holds; an unknown one may have committed, so the review is spent. Same
+    # failure signal as error-recovery/inject-tool-error-recovery.
+    when: >
+      event.data.get('tool_name') == 'Bash'
+      and not (
+        event.metadata.get('is_failure', False)
+        or event.data.get('is_error', False)
+      )
+      and shell_command_consumes_code_review(tool_input.get('command'))
+    effects:
+      - type: set_variable
+        variable: code_review_fresh
+        value: false

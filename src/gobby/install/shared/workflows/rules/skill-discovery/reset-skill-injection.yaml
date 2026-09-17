@@ -20,3 +20,9 @@ rules:
       - type: set_variable
         variable: loaded_skill_references
         value: []
+      # A stale true here would let the first commit after a compact through on
+      # a review from before the reset, since reloading the skill satisfies
+      # require-code-review-skill but not require-code-review-self-review.
+      - type: set_variable
+        variable: code_review_fresh
+        value: false

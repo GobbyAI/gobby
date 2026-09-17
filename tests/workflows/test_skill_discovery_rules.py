@@ -106,9 +106,11 @@ def _skill_fetch_template(name: str) -> str:
 
 SKILL_DISCOVERY_RULES = {
     "bootstrap-default-agent-core-skills",
+    "clear-ocr-review-freshness",
     "list-skill-hubs-once-per-session",
     "require-bash-skill",
     "require-c-skill",
+    "require-code-review-self-review",
     "require-code-review-skill",
     "require-cpp-skill",
     "require-csharp-skill",
@@ -121,6 +123,7 @@ SKILL_DISCOVERY_RULES = {
     "require-json-skill",
     "require-kotlin-skill",
     "require-lua-skill",
+    "require-objc-skill",
     "require-php-skill",
     "require-plan-skill",
     "require-python-skill",
@@ -131,6 +134,7 @@ SKILL_DISCOVERY_RULES = {
     "require-typescript-skill",
     "require-yaml-skill",
     "reset-skill-injection",
+    "track-ocr-review-freshness",
 }
 
 LANGUAGE_SKILL_RULES = {
@@ -138,7 +142,12 @@ LANGUAGE_SKILL_RULES = {
     for rule_name in SKILL_DISCOVERY_RULES
     if rule_name.startswith("require-")
     and rule_name
-    not in {"require-code-review-skill", "require-impeccable-skill", "require-plan-skill"}
+    not in {
+        "require-code-review-self-review",
+        "require-code-review-skill",
+        "require-impeccable-skill",
+        "require-plan-skill",
+    }
 }
 
 REPLACED_SKILL_RULES = {
@@ -176,6 +185,18 @@ class TestSkillDiscoverySync:
             f"Missing: {SKILL_DISCOVERY_RULES - rule_names}"
         )
         assert REPLACED_SKILL_RULES.isdisjoint(rule_names)
+
+        # The subset check above only catches an inventory entry that stopped
+        # syncing. It cannot see a rule added to the directory and never listed
+        # here, which is how require-objc-skill drifted out unnoticed. Compare
+        # both directions against the group so the inventory stays exhaustive.
+        synced_group = {
+            row.name for row in rules if row.definition_json.get("group") == "skill-discovery"
+        }
+        assert synced_group == SKILL_DISCOVERY_RULES, (
+            f"Unlisted in SKILL_DISCOVERY_RULES: {sorted(synced_group - SKILL_DISCOVERY_RULES)}; "
+            f"listed but not synced: {sorted(SKILL_DISCOVERY_RULES - synced_group)}"
+        )
 
     def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All rules should have group='skill-discovery'."""
@@ -3130,6 +3151,89 @@ class TestRequirePlanSkillStructure:
         assert "registration waits for a real expansion root" in response.reason
         assert "Lightweight planning" not in response.reason
         assert "written by `gobby plans register`" not in response.reason
+
+
+class TestCodeReviewFreshnessConditions:
+    """The per-commit freshness ledger behind the code-review gate.
+
+    The gate used to be satisfied-once: `not skill_loaded('code-review')` is
+    false for the rest of a context epoch, so one `get_skill` bought unlimited
+    ungated commits. These cases pin the four-rule cycle that replaced it.
+    """
+
+    RULES = "skill-discovery/require-code-review-skill.yaml"
+    SKILL_GATE = _bundled_rule_condition(RULES, "require-code-review-skill")
+    FRESHNESS_GATE = _bundled_rule_condition(RULES, "require-code-review-self-review")
+    TRACK = _bundled_rule_condition(RULES, "track-ocr-review-freshness")
+    CLEAR = _bundled_rule_condition(RULES, "clear-ocr-review-freshness")
+
+    def _eval(
+        self,
+        condition: str,
+        command: str,
+        *,
+        variables: dict[str, Any] | None = None,
+        is_failure: bool | None = None,
+    ) -> bool:
+        tool_input = {"command": command}
+        context = {
+            "variables": variables or {},
+            "event": SimpleNamespace(
+                data={"tool_name": "Bash", "tool_input": tool_input},
+                metadata={} if is_failure is None else {"is_failure": is_failure},
+            ),
+            "tool_input": tool_input,
+            "source": "interactive",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return bool(evaluator.evaluate(condition))
+
+    def test_skill_gate_covers_only_the_unloaded_state(self) -> None:
+        assert self._eval(self.SKILL_GATE, "git commit -m x") is True
+        loaded = {"loaded_skills": ["code-review"]}
+        assert self._eval(self.SKILL_GATE, "git commit -m x", variables=loaded) is False
+
+    def test_freshness_gate_blocks_a_later_commit_after_the_skill_loads(self) -> None:
+        loaded = {"loaded_skills": ["code-review"]}
+        assert self._eval(self.FRESHNESS_GATE, "git commit -m x", variables=loaded) is True
+
+        reviewed = {"loaded_skills": ["code-review"], "code_review_fresh": True}
+        assert self._eval(self.FRESHNESS_GATE, "git commit -m x", variables=reviewed) is False
+
+        spent = {"loaded_skills": ["code-review"], "code_review_fresh": False}
+        assert self._eval(self.FRESHNESS_GATE, "git commit -m x", variables=spent) is True
+
+    def test_freshness_gate_defers_to_the_skill_gate(self) -> None:
+        """Only one of the two blocks at a time, so the reason is never doubled."""
+        assert self._eval(self.FRESHNESS_GATE, "git commit -m x") is False
+
+    def test_review_grants_freshness_only_on_a_proven_success(self) -> None:
+        rule_call = "ocr delegate rule --format json src/a.py"
+        assert self._eval(self.TRACK, rule_call, is_failure=False) is True
+        assert self._eval(self.TRACK, rule_call, is_failure=True) is False
+        # An indeterminate outcome proves no review ran, so the gate stays shut.
+        assert self._eval(self.TRACK, rule_call, is_failure=None) is False
+        # preview alone lists paths and reviews nothing.
+        assert self._eval(self.TRACK, "ocr delegate preview --format json", is_failure=False) is (
+            False
+        )
+
+    def test_commit_spends_freshness_unless_it_demonstrably_failed(self) -> None:
+        assert self._eval(self.CLEAR, "git commit -m x", is_failure=False) is True
+        assert self._eval(self.CLEAR, "git commit -m x", is_failure=True) is False
+        # Unknown outcome may have committed, so the review is spent. The
+        # opposite default would leave a stale review valid on any provider
+        # that cannot report a Bash exit code.
+        assert self._eval(self.CLEAR, "git commit -m x", is_failure=None) is True
+        assert self._eval(self.CLEAR, "git log --oneline", is_failure=False) is False
+
+    @pytest.mark.parametrize(
+        "command",
+        ["git merge --no-ff task-1", "git cherry-pick abc1234", "git revert --no-edit abc1234"],
+    )
+    def test_merges_spend_freshness_like_commits(self, command: str) -> None:
+        assert self._eval(self.CLEAR, command, is_failure=False) is True
 
 
 class TestRequirePlanSkillCondition:

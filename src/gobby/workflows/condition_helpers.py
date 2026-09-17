@@ -28,6 +28,16 @@ logger = logging.getLogger(__name__)
 TaskIdRef = str | int | UUID | bytes | bytearray | memoryview
 TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_COMMAND_POSITION_PREFIXES = frozenset({"sudo", "command", "do", "then", "else"})
+_GIT_GLOBAL_VALUE_OPTIONS = frozenset(
+    {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+)
+_GIT_GLOBAL_FLAGS = frozenset(
+    {"--no-pager", "--paginate", "-p", "--bare", "--literal-pathspecs", "--no-optional-locks"}
+)
+# Git subcommands that record reviewable content. Kept in sync with the
+# command_pattern in skill-discovery/require-code-review-skill.yaml.
+_REVIEW_GATED_GIT_SUBCOMMANDS = frozenset({"commit", "merge", "cherry-pick", "revert"})
 _TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES = frozenset(
     {
         "src/gobby/mcp_proxy/tools/task_commits.py",
@@ -571,6 +581,80 @@ def shell_command_invokes_gcode(command: Any) -> bool:
         if tokens and _executable_name(tokens[0]) == "gcode":
             return True
     return False
+
+
+def shell_command_runs_ocr_review(command: Any) -> bool:
+    """Return whether any shell command segment runs an ``ocr delegate rule`` review.
+
+    The code-review skill's pre-commit self-review ends in this call, so it is
+    what proves the staged work was reviewed. ``ocr delegate preview`` only
+    lists reviewable paths and does not count on its own.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return False
+
+    for segment in shell_command_segments(command):
+        tokens = _strip_shell_command_prefixes(segment)
+        if not tokens or _executable_name(tokens[0]) != "ocr":
+            continue
+        for index in range(1, len(tokens) - 1):
+            if tokens[index] == "delegate" and tokens[index + 1] == "rule":
+                return True
+    return False
+
+
+def shell_command_consumes_code_review(command: Any) -> bool:
+    """Return whether any segment runs a git operation that spends a code review.
+
+    Paired with the ``command_pattern`` in
+    ``skill-discovery/require-code-review-skill.yaml``: ``set_variable`` effects
+    take no command selectors, so the after_tool tracker matches here in ``when``
+    while the block effect matches with a regex.
+
+    The two sides disagree deliberately on ``--abort``/``--quit``. The regex
+    exempts them so aborting a conflicted merge is never blocked, and it can do
+    that safely because ``mask_quoted`` blanks a message argument first. Shell
+    lexing unquotes instead, so honoring the same exemption here would let a
+    crafted message argument keep a stale review alive. Spending the review on
+    every gated subcommand costs one extra review after an abort and opens no
+    bypass.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return False
+
+    return any(
+        _git_subcommand(segment) in _REVIEW_GATED_GIT_SUBCOMMANDS
+        for segment in shell_command_segments(command)
+    )
+
+
+def _strip_shell_command_prefixes(tokens: list[str]) -> list[str]:
+    """Drop env assignments and command-position keywords before the executable."""
+    tokens = _strip_env_assignments(tokens)
+    while tokens and tokens[0] in _COMMAND_POSITION_PREFIXES:
+        tokens = _strip_env_assignments(tokens[1:])
+    return tokens
+
+
+def _git_subcommand(tokens: list[str]) -> str | None:
+    """Return the git subcommand a segment invokes, past git's own global options."""
+    tokens = _strip_shell_command_prefixes(tokens)
+    if not tokens or _executable_name(tokens[0]) != "git":
+        return None
+
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in _GIT_GLOBAL_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token in _GIT_GLOBAL_FLAGS or any(
+            token.startswith(f"{option}=") for option in _GIT_GLOBAL_VALUE_OPTIONS
+        ):
+            index += 1
+            continue
+        return token
+    return None
 
 
 def _segment_invokes_gobby_build(tokens: list[str]) -> bool:

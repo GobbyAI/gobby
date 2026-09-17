@@ -21,7 +21,9 @@ from gobby.workflows.condition_helpers import (
     is_gobby_build_command,
     is_task_complete,
     paths_written_this_turn,
+    shell_command_consumes_code_review,
     shell_command_invokes_gcode,
+    shell_command_runs_ocr_review,
     task_commit_project_path_allowlist_violation,
     task_needs_human_review,
     task_tree_complete,
@@ -118,6 +120,85 @@ class TestShellCommandInvokesGcode:
     )
     def test_skips_non_gcode_invocations(self, command: object) -> None:
         assert shell_command_invokes_gcode(command) is False
+
+
+class TestShellCommandRunsOcrReview:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ocr delegate rule --format json src/a.py",
+            "ocr delegate rule src/a.py src/b.py",
+            "cd repo && /usr/local/bin/ocr delegate rule --format json src/a.py",
+            "OCR_LOG=debug ocr delegate rule --format json src/a.py",
+            "sudo ocr delegate rule src/a.py",
+            "ocr --format json delegate rule src/a.py",
+        ],
+    )
+    def test_shell_command_runs_ocr_review(self, command: str) -> None:
+        assert shell_command_runs_ocr_review(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "",
+            None,
+            # preview only lists reviewable paths; it proves no review.
+            "ocr delegate preview --format json",
+            "ocr delegate",
+            "ocr --version",
+            'echo "ocr delegate rule src/a.py"',
+            "python3 -c \"print('ocr delegate rule')\"",
+            "ocrx delegate rule src/a.py",
+        ],
+    )
+    def test_skips_non_review_invocations(self, command: object) -> None:
+        assert shell_command_runs_ocr_review(command) is False
+
+
+class TestShellCommandConsumesCodeReview:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'git commit -m "[gobby-#1] fix: x"',
+            "git commit --amend",
+            "git merge --no-ff task-123",
+            "git cherry-pick abc1234",
+            "git revert --no-edit abc1234",
+            "git -C /tmp/wt commit -m x",
+            "git --git-dir=/tmp/.git commit -m x",
+            "git --no-pager merge task-123",
+            "cd repo && git commit -m x",
+            "GIT_AUTHOR_NAME=x git commit -m y",
+            "sudo git commit -m x",
+            # Deliberate asymmetry with the block pattern, which exempts
+            # --abort so a conflicted merge can always be unwound. Shell lexing
+            # unquotes, so honoring the exemption here would let a crafted
+            # message argument keep a stale review alive. Spending the review
+            # costs one extra pass and opens no bypass.
+            "git merge --abort",
+        ],
+    )
+    def test_shell_command_consumes_code_review(self, command: str) -> None:
+        assert shell_command_consumes_code_review(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "",
+            None,
+            "git log --oneline",
+            "git status --short",
+            "git rebase 0.5.0",
+            # Hyphenated subcommands are different commands.
+            "git merge-base HEAD main",
+            "git commit-graph write",
+            "git mergetool",
+            'echo "git commit -m x"',
+            "gitx commit -m x",
+        ],
+    )
+    def test_skips_other_commands(self, command: object) -> None:
+        assert shell_command_consumes_code_review(command) is False
 
 
 class TestPathsWrittenThisTurn:

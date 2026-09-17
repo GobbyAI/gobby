@@ -119,6 +119,12 @@ ENGINE_VARIABLE_OVERRIDES: dict[str, dict[str, object]] = {
     "no-push-for-workers": {"_agent_type": "developer"},
     "require-task-before-commit": {"require_task_before_edit": True, "task_claimed": False},
     "require-code-review-skill": {},
+    # The skill is loaded and no ocr review has run, which is the state the
+    # freshness gate exists to catch.
+    "require-code-review-self-review": {
+        "loaded_skills": ["code-review"],
+        "code_review_fresh": False,
+    },
     "require-monolith-resolution-before-commit": {},
     "block-gobby-tasks-cli": {},
     "no-external-github-issues": {},
@@ -384,8 +390,46 @@ RULE_CASES = (
     ),
     RuleCase(
         "require-code-review-skill",
-        blocked=('git commit -m "[gobby-#1] fix: x"',),
-        allowed=('echo "git commit"', "git log --oneline"),
+        blocked=(
+            'git commit -m "[gobby-#1] fix: x"',
+            "git merge --no-ff task-123",
+            "git merge --squash task-123",
+            "git cherry-pick abc1234",
+            "git revert --no-edit abc1234",
+            "git merge --continue",
+            # mask_quoted blanks the message, so --abort inside it cannot
+            # borrow the abort exemption.
+            'git commit -m "docs: explain git merge --abort"',
+        ),
+        allowed=(
+            'echo "git commit"',
+            "git log --oneline",
+            # Unwinding a conflicted operation is never gated.
+            "git merge --abort",
+            "git cherry-pick --abort",
+            "git cherry-pick --quit",
+            "git revert --abort",
+            # Hyphenated subcommands are different commands.
+            "git merge-base HEAD main",
+            "git commit-graph write",
+            "git mergetool",
+            "git rebase 0.5.0",
+        ),
+    ),
+    RuleCase(
+        "require-code-review-self-review",
+        blocked=(
+            'git commit -m "[gobby-#1] fix: x"',
+            "git merge --no-ff task-123",
+            "git cherry-pick abc1234",
+            "git revert --no-edit abc1234",
+        ),
+        allowed=(
+            'echo "git commit"',
+            "git log --oneline",
+            "git merge --abort",
+            "git merge-base HEAD main",
+        ),
     ),
     RuleCase(
         "require-monolith-resolution-before-commit",
@@ -453,6 +497,9 @@ GIT_OPTION_CASES = (
     ("no-invalid-git-flags", "log --no-stat"),
     ("require-task-before-commit", 'commit -m "[gobby-#20825] chore: x"'),
     ("require-code-review-skill", 'commit -m "[gobby-#22166] chore: x"'),
+    ("require-code-review-skill", "merge --no-ff task-22499"),
+    ("require-code-review-self-review", 'commit -m "[gobby-#22499] fix: x"'),
+    ("require-code-review-self-review", "merge --no-ff task-22499"),
     ("require-monolith-resolution-before-commit", "commit"),
 )
 
@@ -461,6 +508,7 @@ GIT_OPTION_CASES = (
 COMMIT_PROSE_EXEMPT = frozenset(
     {
         "require-code-review-skill",
+        "require-code-review-self-review",
         "require-task-before-commit",
         "require-monolith-resolution-before-commit",
     }

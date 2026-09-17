@@ -172,19 +172,33 @@ follows this workflow and returns findings in the field shape above.
 
 ## Pre-Commit Self-Review
 
-The `require-code-review-skill` gate blocks the first `git commit` of a session
-until this skill is loaded. Run this self-review before that commit and before
-every later commit in the session; it costs two `ocr` calls.
+Two gates cover every Git operation that records reviewable content:
+`commit`, `merge`, `cherry-pick`, and `revert`. `require-code-review-skill`
+blocks the first such operation of a context epoch until this skill is loaded.
+`require-code-review-self-review` blocks each later one until an
+`ocr delegate rule` call has run since the previous operation, so loading this
+skill once does not clear the rest of the session. Run this self-review before
+each of them; it costs two `ocr` calls.
 
 1. `ocr delegate preview --format json` (workspace mode). Intersect
    `reviewable_files` with `git diff --cached --name-only`; only staged paths
-   count. If no staged path is reviewable, say so and retry the commit.
-2. `ocr delegate rule --format json <staged reviewable paths>`.
+   count.
+2. `ocr delegate rule --format json <staged paths>`. This call is what
+   satisfies the gate; `preview` alone does not. Pass the staged paths even
+   when `preview` excluded all of them: `rule` answers for any path and
+   returns its `default` group, which is the checklist to judge them against.
+   Retrying the commit without this call only blocks again.
 3. Diff each path with `git diff --cached -- <path>` so only staged hunks are
    judged, not the rest of the working tree.
 4. Review per step 4 above. Fix every critical and high finding, stage the fix,
    and re-run step 3 for the touched paths. Report medium findings in your reply.
 5. Retry the commit.
+
+Run the review in its own tool call. Chaining it onto the commit
+(`ocr delegate rule ... && git commit ...`) is still blocked, because the
+findings have to reach you before the commit does. A successful gated operation
+spends the review, so the next one needs a fresh pass. `--abort` and `--quit`
+are never blocked, so a conflicted merge can always be unwound.
 
 ## Topic Index
 

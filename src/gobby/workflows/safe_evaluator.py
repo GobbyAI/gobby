@@ -533,7 +533,9 @@ def build_condition_helpers(
         is_gobby_build_command,
         is_validation_command,
         paths_written_this_turn,
+        shell_command_consumes_code_review,
         shell_command_invokes_gcode,
+        shell_command_runs_ocr_review,
         task_commit_project_path_allowlist_violation,
         task_needs_human_review,
         task_state_in,
@@ -566,6 +568,8 @@ def build_condition_helpers(
                 navigation_requires_index(data, _get_variables(ctx), action, broad_only=broad_only)
             ),
             "shell_command_invokes_gcode": shell_command_invokes_gcode,
+            "shell_command_runs_ocr_review": shell_command_runs_ocr_review,
+            "shell_command_consumes_code_review": shell_command_consumes_code_review,
             "blocks_direct_provider_launch": blocks_direct_provider_launch,
             "task_commit_project_path_allowlist_violation": (
                 task_commit_project_path_allowlist_violation
