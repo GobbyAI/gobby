@@ -33,7 +33,6 @@ BLOCKED_COMMANDS = (
     "GOBBY_TEST_PROTECT=1 uv run pytest tests/x.py -q | tail -5",
     "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json"
     " --fail-on-new 2>&1 | tail -3",
-    "uv run gobby test-quality audit tests/x.py --min-severity low | tail -3",
     "uv run ruff check src/; echo done",
     "cargo clippy -p gobby-terminal --all-targets -- -D warnings || true",
     "npx vitest run src/a.test.tsx && echo ok",
@@ -46,7 +45,6 @@ ALLOWED_COMMANDS = (
     "uv run mypy src/",
     "GOBBY_TEST_PROTECT=1 uv run pytest tests/x.py -q",
     "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new",
-    "uv run gobby test-quality audit tests/x.py --min-severity low",
     "uv run ruff check src/",
     "cargo clippy -p gobby-terminal --all-targets -- -D warnings",
     "npx vitest run src/a.test.tsx",
