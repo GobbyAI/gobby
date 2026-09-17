@@ -165,7 +165,9 @@ async def test_assistant_activity_kind(
 
 async def test_tail_is_bounded_and_structurally_redacted(tmp_path: Path) -> None:
     path = tmp_path / "redacted.jsonl"
-    records = [{"type": _SECRET, "timestamp": _SECRET, "error": _SECRET}]
+    records: list[dict[str, object] | str] = [
+        {"type": _SECRET, "timestamp": _SECRET, "error": _SECRET}
+    ]
     records.extend(
         _assistant_record(
             _SECRET,
@@ -295,3 +297,148 @@ async def test_empty_transcript_returns_empty_snapshot(tmp_path: Path) -> None:
 async def test_reader_raises_oserror_for_missing_path(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         await ClaudeTranscriptWatchdogReader().read(str(tmp_path / "missing.jsonl"))
+
+
+_AUTH_401_TEXT = (
+    "Please run /login · API Error: 401 OAuth access token has expired. "
+    "Re-authenticate to continue."
+)
+_BAD_GATEWAY_TEXT = (
+    "API Error: 502 status code (no body). This is a server-side issue, usually temporary"
+)
+
+
+def _api_error_record(
+    text: str,
+    *,
+    error: object,
+    status: object = None,
+) -> dict[str, object]:
+    record = _assistant_record("text", api_error=True, error=error)
+    record["message"] = {"role": "assistant", "content": [{"type": "text", "text": text}]}
+    if status is not None:
+        record["apiErrorStatus"] = status
+    return record
+
+
+@pytest.mark.parametrize(
+    ("record", "expected_reason"),
+    [
+        (
+            _api_error_record(_AUTH_401_TEXT, error="authentication_failed", status=401),
+            f"authentication_failed (HTTP 401): {_AUTH_401_TEXT}",
+        ),
+        (
+            _api_error_record(_BAD_GATEWAY_TEXT, error="server_error", status=502),
+            f"server_error (HTTP 502): {_BAD_GATEWAY_TEXT}",
+        ),
+    ],
+    ids=["401", "502"],
+)
+async def test_turn_ending_auth_or_server_api_error_is_terminal(
+    tmp_path: Path,
+    record: dict[str, object],
+    expected_reason: str,
+) -> None:
+    path = tmp_path / "terminal-api-error.jsonl"
+    _write(path, [_user_record(), _assistant_record("tool_use"), record, _turn_duration_record()])
+
+    snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.provider_error_kind == "terminal"
+    assert snapshot.provider_error_reason == expected_reason
+    assert snapshot.has_current_provider_error is True
+    assert snapshot.has_conclusive_terminal_provider_error is True
+    assert snapshot.provider_error_payload == f"Claude provider error: {expected_reason}"
+    assert snapshot.provider_error_terminal_reason == "provider_error"
+
+
+async def test_terminal_api_error_reason_is_single_line_bounded_and_label_redacted(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "long-api-error.jsonl"
+    long_text = "API Error: 500\n" + "x" * 400
+    _write(
+        path,
+        [
+            _user_record(),
+            _api_error_record(long_text, error=_SECRET, status=500),
+            _turn_duration_record(),
+        ],
+    )
+
+    snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    reason = snapshot.provider_error_reason
+    assert reason is not None
+    assert reason.startswith("server_error (HTTP 500): API Error: 500 xxx")
+    assert reason.isprintable()
+    assert len(reason) <= 240
+    assert _SECRET not in json.dumps(snapshot.to_log_dict())
+    assert snapshot.has_conclusive_terminal_provider_error is True
+
+
+async def test_api_error_followed_by_assistant_progress_is_not_terminal(tmp_path: Path) -> None:
+    path = tmp_path / "transient-api-error.jsonl"
+    _write(
+        path,
+        [
+            _user_record(),
+            _api_error_record(_BAD_GATEWAY_TEXT, error="server_error", status=502),
+            _assistant_record("text"),
+            _turn_duration_record(),
+        ],
+    )
+
+    snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.provider_error_kind == "terminal"
+    assert snapshot.has_current_provider_error is False
+    assert snapshot.has_conclusive_terminal_provider_error is False
+
+
+async def test_terminal_api_error_before_a_new_turn_is_not_current(tmp_path: Path) -> None:
+    path = tmp_path / "earlier-api-error.jsonl"
+    _write(
+        path,
+        [
+            _user_record(),
+            _api_error_record(_AUTH_401_TEXT, error="authentication_failed", status=401),
+            _turn_duration_record(),
+            _user_record(),
+            _turn_duration_record(),
+        ],
+    )
+
+    snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.has_current_provider_error is False
+    assert snapshot.has_conclusive_terminal_provider_error is False
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [("rate_limit", 429), ("server_error", None), ("invalid_request", 400)],
+)
+async def test_retryable_or_request_api_errors_stay_diagnostic(
+    tmp_path: Path,
+    error: str,
+    status: int | None,
+) -> None:
+    path = tmp_path / "diagnostic-api-error.jsonl"
+    _write(
+        path,
+        [
+            _user_record(),
+            _api_error_record("API Error: private detail", error=error, status=status),
+            _turn_duration_record(),
+        ],
+    )
+
+    snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.provider_error_kind == "api_error"
+    assert snapshot.provider_error_reason == "api_error"
+    assert snapshot.has_current_provider_error is True
+    assert snapshot.has_conclusive_terminal_provider_error is False
+    assert "private detail" not in json.dumps(snapshot.to_log_dict())

@@ -17,6 +17,9 @@ KNOWN_ERROR_REASONS = frozenset(
     {"server_overloaded", "api_error", "retrying", "usage_limit_exceeded", "provider_error"}
 )
 KNOWN_WATCHDOG_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok", "qwen"})
+# A terminal provider error may instead carry a reader-built single-line description
+# (error kind, HTTP status, provider error message) so the failed run can name it.
+MAX_TERMINAL_ERROR_REASON_CHARS = 240
 
 # Readers may retain only these structural labels. Raw content never enters a model.
 KNOWN_EVENT_TYPES = frozenset(
@@ -200,7 +203,12 @@ class WatchdogTranscriptSnapshot:
             "provider_error_reason",
             self.provider_error_reason
             if isinstance(self.provider_error_reason, str)
-            and self.provider_error_reason in KNOWN_ERROR_REASONS
+            and (
+                self.provider_error_reason in KNOWN_ERROR_REASONS
+                or self.provider_error_kind == "terminal"
+                and 0 < len(self.provider_error_reason) <= MAX_TERMINAL_ERROR_REASON_CHARS
+                and self.provider_error_reason.isprintable()
+            )
             else None,
         )
         object.__setattr__(
@@ -255,16 +263,45 @@ class WatchdogTranscriptSnapshot:
         return self.last_malformed_line_num is None
 
     @property
+    def has_current_provider_error(self) -> bool:
+        """True when a provider error is the newest model output of the latest turn."""
+        error = self.provider_error_event
+        started = self.turn_started_event
+        return (
+            self.provider_error_kind is not None
+            and error is not None
+            and (started is None or started.line_num < error.line_num)
+            and (
+                self.latest_model_output_line_num is None
+                or self.latest_model_output_line_num <= error.line_num
+            )
+        )
+
+    @property
     def has_conclusive_terminal_provider_error(self) -> bool:
         error = self.provider_error_event
         completed = self.latest_turn_event
         return (
             self.provider_error_kind == "terminal"
+            and self.has_current_provider_error
             and error is not None
             and completed is not None
-            and error.line_num == completed.line_num
+            and error.line_num <= completed.line_num
             and self.has_conclusive_turn_completed
         )
+
+    @property
+    def provider_error_payload(self) -> str:
+        reason = self.provider_error_reason or "provider_error"
+        return f"{self.provider.title()} provider error: {reason}"
+
+    @property
+    def provider_error_terminal_reason(
+        self,
+    ) -> Literal["provider_quota_exhausted", "provider_error"]:
+        if self.provider_error_reason == "usage_limit_exceeded":
+            return "provider_quota_exhausted"
+        return "provider_error"
 
     @property
     def has_open_tool_call(self) -> bool:

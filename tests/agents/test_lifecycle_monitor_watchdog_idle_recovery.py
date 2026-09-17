@@ -16,6 +16,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
+from gobby.autonomous.stuck_detector import StuckDetector
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -376,6 +377,7 @@ def _make_idle_monitor_run(
     task_id: str | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     made_gobby_mcp_call: bool = True,
+    stuck_detector: StuckDetector | None = None,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
     config = TmuxConfig(
         idle_check_enabled=True,
@@ -391,6 +393,7 @@ def _make_idle_monitor_run(
         session_manager=session_manager,
         task_manager=task_manager,
         completion_registry=completion_registry,
+        stuck_detector=stuck_detector,
         check_interval_seconds=1.0,
         tmux_config=config,
         terminal_services=_fake_terminal_services(temp_db),

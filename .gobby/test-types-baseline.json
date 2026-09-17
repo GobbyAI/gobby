@@ -701,26 +701,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/watchdog/test_claude_reader.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 178,
-      "message": "Argument 2 to \"_write\" has incompatible type \"list[dict[str, str]]\"; expected \"list[dict[str, object] | str]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_claude_reader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/watchdog/test_claude_reader.py::::mypy:misc",
-      "issue_code": "mypy:misc",
-      "line": 170,
-      "message": "Generator has incompatible item type \"dict[str, object]\"; expected \"dict[str, str]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_claude_reader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/watchdog/test_droid_reader.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 155,
