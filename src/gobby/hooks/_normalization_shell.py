@@ -440,6 +440,30 @@ def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
     return False
 
 
+def redirects_stdout_to_file(tokens: list[ShellToken]) -> bool:
+    """Return True when an output redirection sends stdout to a file, not the model.
+
+    Stderr-only and higher-fd redirections leave stdout visible; benign sinks
+    are not file writes.
+    """
+    for idx, token in enumerate(tokens):
+        if not is_shell_output_redirection_token(token):
+            continue
+        if token.value in {"2>", "2>>"} or (
+            _FD_OUTPUT_REDIRECTION_RE.match(token.value) is not None
+            and not token.value.startswith("1")
+        ):
+            continue
+        if idx + 1 >= len(tokens):
+            continue
+        target = tokens[idx + 1]
+        if is_unquoted_shell_control_token(target):
+            continue
+        if not is_benign_redirect_target(target.value):
+            return True
+    return False
+
+
 def strip_input_redirections(tokens: list[ShellToken]) -> list[ShellToken]:
     """Drop input-redirection operators and their immediate operands from tokens.
 

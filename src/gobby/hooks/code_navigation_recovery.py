@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +16,13 @@ from gobby.hooks._path_scope import (
     current_tool_cwd,
     resolve_tool_path,
 )
+from gobby.hooks.code_navigation import MAX_NARROW_SOURCE_LINES
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 
 # Gcode's fixed directory exclusions (index/indexer/util.rs). Build/dist are
 # root-only there; nested generated output is recognized through Git below.
+# Committed third_party/ trees are excluded here like vendor/ even though the
+# indexer still walks them: vendored upstream code is not project source.
 _INDEX_EXCLUDED_DIRS = frozenset(
     {
         "node_modules",
@@ -33,6 +36,7 @@ _INDEX_EXCLUDED_DIRS = frozenset(
         ".ruff_cache",
         "target",
         "vendor",
+        "third_party",
         ".next",
         ".nuxt",
         "coverage",
@@ -71,6 +75,9 @@ _EMPTY_OUTLINE_DIAGNOSTICS = (
 )
 # Separator arguments that could print a forged JSON line through escapes or expansion.
 _SEPARATOR_UNSAFE_CHARS = frozenset("{\\$`")
+# Whole-file reads are only verified narrow inside this byte budget; bigger
+# files keep the unverified (broad) classification whatever their line count.
+_LINE_COUNT_SCAN_LIMIT = 262144
 
 
 def gcode_targets(parts: list[str], command: str) -> list[str]:
@@ -182,6 +189,36 @@ def _ignored_target(path: Path, root: Path | None) -> bool:
     return result.returncode == 0
 
 
+def _verified_source_line_count(paths: Sequence[Path | None]) -> int | None:
+    """Total line count when every operand resolves to a readable, bounded file.
+
+    A whole-file read is only provably narrow when each operand is verifiable;
+    anything missing, oversized, or beyond the scan limit stays unverified.
+    """
+    total = 0
+    for path in paths:
+        if path is None:
+            return None
+        try:
+            if not path.is_file():
+                return None
+            with path.open("rb") as handle:
+                newlines = 0
+                tail = b""
+                while True:
+                    chunk = handle.read(65536)
+                    if not chunk:
+                        break
+                    newlines += chunk.count(b"\n")
+                    tail = chunk[-1:]
+                    if newlines > MAX_NARROW_SOURCE_LINES or handle.tell() > _LINE_COUNT_SCAN_LIMIT:
+                        return None
+                total += newlines + (1 if tail and tail != b"\n" else 0)
+        except OSError:
+            return None
+    return total if total <= MAX_NARROW_SOURCE_LINES else None
+
+
 def annotate_navigation(data: Mapping[str, Any], metadata: dict[str, Any]) -> None:
     """Resolve each shell segment independently before rules see the aggregate."""
     segments = metadata.get("canonical_code_navigation_segments")
@@ -212,6 +249,19 @@ def annotate_navigation(data: Mapping[str, Any], metadata: dict[str, Any]) -> No
             )
             for path in resolved
         )
+        if (
+            segment.get("canonical_code_navigation_action") == "read"
+            and segment.get("canonical_source_read_scope") == "full_file"
+            and "canonical_source_line_count" not in segment
+            and "canonical_source_byte_count" not in segment
+        ):
+            # A whole-file read of a provably short file is bounded by the file
+            # itself; gcode outline/symbol-at adds nothing over reading it.
+            line_count = _verified_source_line_count(resolved)
+            if line_count is not None:
+                segment["canonical_code_navigation_broad"] = False
+                segment["canonical_narrow_source_context"] = True
+                segment["canonical_source_line_count"] = line_count
     metadata["canonical_code_navigation_segments"] = segments
 
 

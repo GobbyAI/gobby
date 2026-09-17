@@ -1,4 +1,4 @@
-"""Regression boundaries for #22213 and #22345, including merged #22233 generated output."""
+"""Regression boundaries for #22213, #22345, and #22413, including merged #22233 generated output."""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ def repo(tmp_path: Path) -> Path:
     (root / "custom-output").mkdir()
     (root / "src").mkdir()
     (root / "src/constants.py").write_text("VALUE = 1\n")
+    (root / "src/short.py").write_text("value = 1\n" * 5)
+    (root / "src/long.py").write_text("value = 1\n" * 60)
     return root
 
 
@@ -57,6 +59,26 @@ def turn(
         "code_index_verified": after.get("canonical_code_index_verified", []),
         "code_index_recoveries": after.get("canonical_code_index_recovery", []),
     }
+
+
+def read_event(repo: Path, path: str, *, limit: int | None = None) -> dict[str, Any]:
+    """A normalized Read tool call; without ``limit`` the scope is the whole file."""
+    tool_input: dict[str, Any] = {"file_path": str(repo / path)}
+    if limit is not None:
+        tool_input["limit"] = limit
+    data: dict[str, Any] = {
+        "tool_name": "Read",
+        "tool_input": tool_input,
+        "cwd": str(repo),
+        "project_path": str(repo),
+    }
+    normalize_tool_fields(data)
+    return data
+
+
+def broad_read_blocked(repo: Path, command: str) -> bool:
+    """The prefer-gcode gate for broad reads after the code-index reference loads."""
+    return navigation_requires_index(event(repo, command), {}, "read", broad_only=True)
 
 
 def test_typed_outage_opens_the_checkout_for_every_operation(repo: Path) -> None:
@@ -126,7 +148,8 @@ def test_verified_output_closes_only_its_own_attempt(repo: Path) -> None:
 @pytest.mark.parametrize(
     ("command", "redirected"),
     [
-        ("cat src/constants.py", True),
+        ("cat src/constants.py", False),
+        ("cat src/long.py", True),
         ("sed -n '1,80p' src/constants.py", True),
         ("head -n 40 src/constants.py", False),
         ("rg VALUE src", False),
@@ -138,6 +161,111 @@ def test_source_read_redirect_skips_narrow_reads_and_other_operations(
     variables = {"code_index_navigation_used_this_turn": True}
     result = navigation_requires_index(event(repo, command), variables, "read", broad_only=True)
     assert result is redirected
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("cat src/constants.py", False),
+        ("cat src/short.py", False),
+        ("cat src/constants.py src/short.py", False),
+        ("nl -ba src/short.py", False),
+        ("nl -ba src/long.py", True),
+        ("cat src/long.py", True),
+        ("cat src/short.py src/long.py", True),
+        ("cat src/missing.py", True),
+    ],
+)
+def test_full_file_reads_follow_the_verified_line_count(
+    repo: Path, command: str, blocked: bool
+) -> None:
+    assert broad_read_blocked(repo, command) is blocked
+
+
+def test_read_tool_without_limit_follows_the_file_size(repo: Path) -> None:
+    variables = {"code_index_navigation_used_this_turn": True}
+    assert not navigation_requires_index(
+        read_event(repo, "src/short.py"), variables, "read", broad_only=True
+    )
+    assert not navigation_requires_index(
+        read_event(repo, "src/long.py", limit=30), variables, "read", broad_only=True
+    )
+    assert navigation_requires_index(
+        read_event(repo, "src/long.py"), variables, "read", broad_only=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("head -c 500 src/long.py", False),
+        ("tail -c 2000 src/long.py", False),
+        ("head -c 4096 src/long.py", False),
+        ("head -c 4097 src/long.py", True),
+        ("tail -c 5000 src/long.py", True),
+        ("tail -c +1 src/long.py", True),
+    ],
+)
+def test_byte_bounded_reads_exempt_only_the_verified_window(
+    repo: Path, command: str, blocked: bool
+) -> None:
+    assert broad_read_blocked(repo, command) is blocked
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("cat src/long.py > gen.py", False),
+        ("cat src/long.py src/constants.py > gen.py", False),
+        ("cat src/long.py >> gen.py", False),
+        ("cat src/long.py | tee gen.py", True),
+        ("cat src/long.py 2> err.txt", True),
+    ],
+)
+def test_redirected_copies_never_reach_the_model(repo: Path, command: str, blocked: bool) -> None:
+    assert broad_read_blocked(repo, command) is blocked
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("sed -n 94,163p src/long.py | head -40", False),
+        ("nl -ba src/long.py | sed -n '10,30p'", False),
+        ("cat src/long.py | head -40", False),
+        ("sed '1,40!d' src/long.py", False),
+        ("cat src/long.py | head -60", True),
+        ("sed '1,80!d' src/long.py", True),
+        ("cat src/long.py | head -40 | wc -l", True),
+    ],
+)
+def test_pipeline_final_stage_bounds_output(repo: Path, command: str, blocked: bool) -> None:
+    assert broad_read_blocked(repo, command) is blocked
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("cat third_party/lib/x.py", False),
+        ("rg pattern third_party/lib", False),
+        ("rg pattern src/third_party/lib", False),
+        ("rg pattern src", True),
+        ("cat src/long.py", True),
+    ],
+)
+def test_committed_third_party_reads_like_vendor(repo: Path, command: str, blocked: bool) -> None:
+    assert navigation_requires_index(event(repo, command), {}) is blocked
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'sed -n "$(grep -n VALUE src/long.py | cut -d: -f1)p" src/long.py',
+        'sed -n "${start},${end}p" src/long.py',
+        'cat "$SCRATCH/probe.py"',
+    ],
+)
+def test_unverifiable_bounds_and_variable_paths_stay_blocked(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
 
 
 @pytest.mark.parametrize(

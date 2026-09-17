@@ -8,6 +8,11 @@ tags: [code-index, gobby, default]
 # | find live metadata/format/action predicates | allow | gcode must not emulate filesystem state/actions |
 # | source range of 40 lines or fewer | teach | load reference once, then allow |
 # | broad source read after reference load | redirect | gcode outline, then gcode symbol-at |
+# | whole-file read of a 40-line-or-fewer source file | allow | bounded by the file itself (#22413) |
+# | head/tail byte window of 4096 bytes or fewer | allow | bounded byte peek, no gcode equivalent (#22413) |
+# | fully redirected copy/concatenation of source files | allow | stdout never reaches the model (#22413) |
+# | pipeline final stage bounding output to 40 lines | allow | head -n N or a literal sed window (#22413) |
+# | committed third_party/ trees | allow | vendored upstream code, like vendor/ (#22413) |
 # | read after an unverified gcode attempt on that file | allow | hooks cannot report every failure |
 # | any navigation after a typed gcode outage | allow | the checkout cannot be served this turn |
 # | wc byte/line counts | allow | exact current filesystem aggregate |

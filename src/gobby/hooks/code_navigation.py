@@ -54,6 +54,7 @@ GCODE_SEARCH_COMMANDS = frozenset(
     ("grep", "search", "search-symbol", "search-text", "search-content")
 )
 MAX_NARROW_SOURCE_LINES = 40
+MAX_NARROW_SOURCE_BYTES = 4096
 _FIND_FILESYSTEM_ONLY_PREDICATES = frozenset(
     {
         "-amin",
@@ -110,9 +111,24 @@ def line_count_from_tool_input(tool_input: Any) -> int | None:
 
 
 def sed_line_count(parts: list[str], positional_args: list[str]) -> int | None:
-    if not _sed_has_quiet_option(parts):
-        return None
+    """Sum of literal sed window sizes, in lines, or None without any.
+
+    Quiet ``p`` windows and non-quiet ``!d`` keep-lines windows both bound what
+    sed can print. Each recognized literal window adds to the total so multiple
+    ``-e`` scripts cannot hide behind the first one; non-literal scripts and
+    file operands contribute nothing.
+    """
+    quiet = _sed_has_quiet_option(parts)
+    total = 0
     for token in positional_args:
+        count = _literal_sed_window_line_count(token, quiet)
+        if count is not None:
+            total += count
+    return total or None
+
+
+def _literal_sed_window_line_count(token: str, quiet: bool) -> int | None:
+    if quiet:
         match = re.fullmatch(r"(\d+)p", token)
         if match:
             return 1
@@ -123,6 +139,13 @@ def sed_line_count(parts: list[str], positional_args: list[str]) -> int | None:
         match = re.fullmatch(r"(\d+),\+(\d+)p", token)
         if match:
             return int(match.group(2)) + 1
+    match = re.fullmatch(r"(\d+),(\d+)!d", token)
+    if match:
+        start, end = int(match.group(1)), int(match.group(2))
+        return end - start + 1 if end >= start else None
+    match = re.fullmatch(r"(\d+)!d", token)
+    if match:
+        return 1
     return None
 
 
@@ -143,15 +166,38 @@ def count_option_line_count(parts: list[str]) -> int | None:
     return None
 
 
+def count_option_byte_count(parts: list[str]) -> int | None:
+    """Bounded byte count from head/tail ``-c``/``--bytes`` options.
+
+    ``+N`` offset forms read to end of file and stay unbounded; ``K``/``M``
+    suffix forms are not parsed.
+    """
+    if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
+        return None
+    for index, part in enumerate(parts[1:], start=1):
+        if part in {"-c", "--bytes"}:
+            if index + 1 < len(parts):
+                return _positive_int(parts[index + 1])
+            return None
+        if part.startswith("--bytes="):
+            return _positive_int(part.split("=", maxsplit=1)[1])
+        if part.startswith("-c") and len(part) > 2:
+            return _positive_int(part[2:])
+    return None
+
+
 def source_read_navigation_metadata(
     paths: list[str],
     *,
-    line_count: int | None,
+    line_count: int | None = None,
+    byte_count: int | None = None,
     read_scope: str,
 ) -> dict[str, Any]:
     if not any(_is_source_file_path(path) for path in paths):
         return {}
-    narrow = line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES
+    narrow = (line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES) or (
+        byte_count is not None and byte_count <= MAX_NARROW_SOURCE_BYTES
+    )
     metadata: dict[str, Any] = {
         "canonical_code_navigation_action": "read",
         "canonical_code_navigation_broad": not narrow,
@@ -160,6 +206,8 @@ def source_read_navigation_metadata(
     }
     if line_count is not None:
         metadata["canonical_source_line_count"] = line_count
+    if byte_count is not None:
+        metadata["canonical_source_byte_count"] = byte_count
     return metadata
 
 
