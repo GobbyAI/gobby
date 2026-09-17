@@ -461,6 +461,62 @@ function build() {
 }
 
 #[test]
+fn indexes_module_level_python_assignments() {
+    let parsed = parse_python(
+        r#"
+_RUN_ROOT_ENV = "GHOBBY_RUN_ROOT"
+_LIMIT: int = 5
+_PREFIX: str
+_TABLE = {
+    "a": 1,
+    "b": 2,
+}
+first, second = 1, 2
+config.attr = 1
+items[0] = 1
+
+
+def configure():
+    local = "nested"
+    annotated_local: int = 7
+
+
+class Guard:
+    class_attr = "nested"
+    annotated_class_attr: int = 8
+"#,
+        &[],
+    );
+
+    assert_eq!(
+        sorted_symbol_kinds(&parsed),
+        vec![
+            ("Guard", "class"),
+            ("_LIMIT", "constant"),
+            ("_PREFIX", "constant"),
+            ("_RUN_ROOT_ENV", "constant"),
+            ("_TABLE", "constant"),
+            ("configure", "function"),
+        ]
+    );
+
+    let table = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "_TABLE")
+        .expect("_TABLE symbol");
+    assert_eq!(
+        (table.line_start, table.line_end),
+        (5, 8),
+        "module-level constants span their full statement"
+    );
+    assert!(
+        table.parent_symbol_id.is_none(),
+        "_TABLE should be a top-level symbol"
+    );
+}
+
+#[test]
 fn leaves_external_qualified_roots_shadowed_by_locals_unresolved() {
     let parsed = parse_typescript(
         r#"

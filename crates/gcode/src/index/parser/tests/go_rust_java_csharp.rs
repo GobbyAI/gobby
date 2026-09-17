@@ -1297,3 +1297,81 @@ fn attributed_rust_definitions_extract_and_resolve_as_local_imports() {
     );
     assert_rust_local_import!(&caller, "rust_target", "src/service.rs");
 }
+
+fn sorted_symbol_kinds(parsed: &ParseResult) -> Vec<(&str, &str)> {
+    let mut symbols: Vec<_> = parsed
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
+        .collect();
+    symbols.sort_unstable();
+    symbols
+}
+
+#[test]
+fn indexes_rust_const_and_static_items() {
+    let parsed = parse_rust(
+        r#"
+const MAX_RETRIES: u32 = 3;
+pub static PLUGIN_NAME: &str = "gcode";
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub const TABLE: &[(&str, u32)] = &[
+    ("alpha", 1),
+    ("beta", 2),
+];
+
+struct Capabilities;
+
+impl Capabilities {
+    const DEFAULT_TIMEOUT_MS: u64 = 5_000;
+}
+"#,
+        &[],
+    );
+
+    assert_eq!(
+        sorted_symbol_kinds(&parsed),
+        vec![
+            ("COUNTER", "constant"),
+            ("Capabilities", "class"),
+            ("DEFAULT_TIMEOUT_MS", "constant"),
+            ("MAX_RETRIES", "constant"),
+            ("PLUGIN_NAME", "constant"),
+            ("TABLE", "constant"),
+        ]
+    );
+
+    let table = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "TABLE")
+        .expect("TABLE symbol");
+    assert_eq!(
+        (table.line_start, table.line_end),
+        (5, 8),
+        "const items span their full statement"
+    );
+    assert!(
+        table.parent_symbol_id.is_none(),
+        "TABLE should be a top-level symbol"
+    );
+
+    let associated = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "DEFAULT_TIMEOUT_MS")
+        .expect("associated const symbol");
+    let capabilities = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "Capabilities" && symbol.kind == "class")
+        .expect("Capabilities struct symbol");
+    assert_eq!(
+        associated.qualified_name,
+        "Capabilities::DEFAULT_TIMEOUT_MS"
+    );
+    assert_eq!(
+        associated.parent_symbol_id.as_deref(),
+        Some(capabilities.id.as_str())
+    );
+}
