@@ -1,0 +1,392 @@
+header:
+  plan_id: memory-surfacing
+  plan_hash: 12c23d853e20d30dd28da2f5775920732562f7dc82d211f8a49686f994401b36
+  root_task_ref: '22410'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-17T20:35:01Z'
+  task_tree_source: db
+  task_tree_source_hash: ca056c93574422329974218d9159128dd4606e454250b6a057e56191abb0e5ed
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 0c580ab1b7249d62277a2eba761e6a6bce0573ed146922e5f6ffa00fe8a31b90
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22489'
+    validation_criteria_snippet: '1.1.1: A query of six or more words reaches the
+      embedding function unchanged when no `embed_text` is supplied. test: `tests/memory/test_search_ranking.py::test...'
+    matched_artifact_ref: tests/memory/test_search_ranking.py::test_query_is_embedded_verbatim
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: b4d14bd926a2d2a626450a83c4c71c6b49a92e8ccfe27be70e215ed627517ac9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22489'
+    validation_criteria_snippet: '1.1.1: A query of six or more words reaches the
+      embedding function unchanged when no `embed_text` is supplied. test: `tests/memory/test_search_ranking.py::test...'
+    matched_artifact_ref: tests/memory/test_search_ranking.py::test_embed_text_overrides_query_for_embedding
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 8f80263f80c3aae581fd5d88bc6f8654e98d4b0ed337d0679d366e53f9ab364e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22489'
+    validation_criteria_snippet: '1.1.1: A query of six or more words reaches the
+      embedding function unchanged when no `embed_text` is supplied. test: `tests/memory/test_search_ranking.py::test...'
+    matched_artifact_ref: src/gobby/search/keywords.py
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 6e2ef03a156780dbcf82d4a19d8fb2aa8834b081169785d9df9faa45e8340aca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22489'
+    validation_criteria_snippet: '1.1.1: A query of six or more words reaches the
+      embedding function unchanged when no `embed_text` is supplied. test: `tests/memory/test_search_ranking.py::test...'
+    matched_artifact_ref: pyproject.toml
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 6767b597c3616859dd72fd8119bb5beeec9c2567f03064205063b6989d09b3ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22489'
+    validation_criteria_snippet: '1.1.1: A query of six or more words reaches the
+      embedding function unchanged when no `embed_text` is supplied. test: `tests/memory/test_search_ranking.py::test...'
+    matched_artifact_ref: docs/guides/memory.md
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: acda9e4413c0922664e76569d49b804d2d8d7d04ff2b2a2d1fa0df69fdeeb412
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22490'
+    validation_criteria_snippet: '1.2.1: `build_results` orders hits only through
+      `result_sort_key`. symbol: `result_sort_key`. file: `src/gobby/memory/services/_search_ranking.py`.
+      1.2.2: The ...'
+    matched_artifact_ref: result_sort_key
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 033fe7c00288c29c1c2fb7bba79c4ea1b5d73bb898199c7ab08b63055ef3a86e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22490'
+    validation_criteria_snippet: '1.2.1: `build_results` orders hits only through
+      `result_sort_key`. symbol: `result_sort_key`. file: `src/gobby/memory/services/_search_ranking.py`.
+      1.2.2: The ...'
+    matched_artifact_ref: tests/memory/fixtures/ranking_cohort.json
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 62f04a3eb3179f3c5272f9d086512f0fb11d1ee8a1f6b28e2c8a09e71e1134d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22490'
+    validation_criteria_snippet: '1.2.1: `build_results` orders hits only through
+      `result_sort_key`. symbol: `result_sort_key`. file: `src/gobby/memory/services/_search_ranking.py`.
+      1.2.2: The ...'
+    matched_artifact_ref: tests/memory/test_ranking_policy.py::test_shipped_policy_is_selection_rule_winner
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: c62045ca531910a4e65ec75c994140eb95f706656ef89172905032daa9138750
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22490'
+    validation_criteria_snippet: '1.2.1: `build_results` orders hits only through
+      `result_sort_key`. symbol: `result_sort_key`. file: `src/gobby/memory/services/_search_ranking.py`.
+      1.2.2: The ...'
+    matched_artifact_ref: tests/memory/test_ranking_policy.py::test_shipped_policy_does_not_regress_cosine
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 2093bb659f2932198468653e753fc90c0bdd1b55b150028e271836f59c4b5c38
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22490'
+    validation_criteria_snippet: '1.2.1: `build_results` orders hits only through
+      `result_sort_key`. symbol: `result_sort_key`. file: `src/gobby/memory/services/_search_ranking.py`.
+      1.2.2: The ...'
+    matched_artifact_ref: tests/memory/test_ranking_policy.py::test_evidence_memory_reaches_top_three
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: d574533be6b93a248fc6093d8d24c22385ff9defed046777cc973f13ff930546
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22490'
+    validation_criteria_snippet: '1.2.1: `build_results` orders hits only through
+      `result_sort_key`. symbol: `result_sort_key`. file: `src/gobby/memory/services/_search_ranking.py`.
+      1.2.2: The ...'
+    matched_artifact_ref: docs/guides/memory.md
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 468b16488750e609b8807d6374f5655946a3710d62999b5b7b19b4ed6b3a4397
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22491'
+    validation_criteria_snippet: '1.3.1: `recall_fit.py` is under 1,000 lines. file:
+      `src/gobby/memory/recall_fit.py`. 1.3.2: `replayed_sort_key` delegates to `result_sort_key`.
+      symbol: `replay...'
+    matched_artifact_ref: src/gobby/memory/recall_fit.py
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 8c5d16b82e56db29d064877b32439ce1787a3813f7b7e0c1e28aff75168e0afa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22491'
+    validation_criteria_snippet: '1.3.1: `recall_fit.py` is under 1,000 lines. file:
+      `src/gobby/memory/recall_fit.py`. 1.3.2: `replayed_sort_key` delegates to `result_sort_key`.
+      symbol: `replay...'
+    matched_artifact_ref: replayed_sort_key
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: cdb8576f0341706257441b9ec9782c0d8503e05fca7a7e22b4f373baea8f4882
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22491'
+    validation_criteria_snippet: '1.3.1: `recall_fit.py` is under 1,000 lines. file:
+      `src/gobby/memory/recall_fit.py`. 1.3.2: `replayed_sort_key` delegates to `result_sort_key`.
+      symbol: `replay...'
+    matched_artifact_ref: tests/memory/test_recall_fit.py::test_replayed_order_matches_live_sort_key
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: d0bd24aa48ef348f7632219eb3439aeea4ade4850f6140ee8020dce29b009cc1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_surface.py::test_surface_search_arguments
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: f267c12e88395d7504e9b9856e8c2115a4696efd27c2f8d16e8d3ba6a3fbf8f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_surface.py::test_surface_fails_open
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 746288850d5ea8f87b75039fe191f9898d5e0cc8aa5d22eb7d77b4eb7b4d23a1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_surface.py::test_floor_matches_ranking_fixture
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 7bef10483ef17e416770b7bbfa79c835f8a525c729bc9af6661945c993e2b689
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: tests/workflows/test_memory_index_delivery.py::test_index_line_format
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 2aaf22e47088b9bf8ba9df60ff23518c87a29fd36413967fd18c44d9604d7c22
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: tests/workflows/test_memory_index_delivery.py::test_index_dedupes_and_stages_ids
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: ca22bd872f8120b99c53d5fbdcd7b53c5e9414311f6a8907942e524934417326
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: tests/workflows/test_memory_index_delivery.py::test_empty_index_injects_nothing
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: 14cc46e2bd24767909dccd7bd07b4db6b1b2d9790fc99ed2ff92164422df478f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22492'
+    validation_criteria_snippet: '2.1.1: `surface_memories` searches with the text
+      embedded verbatim, a limit of 5, review lessons excluded, the fixture floor,
+      and caller `memory.surface`. test...'
+    matched_artifact_ref: docs/reference-audit/memory.json
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 49277dd9e71db07a1fbd86f7e0e1e3e7e7ad77913e4f48359abd968ff82d11c1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22493'
+    validation_criteria_snippet: '2.2.1: Each of the four rules fires on its tool
+      and event, passes the stated text and trigger, and injects inline. test: `tests/workflows/test_memory_lifecycle...'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py::TestToolIntentSurfacing
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 4b21e9de997efe4432ab1f7ad75dcd41fa43217c79d7a28f009419af83a3fd45
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22493'
+    validation_criteria_snippet: '2.2.1: Each of the four rules fires on its tool
+      and event, passes the stated text and trigger, and injects inline. test: `tests/workflows/test_memory_lifecycle...'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: edd6f57764000abc8e30a3bfc5a73707b7c8a95ffc83659954603b6e78428ab3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22493'
+    validation_criteria_snippet: '2.2.1: Each of the four rules fires on its tool
+      and event, passes the stated text and trigger, and injects inline. test: `tests/workflows/test_memory_lifecycle...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 9ed9bba801d87a0fb9bfbc40077fa9db4f3336dca1d0b5da6010de8e5219cdca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22493'
+    validation_criteria_snippet: '2.2.1: Each of the four rules fires on its tool
+      and event, passes the stated text and trigger, and injects inline. test: `tests/workflows/test_memory_lifecycle...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/AGENTS.md
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: a611ea79d86c670c79bb75e55d8dd057b553c6cdfb35c4361e30c6d98f5c2b54
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22494'
+    validation_criteria_snippet: '2.3.1: Acknowledgments, continuations, status questions,
+      slash commands, and short lifecycle commands are non-substantive; a task-describing
+      prompt is substant...'
+    matched_artifact_ref: tests/memory/test_prompt_triage.py::test_triage_matrix
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 949834c8510237c21de9ce544feb101220717d547103734ac09b6e1d273c82f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22494'
+    validation_criteria_snippet: '2.3.1: Acknowledgments, continuations, status questions,
+      slash commands, and short lifecycle commands are non-substantive; a task-describing
+      prompt is substant...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_surface.py::test_turn_trigger_uses_substantive_prompt
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: b028d4d708734c09264760cbf8871130bf1d869ebd6fae2ed7f891be75cf711d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22494'
+    validation_criteria_snippet: '2.3.1: Acknowledgments, continuations, status questions,
+      slash commands, and short lifecycle commands are non-substantive; a task-describing
+      prompt is substant...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_memory_surface.py::test_turn_trigger_falls_back_to_assistant_text
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: fa1ef9ba4d0c7eb1ec489009d88e281c07f0dd8de6a745c67f8dd958bffe2e8c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22494'
+    validation_criteria_snippet: '2.3.1: Acknowledgments, continuations, status questions,
+      slash commands, and short lifecycle commands are non-substantive; a task-describing
+      prompt is substant...'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py::TestTurnStartSurfacing
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: d45c1a034cb8936d7b765bc1c51b4e6be3b68abfba6114f1e65a3a3838b121a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22494'
+    validation_criteria_snippet: '2.3.1: Acknowledgments, continuations, status questions,
+      slash commands, and short lifecycle commands are non-substantive; a task-describing
+      prompt is substant...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/AGENTS.md
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: c7b125653aa1ebaf7c74e1cbdbf6cdcb66d663a569bb83b79426a08f5a38a101
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22495'
+    validation_criteria_snippet: '3.1.1: `AGENTS.md` carries Working Rule 14 with
+      objective triggers and the familiar-code clause. file: `AGENTS.md`. 3.1.2: `remind-memory-guidance-on-later-tur...'
+    matched_artifact_ref: AGENTS.md
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 9808c511f428f05b100e927012fc01e2558bf52badc37c92f623955c00061745
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22495'
+    validation_criteria_snippet: '3.1.1: `AGENTS.md` carries Working Rule 14 with
+      objective triggers and the familiar-code clause. file: `AGENTS.md`. 3.1.2: `remind-memory-guidance-on-later-tur...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 6c2a863e8e6cc9fa0ffaff04d63bd4d0d3c7289000dd05e0cc93e121ea8a6ebf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22495'
+    validation_criteria_snippet: '3.1.1: `AGENTS.md` carries Working Rule 14 with
+      objective triggers and the familiar-code clause. file: `AGENTS.md`. 3.1.2: `remind-memory-guidance-on-later-tur...'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py::TestLayeredMemoryGuidance
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 3c9918ce1405a88d1b9e461b2700a09d15bdce9b21b1309108c2e918a6739a5b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22495'
+    validation_criteria_snippet: '3.1.1: `AGENTS.md` carries Working Rule 14 with
+      objective triggers and the familiar-code clause. file: `AGENTS.md`. 3.1.2: `remind-memory-guidance-on-later-tur...'
+    matched_artifact_ref: docs/reference-audit/memory.json
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: d40493478306e61942f82f85c6f1bc01a156f5c059b660ccf1e4f23e436c2505
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22495'
+    validation_criteria_snippet: '3.1.1: `AGENTS.md` carries Working Rule 14 with
+      objective triggers and the familiar-code clause. file: `AGENTS.md`. 3.1.2: `remind-memory-guidance-on-later-tur...'
+    matched_artifact_ref: src/gobby/install/shared/skills/gobby/references/memory/overview.md
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: 0f1352f68ac989596b75c9892fc69ed0e0f27d202d7d8d5e8c99b337a5ed2bd9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22495'
+    validation_criteria_snippet: '3.1.1: `AGENTS.md` carries Working Rule 14 with
+      objective triggers and the familiar-code clause. file: `AGENTS.md`. 3.1.2: `remind-memory-guidance-on-later-tur...'
+    matched_artifact_ref: docs/contracts/memory-usefulness-label.md
+  deferral_target: null
