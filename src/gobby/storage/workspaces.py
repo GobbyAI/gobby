@@ -190,6 +190,11 @@ def _uuid(value: str) -> str:
     return str(parsed)
 
 
+def mint_pane_id() -> str:
+    """Mint a pane row identity before its insert; runtimes never generate their own."""
+    return str(uuid4())
+
+
 def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
 
@@ -834,6 +839,13 @@ class WorkspaceManager:
             RETURNING *
             """,
             (_uuid(terminal_id), owns_terminal, _uuid(pane_id)),
+        )
+        return None if row is None else WorkspacePane.from_row(row)
+
+    def get_pane_for_terminal(self, terminal_id: str) -> WorkspacePane | None:
+        """The pane holding ``terminal_id``, if any (at most one, by the partial unique index)."""
+        row = self.db.fetchone(
+            "SELECT * FROM workspace_panes WHERE terminal_id = %s", (_uuid(terminal_id),)
         )
         return None if row is None else WorkspacePane.from_row(row)
 

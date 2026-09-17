@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, is_named_key
 from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteRequest
@@ -73,29 +74,27 @@ def _authorize_send_keys_target(
         }
 
     try:
-        caller_id = session_manager.resolve_session_reference(caller_ref)
-    except ValueError as exc:
+        scope = resolve_actor_scope(session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}")
+    except ActorScopeError as exc:
+        if exc.reason == "autonomous_agent":
+            return None, {
+                "success": False,
+                "error": "Autonomous agent sessions cannot use send_keys",
+                "error_code": "send_keys_autonomous_agent_forbidden",
+                "caller_session_id": exc.caller_session_id,
+            }
+        error = (
+            f"Send_keys caller session {exc.caller_session_id} not found"
+            if exc.reason == "caller_not_found"
+            else f"Could not resolve send_keys caller: {exc.detail}"
+        )
         return None, {
             "success": False,
-            "error": f"Could not resolve send_keys caller: {exc}",
+            "error": error,
             "error_code": "send_keys_caller_not_found",
         }
-
-    caller = session_manager.get(caller_id)
-    if caller is None:
-        return None, {
-            "success": False,
-            "error": f"Send_keys caller session {caller_id} not found",
-            "error_code": "send_keys_caller_not_found",
-        }
-
-    if caller.agent_run_id:
-        return None, {
-            "success": False,
-            "error": "Autonomous agent sessions cannot use send_keys",
-            "error_code": "send_keys_autonomous_agent_forbidden",
-            "caller_session_id": caller_id,
-        }
+    caller = scope.caller
+    assert caller is not None
 
     try:
         target_id = session_manager.resolve_session_reference(session_ref, caller.project_id)
@@ -114,19 +113,14 @@ def _authorize_send_keys_target(
             "error_code": "send_keys_target_not_found",
         }
 
-    if (
-        target_id == caller_id
-        or target.project_id == caller.project_id
-        or session_manager.is_ancestor(caller_id, target_id)
-        or session_manager.is_ancestor(target_id, caller_id)
-    ):
+    if scope.admits(project_id=target.project_id, session_id=target_id):
         return target_id, None
 
     return None, {
         "success": False,
         "error": "send_keys target is outside the caller's project and agent tree",
         "error_code": "send_keys_target_forbidden",
-        "caller_session_id": caller_id,
+        "caller_session_id": caller.id,
         "target_session_id": target_id,
     }
 
