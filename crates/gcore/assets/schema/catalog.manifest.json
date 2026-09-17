@@ -1529,6 +1529,10 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "coordination_waits.reply",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
       "name": "coordination_waits.statuses",
       "definition": "ARRAY|_text|YES||NEVER"
     },
@@ -6616,11 +6620,11 @@
     },
     {
       "name": "coordination_waits.coordination_waits_check",
-      "definition": "CHECK ((coordination_key IS NOT NULL) <> (statuses IS NOT NULL))"
+      "definition": "CHECK (((coordination_key IS NOT NULL)::integer + (statuses IS NOT NULL)::integer + reply::integer) = 1)"
     },
     {
       "name": "coordination_waits.coordination_waits_outcome_check",
-      "definition": "CHECK (outcome = ANY (ARRAY['waiting'::text, 'released'::text, 'status_matched'::text, 'owner_ended'::text, 'cancelled'::text, 'timeout'::text]))"
+      "definition": "CHECK (outcome = ANY (ARRAY['waiting'::text, 'released'::text, 'replied'::text, 'status_matched'::text, 'owner_ended'::text, 'cancelled'::text, 'timeout'::text]))"
     },
     {
       "name": "coordination_waits.coordination_waits_pkey",
@@ -8245,12 +8249,12 @@
       "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nELSE COALESCE(\n(\nSELECT CASE\nWHEN stage_scan.state IN (\n'ready', 'in_progress', 'needs_review', 'review_approved'\n)\nTHEN stage_scan.state\nELSE 'ready'\nEND\nFROM task_stage_states stage_scan\nWHERE stage_scan.task_id = p_task_id\nAND stage_scan.state <> 'done'\nORDER BY stage_scan.position\nLIMIT 1\n),\n'ready'\n)\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
     },
     {
-      "name": "$schema.coordination_owner_changed()",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_owner_changed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE wait_id text;\nBEGIN\nFOR wait_id IN SELECT id FROM coordination_waits\nWHERE owner_session_id = OLD.id AND outcome = 'waiting'\nLOOP\nPERFORM resolve_coordination_wait(wait_id);\nEND LOOP;\nRETURN NULL;\nEND;\n$function$"
+      "name": "$schema.coordination_message_committed()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_message_committed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE wait_id text;\nBEGIN\nPERFORM id FROM sessions WHERE id = NEW.from_session FOR UPDATE;\nFOR wait_id IN SELECT id FROM coordination_waits\nWHERE owner_session_id = NEW.from_session AND waiter_session_id = NEW.to_session\nAND outcome = 'waiting' AND reply\nLOOP\nPERFORM resolve_coordination_wait(wait_id, NEW.id::text);\nEND LOOP;\nIF NEW.message_type = 'coordination_release' THEN\nFOR wait_id IN SELECT id FROM coordination_waits\nWHERE owner_session_id = NEW.from_session AND waiter_session_id = NEW.to_session\nAND outcome = 'waiting'\nAND coordination_key = NEW.metadata_json::jsonb ->> 'coordination_key'\nLOOP\nPERFORM resolve_coordination_wait(wait_id);\nEND LOOP;\nEND IF;\nRETURN NEW;\nEND;\n$function$"
     },
     {
-      "name": "$schema.coordination_release_committed()",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_release_committed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE wait_id text;\nBEGIN\nIF NEW.message_type <> 'coordination_release' THEN RETURN NEW; END IF;\nPERFORM id FROM sessions WHERE id = NEW.from_session FOR UPDATE;\nFOR wait_id IN SELECT id FROM coordination_waits\nWHERE owner_session_id = NEW.from_session AND waiter_session_id = NEW.to_session\nAND outcome = 'waiting'\nAND coordination_key = NEW.metadata_json::jsonb ->> 'coordination_key'\nLOOP\nPERFORM resolve_coordination_wait(wait_id);\nEND LOOP;\nRETURN NEW;\nEND;\n$function$"
+      "name": "$schema.coordination_owner_changed()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_owner_changed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE wait_id text;\nBEGIN\nFOR wait_id IN SELECT id FROM coordination_waits\nWHERE owner_session_id = OLD.id AND outcome = 'waiting'\nLOOP\nPERFORM resolve_coordination_wait(wait_id);\nEND LOOP;\nRETURN NULL;\nEND;\n$function$"
     },
     {
       "name": "$schema.coordination_wait_changed()",
@@ -8285,8 +8289,8 @@
       "definition": "CREATE OR REPLACE FUNCTION $schema.reset_transcript_processing_on_recovery()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nIF NEW.source IS DISTINCT FROM OLD.source\nOR NEW.transcript_path IS DISTINCT FROM OLD.transcript_path\nOR NEW.external_id IS DISTINCT FROM OLD.external_id\nOR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('active', 'paused'))\nTHEN\nNEW.transcript_processed := FALSE;\nNEW.transcript_processing_failure_count := 0;\nNEW.transcript_processing_last_error_code := NULL;\nNEW.transcript_processing_last_error := NULL;\nNEW.transcript_processing_last_failed_at := NULL;\nEND IF;\nRETURN NEW;\nEND;\n$function$"
     },
     {
-      "name": "$schema.resolve_coordination_wait(wait_id text)",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.resolve_coordination_wait(wait_id text)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\nw coordination_waits%ROWTYPE;\nowner_status text;\nrelease_id text;\nterminal_outcome text;\nBEGIN\nSELECT * INTO w FROM coordination_waits WHERE id = wait_id FOR UPDATE;\nIF NOT FOUND OR w.outcome <> 'waiting' THEN RETURN; END IF;\nSELECT status INTO owner_status FROM sessions WHERE id = w.owner_session_id;\nSELECT id INTO release_id FROM inter_session_messages\nWHERE from_session = w.owner_session_id AND to_session = w.waiter_session_id\nAND message_type = 'coordination_release'\nAND metadata_json::jsonb ->> 'coordination_key' = w.coordination_key\nAND sent_at <= w.expires_at\nORDER BY sent_at, id LIMIT 1;\nterminal_outcome := CASE\nWHEN clock_timestamp() >= w.expires_at THEN 'timeout'\nWHEN release_id IS NOT NULL THEN 'released'\nWHEN owner_status = ANY(w.statuses) THEN 'status_matched'\nWHEN owner_status IS NULL OR owner_status IN\n('completed', 'cancelled', 'closed', 'expired', 'deleted') THEN 'owner_ended'\nELSE NULL END;\nIF terminal_outcome IS NOT NULL THEN\nUPDATE coordination_waits SET outcome = terminal_outcome,\nmatched_status = CASE WHEN terminal_outcome = 'status_matched' THEN owner_status END,\nmessage_id = CASE WHEN terminal_outcome = 'released' THEN release_id END,\ncompleted_at = clock_timestamp() WHERE id = wait_id;\nEND IF;\nEND;\n$function$"
+      "name": "$schema.resolve_coordination_wait(wait_id text, reply_message_id text)",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.resolve_coordination_wait(wait_id text, reply_message_id text DEFAULT NULL::text)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\nw coordination_waits%ROWTYPE;\nowner_status text;\nrelease_id text;\nterminal_outcome text;\nBEGIN\nSELECT * INTO w FROM coordination_waits WHERE id = wait_id FOR UPDATE;\nIF NOT FOUND OR w.outcome <> 'waiting' THEN RETURN; END IF;\nSELECT status INTO owner_status FROM sessions WHERE id = w.owner_session_id;\nIF NOT w.reply THEN\nSELECT id INTO release_id FROM inter_session_messages\nWHERE from_session = w.owner_session_id AND to_session = w.waiter_session_id\nAND message_type = 'coordination_release'\nAND metadata_json::jsonb ->> 'coordination_key' = w.coordination_key\nAND sent_at <= w.expires_at\nORDER BY sent_at, id LIMIT 1;\nEND IF;\nterminal_outcome := CASE\nWHEN clock_timestamp() >= w.expires_at THEN 'timeout'\nWHEN w.reply AND reply_message_id IS NOT NULL THEN 'replied'\nWHEN release_id IS NOT NULL THEN 'released'\nWHEN owner_status = ANY(w.statuses) THEN 'status_matched'\nWHEN owner_status IS NULL OR owner_status IN\n('completed', 'cancelled', 'closed', 'expired', 'deleted') THEN 'owner_ended'\nELSE NULL END;\nIF terminal_outcome IS NOT NULL THEN\nUPDATE coordination_waits SET outcome = terminal_outcome,\nmatched_status = CASE WHEN terminal_outcome = 'status_matched' THEN owner_status END,\nmessage_id = CASE WHEN terminal_outcome = 'released' THEN release_id\nWHEN terminal_outcome = 'replied' THEN reply_message_id END,\ncompleted_at = clock_timestamp() WHERE id = wait_id;\nEND IF;\nEND;\n$function$"
     },
     {
       "name": "$schema.touch_chat_attachments_updated_at()",
@@ -10193,8 +10197,8 @@
       "definition": "CREATE TRIGGER coordination_wait_changed AFTER INSERT OR UPDATE ON coordination_waits FOR EACH ROW EXECUTE FUNCTION coordination_wait_changed()"
     },
     {
-      "name": "inter_session_messages.coordination_release_committed",
-      "definition": "CREATE TRIGGER coordination_release_committed AFTER INSERT ON inter_session_messages FOR EACH ROW EXECUTE FUNCTION coordination_release_committed()"
+      "name": "inter_session_messages.coordination_message_committed",
+      "definition": "CREATE TRIGGER coordination_message_committed AFTER INSERT ON inter_session_messages FOR EACH ROW EXECUTE FUNCTION coordination_message_committed()"
     },
     {
       "name": "sessions.coordination_owner_changed",

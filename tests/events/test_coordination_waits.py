@@ -48,8 +48,16 @@ class CoordinationHarness:
             **kwargs,
         ).id
 
+    def reply(self, **kwargs: Any) -> str:
+        return self.messages.create_message(
+            from_session=kwargs.pop("from_session", self.owner),
+            to_session=kwargs.pop("to_session", self.waiter),
+            content="Use the staging DSN",
+            **kwargs,
+        ).id
+
     def wait(self, **kwargs: Any) -> dict[str, Any]:
-        if "statuses" not in kwargs:
+        if "statuses" not in kwargs and "reply" not in kwargs:
             kwargs.setdefault("coordination_key", "restart-1")
         return self.manager.register(self.waiter, self.owner, **kwargs)
 
@@ -102,6 +110,10 @@ def test_early_release_and_repeated_registration(harness: CoordinationHarness) -
         {"coordination_key": "x", "timeout": 0},
         {"coordination_key": "x", "timeout": 3601},
         {"coordination_key": "x", "timeout": float("nan")},
+        {"reply": False},
+        {"reply": True, "coordination_key": "x"},
+        {"reply": True, "statuses": ["paused"]},
+        {"reply": True, "timeout": 3601},
     ],
 )
 def test_invalid_registration(harness: CoordinationHarness, kwargs: dict[str, Any]) -> None:
@@ -124,6 +136,55 @@ def test_release_matches_structured_identity_only(harness: CoordinationHarness) 
     assert completed["outcome"] == "released"
     assert completed["message_id"] == message_id
     assert harness.row(row["id"]) == completed
+
+
+def test_reply_resolves_on_the_next_owner_message(harness: CoordinationHarness) -> None:
+    row = harness.wait(reply=True)
+    assert row["outcome"] == "waiting"
+    message_id = harness.reply()
+    completed = harness.row(row["id"])
+    harness.reply()
+    assert completed["outcome"] == "replied"
+    assert completed["message_id"] == message_id
+    assert completed["matched_status"] is None
+    assert harness.row(row["id"]) == completed
+    assert harness.wait(reply=True) == completed
+
+
+def test_reply_ignores_messages_that_predate_registration(harness: CoordinationHarness) -> None:
+    harness.reply()
+    harness.release()
+    row = harness.wait(reply=True)
+    assert row["outcome"] == "waiting"
+    assert harness.row(row["id"])["outcome"] == "waiting"
+
+
+def test_reply_matches_the_owner_to_waiter_direction_only(harness: CoordinationHarness) -> None:
+    row = harness.wait(reply=True)
+    harness.reply(from_session=harness.stranger)
+    harness.reply(to_session=harness.stranger)
+    assert harness.row(row["id"])["outcome"] == "waiting"
+    # Any durable message type from the owner answers the question, including
+    # one shaped as a release for a key this wait never named.
+    message_id = harness.release()
+    completed = harness.row(row["id"])
+    assert completed["outcome"] == "replied"
+    assert completed["message_id"] == message_id
+
+
+def test_reply_keeps_its_deadline_and_the_owner_ending(harness: CoordinationHarness) -> None:
+    expired = harness.wait(reply=True)
+    harness.db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '1 second' "
+        "WHERE id = %s",
+        (expired["id"],),
+    )
+    harness.reply()
+    assert harness.row(expired["id"])["outcome"] == "timeout"
+
+    orphaned = harness.manager.register(harness.stranger, harness.owner, reply=True)
+    harness.status("completed")
+    assert harness.row(orphaned["id"])["outcome"] == "owner_ended"
 
 
 def test_transient_status_and_idempotent_set(harness: CoordinationHarness) -> None:
@@ -180,12 +241,22 @@ def test_expiry_uses_original_deadline(harness: CoordinationHarness) -> None:
     assert harness.row(row["id"]) == expired
 
 
-@pytest.mark.parametrize("event", ["release", "status"])
+@pytest.mark.parametrize("event", ["release", "status", "reply"])
 def test_rolled_back_events_do_not_resolve(harness: CoordinationHarness, event: str) -> None:
-    row = harness.wait(statuses=["paused"]) if event == "status" else harness.wait()
+    conditions: dict[str, dict[str, Any]] = {
+        "release": {},
+        "status": {"statuses": ["paused"]},
+        "reply": {"reply": True},
+    }
+    row = harness.wait(**conditions[event])
     with pytest.raises(RuntimeError, match="rollback"):
         with harness.db.transaction():
-            harness.status("paused") if event == "status" else harness.release()
+            if event == "status":
+                harness.status("paused")
+            elif event == "reply":
+                harness.reply()
+            else:
+                harness.release()
             raise RuntimeError("rollback")
     assert harness.row(row["id"])["outcome"] == "waiting"
 
@@ -325,6 +396,39 @@ async def test_mcp_registration_and_cancellation(harness: CoordinationHarness) -
         assert row["outcome"] == "waiting"
         cancelled = await registry.call("cancel_coordination_wait", {"wait_id": row["wait_id"]})
         assert cancelled["outcome"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_mcp_reply_wait_defaults_to_the_spawning_parent(
+    harness: CoordinationHarness,
+) -> None:
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=SessionManager(harness.db),
+        db=harness.db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    with session_context_for_test(harness.waiter):
+        orphan = await registry.call("wait_for_coordination", {"reply": True})
+        assert orphan["success"] is False
+        assert "parent" in orphan["error"]
+
+        harness.db.execute(
+            "UPDATE sessions SET parent_session_id = %s WHERE id = %s",
+            (harness.owner, harness.waiter),
+        )
+        row = await registry.call("wait_for_coordination", {"reply": True})
+        assert row["outcome"] == "waiting"
+        assert row["owner_session_id"] == harness.owner
+        harness.reply()
+        assert harness.row(row["wait_id"])["outcome"] == "replied"
+
+    with session_context_for_test(harness.stranger):
+        named = await registry.call(
+            "wait_for_coordination", {"owner_session": harness.owner, "reply": True}
+        )
+        assert named["outcome"] == "waiting"
+        assert named["owner_session_id"] == harness.owner
 
 
 @pytest.mark.asyncio

@@ -298,14 +298,24 @@ Coordination tools:
 - `get_inter_session_messages`
 
 For a coordinated hold, call `wait_for_coordination(owner_session="#123", ... )`
-with exactly one condition: `coordination_key="unique-release-key"` or
-`statuses=["paused", "completed"]`. The owner releases a keyed wait by sending
-you a `coordination_release` message with `metadata.coordination_key` equal to
-that key. Ordinary message text has no release or wake semantics.
+with exactly one condition: `coordination_key="unique-release-key"`,
+`statuses=["paused", "completed"]`, or `reply=True`. The owner releases a keyed
+wait by sending you a `coordination_release` message with
+`metadata.coordination_key` equal to that key. Ordinary message text has no
+release or wake semantics for a keyed wait.
+
+A reply wait is how a spawned worker waits for an ordinary answer it asked its
+parent for. It resolves on the next durable message the owner session sends the
+waiter after registration, whatever its type; `owner_session` defaults to the
+caller's parent. Resolution is commit-ordered, so a message that was already
+sent when the wait registered never resolves it — send the question and register
+the wait in the same turn. While the wait is registered, the idle check and the
+autonomous stuck sweep leave the run alone, and normal handling resumes once it
+resolves, times out, or is cancelled.
 
 The tool returns a durable `wait_id` and an `outcome` of `waiting`, `released`,
-`status_matched`, `owner_ended`, `cancelled`, or `timeout`. Yield after `waiting`;
-completion uses the existing durable mailbox and protected wake handling.
+`replied`, `status_matched`, `owner_ended`, `cancelled`, or `timeout`. Yield after
+`waiting`; completion uses the existing durable mailbox and protected wake handling.
 Expiry defaults to 900 seconds and accepts at most 3600 seconds. Repeating an
 identical owner/condition registration returns the original wait without extending
 its deadline, including its terminal outcome. Use a fresh unique release key for a
