@@ -22,7 +22,12 @@ from gobby.hooks.event_handlers._session_start.profile import (
     read_user_profile_content,
     write_user_profile_content,
 )
-from gobby.paths import FilesHomeError, FilesHomeNotOnThisDaemonError, require_files_home
+from gobby.paths import (
+    FilesHomeError,
+    FilesHomeNotOnThisDaemonError,
+    FilesHomeUnsupportedPlatformError,
+    require_files_home,
+)
 
 
 def create_hub_files_proxy_router() -> APIRouter:
@@ -36,6 +41,8 @@ def create_hub_files_proxy_router() -> APIRouter:
             return {"content": read_user_profile_content()}
         except FilesHomeNotOnThisDaemonError as exc:
             raise _remote_target() from exc
+        except FilesHomeUnsupportedPlatformError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
         except FilesHomeError as exc:
             raise HTTPException(status_code=404, detail="files_home is missing") from exc
 
@@ -49,6 +56,8 @@ def create_hub_files_proxy_router() -> APIRouter:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         except FilesHomeNotOnThisDaemonError as exc:
             raise _remote_target() from exc
+        except FilesHomeUnsupportedPlatformError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
         except FilesHomeError as exc:
             raise HTTPException(status_code=409, detail="files_home is missing") from exc
         return {"content": content}

@@ -17,6 +17,7 @@ from gobby.cli.hub_backup._integrity import file_digest
 from gobby.cli.hub_backup._manifest import ArtifactRecord, VerificationState
 from gobby.files_migrate import special_file_reason
 from gobby.paths import (
+    FilesHomeUnsupportedPlatformError,
     ensure_files_home_descendant_dir,
     get_gobby_home,
     require_files_home,
@@ -85,7 +86,15 @@ def require_destination_files_home() -> Path:
     bootstrap = get_gobby_home() / "bootstrap.yaml"
     if not bootstrap.is_file():
         raise FilesHomeArchiveError("bootstrap", "destination bootstrap.yaml is required")
-    return require_files_home()
+    return _require_owner_files_home()
+
+
+def _require_owner_files_home() -> Path:
+    """require_files_home with the platform refusal mapped to the archive error channel."""
+    try:
+        return require_files_home()
+    except FilesHomeUnsupportedPlatformError as exc:
+        raise FilesHomeArchiveError("platform", str(exc)) from exc
 
 
 @contextmanager
@@ -296,7 +305,7 @@ def _emit_entries(
 ) -> None:
     from gobby.paths import open_files_home_descendant
 
-    require_files_home()
+    _require_owner_files_home()
     if hooks.after_prewalk is not None:
         hooks.after_prewalk(entries)
     emitted = 0
@@ -342,7 +351,7 @@ def archive_files_home_store(
     backup_root: Path,
     files_home: Path | None = None,
 ) -> tuple[list[ArtifactRecord], dict[str, object]]:
-    root = files_home or require_files_home()
+    root = files_home or _require_owner_files_home()
     dest = backup_root / FILES_ARCHIVE_RELPATH
     dest.parent.mkdir(parents=True, exist_ok=True)
     write_restricted_archive(
@@ -446,7 +455,7 @@ def _restore_body(
             raise FilesHomeArchiveError(
                 "space", "insufficient destination space for files_home restore"
             )
-        require_files_home()
+        _require_owner_files_home()
         published = 0
         for member in members:
             rel = _strip_prefix(member.name, prefix)

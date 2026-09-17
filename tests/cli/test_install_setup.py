@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tarfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -42,6 +43,7 @@ from gobby.cli.install_setup import (
     run_daemon_setup,
 )
 from gobby.cli.installers.hook_commands import build_hook_command
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.checksums import parse_sha256_digest
 from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
@@ -90,6 +92,20 @@ class TestEnsureDaemonConfig:
         files_home.mkdir()
         res = ensure_daemon_config(files_home=files_home)
         assert not res["created"]
+
+    @patch("gobby.cli.install_setup.Path.expanduser")
+    def test_windows_local_bootstrap_refused(
+        self, mock_expand: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "bootstrap.yaml"
+        mock_expand.return_value = target
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        with pytest.raises(BootstrapConfigError, match="native Windows"):
+            ensure_daemon_config(files_home=files_home)
+        assert not target.exists()
 
     @patch("gobby.cli.install_setup.Path.expanduser")
     @patch("gobby.cli.install_setup.get_install_dir")

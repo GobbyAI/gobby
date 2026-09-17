@@ -65,6 +65,12 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
     if bootstrap_path.exists():
         return {"created": False, "path": str(bootstrap_path)}
 
+    if sys.platform == "win32":
+        raise BootstrapConfigError(
+            "A local-mode bootstrap (files_home) is unsupported on native Windows. "
+            "Run the daemon under WSL 2, or configure remote mode."
+        )
+
     if files_home is None:
         raise BootstrapConfigError(
             "Creating a local bootstrap requires an existing absolute files_home. "

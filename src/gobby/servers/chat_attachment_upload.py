@@ -11,7 +11,12 @@ from typing import Any
 from fastapi import HTTPException, UploadFile
 
 import gobby.storage.chat_attachments as chat_attachments
-from gobby.paths import FilesHomeError, FilesHomeNotOnThisDaemonError, require_files_home
+from gobby.paths import (
+    FilesHomeError,
+    FilesHomeNotOnThisDaemonError,
+    FilesHomeUnsupportedPlatformError,
+    require_files_home,
+)
 from gobby.servers.chat_attachment_files import (
     attachment_relative_locator,
     attachment_temp_locator,
@@ -44,6 +49,8 @@ async def publish_uploaded_attachment(
         require_files_home()
     except FilesHomeNotOnThisDaemonError as exc:
         raise HTTPException(status_code=409, detail="files_home is not on this daemon") from exc
+    except FilesHomeUnsupportedPlatformError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
     except FilesHomeError as exc:
         raise HTTPException(status_code=507, detail="Attachment storage unavailable") from exc
 

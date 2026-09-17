@@ -8,6 +8,7 @@ development (source) and installed (package) modes without CLI dependencies.
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,10 @@ class FilesHomeError(Exception):
 
 class FilesHomeNotOnThisDaemonError(FilesHomeError):
     """Raised when files_home is requested on a remote-mode daemon."""
+
+
+class FilesHomeUnsupportedPlatformError(FilesHomeError):
+    """Raised when files_home descendant I/O is requested on native Windows."""
 
 
 def get_package_root() -> Path:
@@ -126,6 +131,11 @@ def get_files_home() -> Path | None:
 
 def require_files_home() -> Path:
     """Return files_home after opening and holding the directory fd."""
+    if sys.platform == "win32":
+        raise FilesHomeUnsupportedPlatformError(
+            "files_home descendant I/O is unsupported on native Windows; "
+            "run the daemon under WSL 2 or use remote mode"
+        )
     from gobby.config.bootstrap import load_bootstrap
 
     config = load_bootstrap()

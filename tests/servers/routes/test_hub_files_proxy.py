@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -199,6 +200,26 @@ def test_get_user_md_returns_files_home_profile(files_home: Path) -> None:
     response = _owner_client().get(USER_MD_PATH)
     assert response.status_code == 200
     assert response.json() == {"content": "## Identity\nJosh"}
+
+
+def test_get_user_md_windows_refusal_is_501(
+    files_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del files_home
+    monkeypatch.setattr(sys, "platform", "win32")
+    response = _owner_client().get(USER_MD_PATH)
+    assert response.status_code == 501
+    assert "WSL 2" in response.json()["detail"]
+
+
+def test_put_user_md_windows_refusal_is_501(
+    files_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del files_home
+    monkeypatch.setattr(sys, "platform", "win32")
+    response = _owner_client().put(USER_MD_PATH, json={"content": "new profile"})
+    assert response.status_code == 501
+    assert "WSL 2" in response.json()["detail"]
 
 
 def test_get_user_md_missing_file_is_empty(files_home: Path) -> None:

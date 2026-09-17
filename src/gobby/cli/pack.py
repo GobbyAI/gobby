@@ -39,7 +39,11 @@ from gobby.cli.postgres_backup import (
     restore_postgres_backup,
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
-from gobby.paths import FilesHomeError, require_files_home
+from gobby.paths import (
+    FilesHomeError,
+    FilesHomeUnsupportedPlatformError,
+    require_files_home,
+)
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 from gobby.utils.durable_file import durable_replace
 
@@ -419,7 +423,10 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
     try:
         with maintenance_claim(get_gobby_home()):
             if files_home is not None:
-                require_files_home()
+                try:
+                    require_files_home()
+                except FilesHomeUnsupportedPlatformError as exc:
+                    raise FilesHomeArchiveError("platform", str(exc)) from exc
             _do_pack(
                 output_path,
                 items,

@@ -12,6 +12,7 @@ from gobby.files_home_http import (
 )
 from gobby.paths import (
     FilesHomeNotOnThisDaemonError,
+    FilesHomeUnsupportedPlatformError,
     publish_files_home_descendant,
     require_files_home,
 )
@@ -69,6 +70,8 @@ def read_user_profile_content() -> str:
             return path.read_text(encoding="utf-8").strip()
         except FileNotFoundError:
             return ""
+    except FilesHomeUnsupportedPlatformError:
+        return ""
     except FilesHomeNotOnThisDaemonError:
         return _read_remote_profile()
 

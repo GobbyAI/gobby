@@ -19,7 +19,11 @@ import gobby.storage.chat_attachments as chat_attachments
 from gobby import files_home_proxy
 from gobby.files_home_http import is_remote_files_mode
 from gobby.files_home_proxy import as_json_object
-from gobby.paths import FilesHomeError, require_files_home
+from gobby.paths import (
+    FilesHomeError,
+    FilesHomeUnsupportedPlatformError,
+    require_files_home,
+)
 from gobby.servers.chat_attachment_files import (
     open_attachment_descriptor,
     resolve_attachment_dir,
@@ -337,6 +341,8 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             fd, stat_result = await asyncio.to_thread(open_attachment_descriptor, locator)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Attachment content not found") from exc
+        except FilesHomeUnsupportedPlatformError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
         except FilesHomeError as exc:
             raise HTTPException(status_code=409, detail="Attachment storage unavailable") from exc
         if not stat.S_ISREG(stat_result.st_mode):
@@ -396,6 +402,8 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
             )
             if cancelled:
                 raise asyncio.CancelledError
+            if isinstance(outcome.error, FilesHomeUnsupportedPlatformError):
+                raise HTTPException(status_code=501, detail=str(outcome.error)) from outcome.error
             return {"ok": False}
         deleted = await server.run_db(
             delete_claimed_row_db,

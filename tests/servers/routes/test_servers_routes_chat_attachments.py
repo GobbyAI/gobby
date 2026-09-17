@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -492,6 +493,56 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
     )
     assert remaining is not None
     assert remaining["claim_token"] is None
+
+
+def test_windows_upload_refusal_maps_to_501(
+    client: TestClient,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = LocalProjectManager(temp_db).create(name="windows-refusal-project")
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    response = client.post(
+        "/api/chat/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+        data={"draft_id": "draft-1", "project_id": project.id},
+    )
+
+    assert response.status_code == 501
+    assert "WSL 2" in response.json()["detail"]
+
+
+def test_windows_content_refusal_maps_to_501(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uploaded = client.post(
+        "/api/chat/attachments",
+        files={"file": ("dl.txt", b"dl", "text/plain")},
+    ).json()
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    response = client.get(f"/api/chat/attachments/{uploaded['id']}/content")
+
+    assert response.status_code == 501
+    assert "WSL 2" in response.json()["detail"]
+
+
+def test_windows_delete_refusal_maps_to_501(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uploaded = client.post(
+        "/api/chat/attachments",
+        files={"file": ("queued.txt", b"queued", "text/plain")},
+    ).json()
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    response = client.delete(f"/api/chat/attachments/{uploaded['id']}")
+
+    assert response.status_code == 501
+    assert "WSL 2" in response.json()["detail"]
 
 
 def test_vanished_files_home_raises_and_does_not_recreate(

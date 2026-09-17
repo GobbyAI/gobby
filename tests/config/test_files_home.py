@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from multiprocessing import get_context
 from pathlib import Path
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from gobby.config.bootstrap_io import (
 from gobby.paths import (
     FilesHomeError,
     FilesHomeNotOnThisDaemonError,
+    FilesHomeUnsupportedPlatformError,
     get_files_home,
     publish_files_home_descendant,
     require_files_home,
@@ -223,6 +225,38 @@ def test_require_files_home_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     with pytest.raises(FilesHomeNotOnThisDaemonError):
         require_files_home()
     assert get_files_home() is None
+
+
+def test_require_files_home_refuses_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "gobby"
+    home.mkdir()
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    write_bootstrap_yaml(home / "bootstrap.yaml", _local_mapping(files_home))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with pytest.raises(FilesHomeUnsupportedPlatformError):
+        require_files_home()
+
+
+def test_windows_refusal_is_not_remote_daemon_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "gobby"
+    home.mkdir()
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    write_bootstrap_yaml(home / "bootstrap.yaml", _local_mapping(files_home))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with pytest.raises(FilesHomeUnsupportedPlatformError) as excinfo:
+        require_files_home()
+    assert not isinstance(excinfo.value, FilesHomeNotOnThisDaemonError)
+    assert "WSL 2" in str(excinfo.value)
 
 
 def test_require_files_home_detects_root_swap_before_publish(
