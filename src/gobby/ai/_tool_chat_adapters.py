@@ -219,7 +219,10 @@ def _accumulate_usage(total: dict[str, int], usage: Any) -> None:
 # Built-in agent tools denied for every tool_chat run. Mutation is permitted
 # only through a caller's declared (policy-validated) MCP tools — never through
 # raw shell/file tools — so a read-only policy cannot write to the repo and a
-# write-capable policy still mutates only via its own tools.
+# write-capable policy still mutates only via its own tools. Delegation tools are
+# denied for a second reason: a one-shot run is budgeted by max_turns and the
+# caller's tool policy, and a native sub-agent or workflow would run outside both.
+# Managed spawns are the opposite case and keep these tools (#22482).
 _DISALLOWED_TOOLS: tuple[str, ...] = (
     "Bash",
     "Write",
@@ -228,6 +231,7 @@ _DISALLOWED_TOOLS: tuple[str, ...] = (
     "NotebookEdit",
     "Task",
     "Agent",
+    "Workflow",
 )
 _REPO_MCP_SERVER_NAME = "repo"
 

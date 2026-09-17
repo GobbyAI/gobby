@@ -321,6 +321,9 @@ async def test_claude_adapter_constrains_tools_and_maps_result() -> None:
     assert kw is not None
     # Read-only enforcement: mutation/shell tools are hard-denied.
     assert kw["disallowed_tools"] == _DISALLOWED_TOOLS
+    # Delegation facilities are denied by name: a one-shot run stays one shot and
+    # cannot fan out through native sub-agents or workflows.
+    assert {"Task", "Agent", "Workflow"} <= set(kw["disallowed_tools"])
     # The agent is steered to the caller's MCP tools only.
     assert set(kw["allowed_tools"]) == {
         "mcp__repo__gcode_search",
