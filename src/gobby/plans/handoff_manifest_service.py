@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.manifest_emitter import ManifestSynthesisError, derive_manifest_entries
 from gobby.plans.parser import PlanDocument, PlanParseError, parse_plan
+from gobby.plans.plan_roots import resolve_plan_root
 from gobby.plans.review_evidence_io import (
     atomic_write_bytes,
     normalize_plan_path,
@@ -17,9 +18,7 @@ from gobby.plans.review_evidence_io import (
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation
-from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workspace_machine_scope import require_local_machine_id
 
 
 class PlanHandoffManifestService:
@@ -165,16 +164,7 @@ class PlanHandoffManifestService:
                 "project_not_found",
                 f"project has no local repository: {project_id}",
             )
-        try:
-            machine_id = require_local_machine_id(
-                None, resource_kind="project_checkout", resource_id=project_id
-            )
-            root = Path(require_root(self.db, project_id, machine_id)).resolve(strict=True)
-        except CheckoutNotFoundError as exc:
-            raise ReviewEvidenceError(
-                "project_not_found",
-                f"project has no local repository: {project_id}",
-            ) from exc
+        root = resolve_plan_root(self.db, project_id, plan_path)
         resolved = normalize_plan_path(root, plan_path)
         return resolved, resolved.relative_to(root).as_posix()
 

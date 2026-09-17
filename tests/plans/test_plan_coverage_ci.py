@@ -56,7 +56,9 @@ def test_retired_plan_state_files_are_removed() -> None:
 def test_plan_registry_queries_plans_table(temp_db: TestDatabase) -> None:
     entries = _seed_registry(temp_db)
 
-    rows = temp_db.fetchall("SELECT plan_id, state, plan_kind FROM plans ORDER BY plan_id")
+    rows = temp_db.fetchall(
+        'SELECT plan_id, state, plan_kind FROM plans ORDER BY plan_id COLLATE "C"'
+    )
 
     assert [row["plan_id"] for row in rows] == sorted(entries)
     assert {row["state"] for row in rows} <= {"active", "archived"}
@@ -263,10 +265,11 @@ def _coverage_manifest_exists(path: Path) -> bool:
 
 def _plan_heading_text(text: str) -> str:
     stripped = _strip_leading_html_comments(text).lstrip()
-    if stripped.startswith("Plan artifact:"):
+    while stripped.startswith(("Plan artifact:", "**Plan ID:**")):
         newline = stripped.find("\n")
-        if newline != -1:
-            stripped = stripped[newline + 1 :].lstrip()
+        if newline == -1:
+            break
+        stripped = stripped[newline + 1 :].lstrip()
     return stripped
 
 
