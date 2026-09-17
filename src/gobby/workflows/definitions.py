@@ -366,7 +366,7 @@ class RuleEffect(BaseModel):
         selector_fields = {"tools", "mcp_tools", "command_pattern", "command_not_pattern"}
         _fields_by_type: dict[str, set[str]] = {
             "block": {"reason", "acknowledge_variable", *selector_fields},
-            "set_variable": {"variable", "value"},
+            "set_variable": {"variable", "value", *selector_fields},
             "inject_context": {"template", *selector_fields},
             "set_display_content": {"template", *selector_fields},
             "mcp_call": {

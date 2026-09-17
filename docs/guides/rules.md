@@ -254,6 +254,10 @@ Supported match fields include:
 - `command_pattern`
 - `command_not_pattern`
 
+These match fields are not specific to `block`: the engine applies an effect's
+tool and command selectors to every effect type, so a `set_variable` or
+`inject_context` effect can gate itself on the command that triggered the event.
+
 `command_pattern` is matched against each executable segment of a shell
 command — the raw text of one pipeline between unquoted `&&`, `||`, `;`, `&`,
 and newlines, quotes and substitutions intact — so an anchored pattern sees

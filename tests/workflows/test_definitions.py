@@ -136,3 +136,46 @@ def test_rule_definition_metadata_rejects_invalid_values() -> None:
                 "enabled": "sometimes",
             }
         )
+
+
+def test_set_variable_effect_accepts_command_selectors() -> None:
+    """A set_variable effect carries command selectors; the engine honors them."""
+    import warnings
+    from datetime import UTC, datetime
+
+    from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+    from gobby.workflows.definitions import RuleEffect
+    from gobby.workflows.engine.effects import EffectsMixin
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        effect = RuleEffect(
+            type="set_variable",
+            variable="code_review_fresh",
+            value=True,
+            command_pattern=r"git\s+commit",
+        )
+
+    assert [str(record.message) for record in caught] == []
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        RuleEffect(type="set_variable", variable="v", value=1, reason="belongs to block")
+
+    assert [str(record.message) for record in caught] == [
+        "RuleEffect(type='set_variable') has 'reason' set "
+        "(relevant to 'block' effects, ignored here)"
+    ]
+
+    def event_for(command: str) -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Bash", "tool_input": {"command": command}},
+        )
+
+    matcher = EffectsMixin()
+    assert matcher._effect_matches_event(effect, event_for("git commit -m x"))
+    assert not matcher._effect_matches_event(effect, event_for("git status"))
