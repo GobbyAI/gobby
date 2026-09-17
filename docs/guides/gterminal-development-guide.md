@@ -50,12 +50,17 @@ then exports the cache variables:
 
 Zig resolves a `--system` directory by package id (`<name>-<version>-<hash>`,
 matching the `.hash` fields in the vendored `build.zig.zon`) with fetching
-disabled, so every entry there must be an extracted directory. Tarball-only
-entries from the machine cache are unpacked (reusing an extraction from the
-vendored `zig-pkg/` directory when the id matches) and already-extracted
-entries are copied, never symlinked. If any package cannot be materialized,
-`LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` stays unset so Zig fetches normally instead of
-resolving against a directory with unusable entries.
+disabled, so every entry there must resolve to an extracted directory.
+Tarball-only entries from the machine cache are unpacked (reusing an extraction
+from the vendored `zig-pkg/` directory when the id matches); entries the machine
+cache already holds extracted are symlinked, which Zig follows and which keeps
+the run from copying hundreds of megabytes. If any package cannot be
+materialized, `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` stays unset so Zig fetches normally
+instead of resolving against a directory with unusable entries.
+
+Without the prepared directory a lazy dependency such as `translate_c` is
+fetched over the network mid-build, which fails in a sandbox or against an
+unreachable host.
 
 The vendored `libsystem_override.sh` honors the same environment: it creates
 its scratch directory with `mktemp` under `${TMPDIR:-/tmp}`, which Guard set G

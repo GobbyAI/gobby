@@ -685,18 +685,14 @@ def isolated_run_root(parent: Path | None = None) -> Iterator[Path]:
             shutil.rmtree(owned, ignore_errors=True)
 
 
-def _stage_zig_package(origin: Path, dest: Path, *, extract: bool, staging_parent: Path) -> None:
-    """Copy or extract one package into dest through a staged sibling directory."""
+def _extract_zig_package(tarball: Path, dest: Path, *, staging_parent: Path) -> None:
+    """Unpack one package tarball into dest through a staged sibling directory."""
     staging = Path(tempfile.mkdtemp(prefix=".zig-pkg-", dir=staging_parent))
     try:
-        staged = staging / dest.name
-        if extract:
-            with tarfile.open(origin, "r:gz") as archive:
-                archive.extractall(staging, filter="data")
-        else:
-            shutil.copytree(origin, staged)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extractall(staging, filter="data")
         try:
-            os.replace(staged, dest)
+            os.replace(staging / dest.name, dest)
         except OSError:
             # A concurrent run materialized the same package first.
             if not dest.is_dir():
@@ -710,13 +706,15 @@ def _materialize_zig_packages(
     cache_root: Path,
     vendored_zig_pkg: Path | None,
 ) -> bool:
-    """Make every machine Zig package usable as an extracted run-cache directory.
+    """Make every machine Zig package usable as an extracted directory.
 
     A `zig build --system <dir>` run resolves packages by id with fetching
     disabled, so tarball-only entries must be unpacked (reusing the vendored
     zig-pkg extraction when the package id matches) before that directory can
-    back a sandboxed build. Returns True only when every source package
-    resolved to an extracted directory.
+    back a sandboxed build. Entries the machine cache already holds extracted
+    are symlinked instead: Zig resolves a `--system` package through a symlink,
+    and copying the cache costs a minute and half a gigabyte per run. Returns
+    True only when every source package resolved to a usable directory.
     """
     packages = cache_root / _ZIG_PACKAGES
     packages.mkdir(parents=True, exist_ok=True)
@@ -728,22 +726,21 @@ def _materialize_zig_packages(
     for entry in entries:
         pkgid = entry.name.removesuffix(_ZIG_TARBALL_SUFFIX)
         dest = packages / pkgid
-        if dest.exists():
-            continue
-        origin = entry
-        extract = False
-        if entry.is_file() and entry.name.endswith(_ZIG_TARBALL_SUFFIX):
-            vendored_copy = vendored_zig_pkg / pkgid if vendored_zig_pkg is not None else None
-            if vendored_copy is not None and vendored_copy.is_dir():
-                origin = vendored_copy
-            else:
-                extract = True
-        elif not entry.is_dir():
-            _emit(f"zig package cache entry {entry} is not a directory or tarball")
-            complete = False
+        if dest.exists() or dest.is_symlink():
             continue
         try:
-            _stage_zig_package(origin, dest, extract=extract, staging_parent=cache_root)
+            if entry.is_dir():
+                dest.symlink_to(entry, target_is_directory=True)
+                continue
+            if not entry.name.endswith(_ZIG_TARBALL_SUFFIX):
+                _emit(f"zig package cache entry {entry} is not a directory or tarball")
+                complete = False
+                continue
+            vendored_copy = vendored_zig_pkg / pkgid if vendored_zig_pkg is not None else None
+            if vendored_copy is not None and vendored_copy.is_dir():
+                dest.symlink_to(vendored_copy, target_is_directory=True)
+                continue
+            _extract_zig_package(entry, dest, staging_parent=cache_root)
         except (OSError, tarfile.TarError) as exc:
             _emit(f"zig package {pkgid} could not be materialized: {exc}")
             complete = False

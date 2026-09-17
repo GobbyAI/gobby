@@ -49,13 +49,14 @@ def test_materialize_extracts_tarball_only_package(tmp_path: Path) -> None:
     assert _materialize_zig_packages(source, cache_root, None)
 
     packages = cache_root / "p"
-    marker = packages / "libxev-0.0.0-86vtcXXXX" / "src" / "marker.txt"
-    assert marker.read_text(encoding="utf-8") == "tarball-payload"
-    assert list(packages.iterdir()) == [packages / "libxev-0.0.0-86vtcXXXX"]
+    extracted = packages / "libxev-0.0.0-86vtcXXXX"
+    assert not extracted.is_symlink()
+    assert (extracted / "src" / "marker.txt").read_text(encoding="utf-8") == "tarball-payload"
+    assert list(packages.iterdir()) == [extracted]
     assert _materialize_zig_packages(source, cache_root, None)
 
 
-def test_materialize_copies_already_extracted_package(tmp_path: Path) -> None:
+def test_materialize_links_already_extracted_package(tmp_path: Path) -> None:
     source = tmp_path / "p"
     source.mkdir()
     extracted = _make_extracted_package(source, "uucode-0.2.0-ZZjBPXXXX", "extracted-payload")
@@ -63,8 +64,10 @@ def test_materialize_copies_already_extracted_package(tmp_path: Path) -> None:
 
     assert _materialize_zig_packages(source, cache_root, None)
 
-    marker = cache_root / "p" / "uucode-0.2.0-ZZjBPXXXX" / "src" / "marker.txt"
-    assert marker.read_text(encoding="utf-8") == "extracted-payload"
+    package = cache_root / "p" / "uucode-0.2.0-ZZjBPXXXX"
+    assert package.is_symlink(), "an already-extracted package is linked, never copied"
+    assert package.readlink() == extracted
+    assert (package / "src" / "marker.txt").read_text(encoding="utf-8") == "extracted-payload"
     assert extracted.is_dir()
 
 
@@ -78,8 +81,9 @@ def test_materialize_reuses_vendored_extracted_copy_when_hashes_match(tmp_path: 
 
     assert _materialize_zig_packages(source, cache_root, vendored_zig_pkg)
 
-    marker = cache_root / "p" / "vaxis-0.6.0-BWNVXXXX" / "src" / "marker.txt"
-    assert marker.read_text(encoding="utf-8") == "vendored-payload"
+    package = cache_root / "p" / "vaxis-0.6.0-BWNVXXXX"
+    assert package.readlink() == vendored_zig_pkg / "vaxis-0.6.0-BWNVXXXX"
+    assert (package / "src" / "marker.txt").read_text(encoding="utf-8") == "vendored-payload"
 
 
 def test_materialize_reports_incomplete_for_unrecognized_entry(tmp_path: Path) -> None:
@@ -120,10 +124,12 @@ def test_isolated_child_env_materializes_run_scoped_zig_package_cache(
     assert env["ZIG_GLOBAL_CACHE_DIR"] == str(cache_root)
     assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == str(cache_root / "p")
     packages = cache_root / "p"
-    extracted = packages / "uucode-0.2.0-ZZjBPXXXX" / "src" / "marker.txt"
-    assert extracted.read_text(encoding="utf-8") == "extracted-payload"
-    reused = packages / "libxev-0.0.0-86vtcXXXX" / "src" / "marker.txt"
-    assert reused.read_text(encoding="utf-8") == "vendored-payload"
+    extracted = packages / "uucode-0.2.0-ZZjBPXXXX"
+    assert extracted.readlink() == machine_pkgs / "uucode-0.2.0-ZZjBPXXXX"
+    assert (extracted / "src" / "marker.txt").read_text(encoding="utf-8") == "extracted-payload"
+    reused = packages / "libxev-0.0.0-86vtcXXXX"
+    assert reused.readlink() == vendored_zig_pkg / "libxev-0.0.0-86vtcXXXX"
+    assert (reused / "src" / "marker.txt").read_text(encoding="utf-8") == "vendored-payload"
     assert sorted(entry.name for entry in packages.iterdir()) == [
         "libxev-0.0.0-86vtcXXXX",
         "uucode-0.2.0-ZZjBPXXXX",
