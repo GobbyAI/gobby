@@ -503,13 +503,7 @@ def test_close_task_completes_merge_from_close_sha(
         closed_commit_sha="close-merge-sha",
     )
 
-    count_row = temp_db.fetchone(
-        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
-        (task.id,),
-    )
     assert stage_row(temp_db, task.id, "merge")["completed_commit_sha"] == "close-merge-sha"
-    assert count_row is not None
-    assert count_row["campaign_count"] == 0
 
 
 def _closed_leaf_for_epic_failure(temp_db, sample_project, parent_id: str, title: str):

@@ -1,6 +1,8 @@
 """Task automation candidate and stale-claim helpers."""
 
+import json
 import logging
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
 
@@ -30,15 +32,25 @@ from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
-# Labels that hold a task out of automated dispatch until a person acts on it: a
-# decision to make, a clean window to wait for, or a spec still to be written for
-# work a plan deferred. The task stays visible and claimable by hand.
+# Labels that hold a task out of automated action — dispatch and ancestor
+# auto-close — until a person acts on it: a decision to make, a clean window to
+# wait for, or a spec still to be written for work a plan deferred. The task
+# stays visible and claimable by hand.
 HOLD_LABELS = frozenset({"needs-decision", "clean-window", "needs-planning"})
 
 
 def has_hold_label(task: object) -> bool:
-    """Return whether a task carries a label that holds it out of dispatch."""
-    return bool(HOLD_LABELS.intersection(getattr(task, "labels", None) or ()))
+    """Return whether a task carries a label that needs a person's action first.
+
+    Accepts Task objects and raw task rows: rows keep labels as the JSON text
+    the storage layer writes, so decode that form before matching.
+    """
+    labels = getattr(task, "labels", None)
+    if labels is None and isinstance(task, Mapping):
+        labels = task.get("labels")
+    if isinstance(labels, str):
+        labels = json.loads(labels) if labels else ()
+    return bool(HOLD_LABELS.intersection(labels or ()))
 
 
 def _is_unattended(task: Any) -> bool:
