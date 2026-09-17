@@ -60,12 +60,12 @@ async def test_web_viewer_sizes_only_while_holding_the_input_lease() -> None:
     registry = TerminalLeaseRegistry()
     web = await registry.attach("term-1", viewer="web")
     gclient = await registry.attach("term-1", viewer="gclient")
+    assert registry.resize_pty(gclient.attachment_id, rows=40, cols=120).applied is True
 
     watching = registry.resize_pty(web.attachment_id, rows=24, cols=80)
     assert watching.ok is True
     assert watching.applied is False
-    assert watching.owner_viewer is None
-    assert registry.resize_pty(gclient.attachment_id, rows=40, cols=120).applied is True
+    assert watching.owner_viewer == "gclient"
 
     typing = await registry.take_control("term-1", web.attachment_id)
     assert typing.sizing is not None
@@ -104,6 +104,27 @@ async def test_tmux_web_watcher_without_lease_does_not_size() -> None:
     assert watching.ok is True
     assert watching.applied is False
     assert watching.owner_viewer is None
+
+
+@pytest.mark.asyncio
+async def test_geometry_less_gclient_seat_does_not_block_unattended_web_sizing() -> None:
+    # A gclient attachment that never declared a grid has nothing to protect,
+    # so the native web watcher still sizes the terminal until that seat
+    # reports its own geometry.
+    registry = TerminalLeaseRegistry()
+    seat = await registry.attach("term-1", viewer="gclient", backend="native")
+    web = await registry.attach("term-1", viewer="web", backend="native")
+
+    unattended = registry.resize_pty(web.attachment_id, rows=40, cols=151)
+    assert unattended.applied is True
+    assert unattended.sizing is not None
+    assert unattended.sizing.owner_viewer == "web"
+    assert (unattended.sizing.rows, unattended.sizing.cols) == (40, 151)
+
+    seated = registry.resize_pty(seat.attachment_id, rows=24, cols=80)
+    assert seated.applied is True
+    assert seated.owner_viewer == "gclient"
+    assert registry.resize_pty(web.attachment_id, rows=40, cols=151).applied is False
 
 
 @pytest.mark.asyncio

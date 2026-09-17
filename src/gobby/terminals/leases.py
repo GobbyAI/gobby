@@ -589,15 +589,16 @@ class TerminalLeaseRegistry:
         # size it and the latest resize wins; a tmux window keeps the lease rule
         # because a web owner pins the human's own tmux client to its grid.
         holder = self._lease(terminal_id).holder
-        live = self._live_viewers(terminal_id)
+        sized = [
+            record for record in self._live_viewers(terminal_id) if record.geometry is not None
+        ]
         unattended = holder is None and all(
-            record.viewer == "web" and record.backend == "native" for record in live
+            record.viewer == "web" and record.backend == "native" for record in sized
         )
         candidates = [
             record
-            for record in live
-            if record.geometry is not None
-            and (unattended or record.viewer != "web" or record.attachment_id == holder)
+            for record in sized
+            if unattended or record.viewer != "web" or record.attachment_id == holder
         ]
         if not candidates:
             return None
