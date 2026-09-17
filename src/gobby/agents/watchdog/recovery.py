@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import (
         AgentRun,
-        AgentRunTerminalReason,
         LocalAgentRunManager,
         TerminalAction,
     )
@@ -692,11 +691,8 @@ class WatchdogRecoveryCoordinator:
         snapshot: WatchdogTranscriptSnapshot,
     ) -> None:
         """Fail a run after a conclusive hard provider error ended its turn."""
-        reason = snapshot.provider_error_reason or "provider_error"
-        payload = f"{snapshot.provider.title()} provider error: {reason}"
-        terminal_reason: AgentRunTerminalReason = (
-            "provider_quota_exhausted" if reason == "usage_limit_exceeded" else "provider_error"
-        )
+        payload = snapshot.provider_error_payload
+        terminal_reason = snapshot.provider_error_terminal_reason
 
         async def terminalize(
             _action: TerminalAction,

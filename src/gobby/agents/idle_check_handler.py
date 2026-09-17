@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from gobby.agents.prompt_detector import PromptDetector
     from gobby.agents.stall_classifier import StallClassifier
     from gobby.agents.tmux.session_manager import TmuxSessionManager
-    from gobby.agents.watchdog import WatchdogReaderRegistry
+    from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.attention import AttentionStateManager
@@ -189,6 +189,89 @@ class IdleCheckHandler:
             self._idle_timeout_seconds_for_run(run),
         )
 
+    async def _read_local_transcript(
+        self,
+        run: AgentRun,
+        session: Session | None,
+        reader: TranscriptWatchdogReader | None,
+    ) -> tuple[str | None, WatchdogTranscriptSnapshot | None]:
+        """Read a locally owned session transcript without touching the session row."""
+        if (
+            reader is None
+            or session is None
+            or not is_local_machine_owner(session.machine_id, get_machine_id())
+        ):
+            return None, None
+        transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
+        if transcript_path is None:
+            return None, None
+        try:
+            return transcript_path, await reader.read(transcript_path)
+        except OSError:
+            logger.warning(
+                "Failed to read %s transcript for idle recovery on run %s",
+                reader.provider_id,
+                run.id,
+            )
+            return transcript_path, None
+
+    @staticmethod
+    def _provider_error_postdates_run(run: AgentRun, snapshot: WatchdogTranscriptSnapshot) -> bool:
+        error = snapshot.provider_error_event
+        created_at = parse_stored_datetime(run.created_at)
+        # Native resume appends to the predecessor's rollout. The new run
+        # exists before launch; started_at is persisted afterward and could
+        # exclude a current process's immediate startup failure.
+        return (
+            error is not None
+            and error.timestamp is not None
+            and created_at is not None
+            and error.timestamp >= created_at
+        )
+
+    async def _fail_on_terminal_provider_error(
+        self,
+        run: AgentRun,
+        snapshot: WatchdogTranscriptSnapshot | None,
+    ) -> bool:
+        """Terminalize a run whose turn ended on a hard provider error."""
+        if (
+            snapshot is None
+            or not snapshot.has_conclusive_terminal_provider_error
+            or not self._provider_error_postdates_run(run, snapshot)
+        ):
+            return False
+        if not await self._recovery._complete_if_work_finished(run):
+            await self._recovery.fail_terminal_provider_agent(run, snapshot)
+        return True
+
+    async def current_provider_error_snapshot(
+        self, run: AgentRun
+    ) -> WatchdogTranscriptSnapshot | None:
+        """Return the run's transcript snapshot when a provider error is its newest output."""
+        session_manager = self._get_session_manager()
+        if session_manager is None or not run.child_session_id:
+            return None
+        try:
+            session = await self._run_db(session_manager.get, run.child_session_id)
+        except Exception:
+            logger.warning(
+                "Failed to load session for provider error lookup on run %s",
+                run.id,
+                exc_info=True,
+            )
+            return None
+        provider_id = (session.source if session is not None else None) or run.provider
+        reader = self._watchdog_readers.for_provider(provider_id)
+        _path, snapshot = await self._read_local_transcript(run, session, reader)
+        if (
+            snapshot is None
+            or not snapshot.has_current_provider_error
+            or not self._provider_error_postdates_run(run, snapshot)
+        ):
+            return None
+        return snapshot
+
     async def _handle_idle_check(
         self,
         run: AgentRun,
@@ -267,6 +350,12 @@ class IdleCheckHandler:
         reader = self._watchdog_readers.for_provider(provider_id)
         has_capacity_probe = reader is not None and reader.capacity_pane_message is not None
         if session_recent and not has_capacity_probe:
+            # A Claude turn that ended on an unrecoverable API error fails the run
+            # now rather than after the session goes stale.
+            if reader is not None and reader.provider_id == "claude":
+                _path, snapshot = await self._read_local_transcript(run, session, reader)
+                if await self._fail_on_terminal_provider_error(run, snapshot):
+                    return 1
             idle_detector.reset_idle(run.id)
             return 0
 
@@ -297,45 +386,17 @@ class IdleCheckHandler:
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None
         transcript_path: str | None = None
         if (
-            reader is not None
-            and session is not None
-            and is_local_machine_owner(session.machine_id, get_machine_id())
-            and (
-                session_stale
-                or capacity_candidate
-                or reader.provider_id == "codex"
-                and status != "active"
+            session_stale
+            or capacity_candidate
+            or reader is not None
+            and reader.provider_id == "codex"
+            and status != "active"
+        ):
+            transcript_path, transcript_snapshot = await self._read_local_transcript(
+                run, session, reader
             )
-        ):
-            transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
-        if reader is not None and transcript_path is not None:
-            try:
-                transcript_snapshot = await reader.read(transcript_path)
-            except OSError:
-                logger.warning(
-                    "Failed to read %s transcript for idle recovery on run %s",
-                    reader.provider_id,
-                    run.id,
-                )
-        if (
-            transcript_snapshot is not None
-            and transcript_snapshot.has_conclusive_terminal_provider_error
-        ):
-            error = transcript_snapshot.provider_error_event
-            created_at = parse_stored_datetime(run.created_at)
-            # Native resume appends to the predecessor's rollout. The new run
-            # exists before launch; started_at is persisted afterward and could
-            # exclude a current process's immediate startup failure.
-            if (
-                error is not None
-                and error.timestamp is not None
-                and created_at is not None
-                and error.timestamp >= created_at
-            ):
-                if await self._recovery._complete_if_work_finished(run):
-                    return 1
-                await self._recovery.fail_terminal_provider_agent(run, transcript_snapshot)
-                return 1
+        if await self._fail_on_terminal_provider_error(run, transcript_snapshot):
+            return 1
 
         if status == "unknown":
             idle_detector.reset_idle(run.id)

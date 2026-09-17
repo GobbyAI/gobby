@@ -668,10 +668,18 @@ class AgentLifecycleMonitor:
                         message=f"Agent {run.id} completed (idle after delivering its result)",
                     )
                 else:
-                    await self._cleanup_handler.cleanup_agent(
-                        run,
-                        terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
-                    )
+                    snapshot = await self._idle_check_handler.current_provider_error_snapshot(run)
+                    if snapshot is None:
+                        await self._cleanup_handler.cleanup_agent(
+                            run,
+                            terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
+                        )
+                    else:
+                        await self._cleanup_handler.cleanup_agent(
+                            run,
+                            terminal_payload=snapshot.provider_error_payload,
+                            terminal_reason=snapshot.provider_error_terminal_reason,
+                        )
                 self._draft_grace_observations.pop(run.id, None)
             elif run.terminal_id and self._terminal_services is not None:
                 if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
