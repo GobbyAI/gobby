@@ -60,6 +60,7 @@ pub struct PreparedChild {
 
 pub struct PreparedCommit {
     status_reader: Option<AsyncFd<OwnedFd>>,
+    gate_error: Option<io::Error>,
     #[cfg(debug_assertions)]
     wait_for_child_exit_before_status: bool,
     #[cfg(debug_assertions)]
@@ -67,23 +68,24 @@ pub struct PreparedCommit {
 }
 
 impl PreparedChild {
-    pub fn begin_commit(&mut self) -> Result<PreparedCommit, CommitResult> {
-        if let Some(gate) = self.gate_writer.take() {
-            let write_result = write_gate(gate.as_raw_fd());
-            drop(gate);
-            if let Err(error) = write_result {
-                return Err(CommitResult::ExecFailed(ExecFailure::from_io(
-                    "gate", error,
-                )));
-            }
-        }
-        Ok(PreparedCommit {
+    /// Release the gate. A failed gate write still reads the status pipe in
+    /// `finish`: a child that failed before commit reported its stage there
+    /// and exited, which is exactly what closes the gate and fails the write.
+    pub fn begin_commit(&mut self) -> PreparedCommit {
+        // Dropping the writer after a failed write sends EOF to a child still
+        // waiting on the gate, so the status pipe always reaches EOF.
+        let gate_error = self
+            .gate_writer
+            .take()
+            .and_then(|gate| write_gate(gate.as_raw_fd()).err());
+        PreparedCommit {
             status_reader: self.status_reader.take(),
+            gate_error,
             #[cfg(debug_assertions)]
             wait_for_child_exit_before_status: self.wait_for_child_exit_before_status,
             #[cfg(debug_assertions)]
             exit_watch: self.runtime.child_exit_watch(),
-        })
+        }
     }
 }
 
@@ -105,7 +107,11 @@ impl PreparedCommit {
             Err(_) => return CommitResult::ExecTimeout,
         };
         if bytes.is_empty() {
-            return CommitResult::Committed;
+            // An empty status pipe proves exec only when the gate byte was delivered.
+            return match self.gate_error {
+                None => CommitResult::Committed,
+                Some(error) => CommitResult::ExecFailed(ExecFailure::from_io("gate", error)),
+            };
         }
         match serde_json::from_slice(&bytes) {
             Ok(failure) => CommitResult::ExecFailed(failure),
@@ -249,7 +255,7 @@ fn open_pty(rows: u16, cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &mut size,
+            std::ptr::from_mut(&mut size),
         )
     };
     if result < 0 {

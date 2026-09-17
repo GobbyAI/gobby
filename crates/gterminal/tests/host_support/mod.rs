@@ -138,6 +138,15 @@ fn private_gterm(socket_dir: &Path) -> PathBuf {
 }
 
 pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
+    spawn_host_with_env_removed(socket_dir, extra, &[])
+}
+
+/// Spawns the host without the named variables of the test's environment.
+pub fn spawn_host_with_env_removed(
+    socket_dir: &Path,
+    extra: &[&str],
+    removed: &[&str],
+) -> HostProc {
     let log_path = socket_dir.join("gterm.log");
     let token_path = socket_dir.join("local_cli_token");
     if !token_path.exists() {
@@ -159,6 +168,9 @@ pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> HostProc {
             Some(file) => Stdio::from(file),
             None => Stdio::piped(),
         });
+    for name in removed {
+        cmd.env_remove(name);
+    }
     let child = cmd.spawn().expect("spawn gterm host");
     HostProc {
         child,

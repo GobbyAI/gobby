@@ -562,7 +562,13 @@ fn run_tmux(socket: &str, args: &[&str]) -> Result<String, PollClass> {
 }
 
 fn tmux_command() -> Command {
-    Command::new(std::env::var("GTERM_TMUX_BIN").unwrap_or_else(|_| "tmux".into()))
+    let mut command =
+        Command::new(std::env::var("GTERM_TMUX_BIN").unwrap_or_else(|_| "tmux".into()));
+    // `-u`: without a UTF-8 LC_ALL, LC_CTYPE or LANG and outside tmux, as under
+    // a daemon, tmux rewrites control and non-ASCII bytes in display-message
+    // output to `_`, and the poll batch's length-framed title needs them intact.
+    command.arg("-u");
+    command
 }
 
 async fn publish_frame(

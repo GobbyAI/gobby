@@ -373,17 +373,7 @@ impl HostState {
             });
         }
         #[cfg(feature = "vt-engine")]
-        let commit = if let Some(child) = slot.child.as_mut() {
-            match child.begin_commit() {
-                Ok(commit) => Some(commit),
-                Err(outcome) => {
-                    remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
-                    return commit_failure_json(outcome);
-                }
-            }
-        } else {
-            None
-        };
+        let commit = slot.child.as_mut().map(|child| child.begin_commit());
         #[cfg(not(feature = "vt-engine"))]
         let _ = deadline_ms;
         drop(inner);
