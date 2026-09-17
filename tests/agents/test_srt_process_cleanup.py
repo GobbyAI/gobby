@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -196,6 +196,8 @@ async def test_startup_reaper_schedules_run_root_sweep_without_awaiting(
     processes = [live_runner, live_child, orphan_runner, orphan_child, unrelated]
 
     class RunStorage:
+        db = object()
+
         def list_active_for_machine(
             self,
             machine_id: str,
@@ -224,8 +226,13 @@ async def test_startup_reaper_schedules_run_root_sweep_without_awaiting(
         cleanup_order.append("processes")
         return reaped
 
-    async def sweep_roots(active_run_ids: set[str]) -> None:
+    async def sweep_roots(
+        active_run_ids: set[str],
+        *,
+        record_retention: Callable[[str, dict[str, str]], None],
+    ) -> None:
         assert active_run_ids == {"live-run", "new-pending-run"}
+        record_retention("orphan-run", {"retained_violation_path": "/retained/orphan-run.jsonl"})
         cleanup_order.append("roots-started")
         sweep_started.set()
         await finish_sweep.wait()
@@ -240,8 +247,14 @@ async def test_startup_reaper_schedules_run_root_sweep_without_awaiting(
         sweep_roots,
     )
     caplog.set_level(logging.INFO, logger="gobby.agents.srt_process_cleanup")
+    recorded: list[tuple[object, str, dict[str, str]]] = []
+    monkeypatch.setattr(
+        "gobby.runner_lifecycle_agents.record_sandbox_retention",
+        lambda db, run_id, retention: recorded.append((db, run_id, retention)),
+    )
+    run_storage = RunStorage()
     runner = SimpleNamespace(
-        agent_runner=SimpleNamespace(run_storage=RunStorage()),
+        agent_runner=SimpleNamespace(run_storage=run_storage),
         db_executor=None,
         _sandbox_run_root_sweep_task=None,
     )
@@ -266,5 +279,12 @@ async def test_startup_reaper_schedules_run_root_sweep_without_awaiting(
     assert live_child.terminated is False
     assert unrelated.terminated is False
     assert cleanup_order == ["processes", "roots-started", "roots-finished"]
+    assert recorded == [
+        (
+            run_storage.db,
+            "orphan-run",
+            {"retained_violation_path": "/retained/orphan-run.jsonl"},
+        )
+    ]
     assert "run_id=orphan-run pid_count=2" in caplog.text
     assert "run_id=live-run" not in caplog.text

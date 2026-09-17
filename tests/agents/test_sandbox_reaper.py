@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -68,15 +69,28 @@ async def test_terminal_sandbox_cleanup_reaps_processes_before_roots(
     assert cleanup_order == ["processes", "roots"]
 
 
+def _write_violation_log(sandbox_root: Path, content: str) -> Path:
+    violation_log = sandbox_root / "logs" / "violations.jsonl"
+    violation_log.parent.mkdir(parents=True)
+    violation_log.write_text(content, encoding="utf-8")
+    return violation_log
+
+
+def _write_settings_document(sandbox_root: Path, content: str) -> Path:
+    settings = sandbox_root / "assets" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(content, encoding="utf-8")
+    return settings
+
+
 @pytest.mark.asyncio
 async def test_terminal_run_roots_removed_and_violation_log_retained(tmp_path: Path) -> None:
     gobby_home = tmp_path / "gobby-home"
     run_id = "terminal-run"
     sandbox_root = _create_root(_sandbox_root(gobby_home, run_id))
     managed_root = _create_root(_managed_root(gobby_home, run_id))
-    violation_log = sandbox_root / "logs" / "violations.jsonl"
-    violation_log.parent.mkdir()
-    violation_log.write_text('{"operation":"read"}\n', encoding="utf-8")
+    _write_violation_log(sandbox_root, '{"operation":"read"}\n')
+    _write_settings_document(sandbox_root, '{"policy":"resolved"}\n')
 
     result = await reap_sandbox_run_roots(run_id, gobby_home=gobby_home)
 
@@ -85,7 +99,98 @@ async def test_terminal_run_roots_removed_and_violation_log_retained(tmp_path: P
     assert not sandbox_root.exists()
     assert not managed_root.exists()
     retained = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl"
+    retained_settings = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.settings.json"
     assert retained.read_text(encoding="utf-8") == '{"operation":"read"}\n'
+    assert retained_settings.read_text(encoding="utf-8") == '{"policy":"resolved"}\n'
+    assert retained_settings.stat().st_mode & 0o777 == 0o600
+    assert result.retained_violation_log == retained
+    assert result.retained_settings == retained_settings
+    assert result.retention_metadata() == {
+        "retained_violation_path": str(retained),
+        "retained_settings_path": str(retained_settings),
+    }
+
+
+@pytest.mark.asyncio
+async def test_reap_without_violations_reports_no_retained_artifacts(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_id = "clean-run"
+    sandbox_root = _create_root(_sandbox_root(gobby_home, run_id))
+    _write_settings_document(sandbox_root, '{"policy":"resolved"}\n')
+
+    result = await reap_sandbox_run_roots(run_id, gobby_home=gobby_home)
+
+    assert result.removed_roots == 1
+    assert not sandbox_root.exists()
+    assert result.retained_violation_log is None
+    assert result.retained_settings is None
+    assert result.retention_metadata() == {}
+    assert not (gobby_home / "logs" / "sandbox-violations").exists()
+
+
+@pytest.mark.asyncio
+async def test_reap_with_violations_but_no_settings_retains_log_only(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_id = "no-settings-run"
+    sandbox_root = _create_root(_sandbox_root(gobby_home, run_id))
+    _write_violation_log(sandbox_root, '{"operation":"read"}\n')
+
+    result = await reap_sandbox_run_roots(run_id, gobby_home=gobby_home)
+
+    retained = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl"
+    assert result.removed_roots == 1
+    assert not sandbox_root.exists()
+    assert result.retained_violation_log == retained
+    assert result.retained_settings is None
+    assert result.retention_metadata() == {"retained_violation_path": str(retained)}
+    assert not (gobby_home / "logs" / "sandbox-violations" / f"{run_id}.settings.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_settings_retention_failure_skips_root_and_reports_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_id = "failed-retention-run"
+    sandbox_root = _create_root(_sandbox_root(gobby_home, run_id))
+    _write_violation_log(sandbox_root, '{"operation":"read"}\n')
+    _write_settings_document(sandbox_root, '{"policy":"resolved"}\n')
+    retain_artifact = sandbox_reaper._retain_run_artifact
+
+    def fail_settings_retention(
+        source: Path,
+        run_id: str,
+        filename: str,
+        gobby_home: Path,
+    ) -> Path:
+        if filename.endswith(".settings.json"):
+            raise OSError("retention denied")
+        return retain_artifact(source, run_id, filename, gobby_home)
+
+    monkeypatch.setattr(sandbox_reaper, "_retain_run_artifact", fail_settings_retention)
+
+    result = await reap_sandbox_run_roots(run_id, gobby_home=gobby_home)
+
+    assert result.skipped_roots == 1
+    assert sandbox_root.exists()
+    assert result.retained_violation_log is None
+    assert result.retained_settings is None
+    assert result.retention_metadata() == {}
+
+
+def test_retention_metadata_patches_sandbox_record_keys() -> None:
+    home = Path("/gobby-home")
+    result = SandboxReapResult(
+        retained_violation_log=home / "logs" / "sandbox-violations" / "run.jsonl",
+        retained_settings=home / "logs" / "sandbox-violations" / "run.settings.json",
+    )
+
+    assert result.retention_metadata() == {
+        "retained_violation_path": str(home / "logs" / "sandbox-violations" / "run.jsonl"),
+        "retained_settings_path": str(home / "logs" / "sandbox-violations" / "run.settings.json"),
+    }
+    assert SandboxReapResult().retention_metadata() == {}
 
 
 @pytest.mark.asyncio
@@ -112,6 +217,64 @@ async def test_startup_sweep_removes_terminal_roots_and_keeps_active_runs(
     assert all(not root.exists() for root in terminal_roots)
     assert running_root.exists()
     assert pending_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_sweep_records_retained_artifacts_per_run(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_id = "orphan-run"
+    sandbox_root = _create_root(_sandbox_root(gobby_home, run_id))
+    _write_violation_log(sandbox_root, '{"operation":"write"}\n')
+    _write_settings_document(sandbox_root, '{"policy":"resolved"}\n')
+    _set_age(sandbox_root, 7_200)
+    recorded: list[tuple[str, dict[str, str]]] = []
+
+    def record_retention(run_id: str, patch: dict[str, str]) -> None:
+        recorded.append((run_id, patch))
+
+    result = await sweep_sandbox_run_roots(
+        set(),
+        gobby_home=gobby_home,
+        now=_NOW,
+        record_retention=record_retention,
+    )
+
+    retained_log = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl"
+    retained_settings = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.settings.json"
+    assert result.removed_roots == 1
+    assert not sandbox_root.exists()
+    assert recorded == [
+        (
+            run_id,
+            {
+                "retained_violation_path": str(retained_log),
+                "retained_settings_path": str(retained_settings),
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_startup_sweep_survives_retention_record_failure(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_id = "record-failure-run"
+    sandbox_root = _create_root(_sandbox_root(gobby_home, run_id))
+    _write_violation_log(sandbox_root, '{"operation":"write"}\n')
+    _set_age(sandbox_root, 7_200)
+
+    def record_retention(run_id: str, patch: dict[str, str]) -> None:
+        raise RuntimeError("record store unavailable")
+
+    result = await sweep_sandbox_run_roots(
+        set(),
+        gobby_home=gobby_home,
+        now=_NOW,
+        record_retention=record_retention,
+    )
+
+    assert result.removed_roots == 1
+    assert not sandbox_root.exists()
+    assert (gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl").exists()
 
 
 @pytest.mark.asyncio
@@ -340,3 +503,50 @@ async def test_short_tmp_registration_rejects_escapes(
     assert result.skipped_roots == 1
     assert root.exists()
     assert (outside / "keep").read_text() == "keep"
+
+
+def test_record_sandbox_retention_patches_the_run_sandbox_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class _Manager:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        def merge_sandbox_metadata(self, run_id: str, updates: dict[str, str]) -> None:
+            calls.append((run_id, updates))
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", _Manager)
+    retained = Path("/gobby-home/logs/sandbox-violations/run.jsonl")
+    result = SandboxReapResult(retained_violation_log=retained)
+
+    sandbox_reaper.record_sandbox_retention(cast(Any, object()), "run", result.retention_metadata())
+    sandbox_reaper.record_sandbox_retention(
+        cast(Any, object()), "clean-run", SandboxReapResult().retention_metadata()
+    )
+
+    assert calls == [("run", {"retained_violation_path": str(retained)})]
+
+
+def test_record_sandbox_retention_survives_a_storage_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _Manager:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        def merge_sandbox_metadata(self, run_id: str, updates: dict[str, str]) -> None:
+            raise RuntimeError("hub unavailable")
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", _Manager)
+    caplog.set_level(logging.WARNING, logger="gobby.agents.sandbox_reaper")
+
+    sandbox_reaper.record_sandbox_retention(
+        cast(Any, object()),
+        "run",
+        {"retained_violation_path": "/gobby-home/logs/sandbox-violations/run.jsonl"},
+    )
+
+    assert "Failed to record retained sandbox diagnostics for run run" in caplog.text

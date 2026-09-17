@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents import terminal_delivery
-from gobby.agents.sandbox_reaper import reap_sandbox_run_roots
+from gobby.agents.sandbox_reaper import reap_sandbox_run_roots, record_sandbox_retention
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.storage.attention import run_attention_entry_id
 from gobby.storage.hub.operation_deadline import detached_database_operation_deadline
@@ -193,7 +193,13 @@ class TerminalResourceCleaner:
                 finally:
                     finish_phase("srt_reap")
                 try:
-                    await reap_sandbox_run_roots(run.id)
+                    reaped = await reap_sandbox_run_roots(run.id)
+                    await self._run_db(
+                        record_sandbox_retention,
+                        self._agent_run_manager.db,
+                        run.id,
+                        reaped.retention_metadata(),
+                    )
                 finally:
                     finish_phase("sandbox_reap")
             except Exception:

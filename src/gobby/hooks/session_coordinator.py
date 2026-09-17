@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import threading
 import time
 from collections.abc import Callable
@@ -25,17 +24,21 @@ from weakref import WeakValueDictionary
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
 from gobby.agents.run_completion import (
-    closed_task_completion_result,
     cooperative_close_handoff_pending,
     ended_caller_close_review_outcome,
 )
 from gobby.agents.runtime_cleanup import release_session_end_run
-from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run, record_sandbox_retention
+from gobby.hooks.session_completion import (
+    agent_run_notification_status,
+    closed_task_result,
+    format_no_activity_error,
+    incomplete_step_workflow_error,
+)
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import TerminalAction
-from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 
 if TYPE_CHECKING:
@@ -45,47 +48,7 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
 
 
-_AUTH_PROMPT_RE = re.compile(
-    r"/login|Press 1 to trust|not authenticated|Invalid API key|API key required",
-    re.IGNORECASE,
-)
-_INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
-_NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
 _TERMINAL_DELIVERY_WAIT_SECONDS = 20.0
-
-
-def _format_no_activity_error(result: Any) -> str:
-    if not isinstance(result, str) or not result.strip():
-        return _NO_ACTIVITY_ERROR
-
-    tail = "\n".join(result.splitlines()[-20:])
-    if _AUTH_PROMPT_RE.search(tail):
-        return (
-            f"{_NO_ACTIVITY_ERROR} - auth/trust prompt detected in pane output. "
-            "Check daemon-visible API/provider credentials or Claude Code login state."
-        )
-    return f"{_NO_ACTIVITY_ERROR} - last pane output:\n{tail}"
-
-
-def _format_incomplete_step_workflow_error(
-    workflow_name: str,
-    current_step: str | None,
-    exit_condition: str | None,
-    *,
-    eval_error: Exception | None = None,
-) -> str:
-    parts = [
-        _INCOMPLETE_STEP_WORKFLOW_ERROR,
-        f"workflow={workflow_name}",
-        f"current_step={current_step or 'unknown'}",
-    ]
-    if exit_condition:
-        parts.append(f"exit_condition={exit_condition}")
-    else:
-        parts.append("exit_condition=<none>")
-    if eval_error is not None:
-        parts.append(f"exit_condition_error={eval_error}")
-    return "; ".join(parts)
 
 
 class SessionCoordinator:
@@ -391,7 +354,15 @@ class SessionCoordinator:
         """Synchronously finish process and filesystem cleanup from a hook worker."""
 
         async def cleanup() -> None:
-            await reap_terminal_sandbox_run(run_id)
+            reaped = await reap_terminal_sandbox_run(run_id)
+            manager = self._agent_run_manager
+            if manager is not None:
+                await asyncio.to_thread(
+                    record_sandbox_retention,
+                    manager.db,
+                    run_id,
+                    reaped.retention_metadata(),
+                )
 
         try:
             if self._event_loop and self._event_loop.is_running():
@@ -479,7 +450,9 @@ class SessionCoordinator:
         def finish_followups(updated_run: Any | None) -> Any | None:
             if updated_run is None:
                 return None
-            status = self._agent_run_notification_status(
+            status = agent_run_notification_status(
+                self._agent_run_manager,
+                self.logger,
                 run_id,
                 updated_run,
                 default="success" if action == "complete" else "error",
@@ -754,7 +727,9 @@ class SessionCoordinator:
                         exc_info=True,
                     )
 
-            task_close_result = self._closed_task_result(agent_run, result)
+            task_close_result = closed_task_result(
+                self._task_manager, self.logger, agent_run, result
+            )
             if task_close_result is not None:
                 result = task_close_result
             else:
@@ -767,7 +742,9 @@ class SessionCoordinator:
                     )
                     return
                 if outcome is None:
-                    fail_reason = self._incomplete_step_workflow_error(session_id)
+                    fail_reason = incomplete_step_workflow_error(
+                        self._agent_run_manager, self.logger, session_id
+                    )
                 elif outcome[0] == "fail":
                     fail_reason = outcome[1]
                 else:
@@ -775,7 +752,7 @@ class SessionCoordinator:
                     result = f"{result}\n\n{outcome[1]}" if result else outcome[1]
                 if fail_reason:
                     if tool_calls_count == 0 and turns_used == 0:
-                        fail_reason = f"{fail_reason}\n\n{_format_no_activity_error(result)}"
+                        fail_reason = f"{fail_reason}\n\n{format_no_activity_error(result)}"
                     updated_run = self._terminate_agent_run(
                         run_id=agent_run_id,
                         agent_run=agent_run,
@@ -801,7 +778,7 @@ class SessionCoordinator:
                         run_id=agent_run_id,
                         agent_run=agent_run,
                         action="fail",
-                        reason=_format_no_activity_error(result),
+                        reason=format_no_activity_error(result),
                         result_prefix=result,
                         tool_calls_count=tool_calls_count,
                         turns_used=turns_used,
@@ -837,85 +814,6 @@ class SessionCoordinator:
 
         except Exception as e:
             self.logger.error("Failed to complete agent run %s: %s", agent_run_id, e)
-
-    def _closed_task_result(self, agent_run: Any, result: str | None = None) -> str | None:
-        """Add canonical close metadata when the run's bound task is closed."""
-        task_id = getattr(agent_run, "task_id", None)
-        if self._task_manager is None or not isinstance(task_id, str) or not task_id:
-            return None
-        try:
-            task = self._task_manager.get_task(task_id)
-        except Exception as e:
-            self.logger.warning(
-                "Failed to load bound task %s while completing agent run %s: %s",
-                task_id,
-                getattr(agent_run, "id", "<unknown>"),
-                e,
-            )
-            return None
-        return closed_task_completion_result(task, result)
-
-    def _agent_run_notification_status(
-        self,
-        run_id: str,
-        updated_run: Any | None,
-        *,
-        default: str,
-    ) -> str:
-        """Return the persisted status when another terminalizer won the race."""
-        if updated_run is not None:
-            status = getattr(updated_run, "status", None)
-            return status if isinstance(status, str) else default
-        stored_run = self._agent_run_manager.get(run_id) if self._agent_run_manager else None
-        if stored_run is None:
-            self.logger.warning("Agent run %s disappeared after terminalization race", run_id)
-            return default
-        self.logger.debug(
-            "Agent run %s terminalized concurrently with status %s",
-            run_id,
-            stored_run.status,
-        )
-        return stored_run.status
-
-    def _incomplete_step_workflow_error(self, session_id: str) -> str | None:
-        """Return a failure reason if an active step workflow is still incomplete."""
-        if not self._agent_run_manager:
-            return None
-
-        db = getattr(self._agent_run_manager, "db", None)
-        if db is None:
-            return None
-
-        try:
-            if CoordinationWaitManager(db).has_active_wait(session_id):
-                # Yielding the turn is how a registered wait is served: the step is
-                # incomplete precisely because the session is waiting on another
-                # session, and the wake resumes it. Failing the run here would punish
-                # the coordination the workflow asked for (#22367).
-                return None
-        except Exception as e:
-            self.logger.warning(
-                "Failed to verify coordination hold for session %s: %s", session_id, e
-            )
-
-        try:
-            from gobby.workflows.step_context import first_incomplete_step_workflow
-
-            incomplete = first_incomplete_step_workflow(db, session_id)
-        except Exception as e:
-            self.logger.warning(
-                "Failed to inspect step workflow completion for session %s: %s", session_id, e
-            )
-            return None
-
-        if incomplete is None:
-            return None
-        return _format_incomplete_step_workflow_error(
-            incomplete.workflow_name,
-            incomplete.current_step,
-            incomplete.exit_condition,
-            eval_error=incomplete.eval_error,
-        )
 
     def _notify_agent_completion(self, run_id: str, status: str) -> None:
         """Fire completion event for an agent run (fail-open, idempotent).

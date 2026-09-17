@@ -4,6 +4,7 @@ import asyncio
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.agents import terminal_cleanup
+from gobby.agents.sandbox_reaper import SandboxReapResult
 from gobby.agents.terminal_cleanup import cleanup_merged_task_artifacts_after_agent_exit
 from gobby.storage.hub import operation_deadline
 from gobby.storage.hub.operation_deadline import database_operation_deadline
@@ -35,8 +37,8 @@ def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> None:
     async def reap(_run_id: str) -> int:
         return 0
 
-    async def reap_roots(_run_id: str) -> None:
-        return None
+    async def reap_roots(_run_id: str) -> SandboxReapResult:
+        return SandboxReapResult()
 
     monkeypatch.setattr(terminal_cleanup, "reap_srt_runner_process_tree", reap)
     monkeypatch.setattr(terminal_cleanup, "reap_sandbox_run_roots", reap_roots)
@@ -495,3 +497,38 @@ async def test_post_terminal_cleanup_missing_child_does_not_target_parent_sessio
     session_coordinator.release_session_worktrees.assert_not_called()
     session_manager.update_status.assert_not_called()
     assert db.executed == []
+
+
+@pytest.mark.asyncio
+async def test_post_terminal_cleanup_records_retained_sandbox_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[tuple[object, str, dict[str, str]]] = []
+
+    async def reap_roots(_run_id: str) -> SandboxReapResult:
+        return SandboxReapResult(
+            retained_violation_log=Path("/gobby-home/logs/sandbox-violations/run-1.jsonl"),
+            retained_settings=Path("/gobby-home/logs/sandbox-violations/run-1.settings.json"),
+        )
+
+    monkeypatch.setattr(terminal_cleanup, "reap_sandbox_run_roots", reap_roots)
+    monkeypatch.setattr(
+        terminal_cleanup,
+        "record_sandbox_retention",
+        lambda db, run_id, retention: recorded.append((db, run_id, retention)),
+    )
+    agent_run_manager = MagicMock()
+    handler = _handler(RecordingDb(), agent_run_manager=agent_run_manager)
+
+    await handler.post_terminal_cleanup(_run(task_id=None), allow_parent_session_fallback=False)
+
+    assert recorded == [
+        (
+            agent_run_manager.db,
+            "run-1",
+            {
+                "retained_violation_path": "/gobby-home/logs/sandbox-violations/run-1.jsonl",
+                "retained_settings_path": "/gobby-home/logs/sandbox-violations/run-1.settings.json",
+            },
+        )
+    ]

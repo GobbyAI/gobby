@@ -19,6 +19,7 @@ from ._constants import (
 )
 from ._manager import LocalAgentRunManager
 from ._models import AgentRun
+from ._sandbox_records import sandbox_record
 from ._termination import TerminalAction
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "LocalAgentRunManager",
     "TerminalAction",
     "logger",
+    "sandbox_record",
 ]

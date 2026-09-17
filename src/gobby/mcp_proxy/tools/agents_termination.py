@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +11,7 @@ from gobby.agents.run_completion import (
     agent_run_task_dirty_paths,
     build_agent_exit_notification,
 )
-from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run, record_sandbox_retention
 from gobby.mcp_proxy.tools.agents_runtime import facade
 
 if TYPE_CHECKING:
@@ -54,7 +55,14 @@ async def _cleanup_terminal_artifacts(
 
     if not debug and terminal_transition_owned and run_id:
         try:
-            await reap_terminal_sandbox_run(run_id)
+            reaped = await reap_terminal_sandbox_run(run_id)
+            if db is not None:
+                await asyncio.to_thread(
+                    record_sandbox_retention,
+                    db,
+                    run_id,
+                    reaped.retention_metadata(),
+                )
         except Exception:
             logger.warning(
                 "Failed to reap SRT sandbox resources for terminal agent %s",

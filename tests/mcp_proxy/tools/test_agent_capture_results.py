@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -415,3 +417,56 @@ def test_truncated_tail_reports_actual_excerpt_lines() -> None:
     assert payload["capture"]["excerpt_lines"] == len(excerpt.splitlines()) == 1
     assert payload["capture"]["total_chars"] == len(capture)
     assert len(result) <= _AGENT_RESULT_CAPTURE_CHARS
+
+
+@pytest.mark.asyncio
+async def test_result_entrypoints_expose_bounded_retained_sandbox_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    retention_root = gobby_home / "logs" / "sandbox-violations"
+    retention_root.mkdir(parents=True)
+    retained_log = retention_root / "run-123.jsonl"
+    retained_log.write_text(
+        '{"operation":"read","path":"/etc/secret-a"}\n'
+        '{"operation":"write","path":"/etc/secret-b"}\n',
+        encoding="utf-8",
+    )
+    retained_settings = retention_root / "run-123.settings.json"
+    retained_settings.write_text('{"policy":"resolved"}\n', encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    run = _run(
+        status="success",
+        result="Completed",
+        capture_id=None,
+        resume_metadata_json={
+            "sandbox": {
+                "backend": "srt",
+                "enforced": True,
+                "violation_path": str(gobby_home / "run" / "sandbox" / "run-123" / "reaped.jsonl"),
+                "retained_violation_path": str(retained_log),
+                "retained_settings_path": str(retained_settings),
+            }
+        },
+    )
+    registry = _registry(run)
+
+    for tool in ("get_agent_result", "wait_for_agent"):
+        result = await registry.call(tool, {"run_id": run.id})
+        sandbox = result["sandbox"]
+        assert sandbox["violation_count"] == 2
+        assert sandbox["retained_violation_path"] == str(retained_log)
+        assert sandbox["retained_settings_path"] == str(retained_settings)
+        assert "violations" not in sandbox
+        assert "secret-a" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_result_entrypoints_omit_sandbox_for_unsandboxed_runs() -> None:
+    run = _run(status="success", result="Completed", capture_id=None)
+    registry = _registry(run)
+
+    for tool in ("get_agent_result", "wait_for_agent"):
+        result = await registry.call(tool, {"run_id": run.id})
+        assert "sandbox" not in result

@@ -9,22 +9,34 @@ import shutil
 import stat
 import tempfile
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gobby.agents.sandbox_policy import (
     PRE_COMMIT_STORE_SPARE_NAME,
     PRE_COMMIT_STORE_SPARE_TEMP_NAME,
+    RETAINED_SETTINGS_PATH_KEY,
+    RETAINED_VIOLATION_PATH_KEY,
+    SANDBOX_RETENTION_RELATIVE_PATH,
+    SRT_SETTINGS_RELATIVE_PATH,
     SRT_VIOLATIONS_RELATIVE_PATH,
     registered_run_tmp,
 )
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.paths import get_gobby_home
 
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
+
 logger = logging.getLogger(__name__)
 
 _MINIMUM_ORPHAN_AGE_SECONDS = 60 * 60
+
+# Called once per swept run with the sandbox-record patch naming its retained
+# artifacts. The sweep owns filesystem state only, so recording stays injected.
+RetentionRecorder = Callable[[str, dict[str, str]], None]
 
 
 @dataclass(frozen=True)
@@ -35,6 +47,17 @@ class SandboxReapResult:
     removed_bytes: int = 0
     skipped_roots: int = 0
     first_skipped_path: Path | None = None
+    retained_violation_log: Path | None = None
+    retained_settings: Path | None = None
+
+    def retention_metadata(self) -> dict[str, str]:
+        """Return the sandbox-record patch naming this run's retained artifacts."""
+        patch: dict[str, str] = {}
+        if self.retained_violation_log is not None:
+            patch[RETAINED_VIOLATION_PATH_KEY] = str(self.retained_violation_log)
+        if self.retained_settings is not None:
+            patch[RETAINED_SETTINGS_PATH_KEY] = str(self.retained_settings)
+        return patch
 
 
 def _run_root_parents(gobby_home: Path) -> tuple[Path, Path]:
@@ -73,27 +96,31 @@ def _root_size(path: Path) -> int:
     return total
 
 
-def _violation_log(root: Path) -> tuple[Path, os.stat_result] | None:
-    """Return a safe regular violation log contained by a real run root."""
+def _run_artifact(root: Path, relative: Path) -> tuple[Path, os.stat_result] | None:
+    """Return a safe regular run artifact contained by a real run root."""
     root_stat = _lstat(root)
     if root_stat is None or stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
         return None
-    logs_directory = root / SRT_VIOLATIONS_RELATIVE_PATH.parent
-    logs_stat = _lstat(logs_directory)
-    if logs_stat is None or stat.S_ISLNK(logs_stat.st_mode) or not stat.S_ISDIR(logs_stat.st_mode):
+    parent_directory = root / relative.parent
+    parent_stat = _lstat(parent_directory)
+    if (
+        parent_stat is None
+        or stat.S_ISLNK(parent_stat.st_mode)
+        or not stat.S_ISDIR(parent_stat.st_mode)
+    ):
         return None
-    source = root / SRT_VIOLATIONS_RELATIVE_PATH
+    source = root / relative
     source_stat = _lstat(source)
     if source_stat is None or not stat.S_ISREG(source_stat.st_mode):
         return None
     return source, source_stat
 
 
-def _retain_violation_log(source: Path, run_id: str, gobby_home: Path) -> None:
-    """Atomically retain one forensic violation log before deleting its run root."""
-    retention_root = gobby_home / "logs" / "sandbox-violations"
+def _retain_run_artifact(source: Path, run_id: str, filename: str, gobby_home: Path) -> Path:
+    """Atomically retain one forensic run artifact before deleting its run root."""
+    retention_root = gobby_home / SANDBOX_RETENTION_RELATIVE_PATH
     retention_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination = retention_root / f"{run_id}.jsonl"
+    destination = retention_root / filename
     temporary_path: Path | None = None
     try:
         with source.open("rb") as source_file:
@@ -105,13 +132,14 @@ def _retain_violation_log(source: Path, run_id: str, gobby_home: Path) -> None:
                 temporary_path = Path(temporary_file.name)
                 shutil.copyfileobj(source_file, temporary_file)
         if temporary_path is None:
-            raise RuntimeError("retained violation log temporary path was not created")
+            raise RuntimeError("retained sandbox artifact temporary path was not created")
         temporary_path.chmod(0o600)
         temporary_path.replace(destination)
         temporary_path = None
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+    return destination
 
 
 def _remove_root(path: Path, *, remove_registered_tmp: bool = True) -> bool:
@@ -189,7 +217,7 @@ def _reap_roots(run_id: str, roots: Iterable[Path], gobby_home: Path) -> Sandbox
         try:
             if _lstat(root) is None:
                 continue
-            violation_log = _violation_log(root)
+            violation_log = _run_artifact(root, SRT_VIOLATIONS_RELATIVE_PATH)
         except OSError:
             skipped_roots += 1
             if first_skipped_path is None:
@@ -199,23 +227,36 @@ def _reap_roots(run_id: str, roots: Iterable[Path], gobby_home: Path) -> Sandbox
         if violation_log is not None:
             violation_logs.append((violation_log, root))
 
-    retained_log_failure_root: Path | None = None
+    retained_failure_root: Path | None = None
+    retained_violation_log: Path | None = None
+    retained_settings: Path | None = None
     if violation_logs:
         (source, _source_stat), source_root = max(
             violation_logs,
             key=lambda candidate: candidate[0][1].st_mtime_ns,
         )
+        # Retention is all-or-nothing per run: a partial copy would advertise
+        # diagnostics the record cannot pair, so a failure keeps the root.
         try:
-            _retain_violation_log(source, run_id, gobby_home)
+            settings = _run_artifact(source_root, SRT_SETTINGS_RELATIVE_PATH)
+            retained_violation_log = _retain_run_artifact(
+                source, run_id, f"{run_id}.jsonl", gobby_home
+            )
+            if settings is not None:
+                retained_settings = _retain_run_artifact(
+                    settings[0], run_id, f"{run_id}.settings.json", gobby_home
+                )
         except OSError:
-            retained_log_failure_root = source_root
+            retained_violation_log = None
+            retained_settings = None
+            retained_failure_root = source_root
             skipped_roots = 1
             first_skipped_path = source_root
 
     removed_roots = 0
     removed_bytes = 0
     for root in roots_to_remove:
-        if root == retained_log_failure_root:
+        if root == retained_failure_root:
             continue
         try:
             root_bytes = _root_size(root)
@@ -248,6 +289,8 @@ def _reap_roots(run_id: str, roots: Iterable[Path], gobby_home: Path) -> Sandbox
         removed_bytes=removed_bytes,
         skipped_roots=skipped_roots,
         first_skipped_path=first_skipped_path,
+        retained_violation_log=retained_violation_log,
+        retained_settings=retained_settings,
     )
 
 
@@ -276,10 +319,31 @@ async def reap_terminal_sandbox_run(run_id: str) -> SandboxReapResult:
     return await reap_sandbox_run_roots(run_id)
 
 
+def record_sandbox_retention(
+    db: HubDatabase,
+    run_id: str,
+    retention: Mapping[str, str],
+) -> None:
+    """Point a reaped run's sandbox record at the diagnostics that outlived it."""
+    if not retention:
+        return
+    from gobby.storage.agents import LocalAgentRunManager
+
+    try:
+        LocalAgentRunManager(db).merge_sandbox_metadata(run_id, retention)
+    except Exception:
+        logger.warning(
+            "Failed to record retained sandbox diagnostics for run %s",
+            run_id,
+            exc_info=True,
+        )
+
+
 def _startup_sweep(
     active_run_ids: set[str],
     gobby_home: Path,
     now: float,
+    record_retention: RetentionRecorder | None = None,
 ) -> SandboxReapResult:
     cutoff = now - _MINIMUM_ORPHAN_AGE_SECONDS
     roots_by_run_id: dict[str, list[Path]] = {}
@@ -338,6 +402,16 @@ def _startup_sweep(
         skipped_roots += result.skipped_roots
         if first_skipped_path is None:
             first_skipped_path = result.first_skipped_path
+        retention = result.retention_metadata()
+        if record_retention is not None and retention:
+            try:
+                record_retention(run_id, retention)
+            except Exception:
+                logger.warning(
+                    "Failed to record retained sandbox diagnostics for run %s",
+                    run_id,
+                    exc_info=True,
+                )
     return SandboxReapResult(
         removed_roots=removed_roots,
         removed_bytes=removed_bytes,
@@ -351,6 +425,7 @@ async def sweep_sandbox_run_roots(
     *,
     gobby_home: Path | None = None,
     now: float | None = None,
+    record_retention: RetentionRecorder | None = None,
 ) -> SandboxReapResult:
     """Remove terminal or missing run roots older than one hour."""
     home = gobby_home or get_gobby_home()
@@ -359,6 +434,7 @@ async def sweep_sandbox_run_roots(
         active_run_ids,
         home,
         time.time() if now is None else now,
+        record_retention,
     )
     if result.removed_roots or result.skipped_roots:
         logger.info(
