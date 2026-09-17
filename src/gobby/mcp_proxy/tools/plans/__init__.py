@@ -12,6 +12,7 @@ import psycopg
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
+from gobby.plans.plan_roots import resolve_plan_overlay_root
 from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
@@ -282,7 +283,15 @@ def create_plan_registry(
         context_project_id = (
             project_context.get("id") if project_context is not None else default_project_id
         )
-        if isinstance(context_project_id, str) and (
+        plan_path = Path(plan_file)
+        overlay_root = (
+            resolve_plan_overlay_root(db, context_project_id, plan_path)
+            if isinstance(context_project_id, str)
+            else None
+        )
+        if overlay_root is not None:
+            project_context = get_project_context(overlay_root)
+        elif isinstance(context_project_id, str) and (
             project_context is None or not project_context.get("project_path")
         ):
             from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
@@ -302,7 +311,6 @@ def create_plan_registry(
             except CheckoutNotFoundError:
                 pass
 
-        plan_path = Path(plan_file)
         context_path = project_context.get("project_path") if project_context is not None else None
         if isinstance(context_path, str) and context_path and not plan_path.is_absolute():
             plan_path = Path(context_path) / plan_path

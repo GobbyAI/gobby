@@ -9,6 +9,7 @@ from pathlib import Path
 
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.parser import PlanDocument
+from gobby.plans.plan_roots import resolve_plan_root
 from gobby.plans.review_checkpoint_service import ReviewCheckpointService
 from gobby.plans.review_coverage import (
     review_complexity,
@@ -36,9 +37,7 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     PlanReviewEvidenceMutation,
 )
-from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 
 EVIDENCE_LEASE_SECONDS = 7_200
@@ -92,9 +91,9 @@ class PlanReviewEvidenceService:
                 "project_not_found",
                 f"project has no local repository: {project_id}",
             )
-        root = Path(self._checkout_root(project_id))
+        root = resolve_plan_root(self.db, project_id, plan_path)
         resolved = normalize_plan_path(root, plan_path)
-        relative_path = resolved.relative_to(root.resolve(strict=True)).as_posix()
+        relative_path = resolved.relative_to(root).as_posix()
         mutation = PlanReviewEvidenceMutation(
             project_id=project_id,
             plan_path=relative_path,
@@ -303,7 +302,7 @@ class PlanReviewEvidenceService:
             )
         return validate_review_coverage(
             evidence_id=evidence_id,
-            project_root=Path(self._checkout_root(evidence.project_id)),
+            project_root=resolve_plan_root(self.db, evidence.project_id, evidence.plan_path),
             document=self._snapshot_document(evidence),
             plan_hash=evidence.plan_hash,
             lane_results=lane_results,
@@ -761,18 +760,6 @@ class PlanReviewEvidenceService:
             status=status,
             detail=detail,
         )
-
-    def _checkout_root(self, project_id: str) -> str:
-        try:
-            machine_id = require_local_machine_id(
-                None, resource_kind="project_checkout", resource_id=project_id
-            )
-            return require_root(self.db, project_id, machine_id)
-        except CheckoutNotFoundError as exc:
-            raise ReviewEvidenceError(
-                "project_not_found",
-                f"project has no local repository: {project_id}",
-            ) from exc
 
     def _resolve_plan_path(
         self,
