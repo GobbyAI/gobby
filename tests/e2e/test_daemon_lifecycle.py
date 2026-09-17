@@ -194,7 +194,7 @@ class TestDaemonRestart:
 
         try:
             # Wait for first daemon to be healthy
-            assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_file)
 
             # Stop first daemon
             os.kill(process1.pid, signal.SIGTERM)
@@ -219,9 +219,7 @@ class TestDaemonRestart:
 
             try:
                 # Wait for second daemon to be healthy
-                assert wait_for_daemon_health(http_port, timeout=20.0), (
-                    "Second daemon should start after restart"
-                )
+                wait_for_daemon_health(http_port, log_file=log_file)
 
                 # Verify it's a different process
                 assert process2.pid != process1.pid, "Restarted daemon should have different PID"
@@ -266,7 +264,7 @@ class TestDaemonRestart:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_file)
 
             # Verify initial health
             response1 = authenticated_daemon_request(
@@ -298,7 +296,7 @@ class TestDaemonRestart:
                 )
 
             try:
-                assert wait_for_daemon_health(http_port, timeout=20.0), "Second daemon should start"
+                wait_for_daemon_health(http_port, log_file=log_file)
 
                 # Get status after restart
                 response2 = authenticated_daemon_request(

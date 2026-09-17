@@ -48,6 +48,46 @@ _TERMINAL_E2E_BINARIES = {
     "test_terminal_client_stack.py": ("gterm", "gclient"),
 }
 
+# Measured max: 24.699s under eight concurrent workers; one idle tmux run exceeded 30s.
+ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS = 60.0
+DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS = 0.5
+DAEMON_HEALTH_POLL_INTERVAL_SECONDS = 0.25
+# Preserve multiple observations even when a caller supplies a deliberately tiny deadline.
+DAEMON_HEALTH_MIN_PROBE_ATTEMPTS = 10
+DAEMON_HEALTH_LOG_TAIL_CHARS = 4000
+
+
+class DaemonHealthTimeoutError(AssertionError):
+    """An isolated daemon did not become healthy within the startup budget."""
+
+    def __init__(
+        self,
+        *,
+        port: int,
+        elapsed_seconds: float,
+        attempts: int,
+        connect_refused: int,
+        timed_out: int,
+        transport_errors: int,
+        last_status_code: int | None,
+        log_tail: str,
+    ) -> None:
+        self.port = port
+        self.elapsed_seconds = elapsed_seconds
+        self.attempts = attempts
+        self.connect_refused = connect_refused
+        self.timed_out = timed_out
+        self.transport_errors = transport_errors
+        self.last_status_code = last_status_code
+        self.log_tail = log_tail
+        super().__init__(
+            f"Isolated daemon on port {port} did not serve /api/auth/status after "
+            f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
+            f"timed_out={timed_out}, transport_errors={transport_errors}, "
+            f"last_status_code={last_status_code}\n"
+            f"--- daemon log tail ---\n{log_tail}"
+        )
+
 
 def terminal_native_binary_headers(requested_paths: tuple[str, ...]) -> list[str]:
     """Return provenance headers for terminal e2e files in this run."""
@@ -244,7 +284,7 @@ class DaemonInstance:
             time.sleep(0.05)
         pytest.fail(f"Daemon health endpoint on port {self.http_port} remained available")
 
-    def restart(self, *, health_timeout: float = 30.0) -> None:
+    def restart(self) -> None:
         """Restart the daemon with the fixture's original process configuration."""
         if self.is_alive():
             raise RuntimeError("Cannot restart a running daemon")
@@ -269,12 +309,11 @@ class DaemonInstance:
                 f"Daemon subprocess died immediately with exit code {process.poll()}.\n"
                 f"Logs:\n{self.read_logs()}\nError output:\n{self.read_error_logs()}"
             )
-        if not wait_for_daemon_health(self.http_port, timeout=health_timeout):
+        try:
+            wait_for_daemon_health(self.http_port, log_file=self.log_file)
+        except DaemonHealthTimeoutError:
             terminate_process_tree(process.pid)
-            pytest.fail(
-                f"Daemon failed to restart within timeout.\n"
-                f"Logs:\n{self.read_logs()}\nError logs:\n{self.read_error_logs()}"
-            )
+            raise
         if not wait_for_daemon_websocket(self.ws_port, self.gobby_home, timeout=30.0):
             terminate_process_tree(process.pid)
             pytest.fail(
@@ -490,23 +529,65 @@ def wait_for_port(port: int, timeout: float = 10.0) -> bool:
     return False
 
 
-def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
-    """Wait for the daemon's public authentication status route."""
-    start = time.time()
-    while time.time() - start < timeout:
+def wait_for_daemon_health(
+    port: int,
+    *,
+    log_file: Path | None = None,
+    timeout: float = ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS,
+    min_attempts: int = DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
+) -> None:
+    """Wait for isolated daemon health or raise with bounded startup diagnostics."""
+    start = time.monotonic()
+    deadline = start + timeout
+    attempts = 0
+    connect_refused = 0
+    timed_out = 0
+    transport_errors = 0
+    last_status_code: int | None = None
+
+    while attempts < min_attempts or time.monotonic() < deadline:
+        remaining = max(deadline - time.monotonic(), 0.0)
+        probe_timeout = max(0.001, min(DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS, remaining))
+        attempts += 1
         try:
             response = httpx.get(
-                f"http://localhost:{port}/api/auth/status",
-                timeout=2.0,
+                f"http://127.0.0.1:{port}/api/auth/status",
+                timeout=probe_timeout,
             )
+            last_status_code = response.status_code
             if response.status_code == 200:
-                return True
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
-            pass
-        # Sleep on every non-ready iteration so polling does not steal cycles
-        # from the daemon we are waiting on.
-        time.sleep(0.5)
-    return False
+                return
+        except httpx.ConnectError:
+            connect_refused += 1
+        except httpx.TimeoutException:
+            timed_out += 1
+        except httpx.TransportError:
+            transport_errors += 1
+
+        remaining = max(deadline - time.monotonic(), 0.0)
+        if remaining > 0:
+            time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
+
+    elapsed_seconds = time.monotonic() - start
+    if log_file is None:
+        log_tail = "<daemon log path not provided>"
+    else:
+        try:
+            log_tail = log_file.read_text(errors="replace")[-DAEMON_HEALTH_LOG_TAIL_CHARS:]
+        except OSError as exc:
+            log_tail = f"<unable to read {log_file}: {exc}>"
+        if not log_tail:
+            log_tail = f"<daemon log is empty: {log_file}>"
+    raise DaemonHealthTimeoutError(
+        port=port,
+        elapsed_seconds=elapsed_seconds,
+        attempts=attempts,
+        connect_refused=connect_refused,
+        timed_out=timed_out,
+        transport_errors=transport_errors,
+        last_status_code=last_status_code,
+        log_tail=log_tail,
+    )
 
 
 def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
@@ -855,18 +936,11 @@ def daemon_instance(
         env=env,
     )
 
-    # Wait for daemon to be healthy (longer timeout for when running with full test suite)
-    if not wait_for_daemon_health(http_port, timeout=30.0):
-        # Daemon failed to start - capture logs for debugging
-        logs = instance.read_logs()
-        error_logs = instance.read_error_logs()
-        exit_code = process.poll()
+    try:
+        wait_for_daemon_health(http_port, log_file=log_file)
+    except DaemonHealthTimeoutError:
         terminate_process_tree(process.pid)
-        extra_info = f"\nProcess exited with code: {exit_code}" if exit_code is not None else ""
-        pytest.fail(
-            f"Daemon failed to start within timeout.{extra_info}\n"
-            f"Logs:\n{logs}\nError logs:\n{error_logs}"
-        )
+        raise
 
     # HTTP health check passes as soon as /api/auth/status responds, but the
     # WebSocket server comes up on a separate port and can lag by a few hundred

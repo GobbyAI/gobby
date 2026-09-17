@@ -165,7 +165,7 @@ class TestCrashRecovery:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(database_url)
 
             # Create some state via API (register a session)
@@ -218,7 +218,7 @@ class TestCrashRecovery:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(database_url)
 
             # Get initial session count
@@ -250,9 +250,7 @@ class TestCrashRecovery:
                 )
 
             try:
-                assert wait_for_daemon_health(http_port, timeout=20.0), (
-                    "Recovered daemon should start"
-                )
+                wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
                 _wait_for_database_ready(database_url)
 
                 # Sessions should be accessible (database recovered)
@@ -338,9 +336,7 @@ class TestStalePIDFile:
 
         try:
             # Daemon should still start successfully
-            assert wait_for_daemon_health(http_port, timeout=20.0), (
-                "Daemon should start despite stale PID file"
-            )
+            wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(_database_url_for_config(config_path))
 
             # Verify it's running
@@ -389,7 +385,7 @@ class TestClientReconnection:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             database_url = _database_url_for_config(config_path)
             _wait_for_database_ready(database_url)
 
@@ -426,7 +422,7 @@ class TestClientReconnection:
                 )
 
             try:
-                assert wait_for_daemon_health(http_port, timeout=20.0), "Second daemon should start"
+                wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
                 _wait_for_database_ready(database_url)
 
                 # New client should be able to connect
@@ -478,7 +474,7 @@ class TestTaskStatePersistence:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(database_url)
             project_id = "00000000-0000-4000-8000-000000000001"
             _register_test_project(
@@ -515,7 +511,7 @@ class TestTaskStatePersistence:
                 )
 
             try:
-                assert wait_for_daemon_health(http_port, timeout=20.0), "Second daemon should start"
+                wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
                 _wait_for_database_ready(database_url)
 
                 # Verify task still exists in database
@@ -562,7 +558,7 @@ class TestTaskStatePersistence:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_dir / "daemon.log")
             _wait_for_database_ready(database_url)
             project_id = "00000000-0000-4000-8000-000000000002"
             _register_test_project(

@@ -212,7 +212,7 @@ class TestSessionPersistence:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should start"
+            wait_for_daemon_health(http_port, log_file=log_file)
 
             # Verify sessions endpoint works
             client = authenticated_daemon_client_for_home(
@@ -247,7 +247,7 @@ class TestSessionPersistence:
                 )
 
             try:
-                assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should restart"
+                wait_for_daemon_health(http_port, log_file=log_file)
 
                 # Verify sessions endpoint still works
                 client = authenticated_daemon_client_for_home(
