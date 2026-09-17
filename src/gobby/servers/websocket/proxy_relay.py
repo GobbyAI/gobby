@@ -9,6 +9,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameLagError, FrameProtocolError
 from gobby.terminals.ws_protocol import (
@@ -184,6 +185,7 @@ class ProxyAttachment:
     frame: Any
     encoding: str
     backend: str
+    terminal: Any = None
     task: asyncio.Task[None] | None = None
 
 
@@ -215,6 +217,7 @@ class ProxyHub:
         locator: AttachLocator,
         frame: Any,
         encoding: str,
+        terminal: Any = None,
     ) -> None:
         handshake = getattr(frame, "handshake", None)
         if callable(handshake):
@@ -229,6 +232,7 @@ class ProxyHub:
             frame=frame,
             encoding=encoding,
             backend=locator.backend,
+            terminal=terminal,
         )
         self.attachments[attachment_id] = record
         self.by_socket.setdefault(websocket, set()).add(attachment_id)
@@ -245,33 +249,49 @@ class ProxyHub:
             return
         record.task = asyncio.create_task(self._pump(record))
 
-    async def _emit_empty_history(self, record: ProxyAttachment) -> str | None:
-        """Send the one history frame a native ANSI attachment never gets from the host.
+    async def _emit_native_history(self, record: ProxyAttachment) -> str | None:
+        """Send the history frame a native ANSI attachment never gets from the host.
 
         The host captures attach history only for tmux panes, but every viewer
         that renders raw bytes treats ``terminal_attach_history`` as the start of
         an attachment: the web terminal resets its buffer and leaves the attaching
-        state on it, so a native row without one never renders. It goes out
+        state on it, so a native row without one never renders. Native scrollback
+        lives behind the host's ``snapshot`` verb instead, so the daemon reads it
+        in ANSI form and sends it as the history; a host that cannot answer still
+        gets a frame, marked unavailable, so the viewer attaches. It goes out
         before the first host frame so it precedes the first ``terminal_output``.
         """
+        history: dict[str, Any] = {
+            "type": "terminal_attach_history",
+            "terminal_id": record.terminal_id,
+            "attachment_id": record.attachment_id,
+            "text": "",
+            "truncated": False,
+            "dropped_bytes": 0,
+            "total_bytes": 0,
+        }
+        runtime = None if record.terminal is None else self._owner._runtime_for("native")
+        if runtime is not None:
+            host = getattr(self._owner, "terminal_host_manager", None)
+            lines = getattr(host, "tmux_attach_history_lines", ATTACH_HISTORY_LINES)
+            try:
+                snapshot = await runtime.snapshot(record.terminal, lines=lines, mode="ansi")
+            except Exception:
+                logger.debug("native attach history unavailable", exc_info=True)
+                history["unavailable"] = True
+            else:
+                history.update(
+                    text=snapshot.text,
+                    truncated=snapshot.truncated,
+                    dropped_bytes=snapshot.dropped_bytes,
+                    total_bytes=snapshot.total_bytes,
+                )
         try:
             seq = self._owner._leases().next_message_seq(record.attachment_id)
         except Exception:
             await self.finalize_attachment(record.attachment_id, "message_seq_overflow")
             return "message_seq_overflow"
-        return await self.emit_event(
-            record.websocket,
-            {
-                "type": "terminal_attach_history",
-                "terminal_id": record.terminal_id,
-                "attachment_id": record.attachment_id,
-                "text": "",
-                "truncated": False,
-                "dropped_bytes": 0,
-                "total_bytes": 0,
-            },
-            message_seq=seq,
-        )
+        return await self.emit_event(record.websocket, history, message_seq=seq)
 
     def frame_for(self, attachment_id: str) -> Any | None:
         record = self.attachments.get(attachment_id)
@@ -376,7 +396,7 @@ class ProxyHub:
     async def _pump(self, record: ProxyAttachment) -> None:
         try:
             if record.backend == "native" and record.encoding == "terminal_ansi":
-                if await self._emit_empty_history(record) is not None:
+                if await self._emit_native_history(record) is not None:
                     return
             while True:
                 message = await record.frame.read_message()

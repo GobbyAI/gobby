@@ -183,6 +183,7 @@ class TerminalWsMixin:
             str(delivery),
             websocket=websocket,
             viewer=viewer,
+            backend=str(row.backend),
         )
         locator: AttachLocator | None = None
         if str(delivery) == "direct":
@@ -702,6 +703,7 @@ class TerminalWsMixin:
                 locator=locator,
                 frame=frame,
                 encoding=encoding,
+                terminal=row,
             )
         except Exception:
             await _close_frame_quietly(frame)

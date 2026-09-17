@@ -725,6 +725,45 @@ describe("lifecycle destroy", () => {
     expect(rest.slice(2).every((line) => line === "")).toBe(true);
   });
 
+  it("a renderer core fault during history does not propagate", async () => {
+    const terminalRef = createRef<TerminalViewHandle>();
+    const onReady = vi.fn();
+    render(<TerminalView ref={terminalRef} onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
+
+    const instance = latestInstance();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(instance.write).mockClear();
+    // The Ghostty wasm core traps out of write on a page-integrity fault.
+    vi.mocked(instance.write).mockImplementationOnce(() => {
+      throw new Error("unreachable");
+    });
+
+    expect(() =>
+      act(() => terminalRef.current?.applyAttachHistory("one", false, false)),
+    ).not.toThrow();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toBe(
+      "[terminal] renderer core fault during history",
+    );
+    // The failed reset, then the nudge that gives the renderer its paint.
+    expect(vi.mocked(instance.write).mock.calls.map((call) => call[0])).toEqual(
+      [RESET_BUFFER, ""],
+    );
+
+    vi.mocked(instance.write).mockClear();
+    vi.mocked(instance.write).mockImplementationOnce(() => {
+      throw new Error("unreachable");
+    });
+    expect(() => act(() => terminalRef.current?.write("x"))).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[1]?.[0]).toBe(
+      "[terminal] renderer core fault during write",
+    );
+    warn.mockRestore();
+  });
+
   it("omits the marker when nothing was truncated", async () => {
     const terminalRef = createRef<TerminalViewHandle>();
     const onReady = vi.fn();

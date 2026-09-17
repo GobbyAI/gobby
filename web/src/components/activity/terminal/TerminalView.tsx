@@ -115,6 +115,35 @@ interface TerminalInstanceProps {
   onInitError: (resolution: RendererResolution, error: unknown) => void;
 }
 
+type CoreStage = "write" | "resize" | "history";
+
+/**
+ * Run one call into the renderer core and keep its failure here.
+ *
+ * The Ghostty wasm core is built with runtime safety on, so a page-integrity
+ * fault inside it traps (`RuntimeError: unreachable`) out of `write` or
+ * `resize` instead of returning. Left alone, that throw unwinds the tab's
+ * attach-history listener before the pane is marked ready, and the attaching
+ * scrim stays over a terminal that can never be scrolled or focused. The
+ * empty write afterwards is the scheduled paint the trap skipped.
+ */
+function guardCore(
+  terminal: { write(data: string): void },
+  stage: CoreStage,
+  run: () => void,
+): void {
+  try {
+    run();
+  } catch (error) {
+    console.warn(`[terminal] renderer core fault during ${stage}`, error);
+    try {
+      terminal.write("");
+    } catch {
+      // The core is wedged; the next attach or retry builds a fresh one.
+    }
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -353,7 +382,9 @@ function TerminalInstance({
             }
           }
           if (cols !== readyTerminal.cols || rows !== readyTerminal.rows) {
-            readyTerminal.resize(cols, rows);
+            guardCore(readyTerminal, "resize", () =>
+              readyTerminal.resize(cols, rows),
+            );
           }
         };
         if (typeof ResizeObserver !== "undefined") {
@@ -547,7 +578,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     useImperativeHandle(
       forwardedRef,
       () => ({
-        write: (data: string) => terminalRef.current?.write(data),
+        write: (data: string) => {
+          const terminal = terminalRef.current;
+          if (!terminal) return;
+          guardCore(terminal, "write", () => terminal.write(data));
+        },
         getSize: () => sizeRef.current,
         setKeyboardOpen: (open: boolean) => {
           const input = terminalRef.current?.element.querySelector("textarea");
@@ -608,9 +643,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           // rendered count, even when the geometry is unchanged. Re-applying
           // the grid a replacement attachment was just given is the only
           // public call that rebuilds the mirror; neither core exposes a reset.
-          terminal.write(RESET_BUFFER);
-          terminal.resize(cols, rows);
-          terminal.write(`${marker}${text}${"\r\n".repeat(rows)}`);
+          guardCore(terminal, "history", () => {
+            terminal.write(RESET_BUFFER);
+            terminal.resize(cols, rows);
+            terminal.write(`${marker}${text}${"\r\n".repeat(rows)}`);
+          });
         },
       }),
       [],

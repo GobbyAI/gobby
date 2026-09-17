@@ -119,6 +119,7 @@ class _Attachment:
     terminal_id: str
     frame_delivery: str
     viewer: Viewer = "gclient"
+    backend: str = "native"
     geometry: tuple[int, int] | None = None
     resize_seq: int = 0
     viewport: tuple[int, int] | None = None
@@ -344,6 +345,7 @@ class TerminalLeaseRegistry:
         websocket: object | None = None,
         attachment_id: str | None = None,
         viewer: Viewer = "gclient",
+        backend: str = "native",
     ) -> _Attachment:
         async with self.lock(terminal_id):
             delivery = "direct" if frame_delivery == "direct" else "proxy"
@@ -353,6 +355,7 @@ class TerminalLeaseRegistry:
                 terminal_id=terminal_id,
                 frame_delivery=delivery,
                 viewer=viewer,
+                backend=backend,
             )
             self._attachments[minted] = record
             self._lease(terminal_id)
@@ -581,15 +584,20 @@ class TerminalLeaseRegistry:
     def _elect_sizing_owner(self, terminal_id: str) -> _Attachment | None:
         # A web viewer sizes the shared terminal only while it holds the input
         # lease: a phone that is only watching must not pin a desktop client to
-        # its grid.
+        # its grid. A native terminal that nothing but web viewers watch has no
+        # such client to protect and no lease holder to size it, so its watchers
+        # size it and the latest resize wins; a tmux window keeps the lease rule
+        # because a web owner pins the human's own tmux client to its grid.
         holder = self._lease(terminal_id).holder
+        live = self._live_viewers(terminal_id)
+        unattended = holder is None and all(
+            record.viewer == "web" and record.backend == "native" for record in live
+        )
         candidates = [
             record
-            for record in self._attachments.values()
-            if record.terminal_id == terminal_id
-            and not record.finalized
-            and record.geometry is not None
-            and (record.viewer != "web" or record.attachment_id == holder)
+            for record in live
+            if record.geometry is not None
+            and (unattended or record.viewer != "web" or record.attachment_id == holder)
         ]
         if not candidates:
             return None

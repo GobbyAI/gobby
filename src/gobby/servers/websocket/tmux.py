@@ -185,7 +185,9 @@ class TmuxMixin(TerminalCreateMixin, TerminalSizingMixin, TerminalControlMixin, 
         session_manager, config, session_name = target
         registry = self._leases()
         viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
-        record = await registry.attach(terminal_id, "proxy", websocket=websocket, viewer=viewer)
+        record = await registry.attach(
+            terminal_id, "proxy", websocket=websocket, viewer=viewer, backend="tmux"
+        )
         # A desktop tmux client is a typing seat: the newest one holds the lease,
         # exactly as every attached desktop client can type. A web viewer attaches
         # observe-only and takes control on focus or write, since holding the lease

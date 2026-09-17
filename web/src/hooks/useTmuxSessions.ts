@@ -538,8 +538,16 @@ export function useTmuxSessions(
 
     ws.onmessage = (event) => {
       if (!isCurrentConnection()) return;
+      let data;
       try {
-        const data = JSON.parse(event.data);
+        data = JSON.parse(event.data);
+      } catch (e) {
+        console.error("Failed to parse tmux message:", e);
+        return;
+      }
+      // A handler that throws is a bug in this client, not a bad frame; name
+      // the message so the failing path is findable.
+      try {
         if (data.type === "terminal_ws_fragment") {
           // Fragments reassemble into whole messages before dispatch, so the
           // handler itself never recurses.
@@ -552,7 +560,7 @@ export function useTmuxSessions(
         }
         handleMessageRef.current(data);
       } catch (e) {
-        console.error("Failed to parse tmux message:", e);
+        console.error("Terminal message handler failed:", data.type, e);
       }
     };
   }, [control, pendingRequest]);

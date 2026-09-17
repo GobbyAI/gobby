@@ -81,7 +81,7 @@ async def test_web_viewer_sizes_only_while_holding_the_input_lease() -> None:
 @pytest.mark.asyncio
 async def test_releasing_the_only_sizing_web_viewer_unpins_the_terminal() -> None:
     registry = TerminalLeaseRegistry()
-    web = await registry.attach("term-1", viewer="web")
+    web = await registry.attach("term-1", viewer="web", backend="tmux")
     await registry.take_control("term-1", web.attachment_id)
     assert registry.resize_pty(web.attachment_id, rows=24, cols=80).applied is True
 
@@ -90,6 +90,56 @@ async def test_releasing_the_only_sizing_web_viewer_unpins_the_terminal() -> Non
     assert released.sizing is not None
     assert released.sizing.owner_viewer is None
     assert released.sizing.applied is False
+
+
+@pytest.mark.asyncio
+async def test_tmux_web_watcher_without_lease_does_not_size() -> None:
+    # A tmux window has the human's own client on it; a watching phone must
+    # not pin that client to its grid.
+    registry = TerminalLeaseRegistry()
+    phone = await registry.attach("term-1", viewer="web", backend="tmux")
+
+    watching = registry.resize_pty(phone.attachment_id, rows=38, cols=50)
+
+    assert watching.ok is True
+    assert watching.applied is False
+    assert watching.owner_viewer is None
+
+
+@pytest.mark.asyncio
+async def test_native_web_watchers_size_an_unattended_terminal() -> None:
+    # An agent's native terminal has no gclient seat and no lease holder, so
+    # the web viewers watching it are its only geometry: the latest resize
+    # wins, and a gclient seat takes sizing back the moment it arrives.
+    registry = TerminalLeaseRegistry()
+    desktop = await registry.attach("term-1", viewer="web", backend="native")
+
+    alone = registry.resize_pty(desktop.attachment_id, rows=40, cols=151)
+    assert alone.applied is True
+    assert alone.sizing is not None
+    assert alone.sizing.owner_viewer == "web"
+    assert (alone.sizing.rows, alone.sizing.cols) == (40, 151)
+
+    phone = await registry.attach("term-1", viewer="web", backend="native")
+    latest = registry.resize_pty(phone.attachment_id, rows=38, cols=50)
+    assert latest.applied is True
+    assert latest.sizing is not None
+    assert (latest.sizing.rows, latest.sizing.cols) == (38, 50)
+    assert registry.resize_pty(desktop.attachment_id, rows=40, cols=151).applied is True
+
+    gclient = await registry.attach("term-1", viewer="gclient", backend="native")
+    seated = registry.resize_pty(gclient.attachment_id, rows=24, cols=80)
+    assert seated.applied is True
+    assert seated.owner_viewer == "gclient"
+    watching = registry.resize_pty(phone.attachment_id, rows=38, cols=50)
+    assert watching.applied is False
+    assert watching.owner_viewer == "gclient"
+
+    left = await registry.finalize(gclient.attachment_id, reason="detach")
+    assert left is not None
+    assert left.sizing is not None
+    assert left.sizing.owner_viewer == "web"
+    assert (left.sizing.rows, left.sizing.cols) == (38, 50)
 
 
 @pytest.mark.asyncio

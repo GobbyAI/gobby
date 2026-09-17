@@ -29,7 +29,13 @@ from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.dimensions import MAX_CELLS, MAX_FRAME_SIZE
 from gobby.terminals.frame_client import FrameLagError, FrameProtocolError, decode_frame
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import Delivered, IndeterminateWrite, WriteOutcome
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    SnapshotMode,
+    SnapshotResult,
+    WriteOutcome,
+)
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.terminals.ws_protocol import (
     TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
@@ -155,6 +161,19 @@ class RecordingRuntime:
     host_writes: list[dict[str, Any]] = field(default_factory=list)
     locator_result: AttachLocator | None = None
     locator_error: BaseException | None = None
+    snapshot_result: SnapshotResult | None = None
+    snapshot_error: BaseException | None = None
+    snapshot_calls: list[tuple[str, int, str]] = field(default_factory=list)
+
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
+        self.snapshot_calls.append((terminal.id, lines, mode))
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        if self.snapshot_result is not None:
+            return self.snapshot_result
+        return SnapshotResult(text="", truncated=False, dropped_bytes=0, total_bytes=0)
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         if self.locator_error is not None:
@@ -438,7 +457,8 @@ async def test_web_attach_native_terminal(
     assert frame.encoding == "terminal_ansi"
     await _take(harness, ws, harness.native_row, attachment)
     # The host captures attach history only for tmux panes, so the fake host
-    # sends none; the daemon owes the viewer one empty history frame anyway.
+    # sends none; the daemon builds the history frame from the native snapshot
+    # instead, and an empty scrollback still owes the viewer the frame.
     await frame.queue.put(
         {
             "type": "terminal",
@@ -530,6 +550,59 @@ async def test_web_attach_native_terminal(
         },
     )
     await _until(lambda: frame.closed or frame.detached)
+
+
+@pytest.mark.asyncio
+async def test_native_attach_history_comes_from_snapshot(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    harness.native_rt.snapshot_result = SnapshotResult(
+        text="\x1b[1mold\x1b[0m\r\nolder\r\n",
+        truncated=True,
+        dropped_bytes=12,
+        total_bytes=40,
+    )
+    ws = MockWebSocket()
+    attachment = await _attach(harness, ws, harness.native_row)
+    frame = _frame_for(harness, harness.native_row)
+    await frame.queue.put(
+        {"type": "terminal", "seq": 1, "width": 80, "height": 24, "full": True, "bytes": b"$ "}
+    )
+    await _until(lambda: ws.messages_of_type("terminal_output"))
+
+    # The scrollback the host keeps for a native terminal is read in ANSI form
+    # at the configured attach-history depth and sent as the history frame.
+    assert harness.native_rt.snapshot_calls == [(harness.native_row.id, 500, "ansi")]
+    history = ws.messages_of_type("terminal_attach_history")
+    assert len(history) == 1
+    assert history[0]["attachment_id"] == attachment
+    assert history[0]["text"] == "\x1b[1mold\x1b[0m\r\nolder\r\n"
+    assert (history[0]["truncated"], history[0]["dropped_bytes"], history[0]["total_bytes"]) == (
+        True,
+        12,
+        40,
+    )
+    assert "unavailable" not in history[0]
+    kinds = [item.get("type") for item in ws.all_messages()]
+    assert (
+        kinds.index("terminal_attach_result")
+        < kinds.index("terminal_attach_history")
+        < kinds.index("terminal_output")
+    )
+
+    # A host that cannot answer still owes the viewer the frame, marked
+    # unavailable, so the pane attaches and says why it has no history.
+    harness.native_rt.snapshot_error = RuntimeError("host down")
+    down = MockWebSocket()
+    await _attach(harness, down, harness.native_row, request_id="a2")
+    await _until(lambda: down.messages_of_type("terminal_attach_history"))
+    unavailable = down.messages_of_type("terminal_attach_history")[-1]
+    assert (unavailable["text"], unavailable["unavailable"], unavailable["total_bytes"]) == (
+        "",
+        True,
+        0,
+    )
 
 
 @pytest.mark.asyncio
