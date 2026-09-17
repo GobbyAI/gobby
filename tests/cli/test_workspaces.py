@@ -63,6 +63,7 @@ NODE = {
     "local": True,
 }
 SPLIT = {"success": True, "panes": [PANE], "tabs": [TAB]}
+OTHER_TAB = {**TAB, "id": "77777777-7777-4777-8777-777777777777", "ref": 2, "title": "other"}
 
 
 @dataclass(frozen=True)
@@ -150,29 +151,37 @@ def test_panes_split_resolves_ref_node_and_direction(daemon: _FakeDaemon) -> Non
 
 
 def test_panes_split_left_swaps_the_new_pane_into_place(daemon: _FakeDaemon) -> None:
-    daemon.payloads = [SPLIT, {"success": True, "tab": TAB}]
+    swapped_tab = {**TAB, "title": "swapped"}
+    daemon.payloads = [SPLIT, {"success": True, "tab": swapped_tab}]
 
-    result = _run(panes, ["split", "w1:t1:p2", "--left"])
+    result = _run(panes, ["split", "w1:t1:p2", "--left", "--json"])
 
     assert result.exit_code == 0, result.output
     assert daemon.tools == ["split_pane", "swap_panes"]
     assert daemon.arguments[0] == {"pane": "w1:t1:p2", "axis": "horizontal"}
     assert daemon.arguments[1] == {"pane": PANE["id"], "other": "w1:t1:p2"}
+    # The printed payload carries the tab as the swap left it, not the pre-swap copy.
+    assert json.loads(result.output)["tabs"] == [swapped_tab]
 
 
 def test_panes_move_carries_the_tab_and_the_direction(daemon: _FakeDaemon) -> None:
-    daemon.payloads = [
-        {"success": True, "panes": [PANE], "tabs": [TAB]},
-        {"success": True, "panes": [PANE], "tabs": [TAB]},
-        {"success": True, "tab": TAB},
-    ]
+    daemon.payloads = [{"success": True, "panes": [PANE], "tabs": [TAB]}]
 
     plain = _run(panes, ["move", "w1:t1:p2", "--tab", "w1:t2", "--node", "n3"])
 
     assert plain.exit_code == 0, plain.output
     assert daemon.arguments[0] == {"pane": "w1:t1:p2", "tab": "w1:t2", "node": "n3"}
 
-    beside = _run(panes, ["move", "w1:t1:p2", "--tab", "w1:t2", "--above", "w1:t2:p1"])
+    # The move renumbers a pane that changes tab (w1:t1:p2 becomes w1:t2:p3), so the
+    # follow-up swap addresses the moved pane by the id the move returned.
+    moved_pane = {**PANE, "ref": 3, "tab_id": OTHER_TAB["id"]}
+    swapped_tab = {**OTHER_TAB, "title": "swapped"}
+    daemon.payloads = [
+        {"success": True, "panes": [moved_pane], "tabs": [TAB, OTHER_TAB]},
+        {"success": True, "tab": swapped_tab},
+    ]
+
+    beside = _run(panes, ["move", "w1:t1:p2", "--tab", "w1:t2", "--above", "w1:t2:p1", "--json"])
 
     assert beside.exit_code == 0, beside.output
     assert daemon.tools == ["move_pane", "move_pane", "swap_panes"]
@@ -182,7 +191,8 @@ def test_panes_move_carries_the_tab_and_the_direction(daemon: _FakeDaemon) -> No
         "beside": "w1:t2:p1",
         "axis": "vertical",
     }
-    assert daemon.arguments[2] == {"pane": "w1:t1:p2", "other": "w1:t2:p1"}
+    assert daemon.arguments[2] == {"pane": PANE["id"], "other": "w1:t2:p1"}
+    assert json.loads(beside.output)["tabs"] == [TAB, swapped_tab]
 
 
 def test_panes_move_refuses_two_directions(daemon: _FakeDaemon) -> None:

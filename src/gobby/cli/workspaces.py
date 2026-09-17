@@ -136,6 +136,11 @@ def _row(result: dict[str, Any], key: str) -> dict[str, Any]:
     return cast(dict[str, Any], row)
 
 
+def _replace_tab(result: dict[str, Any], tab: dict[str, Any]) -> None:
+    """Put the tab a follow-up swap returned over its pre-swap copy in ``result``."""
+    result["tabs"] = [tab if row.get("id") == tab["id"] else row for row in _rows(result, "tabs")]
+
+
 def _emit(result: dict[str, Any], json_format: bool) -> bool:
     """Print the payload in JSON mode; report whether text output still has to run."""
     if json_format:
@@ -280,9 +285,10 @@ def split_pane(
         raise click.ClickException("Gobby daemon returned no pane for the split")
     if direction.first:
         # A split always lands second, so --left and --above swap it into place.
-        _call_workspace_tool(
+        swapped = _call_workspace_tool(
             "swap_panes", _arguments(pane=added[0]["id"], other=pane, node=node_ref)
         )
+        _replace_tab(result, _row(swapped, "tab"))
     if not _emit(result, json_format):
         return
 
@@ -350,7 +356,14 @@ def move_pane(
     )
     if direction is not None and direction.first and beside is not None:
         # A moved pane lands second beside its target, so --left and --above swap it.
-        _call_workspace_tool("swap_panes", _arguments(pane=pane, other=beside, node=node_ref))
+        # The move renumbers a pane that changed tab, so the swap addresses it by id.
+        moved = _rows(result, "panes")
+        if not moved:
+            raise click.ClickException("Gobby daemon returned no pane for the move")
+        swapped = _call_workspace_tool(
+            "swap_panes", _arguments(pane=moved[0]["id"], other=beside, node=node_ref)
+        )
+        _replace_tab(result, _row(swapped, "tab"))
     if not _emit(result, json_format):
         return
 
