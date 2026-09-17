@@ -77,6 +77,72 @@ def classify_validation_command_equivalence(command: str) -> ValidationCommandEq
     return ValidationCommandEquivalence(core_command, False, None)
 
 
+_VALIDATION_RUNNER_PREFIXES = (
+    ("uv", "run"),
+    ("npm", "exec"),
+    ("pnpm", "exec"),
+    ("python", "-m"),
+    ("python3", "-m"),
+    ("npx",),
+    ("pnpm",),
+    ("yarn",),
+)
+# Executables whose bare name is already a validation run.
+_VALIDATION_EXECUTABLES = frozenset({"pytest", "mypy", "vitest", "jest"})
+# Executables that run validation only under specific subcommands, in order.
+_VALIDATION_SUBCOMMANDS: dict[str, tuple[frozenset[str], ...]] = {
+    "cargo": (frozenset({"test", "nextest", "clippy", "fmt"}),),
+    "ruff": (frozenset({"check", "format"}),),
+    "gobby": (frozenset({"test-types", "test-quality"}), frozenset({"audit"})),
+}
+
+
+def wrapped_validation_command(command: object) -> str | None:
+    """Name the wrapper that would void close-gate credit for a validation run.
+
+    Returns ``None`` when the call runs no recognized validation executable or
+    when the run is credited as it stands. A command the validation parser
+    cannot read (subshells, expansions) exposes no recognizable segment and so
+    reports nothing rather than guessing.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return None
+    core = _strip_exit_preserving_prefixes(command)
+    segments = parse_validation_shell(core).segments
+    if not any(_segment_runs_validation(segment) for segment in segments):
+        return None
+    return _wrapper_reason(core)
+
+
+def _segment_runs_validation(segment: tuple[str, ...]) -> bool:
+    tokens = list(segment)
+    index = 0
+    while index < len(tokens) and _ENV_ASSIGNMENT_PREFIX.match(tokens[index]):
+        index += 1
+    consumed = True
+    while consumed:
+        consumed = False
+        for prefix in _VALIDATION_RUNNER_PREFIXES:
+            if tuple(tokens[index : index + len(prefix)]) == prefix:
+                index += len(prefix)
+                consumed = True
+                break
+    if index >= len(tokens):
+        return False
+    executable = os.path.basename(tokens[index])
+    arguments = tokens[index + 1 :]
+    if executable == "cargo" and arguments and arguments[0].startswith("+"):
+        arguments = arguments[1:]
+    if executable in _VALIDATION_EXECUTABLES:
+        return True
+    subcommands = _VALIDATION_SUBCOMMANDS.get(executable)
+    if subcommands is None or len(arguments) < len(subcommands):
+        return False
+    return all(
+        argument in allowed for argument, allowed in zip(arguments, subcommands, strict=False)
+    )
+
+
 def _strip_exit_preserving_prefixes(command: str) -> str:
     cursor = _skip_whitespace(command, 0)
     while (next_cursor := _consume_cd_prefix(command, cursor)) is not None:

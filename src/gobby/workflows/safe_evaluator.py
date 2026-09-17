@@ -543,6 +543,7 @@ def build_condition_helpers(
         touches_claude_memory_path,
         touches_docker_policy_path,
         touches_ui_design_path,
+        wrapped_validation_command,
     )
     from .monolith_guard import (
         outstanding_monolith_paths,
@@ -559,6 +560,7 @@ def build_condition_helpers(
             "tdd_gate_open": tdd_gate_open,
             "is_gobby_build_command": is_gobby_build_command,
             "is_validation_command": is_validation_command,
+            "wrapped_validation_command": wrapped_validation_command,
             "paths_written_this_turn": lambda paths: paths_written_this_turn(
                 paths, _get_variables(ctx).get("turn_written_paths")
             ),
