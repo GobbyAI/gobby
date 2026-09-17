@@ -228,6 +228,31 @@ def canonical_json_object(raw: Mapping[str, object]) -> dict[str, object]:
     return cast(dict[str, object], decoded)
 
 
+_SHADOW_MANIFEST_ENVELOPE_KEYS = frozenset(
+    {
+        "status",
+        "routing_decisions",
+        "manifest_entries",
+        "manifest_digest",
+        "entry_count",
+        "diagnostics",
+    }
+)
+
+
+def normalize_shadow_manifest_envelope(raw: Mapping[str, object]) -> dict[str, object]:
+    """Project a shadow-manifest envelope onto its canonical envelope fields.
+
+    The MCP proxy splats transport keys such as ``ok`` into tool results, and
+    reviewers relay the derivation result verbatim, so non-envelope keys must
+    be dropped before the coverage comparison.
+    """
+    envelope = canonical_json_object(raw)
+    return {
+        key: value for key, value in envelope.items() if key in _SHADOW_MANIFEST_ENVELOPE_KEYS
+    }
+
+
 def canonical_json_bytes(raw: Mapping[str, object]) -> bytes:
     payload = canonical_json_object(raw)
     return json.dumps(

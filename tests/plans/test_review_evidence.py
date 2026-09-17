@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Never
 
 import pytest
 
+from gobby.plans.review_coverage import REVIEW_LANES
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
     _validate_round_entry_plan,
@@ -799,6 +801,77 @@ def test_manifest_compare_and_apply(
     )
     assert rereview.evidence_id != drift_prepared.evidence_id
     assert service.get_evidence(drift_prepared.evidence_id).expired_at is not None
+
+
+def test_validate_plan_review_coverage_normalizes_proxy_envelope(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    source = plan_path.parent.parent / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    citation = {
+        "path": "src/example.py",
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "line_start": 1,
+        "line_end": 1,
+    }
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    derived = service.derive_plan_review_manifest(prepared.evidence_id, routing_decisions={})
+    assert derived["status"] == "valid"
+    # The MCP proxy splats `ok` into the derive result, and reviewers relay the
+    # derivation envelope verbatim as shadow_manifest_status.
+    supplied = {"ok": True, **derived}
+    candidate = {
+        "candidate_id": "candidate-1",
+        "section_ids": ["1.1"],
+        "violated_invariant": "Invariant 1",
+        "source_citations": [citation],
+        "suggested_fix": "Fix 1",
+        "adjacent_sites_checked": ["src/adjacent.py"],
+        "confidence": 0.9,
+    }
+    lanes: list[object] = [
+        {
+            "lane_id": lane_id,
+            "status": (
+                "delegated-verified" if lane_id == "repository_blast_radius" else "completed"
+            ),
+            "section_ids_checked": ["1.1"],
+            "source_citations": [citation],
+            "candidate_issues": [candidate] if lane_id == REVIEW_LANES[0] else [],
+        }
+        for lane_id in REVIEW_LANES
+    ]
+    dispositions = {
+        "cross_lane_interaction_complete": True,
+        "adjacent_variant_complete": True,
+        "items": [
+            {
+                "candidate_id": "candidate-1",
+                "disposition": "emitted_finding",
+                "finding_id": "finding-1",
+                "reason": "Verified",
+            }
+        ],
+    }
+    attestation = service.validate_plan_review_coverage(
+        prepared.evidence_id,
+        lanes,
+        dispositions,
+        supplied,
+    )
+    assert attestation["shadow_manifest_status"]["status"] == "valid"
+    assert attestation["disposition_counts"] == {
+        "total": 1,
+        "emitted_findings": 1,
+        "dismissed": 0,
+    }
 
 
 def test_two_phase_run_binding(

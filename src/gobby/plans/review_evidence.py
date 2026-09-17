@@ -26,6 +26,7 @@ from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     PreparedReviewEvidence,
     ReviewEvidenceError,
+    normalize_shadow_manifest_envelope,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
@@ -287,7 +288,8 @@ class PlanReviewEvidenceService:
     ) -> dict[str, object]:
         """Validate all research lanes and return a canonical coverage attestation."""
         evidence = self.get_evidence(evidence_id)
-        routing_raw = shadow_manifest_status.get("routing_decisions")
+        shadow = normalize_shadow_manifest_envelope(shadow_manifest_status)
+        routing_raw = shadow.get("routing_decisions")
         if not isinstance(routing_raw, Mapping):
             raise ReviewEvidenceError(
                 "invalid_shadow_manifest",
@@ -308,7 +310,7 @@ class PlanReviewEvidenceService:
             plan_hash=evidence.plan_hash,
             lane_results=lane_results,
             candidate_dispositions=candidate_dispositions,
-            shadow_manifest_status=shadow_manifest_status,
+            shadow_manifest_status=shadow,
             expected_shadow_manifest_status=expected_shadow,
         )
 
