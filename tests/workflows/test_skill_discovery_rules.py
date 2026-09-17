@@ -7,6 +7,7 @@ have valid structure, and evaluate conditions properly.
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
