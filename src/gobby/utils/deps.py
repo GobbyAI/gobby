@@ -248,6 +248,32 @@ def get_coding_cli_hook_drift() -> dict[str, list[str]]:
     return drift
 
 
+def get_git_hook_drift(db: HubDatabase) -> dict[str, list[str]]:
+    """Return stale Gobby-managed Git hooks per checkout registered on this machine.
+
+    Keys are checkout root paths, values the hooks whose installed managed section
+    differs from the bundled template. The probe only reads hook files.
+    """
+    from gobby.cli.installers.git_hooks import get_stale_git_hooks
+    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+    from gobby.utils.machine_id import require_machine_id
+
+    try:
+        checkouts = LocalProjectCheckoutManager(db).list_for_machine(require_machine_id())
+    except Exception:
+        # Fail open: an unresolved machine identity or an unreachable hub must not
+        # break gobby status or daemon startup over an advisory probe.
+        logger.debug("Failed to list registered checkouts for Git hook drift", exc_info=True)
+        return {}
+
+    drift: dict[str, list[str]] = {}
+    for checkout in checkouts:
+        stale = get_stale_git_hooks(Path(checkout.root_path))
+        if stale:
+            drift[checkout.root_path] = stale
+    return drift
+
+
 def _agy_hooks_file() -> Path:
     """Return the AGY hooks path used by status and test overrides."""
     if override := os.environ.get("GOBBY_AGY_HOOKS_FILE"):
@@ -695,6 +721,7 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "hooks": get_coding_cli_hooks_status(),
             "hook_drift": get_coding_cli_hook_drift(),
         },
+        "git_hook_drift": get_git_hook_drift(db),
         **dependency_payload,
         "integrations": {
             "tailscale": get_tailscale_info(),

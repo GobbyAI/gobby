@@ -87,13 +87,20 @@ def init_services(runner: GobbyRunner) -> None:
     _init_message_processor(runner)
     _init_task_validator(runner)
     _init_project_context(runner)
-    from gobby.utils.deps import get_coding_cli_hook_drift
+    from gobby.utils.deps import get_coding_cli_hook_drift, get_git_hook_drift
 
     for cli, events in get_coding_cli_hook_drift().items():
         logger.warning(
             "Coding CLI %s hooks are stale versus the bundled template: missing %s",
             cli,
             ", ".join(events),
+        )
+    for root_path, stale_hooks in get_git_hook_drift(runner.database).items():
+        logger.warning(
+            "Git hooks in %s are stale versus the bundled template: %s; "
+            "run 'gobby install git-hooks' in that checkout",
+            root_path,
+            ", ".join(stale_hooks),
         )
 
 
