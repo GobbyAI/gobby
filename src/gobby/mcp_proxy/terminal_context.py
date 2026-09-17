@@ -7,6 +7,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.agents.constants import GOBBY_PANE_REF, GOBBY_TERMINAL_ID
 from gobby.sessions.tmux_context import query_tmux_generation, query_tmux_identity
 
 TERMINAL_CONTEXT_KEYS = (
@@ -20,6 +21,8 @@ TERMINAL_CONTEXT_KEYS = (
     "tty",
     "term_program",
     "term_session_id",
+    "gobby_terminal_id",
+    "gobby_pane_ref",
 )
 
 
@@ -51,6 +54,8 @@ def current_terminal_context() -> dict[str, Any]:
         ("TTY", "tty"),
         ("TERM_PROGRAM", "term_program"),
         ("TERM_SESSION_ID", "term_session_id"),
+        (GOBBY_TERMINAL_ID, "gobby_terminal_id"),
+        (GOBBY_PANE_REF, "gobby_pane_ref"),
     ):
         value = os.environ.get(env_name)
         if value:

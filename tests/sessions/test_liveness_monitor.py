@@ -598,10 +598,20 @@ class TestConditionalExpiry:
         generate.assert_awaited_once_with("session")
 
     @pytest.mark.asyncio
-    async def test_expiry_cases_linked_terminal_row(self) -> None:
+    @pytest.mark.parametrize(
+        ("ownership", "agent_run_id", "released"),
+        [
+            ("gobby", None, True),
+            ("gobby", "run-1", False),
+            ("external", None, False),
+        ],
+    )
+    async def test_expiry_cases_linked_terminal_row(
+        self, ownership: str, agent_run_id: str | None, released: bool
+    ) -> None:
         storage = _Storage(expire_result=SimpleNamespace(status="expired"))
         terminal = MagicMock()
-        live = SimpleNamespace(id="term-1")
+        live = SimpleNamespace(id="term-1", ownership=ownership, agent_run_id=agent_run_id)
         terminal.get_live_for_session.return_value = live
         monitor = SessionLivenessMonitor(
             session_storage=cast(Any, storage),
@@ -612,7 +622,13 @@ class TestConditionalExpiry:
 
         assert result is True
         terminal.get_live_for_session.assert_called_once_with("session")
-        terminal.mark_exited.assert_called_once_with("term-1")
+        if released:
+            # A bare gobby pane outlives the expired CLI and waits for the next session.
+            terminal.release_session.assert_called_once_with("term-1", "session")
+            terminal.mark_exited.assert_not_called()
+        else:
+            terminal.mark_exited.assert_called_once_with("term-1")
+            terminal.release_session.assert_not_called()
 
 
 class TestTmuxInventory:

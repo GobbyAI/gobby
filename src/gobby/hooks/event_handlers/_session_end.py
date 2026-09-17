@@ -203,7 +203,10 @@ class SessionEndMixin(EventHandlersBase):
             if manager is not None:
                 try:
                     row = manager.get_live_for_session(session_id)
-                    if row is not None:
+                    if row is not None and row.ownership == "gobby" and row.agent_run_id is None:
+                        # The pane outlives the CLI; the next session started in it rebinds.
+                        manager.release_session(row.id, session_id)
+                    elif row is not None:
                         manager.mark_exited(row.id)
                 except Exception as e:
                     self.logger.warning(

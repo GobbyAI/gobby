@@ -106,6 +106,10 @@ fn build_context(
         // Carried so the daemon's SESSION_START handler can recognize and
         // drop registrations from daemon-spawned ACP subprocesses.
         "gobby_acp_child": env_or_null("GOBBY_ACP_CHILD"),
+        // Exported into every native pane so SESSION_START can bind the CLI
+        // session to the terminal row it runs in.
+        "gobby_terminal_id": env_or_null("GOBBY_TERMINAL_ID"),
+        "gobby_pane_ref": env_or_null("GOBBY_PANE_REF"),
     })
 }
 
@@ -440,6 +444,8 @@ mod tests {
             "gobby_project_id",
             "gobby_workflow_name",
             "gobby_acp_child",
+            "gobby_terminal_id",
+            "gobby_pane_ref",
         ] {
             assert!(obj.contains_key(key), "missing key: {key}");
         }

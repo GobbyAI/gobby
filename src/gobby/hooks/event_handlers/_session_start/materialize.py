@@ -321,6 +321,18 @@ def activate_materialized_session(
             )
         except ProjectOwnershipConflictError:
             handler.logger.info("external terminal discovery conflict for session %s", session_id)
+        # tmux identity wins: a tmux started by hand inside a pane is the
+        # session's innermost terminal, so the outer native row stays unbound.
+        native_terminal_id = terminal_context.get("gobby_terminal_id")
+        if (
+            isinstance(native_terminal_id, str)
+            and native_terminal_id
+            and not terminal_context.get("tmux_pane")
+            and terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None
+        ):
+            handler.logger.info(
+                "native terminal %s not bound to session %s", native_terminal_id, session_id
+            )
 
     handler._setup_code_index(session_id, project_id)
 
