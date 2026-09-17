@@ -71,8 +71,10 @@ export function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
     discardWrite: vi.fn(),
     dismissWriteRefusal: vi.fn(),
     resizeTerminal: vi.fn(),
+    setScrollOffset: vi.fn(),
     onOutput: vi.fn(),
     onAttachHistory: vi.fn(),
+    onScrollOffsetApplied: vi.fn(),
     ...overrides,
   };
 }

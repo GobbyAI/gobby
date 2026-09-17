@@ -91,6 +91,28 @@ export function terminalKillMessage(
 }
 
 /**
+ * Native (gterm) scrollback lives in the host, not in the renderer: the daemon
+ * clamps `rows_from_live_edge` against `max_rows` and re-renders the frame
+ * stream from the applied offset. `max_rows` is the client's own ceiling
+ * belief, and 0 means "no ceiling known yet" — the daemon then applies what was
+ * asked and the host's own `terminal_scroll_offset_applied` corrects it.
+ */
+export function terminalSetScrollOffsetMessage(
+  terminalId: string | undefined,
+  attachmentId: string,
+  rowsFromLiveEdge: number,
+  maxRows: number,
+): string {
+  return JSON.stringify({
+    type: "terminal_set_scroll_offset",
+    terminal_id: terminalId,
+    attachment_id: attachmentId,
+    rows_from_live_edge: rowsFromLiveEdge,
+    max_rows: maxRows,
+  });
+}
+
+/**
  * The daemon keys this frame on `attachment_id` and returns early without one,
  * so a viewport can only be set for a live attachment whose grid has been
  * measured. `kind` separates the two reasons to send it: the first viewport an
