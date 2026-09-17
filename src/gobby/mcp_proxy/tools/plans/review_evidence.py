@@ -352,7 +352,13 @@ def register_review_evidence_tools(
                     "items": {"type": "object"},
                 },
                 "candidate_dispositions": {"type": "object"},
-                "shadow_manifest_status": {"type": "object"},
+                "shadow_manifest_status": {
+                    "type": "object",
+                    "description": (
+                        "The exact derive_plan_review_manifest result, passed unmodified; "
+                        "its transport-only ok flag is accepted."
+                    ),
+                },
             },
             "required": [
                 "evidence_id",

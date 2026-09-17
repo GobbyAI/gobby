@@ -312,10 +312,20 @@ def test_coverage_reports_source_drift(tmp_path: Path, mutation: str) -> None:
     assert error.value.retryable is True
 
 
-def test_coverage_rejects_shadow_manifest_mismatch(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"manifest_digest": "f" * 64},
+        {"ok": True, "manifest_digest": "f" * 64},
+        {"ok": True, "unexpected": "value"},
+        {"ok": False},
+    ],
+)
+def test_coverage_rejects_shadow_manifest_mismatch(
+    tmp_path: Path, mutation: dict[str, object]
+) -> None:
     document, lanes, dispositions, shadow = _coverage_case(tmp_path)
-    supplied = copy.deepcopy(shadow)
-    supplied["manifest_digest"] = "f" * 64
+    supplied = {**copy.deepcopy(shadow), **mutation}
 
     with pytest.raises(ReviewEvidenceError) as error:
         validate_review_coverage(
