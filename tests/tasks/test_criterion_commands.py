@@ -59,9 +59,9 @@ def test_bare_tool_name_span_is_not_command_shaped() -> None:
 
 
 def test_authored_commands_still_extracted_and_malformed_still_rejected() -> None:
-    well_formed = "Run `uv run gobby restart --wait` and `cargo test -p gobby-terminal`."
+    well_formed = "Run `uv run gobby pipelines list` and `cargo test -p gobby-terminal`."
     assert authored_criterion_commands(well_formed) == [
-        "uv run gobby restart --wait",
+        "uv run gobby pipelines list",
         "cargo test -p gobby-terminal",
     ]
     assert malformed_criterion_command_findings(well_formed) == ()
@@ -144,3 +144,81 @@ def test_targeted_test_runner_spans_are_accepted(span: str) -> None:
     criteria = f"Done when `{span}` passes."
     assert malformed_criterion_command_findings(criteria) == ()
     assert authored_criterion_commands(criteria) == [span]
+
+
+DAEMON_LIFECYCLE_SPANS = [
+    "gobby start",
+    "gobby start --verbose",
+    "gobby stop",
+    "gobby restart",
+    "gobby restart --wait",
+    "gobby cutover",
+    "gobby cutover --allow-dirty",
+    "uv run gobby start --verbose",
+    "uv run gobby stop",
+    "uv run gobby restart",
+    "uv run gobby restart --wait",
+    "uv run gobby cutover --allow-dirty",
+]
+
+
+@pytest.mark.parametrize("span", DAEMON_LIFECYCLE_SPANS)
+def test_daemon_lifecycle_spans_are_excluded_and_reported(span: str) -> None:
+    criteria = f"Done when `{span}` succeeds."
+    assert authored_criterion_commands(criteria) == []
+    assert malformed_criterion_command_findings(criteria) == ()
+    payload = criterion_command_authoring_payload(criteria)
+    assert "criterion_commands" not in payload
+    excluded = payload["excluded_criterion_commands"]
+    assert [entry["command"] for entry in excluded] == [span]
+    assert "daemon lifecycle" in excluded[0]["reason"]
+
+
+def test_daemon_lifecycle_exclusion_is_reported_next_to_registered_commands() -> None:
+    criteria = (
+        "Done when `uv run pytest tests/foo.py -q` passes. "
+        "The coordinator follows with `gobby restart --wait`."
+    )
+    payload = criterion_command_authoring_payload(criteria)
+    assert payload["criterion_commands"] == ["uv run pytest tests/foo.py -q"]
+    assert [entry["command"] for entry in payload["excluded_criterion_commands"]] == [
+        "gobby restart --wait"
+    ]
+
+
+def test_non_lifecycle_gobby_commands_still_register() -> None:
+    criteria = "Done when `gobby test-types audit tests/` and `uv run gobby pipelines list` pass."
+    assert authored_criterion_commands(criteria) == [
+        "gobby test-types audit tests/",
+        "uv run gobby pipelines list",
+    ]
+    payload = criterion_command_authoring_payload(criteria)
+    assert payload["criterion_commands"] == [
+        "gobby test-types audit tests/",
+        "uv run gobby pipelines list",
+    ]
+    assert "excluded_criterion_commands" not in payload
+
+
+def test_live_criteria_never_register_command_spans() -> None:
+    criteria = (
+        "- Focused tests pass.\n"
+        "- Live: `gobby restart` succeeds after the merge.\n"
+        "- lIvE: `uv run pytest tests/smoke.py` passes."
+    )
+    assert authored_criterion_commands(criteria) == []
+    assert malformed_criterion_command_findings(criteria) == ()
+    payload = criterion_command_authoring_payload(criteria)
+    assert "criterion_commands" not in payload
+    assert [entry["command"] for entry in payload["excluded_criterion_commands"]] == [
+        "gobby restart"
+    ]
+
+
+def test_inline_numbered_live_criteria_never_register_command_spans() -> None:
+    criteria = "1) Focused tests pass. 2) Live: `uv run pytest tests/smoke.py` completes."
+    assert authored_criterion_commands(criteria) == []
+    assert malformed_criterion_command_findings(criteria) == ()
+    payload = criterion_command_authoring_payload(criteria)
+    assert "criterion_commands" not in payload
+    assert "excluded_criterion_commands" not in payload

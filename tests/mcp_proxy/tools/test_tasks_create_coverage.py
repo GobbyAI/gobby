@@ -716,6 +716,37 @@ class TestCreateTaskTool:
         assert result["criterion_command_contract"] == CRITERION_COMMAND_CONTRACT
         mock_task_manager.create_task_with_decomposition.assert_called_once()
 
+    async def test_create_reports_excluded_daemon_lifecycle_spans(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        registry = create_task_registry(mock_task_manager)
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440009"
+        mock_task.seq_num = 100
+        mock_task.to_dict.return_value = {"id": mock_task.id, "seq_num": 100}
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": mock_task.id},
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Coordinator restarts the daemon",
+                "category": "research",
+                "validation_criteria": (
+                    "Done when `uv run pytest tests/foo.py -q` passes. "
+                    "The coordinator then runs `gobby restart --wait`."
+                ),
+            },
+        )
+
+        assert "error" not in result
+        assert result["criterion_commands"] == ["uv run pytest tests/foo.py -q"]
+        excluded = result["excluded_criterion_commands"]
+        assert [entry["command"] for entry in excluded] == ["gobby restart --wait"]
+        assert "daemon lifecycle" in excluded[0]["reason"]
+
     @pytest.mark.asyncio
     async def test_create_ignores_prose_after_test_marker(
         self, mock_task_manager: MagicMock
@@ -781,6 +812,37 @@ class TestCreateTaskTool:
 
         assert "expected path::test_symbol" in criteria_result["error"]
         mock_task_manager.update_task.assert_not_called()
+
+    async def test_update_reports_excluded_daemon_lifecycle_spans(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        registry = create_task_registry(mock_task_manager)
+        task_id = "550e8400-e29b-41d4-a716-446655440010"
+        task = MagicMock()
+        task.id = task_id
+        task.seq_num = 46
+        task.claimed_by_session_id = None
+        task.task_type = "task"
+        task.category = "research"
+        task.validation_criteria = "Done when the coordinator restarts the daemon."
+        task.implementation_domain = None
+        task.is_escalated = False
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.update_task.return_value = MagicMock()
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": task_id,
+                "validation_criteria": "Done when `gobby cutover` completes after the merge review.",
+            },
+        )
+
+        assert "error" not in result
+        assert "criterion_commands" not in result
+        excluded = result["excluded_criterion_commands"]
+        assert [entry["command"] for entry in excluded] == ["gobby cutover"]
+        assert "daemon lifecycle" in excluded[0]["reason"]
 
     @pytest.mark.asyncio
     async def test_create_non_code_task_without_validation_criteria(
