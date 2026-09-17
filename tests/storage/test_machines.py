@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -18,6 +19,7 @@ from gobby.storage.machines import (
 from gobby.storage.sessions import SessionManager
 from gobby.storage.users import LocalUserManager, UserIdentityStateError
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.storage.workspaces import WorkspaceManager, WorkspaceNotFoundError
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 
@@ -26,6 +28,8 @@ pytestmark = pytest.mark.unit
 MACHINE_A = "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
 MACHINE_B = "54ba70ce-3ec4-470d-905a-dcb40704abfd"
 OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
+MACHINE_C = "0b7a0cf6-4f3e-4a53-9d0e-6f0f2f1f8c11"
+SEEDED_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
 
 
 def _count_machines(temp_db: HubDatabase) -> int:
@@ -214,3 +218,39 @@ def test_fresh_boot_refuses_to_register_machine_without_canonical_user(
         ensure_machine_identity(temp_db, MACHINE_A)
 
     assert LocalMachineManager(temp_db).get(MACHINE_A) is None
+
+
+def test_upsert_seen_allocates_lowest_free_ref(temp_db: HubDatabase) -> None:
+    manager = LocalMachineManager(temp_db)
+    LocalUserManager(temp_db).create(
+        user_id=OTHER_USER_ID,
+        name="Other User",
+        email="other-ref-owner@example.com",
+        password_hash=hash_password("password"),
+    )
+
+    first = manager.upsert_seen(MACHINE_A, TEST_USER_ID)
+    second = manager.upsert_seen(MACHINE_B, TEST_USER_ID, label="beta")
+    foreign = manager.upsert_seen(MACHINE_C, OTHER_USER_ID)
+    assert (first.ref, second.ref, foreign.ref) == (1, 2, 1)
+    assert manager.upsert_seen(MACHINE_A, TEST_USER_ID, hostname="alpha").ref == 1
+    assert second.to_dict()["ref"] == 2
+
+    temp_db.execute("DELETE FROM machines WHERE id = %s", (MACHINE_A,))
+    seeded = manager.upsert_seen(SEEDED_MACHINE_ID, TEST_USER_ID, hostname="alpha")
+    assert seeded.ref == 1
+    by_ref = manager.get("n2", owner_user_id=TEST_USER_ID)
+    assert by_ref is not None
+    assert by_ref.id == MACHINE_B
+    refs = {machine.id: machine.ref for machine in manager.list_for_user(TEST_USER_ID)}
+    assert (refs[SEEDED_MACHINE_ID], refs[MACHINE_B]) == (1, 2)
+
+    with patch("gobby.utils.machine_id._cached_machine_id", SEEDED_MACHINE_ID):
+        workspaces = WorkspaceManager(temp_db)
+        resolved = [
+            workspaces.resolve_node(node).id for node in (None, "n2", MACHINE_B, "alpha", "beta")
+        ]
+        assert resolved == [SEEDED_MACHINE_ID, MACHINE_B, MACHINE_B, SEEDED_MACHINE_ID, MACHINE_B]
+        for unknown in ("n9", "gamma", MACHINE_C):
+            with pytest.raises(WorkspaceNotFoundError):
+                workspaces.resolve_node(unknown)

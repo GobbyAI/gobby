@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.workspaces import WorkspaceManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 
@@ -144,6 +145,7 @@ class WebSocketServer(
         self.terminal_runtime_registry: Any | None = None
         self.terminal_config: Any | None = None
         self.terminal_host_manager: Any | None = None
+        self.workspace_manager: WorkspaceManager | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:
             lifecycle = TurnLifecycleReducer(
@@ -218,6 +220,7 @@ class WebSocketServer(
         *,
         lease_registry: Any,
         write_coordinator: Any,
+        workspace_manager: WorkspaceManager | None = None,
     ) -> None:
         """Attach composition-root terminal services after construction."""
         self.terminal_manager = terminal_manager
@@ -227,6 +230,7 @@ class WebSocketServer(
         self.terminal_host_manager = host_manager
         self.lease_registry = lease_registry
         self.write_coordinator = write_coordinator
+        self.workspace_manager = workspace_manager
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
 

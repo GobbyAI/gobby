@@ -35,6 +35,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.terminals import TerminalManager
+    from gobby.storage.workspaces import WorkspaceManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.leases import TerminalLeaseRegistry
@@ -86,6 +87,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         registry=runner.terminal_runtime_registry,
         coordinator=runner.write_coordinator,
     )
+    runner.workspace_manager = WorkspaceManager(runner.database)
 
     try:
         loop = asyncio.get_running_loop()

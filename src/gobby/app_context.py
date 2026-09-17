@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
     from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.storage.terminals import TerminalManager
+    from gobby.storage.workspaces import WorkspaceManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.leases import TerminalLeaseRegistry
@@ -116,6 +117,7 @@ class ServiceContainer:
     frame_client: Any | None = None
     write_coordinator: WriteCoordinator | None = None
     lease_registry: TerminalLeaseRegistry | None = None
+    workspace_manager: WorkspaceManager | None = None
 
     # Communications
     communications_manager: Any | None = None  # CommunicationsManager

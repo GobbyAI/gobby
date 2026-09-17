@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     from gobby.storage.spans import SpanStorage
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.terminals import TerminalManager
+    from gobby.storage.workspaces import WorkspaceManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
@@ -222,6 +223,7 @@ class GobbyRunner:
     lease_registry: Any
     write_coordinator: Any
     terminal_services: TerminalServices
+    workspace_manager: WorkspaceManager
     terminal_effect_bridge: Any
     attention_manager: AttentionStateManager
     attention_metadata_store: AttentionMetadataStore
