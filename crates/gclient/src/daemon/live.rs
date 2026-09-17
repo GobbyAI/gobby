@@ -5,7 +5,8 @@ use super::rest::RestClient;
 use super::{
     route_key, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome,
     Page, ProjectRow, RosterEntry, RouteKey, RunRow, SessionRow, SourceStatus, SpawnOutcome,
-    SpawnRequest, SubscribeSnapshot, TerminalRow, WorktreeRow,
+    SpawnRequest, SubscribeSnapshot, TerminalRow, WorkspaceOp, WorkspaceReply, WorkspaceSnapshot,
+    WorktreeRow,
 };
 use futures_util::future::{AbortHandle, Abortable};
 use reqwest::Url;
@@ -57,6 +58,11 @@ pub(super) struct LiveState {
     pub(super) active_attachments: HashSet<String>,
     pub(super) attachment_tombstones: HashSet<String>,
     pub(super) control_tombstones: HashSet<String>,
+    /// Request ids of in-flight `workspace_attach`es.
+    pub(super) workspace_attaches: HashSet<String>,
+    /// The workspace this connection attached; the reader drops every other
+    /// workspace's `workspace_event`.
+    pub(super) attached_workspace: Option<String>,
     reconnect: Option<ReconnectFlight>,
 }
 
@@ -75,6 +81,8 @@ impl Default for LiveState {
             active_attachments: HashSet::new(),
             attachment_tombstones: HashSet::new(),
             control_tombstones: HashSet::new(),
+            workspace_attaches: HashSet::new(),
+            attached_workspace: None,
             reconnect: None,
         }
     }
@@ -139,7 +147,7 @@ impl LiveInner {
 /// Authenticated live client backed by REST and one terminal-WebSocket reader.
 #[derive(Debug)]
 pub struct LiveDaemon {
-    inner: Arc<LiveInner>,
+    pub(super) inner: Arc<LiveInner>,
 }
 
 impl LiveDaemon {
@@ -390,7 +398,7 @@ impl LiveDaemon {
         }
     }
 
-    async fn request(&self, message: Value) -> Result<Value, DaemonError> {
+    pub(super) async fn request(&self, message: Value) -> Result<Value, DaemonError> {
         super::encode_message(&message).map_err(|error| DaemonError::Protocol {
             detail: error.to_string(),
         })?;
@@ -841,6 +849,18 @@ impl Daemon for LiveDaemon {
         self.inner.closed_tx.send_replace(true);
         resources.armed = false;
         Ok(())
+    }
+
+    async fn attach_workspace(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<WorkspaceSnapshot, DaemonError> {
+        self.attach_workspace_live(node, workspace).await
+    }
+
+    async fn workspace_op(&self, op: WorkspaceOp) -> Result<WorkspaceReply, DaemonError> {
+        self.workspace_op_live(op).await
     }
 }
 

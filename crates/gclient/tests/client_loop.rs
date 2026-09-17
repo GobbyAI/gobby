@@ -559,6 +559,21 @@ impl Daemon for ReconnectDaemon {
     async fn close(&self, deadline: Instant) -> Result<(), DaemonError> {
         self.inner.close(deadline).await
     }
+
+    async fn attach_workspace(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<gobby_client::daemon::WorkspaceSnapshot, DaemonError> {
+        self.inner.attach_workspace(node, workspace).await
+    }
+
+    async fn workspace_op(
+        &self,
+        op: gobby_client::daemon::WorkspaceOp,
+    ) -> Result<gobby_client::daemon::WorkspaceReply, DaemonError> {
+        self.inner.workspace_op(op).await
+    }
 }
 
 #[tokio::test(start_paused = true)]

@@ -532,6 +532,21 @@ impl Daemon for TraceDaemon {
         }
         Ok(())
     }
+
+    async fn attach_workspace(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<gobby_client::daemon::WorkspaceSnapshot, DaemonError> {
+        Daemon::attach_workspace(&self.inner, node, workspace).await
+    }
+
+    async fn workspace_op(
+        &self,
+        op: gobby_client::daemon::WorkspaceOp,
+    ) -> Result<gobby_client::daemon::WorkspaceReply, DaemonError> {
+        Daemon::workspace_op(&self.inner, op).await
+    }
 }
 
 struct ShutdownFixture {

@@ -227,7 +227,9 @@ pub(super) async fn run_connection(
                 } else {
                     value
                 };
-                handle_inbound(&inner, value);
+                if let Err(error) = handle_inbound(&inner, value) {
+                    break error;
+                }
             }
             _ = sweep.tick() => {
                 fragments.expire(Instant::now());
@@ -255,7 +257,7 @@ fn decode_frame(message: Message) -> Result<Option<Value>, DaemonError> {
     }
 }
 
-fn handle_inbound(inner: &LiveInner, value: Value) {
+fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
     let kind = message_kind(&value).unwrap_or_default();
     let attachment = value
         .get("attachment_id")
@@ -307,7 +309,15 @@ fn handle_inbound(inner: &LiveInner, value: Value) {
         if !ignored {
             if let Some(key) = route_key(&value) {
                 reply = match key {
-                    super::RouteKey::Request(id) => state.requests.remove(&id),
+                    super::RouteKey::Request(id) => {
+                        if kind == "workspace_snapshot" && state.workspace_attaches.remove(&id) {
+                            state.attached_workspace = value
+                                .pointer("/workspace/id")
+                                .and_then(Value::as_str)
+                                .map(str::to_string);
+                        }
+                        state.requests.remove(&id)
+                    }
                     super::RouteKey::Write(id, sequence) => state.writes.remove(&(id, sequence)),
                     super::RouteKey::Control(id) => {
                         state.control_write_states.remove(&id);
@@ -316,10 +326,15 @@ fn handle_inbound(inner: &LiveInner, value: Value) {
                 };
             }
         }
-        ignored
+        // Only the attached workspace's parametric subscription should deliver
+        // here; anything else is dropped rather than surfaced.
+        let foreign_workspace = kind == "workspace_event"
+            && value.get("workspace_id").and_then(Value::as_str)
+                != state.attached_workspace.as_deref();
+        ignored || foreign_workspace
     };
     if ignored {
-        return;
+        return Ok(());
     }
     for waiter in fenced_writes {
         let _ = waiter.send(Err(DaemonError::ControlScopeIndeterminate));
@@ -334,20 +349,27 @@ fn handle_inbound(inner: &LiveInner, value: Value) {
                 .unwrap_or("terminal_error")
                 .to_string();
             let _ = reply.send(Err(DaemonError::Protocol { detail }));
+        } else if kind == "workspace_error" {
+            let error = serde_json::from_value(value.clone())
+                .map_or_else(protocol_error, DaemonError::Workspace);
+            let _ = reply.send(Err(error));
         } else {
             let _ = reply.send(Ok(value.clone()));
         }
     }
-    if let Some(event) = daemon_event(value) {
+    if let Some(event) = daemon_event(value)? {
         let _ = inner.events.send(event);
     }
+    Ok(())
 }
 
 fn is_tombstoned(inner: &LiveInner, attachment: &str) -> bool {
     inner.state().attachment_tombstones.contains(attachment)
 }
 
-fn daemon_event(value: Value) -> Option<DaemonEvent> {
+/// The event a frame publishes; a `workspace_event` that does not decode is a
+/// protocol error, so the reconnect's re-attach re-reads the workspace.
+fn daemon_event(value: Value) -> Result<Option<DaemonEvent>, DaemonError> {
     let epoch = || {
         value
             .get("daemon_epoch")
@@ -357,7 +379,10 @@ fn daemon_event(value: Value) -> Option<DaemonEvent> {
             .to_string()
     };
     let sequence = || value.get("seq").and_then(Value::as_u64).unwrap_or(0);
-    match message_kind(&value)? {
+    let Some(kind) = message_kind(&value) else {
+        return Ok(None);
+    };
+    Ok(match kind {
         "terminal_event" => Some(DaemonEvent::Terminal {
             daemon_epoch: epoch(),
             seq: sequence(),
@@ -383,6 +408,9 @@ fn daemon_event(value: Value) -> Option<DaemonEvent> {
         "terminal_attach_history" => Some(DaemonEvent::AttachHistory(value)),
         "terminal_scroll_offset_applied" => Some(DaemonEvent::ScrollOffsetApplied(value)),
         "terminal_resize_result" => Some(DaemonEvent::Message(value)),
+        "workspace_event" => Some(DaemonEvent::Workspace(Box::new(
+            serde_json::from_value(value).map_err(protocol_error)?,
+        ))),
         "agent_event"
             if matches!(
                 value.get("event").and_then(Value::as_str),
@@ -399,7 +427,7 @@ fn daemon_event(value: Value) -> Option<DaemonEvent> {
             Some(DaemonEvent::Message(value))
         }
         _ => None,
-    }
+    })
 }
 
 fn disconnect(inner: &LiveInner, generation: super::Generation, error: DaemonError) {
@@ -416,6 +444,7 @@ fn disconnect(inner: &LiveInner, generation: super::Generation, error: DaemonErr
                 .attachment_tombstones
                 .extend(attachments.iter().cloned());
             state.control_tombstones.extend(attachments);
+            state.attached_workspace = None;
             fail_waiters(&mut state, error.clone());
             true
         }

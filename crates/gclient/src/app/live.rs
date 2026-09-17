@@ -571,7 +571,8 @@ impl Workspace<LiveDaemon> {
             DaemonEvent::Output(_)
             | DaemonEvent::Frame(_)
             | DaemonEvent::AttachHistory(_)
-            | DaemonEvent::ScrollOffsetApplied(_) => {}
+            | DaemonEvent::ScrollOffsetApplied(_)
+            | DaemonEvent::Workspace(_) => {}
         }
         Ok(())
     }
