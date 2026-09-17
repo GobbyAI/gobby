@@ -30,8 +30,10 @@ if TYPE_CHECKING:
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.workspaces import WorkspaceManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.tasks.validation import TaskValidator
+    from gobby.terminals.workspace_ops import WorkspaceOps
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
@@ -85,6 +87,8 @@ def setup_internal_registries(
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
     ask_service_resolver: Callable[[str], Any | None] | None = None,
+    workspace_manager: WorkspaceManager | None = None,
+    workspace_ops_resolver: Callable[[], WorkspaceOps | None] | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -401,6 +405,12 @@ def setup_internal_registries(
         )
         manager.add_registry(worktrees_registry)
         logger.debug("Worktrees registry initialized")
+
+    # Workspace tools run through the WebSocket server's shared ops, which publish events.
+    if workspace_manager is not None and workspace_ops_resolver is not None:
+        from gobby.mcp_proxy.tools.workspaces import create_workspaces_registry
+
+        manager.add_registry(create_workspaces_registry(workspace_manager, workspace_ops_resolver))
 
     # Initialize clones registry if clone_storage is available
     if clone_storage is not None:

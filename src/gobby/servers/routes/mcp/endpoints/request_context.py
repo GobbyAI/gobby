@@ -33,6 +33,7 @@ from gobby.utils.session_context import (
     reset_seeded_contexts,
     resolve_and_seed_contexts,
     set_current_agent_run_id,
+    set_request_principal,
     set_session_context,
 )
 
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
     from gobby.storage.agents import AgentRun
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.utils.session_context import RequestPrincipal
 
 logger = logging.getLogger("gobby.servers.routes.mcp.endpoints.execution")
 
@@ -226,6 +228,7 @@ async def _set_context_for_request(
         tokens.resolved_session_id = resolved_session.id
         try:
             await _bind_agent_run_context(server, request, tokens, db=db, arguments=arguments)
+            _seed_request_principal(server, request, tokens)
         except Exception:
             reset_seeded_contexts(tokens)
             raise
@@ -283,10 +286,27 @@ async def _set_context_for_request(
         )
     try:
         await _bind_agent_run_context(server, request, tokens, db=db, arguments=arguments)
+        _seed_request_principal(server, request, tokens)
     except Exception:
         reset_seeded_contexts(tokens)
         raise
     return tokens
+
+
+def _seed_request_principal(
+    server: HTTPServer, request: Request | None, tokens: SeededContextTokens
+) -> None:
+    """Bind the request's authenticated caller, resolved only when a tool asks for it."""
+    if request is None:
+        return
+
+    async def principal() -> RequestPrincipal:
+        resolved: RequestPrincipal = await server.run_db(
+            server.auth_service.request_principal, request
+        )
+        return resolved
+
+    tokens.principal_token = set_request_principal(principal)
 
 
 async def _bind_agent_run_context(

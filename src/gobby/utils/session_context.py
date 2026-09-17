@@ -18,8 +18,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
+    from gobby.utils.local_token import AgentApiTokenClaims
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,14 @@ _current_session_context: contextvars.ContextVar[SessionContext | None] = contex
 )
 _current_agent_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "current_agent_run_id", default=None
+)
+# AuthService.request_principal: managed agent claims, None for the operator, False
+# when rejected. Requests bind a resolver so only tools that act on the caller pay the
+# auth lookup. No default, so nothing outside a seeded request reads as the operator.
+type RequestPrincipal = AgentApiTokenClaims | None | Literal[False]
+type PrincipalResolver = Callable[[], Awaitable[RequestPrincipal]]
+_request_principal: contextvars.ContextVar[PrincipalResolver] = contextvars.ContextVar(
+    "request_principal"
 )
 
 
@@ -89,6 +100,21 @@ def get_current_agent_run_id() -> str | None:
 def reset_current_agent_run_id(token: contextvars.Token[str | None]) -> None:
     """Reset the request-scoped agent-run identity."""
     _current_agent_run_id.reset(token)
+
+
+def set_request_principal(resolver: PrincipalResolver) -> contextvars.Token[PrincipalResolver]:
+    """Bind how the current request's authenticated caller resolves."""
+    return _request_principal.set(resolver)
+
+
+async def get_request_principal() -> RequestPrincipal:
+    """Resolve the request's authenticated caller; LookupError when no request seeded one."""
+    return await _request_principal.get()()
+
+
+def reset_request_principal(token: contextvars.Token[PrincipalResolver]) -> None:
+    """Reset the request-scoped principal."""
+    _request_principal.reset(token)
 
 
 def resolve_session_ref(
@@ -153,6 +179,7 @@ class SeededContextTokens:
     session_token: contextvars.Token[SessionContext | None] | None = None
     agent_run_token: contextvars.Token[str | None] | None = None
     project_token: contextvars.Token[dict[str, Any] | None] | None = field(default=None)
+    principal_token: contextvars.Token[PrincipalResolver] | None = None
     resolved_session_id: str | None = None
     resolved_project_id: str | None = None
 
@@ -481,3 +508,8 @@ def reset_seeded_contexts(tokens: SeededContextTokens) -> None:
             reset_project_context(tokens.project_token)
         except (RuntimeError, TypeError, ValueError) as exc:
             logger.debug("reset_project_context failed: %s", exc)
+    if tokens.principal_token is not None:
+        try:
+            reset_request_principal(tokens.principal_token)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("reset_request_principal failed: %s", exc)

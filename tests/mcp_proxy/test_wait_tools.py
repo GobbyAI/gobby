@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_wait_tool_names_only_include_implemented_tools() -> None:
-    assert WAIT_TOOL_NAMES == ("wait_for_output",)
+    assert WAIT_TOOL_NAMES == ("wait_for_output", "wait_for_pane_output")
 
 
 def test_wait_for_agent_uses_ordinary_client_guard() -> None:

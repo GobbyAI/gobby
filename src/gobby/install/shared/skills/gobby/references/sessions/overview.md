@@ -11,7 +11,7 @@ discovery. Session records connect work and runtime identity; a status or an
 archival summary does not prove a recoverable handoff exists.
 
 Choose `$gobby sessions references discovery`, `transcripts`, `handoffs`,
-`context`, `relationships`, `terminals`, or `waits`. Help and menus only display
+`context`, `relationships`, `terminals`, `workspaces`, or `waits`. Help and menus only display
 choices. Tool schemas own parameters and defaults. Agent operations use MCP;
 the CLI and HTTP guide sections also describe operator/client maintenance.
 

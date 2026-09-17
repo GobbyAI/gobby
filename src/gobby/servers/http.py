@@ -365,6 +365,10 @@ class HTTPServer:
             write_coordinator=getattr(services, "write_coordinator", None),
             dream_coordinator_resolver=lambda: getattr(services, "memory_dream_coordinator", None),
             ask_service_resolver=resolve_ask_service,
+            workspace_manager=services.workspace_manager,
+            workspace_ops_resolver=lambda: getattr(
+                services.websocket_server, "workspace_ops", None
+            ),
         )
         registry_count = len(self._internal_manager)
         logger.debug("Internal registries initialized: %s registries", registry_count)
