@@ -1,0 +1,565 @@
+header:
+  plan_id: gclient-workspaces
+  plan_hash: cea89de82bd517f3c3939eb6d31d5020b86488df2802a5a21fba72286c2a5b77
+  root_task_ref: '22448'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-17T06:03:46Z'
+  task_tree_source: db
+  task_tree_source_hash: 2b8da43d74c5f1c0608aba7849acd341c623ca6c4b2d1d988fc8af1d99c21e14
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 449c21b1ec56e8801f6ccdb6ab5cd91c8a1a509fbee98a3c0a2dfd6b6d558ae8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22454'
+    validation_criteria_snippet: '1.1.1: Migration 440 creates `workspaces`, `workspace_tabs`,
+      `workspace_panes`, adds `machines.ref`, and grants the runtime role. file: `crates/gcore/assets/sc...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/440_add_workspaces.sql
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 2f0b6e9f1e3092e2c78ea7ff2629f5a81c65a06a7ad3e7c7ac85d5bec07f0eb3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22454'
+    validation_criteria_snippet: '1.1.1: Migration 440 creates `workspaces`, `workspace_tabs`,
+      `workspace_panes`, adds `machines.ref`, and grants the runtime role. file: `crates/gcore/assets/sc...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 506f135b2a77bd647c69f13015d75079a40a4f1aa225be1f854ff6e15631f6cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22454'
+    validation_criteria_snippet: '1.1.1: Migration 440 creates `workspaces`, `workspace_tabs`,
+      `workspace_panes`, adds `machines.ref`, and grants the runtime role. file: `crates/gcore/assets/sc...'
+    matched_artifact_ref: tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 7bf3a7ec2604336c2324fd6b42734306c1089e31ada550cb7566748156abc7a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22455'
+    validation_criteria_snippet: '1.2.1: `WorkspaceManager` creates, resolves (uuid,
+      name, every ref form), mutates, and closes workspaces, tabs, and panes with
+      reusable lowest-free refs inside...'
+    matched_artifact_ref: WorkspaceManager
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: bdafa4365aa0343e3fd24595adedd71c2c569f7bc2177e307b692e1386b700cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22455'
+    validation_criteria_snippet: '1.2.1: `WorkspaceManager` creates, resolves (uuid,
+      name, every ref form), mutates, and closes workspaces, tabs, and panes with
+      reusable lowest-free refs inside...'
+    matched_artifact_ref: tests/storage/test_workspaces.py::test_refs_are_lowest_free_and_reused
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: d90b26fb2095f39e111c3f13dcbc74187178d0aab9724cc5ea7c426e40802efc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22455'
+    validation_criteria_snippet: '1.2.1: `WorkspaceManager` creates, resolves (uuid,
+      name, every ref form), mutates, and closes workspaces, tabs, and panes with
+      reusable lowest-free refs inside...'
+    matched_artifact_ref: tests/storage/test_machines.py::test_upsert_seen_allocates_lowest_free_ref
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 054d43635bf62658e00f5b159466b16a3b72fc8b31328395fbe6f0c319862c6c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22455'
+    validation_criteria_snippet: '1.2.1: `WorkspaceManager` creates, resolves (uuid,
+      name, every ref form), mutates, and closes workspaces, tabs, and panes with
+      reusable lowest-free refs inside...'
+    matched_artifact_ref: tests/storage/test_workspaces.py::test_sweep_dead_panes_prunes_layouts
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: eedcba6bb46d6fe24f9cc994626f05065d9cbf8b37428f10018f08a2536fb949
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22455'
+    validation_criteria_snippet: '1.2.1: `WorkspaceManager` creates, resolves (uuid,
+      name, every ref form), mutates, and closes workspaces, tabs, and panes with
+      reusable lowest-free refs inside...'
+    matched_artifact_ref: tests/terminals/test_composition_roots.py::test_wiring_hands_one_workspace_manager_to_both_servers
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: f1c1bea769e978f469b2c34c24a92af07d1ffcf3ad7f583abe4e4997dfe604eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22456'
+    validation_criteria_snippet: '2.1.1: `pane.split` inserts the pane before spawning,
+      spawns on the native runtime even when `default_backend` is `tmux`, with the
+      identity env (and without `G...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_split_spawns_with_pane_identity_env_and_rolls_back
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 165afd400157ebb1a1dc25ca15a3f192697dc125b5d85d6fda791ac95710d44b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22456'
+    validation_criteria_snippet: '2.1.1: `pane.split` inserts the pane before spawning,
+      spawns on the native runtime even when `default_backend` is `tmux`, with the
+      identity env (and without `G...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_adopt_close_and_move_semantics
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 4c1b05202fc81c4e287bacd2a6f5b79b289d409dcf299a273581dd165194dadf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22456'
+    validation_criteria_snippet: '2.1.1: `pane.split` inserts the pane before spawning,
+      spawns on the native runtime even when `default_backend` is `tmux`, with the
+      identity env (and without `G...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_actor_scope_guards_kill_spawn_and_adopt
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 9872d604adcfee202be1bee5dad70ee80ddb66577750b967b1204b6c234655aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22456'
+    validation_criteria_snippet: '2.1.1: `pane.split` inserts the pane before spawning,
+      spawns on the native runtime even when `default_backend` is `tmux`, with the
+      identity env (and without `G...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_ops_publish_events_and_raise_typed_errors
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: f2c0fb08093b82a2d7481be423bcc07aad1ee7e93753afa1dc8184492250bca8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: tests/servers/test_workspace_ws.py::test_attach_creates_default_on_the_local_node
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: bf699e694c94a923b0babba1f3e4d313f9f602af3eca2facd8dae6b26f7d1545
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: tests/servers/test_workspace_ws.py::test_ops_round_trip_and_errors_are_typed
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 08e64464291829ac2dd6ddf684e5c8b0b1cbfe2606eb64b83297aabc0c4eed42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: tests/servers/test_workspace_ws.py::test_workspace_events_share_lifecycle_order_and_filter
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 7e703d36f90896574aefc3e9d531eacadeb5b4946bd51c6e6c4597a515b6b38d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: tests/servers/test_terminal_ws_golden.py::test_python_matches_terminal_ws_golden_corpus
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 56688f0e8b1a2d1c5a5f101b3be920dd80352d4b60790886db68382e3f3b9a01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: crates/gclient/tests/ws_golden.rs::corpus_replays_from_canonical_manifest
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: d7e3969c6bc28806a48e6e05b0a2bce6134f876285f0e33d56ad82143338a727
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: web/src/hooks/__tests__/useTmuxSessions.test.ts::replays
+      every canonical terminal WS fixture from the manifest
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: 9c95803f2ef3d65c816f717aaf908bcc99ec83e06d79ffa637eed0e74c808b02
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22457'
+    validation_criteria_snippet: '2.2.1: `workspace_attach` without a node or workspace
+      attaches the daemon node''s `default`, creating it on first use, and its reply
+      carries the resolved `n#` a...'
+    matched_artifact_ref: workspace messages
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 1b94210085d403f3b55d819ff11bd9b939cf83c261f8a8180fc37efbe8d1b5d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22458'
+    validation_criteria_snippet: '2.3.1: The registry exposes the sixteen tools with
+      schemas and executes them by ref through the shared ops module. symbol: `create_workspaces_registry`.
+      file: ...'
+    matched_artifact_ref: create_workspaces_registry
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 7daa3a2d703d630f7a58b034d2eaa4fcbe0dfe32dcb32d0a9d995c5a6ef41d3e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22458'
+    validation_criteria_snippet: '2.3.1: The registry exposes the sixteen tools with
+      schemas and executes them by ref through the shared ops module. symbol: `create_workspaces_registry`.
+      file: ...'
+    matched_artifact_ref: tests/mcp_proxy/test_workspaces_registry.py::test_read_and_wait_address_panes_by_ref
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: d7ff91c0a063a8e6e8c535f702489280d30c1dd25405fefcc80c9dd4bfa037d0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22458'
+    validation_criteria_snippet: '2.3.1: The registry exposes the sixteen tools with
+      schemas and executes them by ref through the shared ops module. symbol: `create_workspaces_registry`.
+      file: ...'
+    matched_artifact_ref: tests/mcp_proxy/test_workspaces_registry.py::test_actor_is_derived_from_session_context_and_principal
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: e0cd2765b3bfef2e26923973ad51fece567a02b0a191e64a154268c7ace731a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22458'
+    validation_criteria_snippet: '2.3.1: The registry exposes the sixteen tools with
+      schemas and executes them by ref through the shared ops module. symbol: `create_workspaces_registry`.
+      file: ...'
+    matched_artifact_ref: gobby-workspaces
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 76757081d145a0d12e5efb41005542753692bd9a9b2887150c7ce04ead6bde0e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22458'
+    validation_criteria_snippet: '2.3.1: The registry exposes the sixteen tools with
+      schemas and executes them by ref through the shared ops module. symbol: `create_workspaces_registry`.
+      file: ...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: d1203e89c90a5f69d5b83312edc511b89c26e44fb271b9271f389d9e9027233b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22459'
+    validation_criteria_snippet: '2.4.1: The three groups exist with the listed commands,
+      `--node`, and `--json`; a full ref overrides `--node`; `panes split` requires
+      exactly one direction fla...'
+    matched_artifact_ref: tests/cli/test_workspaces.py::test_panes_split_resolves_ref_node_and_direction
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 5b2486a47d6c8535d9e01745b3de0e0478b202988f159f5a8d910e87619a9031
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22459'
+    validation_criteria_snippet: '2.4.1: The three groups exist with the listed commands,
+      `--node`, and `--json`; a full ref overrides `--node`; `panes split` requires
+      exactly one direction fla...'
+    matched_artifact_ref: '### Workspaces'
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 4e66f3128bac485c1d45ea33674c532991588112b10a94453f41689926c21e04
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22459'
+    validation_criteria_snippet: '2.4.1: The three groups exist with the listed commands,
+      `--node`, and `--json`; a full ref overrides `--node`; `panes split` requires
+      exactly one direction fla...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 2592386dbe3e35071a6040bc3517dcae13d9766a54770d8dff32015b6bc3ddde
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22460'
+    validation_criteria_snippet: '3.1.1: Every native spawn env carries `GOBBY_TERMINAL_ID`
+      equal to the minted id, and a caller env cannot override it. test: `tests/terminals/test_native_runti...'
+    matched_artifact_ref: tests/terminals/test_native_runtime.py::test_spawn_env_carries_terminal_id
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 691b1db8c6475eebdb36d6f2dd61c20b2ef7433dfb5d76469abd915bdc93506c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22460'
+    validation_criteria_snippet: '3.1.1: Every native spawn env carries `GOBBY_TERMINAL_ID`
+      equal to the minted id, and a caller env cannot override it. test: `tests/terminals/test_native_runti...'
+    matched_artifact_ref: get_terminal_env_vars
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 23065fc62c4490336855456ae6c4f96269b05e82214d7bed9e9ee0341d3c7f5c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22460'
+    validation_criteria_snippet: '3.1.1: Every native spawn env carries `GOBBY_TERMINAL_ID`
+      equal to the minted id, and a caller env cannot override it. test: `tests/terminals/test_native_runti...'
+    matched_artifact_ref: tests/test_runner_env_scrub.py::test_main_pops_inherited_identity_before_the_runner_starts
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 6b1ce75f9abb2397ef044d848e27fcd3766e11d5a2dfedc164f6b674ebbce27e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22461'
+    validation_criteria_snippet: '3.2.1: ghook and Python emit and accept `gobby_terminal_id`
+      and `gobby_pane_ref`, and the documented key table matches both. test: `crates/ghook/src/terminal_c...'
+    matched_artifact_ref: crates/ghook/src/terminal_context.rs::capture_emits_expected_keys
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: bda17674021801811d7ceed05f9a002e0c529173e47017169f374286c917f9fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22461'
+    validation_criteria_snippet: '3.2.1: ghook and Python emit and accept `gobby_terminal_id`
+      and `gobby_pane_ref`, and the documented key table matches both. test: `crates/ghook/src/terminal_c...'
+    matched_artifact_ref: tests/storage/test_terminal_bindings.py::test_bind_session_guards
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 674a49de06688f905915f8c468dcb8de89c8460c75d244c04bef74e09853a69e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22461'
+    validation_criteria_snippet: '3.2.1: ghook and Python emit and accept `gobby_terminal_id`
+      and `gobby_pane_ref`, and the documented key table matches both. test: `crates/ghook/src/terminal_c...'
+    matched_artifact_ref: tests/hooks/test_session_start_handlers.py::test_native_terminal_id_binds_unless_tmux_or_nested
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: d53d2b348ff439a07e69ef4a080441dd8850316dc7234d74c17736f377e550d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22461'
+    validation_criteria_snippet: '3.2.1: ghook and Python emit and accept `gobby_terminal_id`
+      and `gobby_pane_ref`, and the documented key table matches both. test: `crates/ghook/src/terminal_c...'
+    matched_artifact_ref: tests/servers/test_attention_native_roster.py::test_bound_native_session_is_on_the_roster
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 07d212d5667f25c3f6751073e00935c8e083a1480bfaa370502de372d0a131f6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22462'
+    validation_criteria_snippet: '4.1.1: The client decodes every workspace fixture
+      into typed rows, ops, and events. symbol: `WorkspaceEvent`. file: `crates/gclient/src/daemon/workspace.rs`.
+      4...'
+    matched_artifact_ref: WorkspaceEvent
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 44e8118f281b2e262bb8a25719dfb155994de5cbf2a44891b7e4117356be4153
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22462'
+    validation_criteria_snippet: '4.1.1: The client decodes every workspace fixture
+      into typed rows, ops, and events. symbol: `WorkspaceEvent`. file: `crates/gclient/src/daemon/workspace.rs`.
+      4...'
+    matched_artifact_ref: crates/gclient/tests/daemon_live.rs::workspace_attach_op_and_event_round_trip
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: b2c55a486eb60ce78c602bc47e57829bcb24bc946409826d3f8975391c15f702
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22462'
+    validation_criteria_snippet: '4.1.1: The client decodes every workspace fixture
+      into typed rows, ops, and events. symbol: `WorkspaceEvent`. file: `crates/gclient/src/daemon/workspace.rs`.
+      4...'
+    matched_artifact_ref: crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: db041a6040d49e1f80509f1374e6b0f6d8e96446e3d976eace91a15267d60bf7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: TileLayout::split_focused
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 3a30b0116b7b7d3cf7548a5d24f980ed84fabf7398a251359a64fa0735f33e22
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/workspace.rs::two_viewers_share_layout_and_keep_their_own_focus
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 3b04106199de510d8237abd756f6b2b92f498d066cfecf0db1778e9a439d196b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/workspace.rs::pane_ids_are_interned_without_collision
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: f8a23213281303465162fbe1679b318d5f506425f14c15c8c0e91ab397ae66db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/client_loop.rs::wired_actions_split_focus_swap_and_switch_tabs
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: fdae8ae0ea49d612289d4912c6c50451a39832caec19e421fd4d40df94205d0f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/client_loop.rs::workspace_events_open_terminals_on_demand
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: 156b6198993a40f277021394e0b2af6602828482e5f1a276b9bb3fd3cdeb5349
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/client_loop.rs::daemon_restart_keeps_panes_and_reattaches
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.7
+  plan_node_hash: 34cbe43ac29f72abca6523ccf29e34c175211a9de11c048ee9b6f20bf42485f5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/client_loop.rs::ratio_drag_sends_one_op_on_drop
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.8
+  plan_node_hash: 018c2d559fb47f37715d6b5fab5f310b6f1711622ede150b5f2164483050552b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22463'
+    validation_criteria_snippet: '4.2.1: `TileLayout` has no focus field and every
+      focus-dependent method takes the focus explicitly. symbol: `TileLayout::split_focused`.
+      file: `crates/gtermina...'
+    matched_artifact_ref: crates/gclient/tests/source_size.rs::no_src_file_at_or_above_1000_lines
+  deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: c675534348f85164e18f78c7bd5444e3c146f070d7f47af5de0dac707390b961
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22464'
+    validation_criteria_snippet: '4.3.1: `--node` and `--workspace` parse, default
+      to the local `default` workspace, and a full ref overrides `--node`. test: `crates/gclient/tests/startup.rs::w...'
+    matched_artifact_ref: crates/gclient/tests/startup.rs::workspace_flags_default_to_the_local_default
+  deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 6a5261e232180a6b2cb313a2f0be4b4788eb5d2e9f3f8463e1800d400c7fe051
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22464'
+    validation_criteria_snippet: '4.3.1: `--node` and `--workspace` parse, default
+      to the local `default` workspace, and a full ref overrides `--node`. test: `crates/gclient/tests/startup.rs::w...'
+    matched_artifact_ref: crates/gclient/tests/startup.rs::prefs_carry_sidebar_and_project_preferences
+  deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 0b6a4ba7aea56bbbb3de46ab7a41058fd4a258bc7569024a96576ebe149acbdf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22464'
+    validation_criteria_snippet: '4.3.1: `--node` and `--workspace` parse, default
+      to the local `default` workspace, and a full ref overrides `--node`. test: `crates/gclient/tests/startup.rs::w...'
+    matched_artifact_ref: crates/gclient/tests/workspace_rows.rs::focus_hints_seed_and_follow_the_last_actor
+  deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.4
+  plan_node_hash: e532a07addd55a215a904fdd3d69ecc6fe2fa6afc1dee821c9a8792d3a35dd5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22464'
+    validation_criteria_snippet: '4.3.1: `--node` and `--workspace` parse, default
+      to the local `default` workspace, and a full ref overrides `--node`. test: `crates/gclient/tests/startup.rs::w...'
+    matched_artifact_ref: crates/gclient/tests/startup.rs::nested_pane_launch_shifts_prefix_and_opens_nothing
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 0a302f56e3abefb3cb7e8d9e5e8e660cb5dd0020ac0f00d0c26350e693f40824
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22465'
+    validation_criteria_snippet: '5.1.1: The gclient guide documents workspaces, refs,
+      multi-window behavior, daemon-owned persistence, and bringing a bare terminal
+      in. behavior: "## Workspaces...'
+    matched_artifact_ref: '## Workspaces'
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 85048ad7e3f8918fc98330ece346b1f7062acf44c122ba85b3df1e6574c5d0a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22465'
+    validation_criteria_snippet: '5.1.1: The gclient guide documents workspaces, refs,
+      multi-window behavior, daemon-owned persistence, and bringing a bare terminal
+      in. behavior: "## Workspaces...'
+    matched_artifact_ref: Orphaned terminals
+  deferral_target: null
+- section_id: D1
+  item_id: 5.1.2
+  plan_node_hash: c28538047196807b06c51bfeae1ffae9717ca2ee4006e4642b90db635778bd58
+  status: deferred
+  leaves: []
+  deferral_target: '#22202'
