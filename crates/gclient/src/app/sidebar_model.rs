@@ -61,7 +61,7 @@ pub struct ProjectEntry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorktreeEntry {
     pub worktree_id: String,
-    pub branch: String,
+    pub branch: Option<String>,
     pub path: PathBuf,
     pub task_ref: Option<String>,
     pub role: String,

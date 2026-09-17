@@ -83,7 +83,8 @@ top half of the sidebar (each scrolls inside its cap); Sessions takes the rest.
   `glyph name (branch ↑ahead ↓behind)` with a `▸`/`▾` fold mark at the right
   edge. Only one project is expanded at a time: selecting a project expands it
   and folds the others, and its worktrees appear under the card as
-  `├─ glyph branch · #task`. The band's control toggles `[working]` (projects
+  `├─ glyph branch · #task`, with `~` for the branch of a detached worktree.
+  The band's control toggles `[working]` (projects
   with a live session, run, or terminal on the current machine filter, plus the
   focused one) and `[all]`.
 - *Sessions* lists sessions as two-line rows: `glyph #ref: title` over

@@ -364,7 +364,7 @@ pub fn open_open_worktree_dialog<D: Daemon>(
         .filter(|worktree| !shown(&worktree.worktree_id))
         .map(|worktree| WorktreeChoice {
             worktree_id: worktree.worktree_id.clone(),
-            branch: worktree.branch.clone(),
+            branch: worktree.branch.clone().unwrap_or_else(|| "~".to_string()),
             path: worktree.path.to_string_lossy().into_owned(),
         })
         .collect();
@@ -389,7 +389,7 @@ pub fn open_remove_worktree_dialog<D: Daemon>(
     let tagged: Vec<&Tab> = tagged_tabs(chrome, &project_id, worktree_id);
     chrome.dialog = Some(Dialog::RemoveWorktree {
         worktree_id: worktree_id.to_owned(),
-        branch: worktree.branch.clone(),
+        branch: worktree.branch.clone().unwrap_or_else(|| "~".to_string()),
         path: worktree.path.to_string_lossy().into_owned(),
         tabs: tagged.len(),
         panes: tagged.iter().map(|tab| tab.slots.len()).sum(),

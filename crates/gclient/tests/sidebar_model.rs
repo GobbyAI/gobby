@@ -169,7 +169,7 @@ fn build_joins_projects_worktrees_and_agents() {
         worktrees: vec![WorktreeRow {
             id: "wt-1".to_string(),
             project_id: PROJECT.to_string(),
-            branch_name: "gobby-21986-sidebar".to_string(),
+            branch_name: Some("gobby-21986-sidebar".to_string()),
             worktree_path: "/w/1".to_string(),
             status: "active".to_string(),
             workspace_role: "task".to_string(),
@@ -254,7 +254,7 @@ fn build_joins_projects_worktrees_and_agents() {
     );
     let worktree = &gobby.worktrees[0];
     assert_eq!(worktree.worktree_id, "wt-1");
-    assert_eq!(worktree.branch, "gobby-21986-sidebar");
+    assert_eq!(worktree.branch.as_deref(), Some("gobby-21986-sidebar"));
     assert_eq!(worktree.path, PathBuf::from("/w/1"));
     assert_eq!(worktree.role, "task");
     assert_eq!(
