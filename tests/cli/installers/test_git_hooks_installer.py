@@ -21,6 +21,7 @@ from gobby.cli.installers.git_hooks import (
     _remove_gobby_section,
     _resolve_git_hooks_dir,
     _wrap_gobby_section,
+    get_stale_git_hooks,
     install_git_hooks,
     uninstall_git_hooks,
 )
@@ -1189,3 +1190,81 @@ def test_prepush_verification_and_delete_only_behavior(
             "hooks run pre-push",
         ]
     assert ("Gobby pre-push verification failed" in result.stdout) == (verification_exit != 0)
+
+
+class TestGetStaleGitHooks:
+    """Tests for the read-only managed-section drift probe."""
+
+    def test_reports_hook_whose_managed_section_drifted(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git" / "hooks").mkdir(parents=True)
+        install_git_hooks(repo)
+        hook_path = repo / ".git" / "hooks" / "pre-commit"
+        drifted = hook_path.read_text().replace(
+            GOBBY_HOOK_END, f'echo "stale body"\n{GOBBY_HOOK_END}'
+        )
+        hook_path.write_text(drifted)
+
+        assert get_stale_git_hooks(repo) == ["pre-commit"]
+        assert hook_path.read_text() == drifted
+
+    def test_reports_nothing_for_current_sections(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git" / "hooks").mkdir(parents=True)
+        install_git_hooks(repo)
+
+        assert get_stale_git_hooks(repo) == []
+
+    def test_ignores_hooks_without_managed_section(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        hooks_dir = repo / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        foreign = "#!/usr/bin/env bash\necho foreign\n"
+        (hooks_dir / "pre-commit").write_text(foreign)
+
+        assert get_stale_git_hooks(repo) == []
+        assert (hooks_dir / "pre-commit").read_text() == foreign
+
+    def test_returns_empty_without_hooks_directory(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+
+        assert get_stale_git_hooks(repo) == []
+        assert not (repo / ".git" / "hooks").exists()
+
+    def test_skips_an_unreadable_hook_without_hiding_the_rest(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git" / "hooks").mkdir(parents=True)
+        install_git_hooks(repo)
+        stale_hook = repo / ".git" / "hooks" / "pre-push"
+        stale_hook.write_text(
+            stale_hook.read_text().replace(GOBBY_HOOK_END, f"echo stale\n{GOBBY_HOOK_END}")
+        )
+        unreadable = repo / ".git" / "hooks" / "pre-commit"
+        unreadable.unlink()
+        unreadable.mkdir()
+
+        assert get_stale_git_hooks(repo) == ["pre-push"]
+
+    def test_returns_empty_outside_a_git_repository(self, tmp_path: Path) -> None:
+        plain = tmp_path / "plain"
+        plain.mkdir()
+
+        assert get_stale_git_hooks(plain) == []
+
+    def test_reads_the_shared_hooks_dir_of_a_linked_worktree(self, tmp_path: Path) -> None:
+        main = tmp_path / "main"
+        (main / ".git" / "hooks").mkdir(parents=True)
+        install_git_hooks(main)
+        hook_path = main / ".git" / "hooks" / "post-commit"
+        hook_path.write_text(
+            hook_path.read_text().replace(GOBBY_HOOK_END, f"echo stale\n{GOBBY_HOOK_END}")
+        )
+        worktree = tmp_path / "worktree"
+        git_dir = main / ".git" / "worktrees" / "worktree"
+        worktree.mkdir()
+        git_dir.mkdir(parents=True)
+        (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+        (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+
+        assert get_stale_git_hooks(worktree) == ["post-commit"]

@@ -442,6 +442,18 @@ def format_status_message(
                 lines.append(f"  {label + ':':<{_LW}}not installed{details}")
         lines.append("")
 
+    # ---- Git hooks ----
+    git_hook_drift = _mapping_section(deps_info, "git_hook_drift")
+    if git_hook_drift:
+        lines.append("Git hooks:")
+        for root_path, stale_hooks in sorted(git_hook_drift.items()):
+            hook_names = ", ".join(str(hook) for hook in stale_hooks)
+            lines.append(f"  {root_path}")
+            lines.append(
+                f"    stale sections: {hook_names} (run 'gobby install git-hooks' in that checkout)"
+            )
+        lines.append("")
+
     # ---- Services ----
     if running:
         lines.append("Services:")

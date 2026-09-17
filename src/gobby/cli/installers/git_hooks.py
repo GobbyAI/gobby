@@ -379,6 +379,31 @@ def _has_precommit_config(project_path: Path) -> bool:
     return (project_path / ".pre-commit-config.yaml").exists()
 
 
+def get_stale_git_hooks(project_path: Path) -> list[str]:
+    """Return installed Gobby hook sections that differ from the current template.
+
+    Read-only: hook files are never written. Hooks carrying no Gobby-managed
+    section, and checkouts without a hooks directory, report nothing.
+    """
+    hooks_dir = _resolve_git_hooks_dir(project_path)
+    if hooks_dir is None:
+        return []
+
+    stale: list[str] = []
+    for hook_name, gobby_script in HOOK_TEMPLATES.items():
+        try:
+            content = (hooks_dir / hook_name).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
+            # A hook this probe cannot read is not drift, and must not hide the rest.
+            continue
+        installed_section = _extract_gobby_section(content)
+        if installed_section is None:
+            continue
+        if installed_section != _wrap_gobby_section(gobby_script).strip():
+            stale.append(hook_name)
+    return stale
+
+
 def install_git_hooks(
     project_path: Path,
     *,

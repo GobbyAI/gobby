@@ -1,6 +1,7 @@
 import json
 import logging
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -384,6 +385,117 @@ def test_coding_cli_status_shows_stale_hook_events() -> None:
     )
     grok_line = next(line for line in result.splitlines() if "Grok CLI:" in line)
     assert "stale hook events: StopCancelled, PendingInteraction, InteractionResolved" in grok_line
+
+
+def _unique_project_name(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+def _register_checkout(db: HubDatabase, machine_id: str, root: Path, name: str) -> None:
+    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+    from gobby.storage.projects import LocalProjectManager
+
+    project = LocalProjectManager(db).create(name=name)
+    LocalProjectCheckoutManager(db).register(machine_id, project.id, str(root))
+
+
+def test_git_hook_drift_reports_stale_sections_per_registered_checkout(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.cli.installers.git_hooks import GOBBY_HOOK_END, install_git_hooks
+    from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
+
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+
+    stale_root = tmp_path / "stale"
+    current_root = tmp_path / "current"
+    bare_root = tmp_path / "bare"
+    for root in (stale_root, current_root, bare_root):
+        (root / ".git").mkdir(parents=True)
+    install_git_hooks(stale_root)
+    install_git_hooks(current_root)
+    stale_hook = stale_root / ".git" / "hooks" / "pre-push"
+    stale_hook.write_text(
+        stale_hook.read_text().replace(GOBBY_HOOK_END, f"echo stale\n{GOBBY_HOOK_END}")
+    )
+
+    _register_checkout(temp_db, machine_id, stale_root, _unique_project_name("stale"))
+    _register_checkout(temp_db, machine_id, current_root, _unique_project_name("current"))
+    _register_checkout(temp_db, machine_id, bare_root, _unique_project_name("bare"))
+
+    drift = deps.get_git_hook_drift(temp_db)
+
+    assert drift == {str(stale_root): ["pre-push"]}
+
+
+def test_git_hook_drift_fails_open_and_keeps_the_exception_diagnostics(
+    temp_db: HubDatabase, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.utils.machine_id.require_machine_id",
+        MagicMock(side_effect=RuntimeError("Local machine ID is unavailable")),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.utils.deps"):
+        assert deps.get_git_hook_drift(temp_db) == {}
+
+    swallowed = [record for record in caplog.records if record.exc_info is not None]
+    assert len(swallowed) == 1
+    assert swallowed[0].exc_info is not None
+    assert isinstance(swallowed[0].exc_info[1], RuntimeError)
+
+
+def test_init_services_logs_one_warning_per_stale_checkout(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.runner_init import services as services_mod
+
+    for name in (
+        "_init_llm_service",
+        "_init_memory_stack",
+        "_init_code_indexer",
+        "_init_mcp_stack",
+        "_init_memory_backup",
+        "_init_message_processor",
+        "_init_task_validator",
+        "_init_project_context",
+    ):
+        monkeypatch.setattr(services_mod, name, lambda runner: None)
+    monkeypatch.setattr("gobby.utils.deps.get_coding_cli_hook_drift", dict)
+    monkeypatch.setattr(
+        "gobby.utils.deps.get_git_hook_drift",
+        lambda db: {"/repos/one": ["pre-commit", "post-commit"]},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.runner_init.services"):
+        services_mod.init_services(MagicMock())
+
+    warnings = [
+        record.getMessage() for record in caplog.records if "/repos/one" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "pre-commit, post-commit" in warnings[0]
+    assert "gobby install git-hooks" in warnings[0]
+
+
+def test_git_hook_status_names_checkout_hooks_and_reinstall_command() -> None:
+    result = format_status_message(
+        running=True,
+        deps_info={"git_hook_drift": {"/repos/one": ["pre-commit", "post-commit"]}},
+    )
+
+    assert "Git hooks:" in result
+    checkout_line = next(line for line in result.splitlines() if line.strip() == "/repos/one")
+    detail_line = result.splitlines()[result.splitlines().index(checkout_line) + 1]
+    assert "pre-commit, post-commit" in detail_line
+    assert "gobby install git-hooks" in detail_line
+
+
+def test_git_hook_status_section_is_absent_without_drift() -> None:
+    result = format_status_message(running=True, deps_info={"git_hook_drift": {}})
+
+    assert "Git hooks:" not in result
 
 
 def test_check_hooks_in_file(tmp_path: Path) -> None:
