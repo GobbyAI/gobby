@@ -179,10 +179,7 @@ def test_single_active_daemon_and_explicit_handoff(
     active = _spawn_daemon(e2e_project_dir, active_config, ports[0], ports[1])
     standby: DaemonInstance | None = None
     try:
-        assert wait_for_daemon_health(active.http_port, timeout=30.0), (
-            f"Active daemon failed startup.\nLogs:\n{active.read_logs()}\n"
-            f"Errors:\n{active.read_error_logs()}"
-        )
+        wait_for_daemon_health(active.http_port, log_file=active.log_file)
         assert wait_for_port(active.ws_port, timeout=10.0)
 
         token_path = active.gobby_home / "local_cli_token"
@@ -224,10 +221,7 @@ def test_single_active_daemon_and_explicit_handoff(
             timeout=5.0,
         )
         assert promoted.status_code == 200, promoted.text
-        assert wait_for_daemon_health(standby.http_port, timeout=30.0), (
-            f"Promoted daemon failed startup.\nLogs:\n{standby.read_logs()}\n"
-            f"Errors:\n{standby.read_error_logs()}"
-        )
+        wait_for_daemon_health(standby.http_port, log_file=standby.log_file)
         assert wait_for_port(standby.ws_port, timeout=10.0)
         lease_status = httpx.get(
             f"{standby.http_url}/api/admin/lease/status",

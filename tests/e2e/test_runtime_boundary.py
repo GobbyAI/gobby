@@ -903,7 +903,10 @@ def test_runtime_boundary_scenarios(boundary: BoundaryHarness) -> None:
 
     write_grant_file(boundary.grant_path, boundary.grant)
     boundary.daemon.restart()
-    assert wait_for_daemon_health(boundary.daemon.http_port)
+    wait_for_daemon_health(
+        boundary.daemon.http_port,
+        log_file=boundary.daemon.log_file,
+    )
     restarted = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert restarted.returncode == 0, restarted.stderr or restarted.stdout
     with authenticated_daemon_client(boundary.daemon) as client:
@@ -1145,7 +1148,10 @@ def test_restore_replay_rejected(
             boundary.daemon.stop()
         _restore_schema(postgres_database_url, postgres_schema, dump, postgres_db)
         boundary.daemon.restart()
-        assert wait_for_daemon_health(boundary.daemon.http_port)
+        wait_for_daemon_health(
+            boundary.daemon.http_port,
+            log_file=boundary.daemon.log_file,
+        )
         presented = _present_embeddings(boundary.daemon, boundary.home, archived)
         assert presented.status_code in {401, 403, 409}, presented.text
         presented_code = presented.json().get("code") or presented.json().get("error")
@@ -1314,10 +1320,7 @@ def test_takeover_fencing(
             assert remaining is not None
             assert remaining["root_path"] == str(boundary.project_dir)
 
-            assert wait_for_daemon_health(standby.http_port, timeout=30.0), (
-                f"promoted owner failed to serve\n--- log ---\n{standby.read_logs()}\n"
-                f"--- error ---\n{standby.read_error_logs()}"
-            )
+            wait_for_daemon_health(standby.http_port, log_file=standby.log_file)
             successor_grant = _handshake_grant(standby, boundary.project_dir, home=boundary.home)
             persist_interactive_grant(boundary.home, standby.http_url, successor_grant)
             successor_headers = {
@@ -1376,7 +1379,10 @@ def test_rotation_drain_and_revocation(boundary: BoundaryHarness, postgres_db: A
     assert drained.returncode == 0, drained.stderr or drained.stdout
 
     boundary.daemon.restart()
-    assert wait_for_daemon_health(boundary.daemon.http_port)
+    wait_for_daemon_health(
+        boundary.daemon.http_port,
+        log_file=boundary.daemon.log_file,
+    )
     live = _handshake_grant(boundary.daemon, boundary.project_dir)
     assert _postgres_generation(live) == rotated_generation
     _revoke_interactive(postgres_db, boundary.home, live)

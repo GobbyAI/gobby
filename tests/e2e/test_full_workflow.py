@@ -80,9 +80,7 @@ class TestFullWorkflowIntegration:
             )
 
         try:
-            assert wait_for_daemon_health(http_port, timeout=20.0), (
-                "Phase 1 FAILED: Daemon should start"
-            )
+            wait_for_daemon_health(http_port, log_file=log_file)
 
             # Create client and simulator
             client = authenticated_daemon_client_for_home(
@@ -188,9 +186,7 @@ class TestFullWorkflowIntegration:
                 )
 
             try:
-                assert wait_for_daemon_health(http_port, timeout=20.0), (
-                    "Phase 5 FAILED: Daemon should restart"
-                )
+                wait_for_daemon_health(http_port, log_file=log_file)
 
                 # ===== PHASE 6: Session state is recovered =====
                 client2 = authenticated_daemon_client_for_home(
