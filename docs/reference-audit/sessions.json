@@ -40,8 +40,9 @@
         "sessions"
       ],
       "evidence": [
+        "focused-sessions",
         "source-audit",
-        "focused-sessions"
+        "workspaces-cli"
       ]
     },
     {
@@ -992,14 +993,14 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
-        "symbol": "create_workspaces_registry.rename"
+        "symbol": "create_workspaces_registry.rename_workspace_item"
       },
       "verification": [
         "workspaces-registry"
       ],
       "audience": "agent",
       "server": "gobby-workspaces",
-      "tool": "rename"
+      "tool": "rename_workspace_item"
     },
     {
       "surface": "mcp",
@@ -1020,14 +1021,14 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
-        "symbol": "create_workspaces_registry.send_keys"
+        "symbol": "create_workspaces_registry.send_pane_keys"
       },
       "verification": [
         "workspaces-registry"
       ],
       "audience": "agent",
       "server": "gobby-workspaces",
-      "tool": "send_keys"
+      "tool": "send_pane_keys"
     },
     {
       "surface": "mcp",
@@ -1056,6 +1057,175 @@
       "audience": "agent",
       "server": "gobby-workspaces",
       "tool": "wait_for_pane_output"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "list_workspaces"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby workspaces list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "show_workspace"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby workspaces show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "create_workspace"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby workspaces create"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "delete_workspace"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby workspaces delete"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "split_pane"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes split"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "close_pane"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes close"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "move_pane"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes move"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "swap_panes"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes swap"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "rename_workspace_item"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes rename"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "send_pane_input"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes send"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "read_pane"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes read"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "wait_for_pane_output"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby panes wait"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "list_nodes"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby nodes list"
     }
   ],
   "delegated_operations": {
@@ -1123,7 +1293,13 @@
       "id": "workspaces-registry",
       "kind": "pytest",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_workspaces_registry.py tests/skills/test_reference_library.py tests/servers/routes/mcp/ tests/mcp_proxy/test_registries.py -q",
-      "result": "77 passed. Sixteen gobby-workspaces tools execute by ref through the WebSocket server's shared WorkspaceOps; wrapper sessions act as session:<id>, the local operator token as operator, and agent tokens without a session or unseeded calls are refused forbidden."
+      "result": "Sixteen gobby-workspaces tools execute by ref through the WebSocket server's shared WorkspaceOps; wrapper sessions act as session:<id>, the local operator token as operator, and agent tokens (with or without a session header) and unseeded calls are refused forbidden."
+    },
+    {
+      "id": "workspaces-cli",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_workspaces.py tests/mcp_proxy/test_workspaces_registry.py tests/skills/test_reference_library.py",
+      "result": "The gobby workspaces, panes, and nodes groups call the gobby-workspaces registry with the local CLI token; --node defaults to the daemon's node, a full ref such as n2:w1:t1:p2 overrides it, panes split takes exactly one direction and forwards --terminal, and every group takes --json."
     }
   ],
   "discrepancies": [

@@ -56,6 +56,7 @@ from .ui import ui
 from .uninstall import uninstall
 from .utils import get_gobby_home
 from .variables import variables
+from .workspaces import nodes, panes, workspaces
 from .worktrees import worktrees
 
 
@@ -115,6 +116,9 @@ cli.add_command(skills)
 cli.add_command(stages)
 cli.add_command(agents)
 cli.add_command(worktrees)
+cli.add_command(workspaces)
+cli.add_command(panes)
+cli.add_command(nodes)
 cli.add_command(mcp_proxy)
 cli.add_command(projects)
 cli.add_command(profiles)
