@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.hooks.session_coordinator import (
-    _INCOMPLETE_STEP_WORKFLOW_ERROR,
-    SessionCoordinator,
+from gobby.hooks.session_completion import (
+    INCOMPLETE_STEP_WORKFLOW_ERROR,
+    incomplete_step_workflow_error,
 )
 from gobby.mcp_proxy.tools.agents_query_tools import register_agent_query_tools
 from gobby.mcp_proxy.tools.coordination import register_coordination_tools
@@ -121,11 +122,11 @@ async def test_session_without_an_agent_run_still_registers_a_coordination_wait(
     manager.return_value.register.assert_called_once()
 
 
-def _coordinator() -> SessionCoordinator:
+def _step_workflow_failure(session_id: str) -> str | None:
     # The guard reaches only ``agent_run_manager.db``, which it hands to a patched
     # CoordinationWaitManager, so a real manager would add a hub for nothing.
     manager = cast(LocalAgentRunManager, SimpleNamespace(db=MagicMock()))
-    return SessionCoordinator(agent_run_manager=manager)
+    return incomplete_step_workflow_error(manager, logging.getLogger(__name__), session_id)
 
 
 def _incomplete_workflow() -> SimpleNamespace:
@@ -138,15 +139,13 @@ def _incomplete_workflow() -> SimpleNamespace:
 
 
 def test_pending_coordination_wait_does_not_fail_the_run_on_session_end() -> None:
-    coordinator = _coordinator()
-
     with (
-        patch("gobby.hooks.session_coordinator.CoordinationWaitManager") as manager,
+        patch("gobby.hooks.session_completion.CoordinationWaitManager") as manager,
         patch("gobby.workflows.step_context.first_incomplete_step_workflow") as lookup,
     ):
         manager.return_value.has_active_wait.return_value = True
         lookup.return_value = _incomplete_workflow()
-        failure = coordinator._incomplete_step_workflow_error("session-1")
+        failure = _step_workflow_failure("session-1")
 
     assert failure is None
     # The step is incomplete *because* the session is waiting; that is not a failure.
@@ -154,31 +153,27 @@ def test_pending_coordination_wait_does_not_fail_the_run_on_session_end() -> Non
 
 
 def test_incomplete_step_workflow_without_a_wait_still_fails_the_run() -> None:
-    coordinator = _coordinator()
-
     with (
-        patch("gobby.hooks.session_coordinator.CoordinationWaitManager") as manager,
+        patch("gobby.hooks.session_completion.CoordinationWaitManager") as manager,
         patch("gobby.workflows.step_context.first_incomplete_step_workflow") as lookup,
     ):
         manager.return_value.has_active_wait.return_value = False
         lookup.return_value = _incomplete_workflow()
-        failure = coordinator._incomplete_step_workflow_error("session-1")
+        failure = _step_workflow_failure("session-1")
 
     assert failure is not None
-    assert _INCOMPLETE_STEP_WORKFLOW_ERROR in failure
+    assert INCOMPLETE_STEP_WORKFLOW_ERROR in failure
     assert "workflow=grok-worker" in failure
 
 
 def test_unreadable_coordination_state_does_not_mask_an_incomplete_workflow() -> None:
-    coordinator = _coordinator()
-
     with (
-        patch("gobby.hooks.session_coordinator.CoordinationWaitManager") as manager,
+        patch("gobby.hooks.session_completion.CoordinationWaitManager") as manager,
         patch("gobby.workflows.step_context.first_incomplete_step_workflow") as lookup,
     ):
         manager.return_value.has_active_wait.side_effect = RuntimeError("db down")
         lookup.return_value = _incomplete_workflow()
-        failure = coordinator._incomplete_step_workflow_error("session-1")
+        failure = _step_workflow_failure("session-1")
 
     assert failure is not None
-    assert _INCOMPLETE_STEP_WORKFLOW_ERROR in failure
+    assert INCOMPLETE_STEP_WORKFLOW_ERROR in failure
