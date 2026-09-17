@@ -232,12 +232,15 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
     assert spec["deferrals"] == [
         {
             "section_id": "2.2",
+            "title": "Deferred work",
             "task_ref": "#99",
+            "depends_on": [],
             "reason": "covered by downstream follow-up",
             "owner": "docs",
             "original_acceptance_items": [
                 {
                     "item_id": "2.2.1",
+                    "prose": "2.2.1",
                     "artifact_kind": "behavior",
                     "artifact_ref": "2.2.1",
                 }
