@@ -27,7 +27,10 @@ from gobby.storage.projects import Project
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
-from tests.fixtures.isolated_checkout import IsolatedCheckoutProject, install_isolated_checkout_project
+from tests.fixtures.isolated_checkout import (
+    IsolatedCheckoutProject,
+    install_isolated_checkout_project,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -245,12 +248,9 @@ class TestDispatchBatchResolvesWorktreeReferences:
             result = await registry.call(
                 "dispatch_batch",
                 {
-                    "suggestions": [
-                        {"task_ref": "22377", "prompt": "Continue the assigned task"}
-                    ],
+                    "suggestions": [{"task_ref": "22377", "prompt": "Continue the assigned task"}],
                     "agent": "default",
                     "provider": "claude",
-                    "terminal_backend": "tmux",
                     "parent_session_id": "parent-1",
                     "worktree_id": worktree_ref,
                 },
@@ -284,12 +284,9 @@ class TestDispatchBatchResolvesWorktreeReferences:
             result = await registry.call(
                 "dispatch_batch",
                 {
-                    "suggestions": [
-                        {"task_ref": "22377", "prompt": "Continue the assigned task"}
-                    ],
+                    "suggestions": [{"task_ref": "22377", "prompt": "Continue the assigned task"}],
                     "agent": "default",
                     "provider": "claude",
-                    "terminal_backend": "tmux",
                     "parent_session_id": "parent-1",
                     "worktree_id": worktree_ref,
                 },

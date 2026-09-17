@@ -482,6 +482,10 @@ async def spawn_agent_impl(
     )
     isolation_ctx = None
     if worktree_id and worktree_storage:
+        try:
+            worktree_id = worktree_storage.resolve_reference(worktree_id)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         existing_worktree = worktree_storage.get(worktree_id)
         if not existing_worktree:
             return {"success": False, "error": f"Worktree {worktree_id} not found"}

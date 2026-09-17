@@ -26,14 +26,28 @@ from gobby.mcp_proxy.tools.merge_landscape import (
     _active_merge_resolution_payload,
     register_merge_landscape_tools,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.worktrees.git import WorktreeGitManager
 from tests._timing import wait_forever
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
 
 # --- helpers ---
+
+
+def _worktree_manager() -> MagicMock:
+    """A worktree manager double whose reference resolver is the identity.
+
+    Production resolves every ``worktree_id`` argument through
+    ``LocalWorktreeManager.resolve_reference`` before looking the row up, so a
+    double that omits it would hand a ``MagicMock`` to storage.
+    """
+    manager = MagicMock()
+    manager.resolve_reference.side_effect = lambda ref: ref
+    return manager
 
 
 def _make_worktree(
@@ -118,7 +132,7 @@ def _commit_file(path: Path, name: str, content: str) -> None:
 @pytest.mark.asyncio
 async def test_analyze_merge_landscape_happy_path(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.list_worktrees.return_value = [wt]
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -148,7 +162,7 @@ async def test_analyze_merge_landscape_happy_path(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_analyze_merge_landscape_behind_only_keeps_divergence_zero(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.list_worktrees.return_value = [wt]
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -183,7 +197,7 @@ async def test_analyze_merge_landscape_keeps_merged_worktree_with_branch_only_co
     )
     (tmp_path / "active").mkdir()
     (tmp_path / "merged").mkdir()
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.list_worktrees.return_value = [active, merged]
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -223,7 +237,7 @@ async def test_analyze_merge_landscape_skips_merged_worktree_without_ahead_commi
         path=str(tmp_path),
         status="merged",
     )
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.list_worktrees.return_value = [merged]
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -242,7 +256,7 @@ async def test_analyze_merge_landscape_skips_merged_worktree_without_ahead_commi
 @pytest.mark.asyncio
 async def test_analyze_merge_landscape_missing_worktree_dir(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path / "nonexistent"))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.list_worktrees.return_value = [wt]
     git_manager = MagicMock(spec=WorktreeGitManager)
 
@@ -269,7 +283,7 @@ async def test_analyze_merge_landscape_missing_dependencies() -> None:
 async def test_predict_conflicts_clean_pair(tmp_path: Path) -> None:
     wt_a = _make_worktree(id="wt-a", branch="feat/a", path=str(tmp_path / "a"))
     wt_b = _make_worktree(id="wt-b", branch="feat/b", path=str(tmp_path / "b"))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.side_effect = lambda wid: {"wt-a": wt_a, "wt-b": wt_b}.get(wid)
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -295,7 +309,7 @@ async def test_predict_conflicts_clean_pair(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_predict_conflicts_defaults_to_worktree_base_branch(tmp_path: Path) -> None:
     wt = _make_worktree(id="wt-a", branch="feat/a", path=str(tmp_path / "a"), base="0.4.7")
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -321,7 +335,7 @@ async def test_predict_conflicts_defaults_to_worktree_base_branch(tmp_path: Path
 async def test_predict_conflicts_pair_conflicts(tmp_path: Path) -> None:
     wt_a = _make_worktree(id="wt-a", branch="feat/a", path=str(tmp_path / "a"))
     wt_b = _make_worktree(id="wt-b", branch="feat/b", path=str(tmp_path / "b"))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.side_effect = lambda wid: {"wt-a": wt_a, "wt-b": wt_b}.get(wid)
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -347,7 +361,7 @@ async def test_predict_conflicts_pair_conflicts(tmp_path: Path) -> None:
 async def test_predict_conflicts_distinguishes_command_failure(tmp_path: Path) -> None:
     wt_a = _make_worktree(id="wt-a", branch="missing/a", path=str(tmp_path / "a"))
     wt_b = _make_worktree(id="wt-b", branch="feat/b", path=str(tmp_path / "b"))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.side_effect = lambda wid: {"wt-a": wt_a, "wt-b": wt_b}.get(wid)
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -380,7 +394,7 @@ async def test_predict_conflicts_empty_input() -> None:
 @pytest.mark.asyncio
 async def test_cherry_pick_success(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -399,7 +413,7 @@ async def test_cherry_pick_success(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_cherry_pick_conflict_returns_files(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -435,7 +449,7 @@ async def test_cherry_pick_empty_commits() -> None:
 @pytest.mark.asyncio
 async def test_merge_subset_success(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -464,7 +478,7 @@ async def test_merge_subset_success(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_merge_subset_checkout_failure(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -493,7 +507,7 @@ async def test_merge_subset_checkout_failure(tmp_path: Path) -> None:
 async def test_verify_in_worktree_success(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -512,7 +526,7 @@ async def test_verify_in_worktree_preserves_assignment_prefix_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
     captured_args: tuple[str, ...] = ()
     captured_env: dict[str, str] = {}
@@ -553,7 +567,7 @@ async def test_verify_in_worktree_preserves_env_wrapper_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
     captured_args: tuple[str, ...] = ()
     captured_env: dict[str, str] = {}
@@ -609,7 +623,7 @@ async def test_verify_in_worktree_allows_recognized_validation_commands(
     expected_prefix: tuple[str, ...],
 ) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
     captured_args: tuple[str, ...] = ()
     captured_env: dict[str, str] = {}
@@ -658,7 +672,7 @@ async def test_verify_in_worktree_rejects_unscoped_test_commands(
     command: str,
 ) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -674,7 +688,7 @@ async def test_verify_in_worktree_rejects_unscoped_test_commands(
 @pytest.mark.asyncio
 async def test_verify_in_worktree_rejects_env_wrapper_without_assignments(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -696,7 +710,7 @@ async def test_verify_in_worktree_final_rejects_dirty_tree(tmp_path: Path) -> No
     _commit_file(tmp_path, "tracked.txt", "clean\n")
     (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(
@@ -724,7 +738,7 @@ async def test_verify_in_worktree_non_final_allows_dirty_tree(tmp_path: Path) ->
     _commit_file(tmp_path, "tracked.txt", "clean\n")
     (tmp_path / "tracked.txt").write_text("dirty\n", encoding="utf-8")
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(
@@ -744,7 +758,7 @@ async def test_verify_in_worktree_non_final_allows_dirty_tree(tmp_path: Path) ->
 async def test_verify_in_worktree_command_failure(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -764,7 +778,7 @@ async def test_verify_in_worktree_command_failure(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_verify_in_worktree_rejects_unapproved_command(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -780,7 +794,7 @@ async def test_verify_in_worktree_rejects_unapproved_command(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_verify_in_worktree_parse_error(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -799,7 +813,7 @@ async def test_verify_in_worktree_parse_error(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_verify_in_worktree_empty_command(tmp_path: Path) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -815,7 +829,7 @@ async def test_verify_in_worktree_empty_command(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_verify_in_worktree_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     class SlowProcess:
@@ -864,7 +878,7 @@ async def test_verify_in_worktree_timeout_kills_descendants(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
     heartbeat = tmp_path / "heartbeat"
     child_code = """
@@ -964,7 +978,7 @@ async def test_inspect_merge_state_clean(tmp_path: Path) -> None:
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -993,7 +1007,7 @@ async def test_inspect_merge_state_orphaned_merge(tmp_path: Path) -> None:
     git_dir.mkdir()
     (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -1022,7 +1036,7 @@ async def test_inspect_merge_state_includes_active_resolution_conflicts(tmp_path
     git_dir.mkdir()
     (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -1094,7 +1108,7 @@ async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_m
     git_dir.mkdir()
     (git_dir / "MERGE_HEAD").write_text("abcdef0123\n")
     wt = _make_worktree(path=str(tmp_path))
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = wt
 
     git_manager = MagicMock(spec=WorktreeGitManager)
@@ -1155,7 +1169,7 @@ async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_m
 
 @pytest.mark.asyncio
 async def test_inspect_merge_state_worktree_missing() -> None:
-    worktree_manager = MagicMock()
+    worktree_manager = _worktree_manager()
     worktree_manager.get.return_value = None
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
@@ -1171,16 +1185,14 @@ _RESOLVE_UNIQUE_PREFIX = "eeeeeeee"
 _RESOLVE_AMBIGUOUS_PREFIX = "eeee"
 
 _RESOLVE_ERROR_REFS = [
-    pytest.param(
-        _RESOLVE_AMBIGUOUS_PREFIX, "Ambiguous worktree reference", id="ambiguous-prefix"
-    ),
+    pytest.param(_RESOLVE_AMBIGUOUS_PREFIX, "Ambiguous worktree reference", id="ambiguous-prefix"),
     pytest.param("deadbeef", "not found", id="unknown-prefix"),
 ]
 
 _REF_TAKING_TOOLS: list[tuple[str, dict[str, Any]]] = [
     ("cherry_pick_into_worktree", {"commits": ["abcdef1"]}),
     ("merge_subset", {"source_branch": "feat/x", "paths": ["src/a.py"]}),
-    ("verify_in_worktree", {"command": "true"}),
+    ("verify_in_worktree", {"command": "git status --short"}),
     ("inspect_merge_state", {}),
 ]
 
@@ -1207,13 +1219,12 @@ def _merge_ref_registry(
     tmp_path: Path,
 ) -> tuple[InternalToolRegistry, MagicMock, MagicMock]:
     """Registry whose manager resolves refs and whose git side always succeeds."""
+    _init_git_repo(tmp_path)
     worktree_manager = _resolving_worktree_manager()
-    worktree_manager.get.return_value = _make_worktree(
-        id=_RESOLVE_FULL_ID, path=str(tmp_path)
-    )
+    worktree_manager.get.return_value = _make_worktree(id=_RESOLVE_FULL_ID, path=str(tmp_path))
     git_manager = MagicMock(spec=WorktreeGitManager)
     git_manager.repo_path = str(tmp_path)
-    git_manager.run_git_command.return_value = _completed(returncode=0)
+    git_manager.run_git_command.return_value = _completed(returncode=0, stdout=".git")
     merge_storage = MagicMock()
     merge_storage.get_active_resolution.return_value = None
     registry = _make_registry(
@@ -1305,6 +1316,102 @@ async def test_predict_conflicts_reports_resolver_error_per_ref(
     assert result["errors"][0]["worktree_id"] == worktree_ref
     assert error_needle in result["errors"][0]["error"]
     assert "invalid input syntax" not in result["errors"][0]["error"]
-    assert [call.args[0] for call in worktree_manager.get.call_args_list] == [
-        _RESOLVE_FULL_ID
-    ]
+    assert [call.args[0] for call in worktree_manager.get.call_args_list] == [_RESOLVE_FULL_ID]
+
+
+# --- reference resolution against real storage (#22377) ---
+
+_STORAGE_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+_STORAGE_FULL_ID = "0c0c0c0c-5555-4555-8555-555555555501"
+_STORAGE_SIBLING_ID = "0c0c0d0d-6666-4666-8666-666666666601"
+_STORAGE_UNIQUE_PREFIX = "0c0c0c0c"
+_STORAGE_AMBIGUOUS_PREFIX = "0c0c"
+_STORAGE_UNKNOWN_PREFIX = "deadbeef"
+
+
+@pytest.fixture
+def storage_worktrees(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> LocalWorktreeManager:
+    """Two on-disk worktrees sharing a prefix, behind a real manager."""
+    checkout = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "isolated-checkout",
+        machine_id=_STORAGE_MACHINE_ID,
+        monkeypatch=monkeypatch,
+    )
+    manager = LocalWorktreeManager(temp_db)
+    for worktree_id, directory, branch in (
+        (_STORAGE_FULL_ID, "target-worktree", "feature/target"),
+        (_STORAGE_SIBLING_ID, "other-worktree", "feature/other"),
+    ):
+        worktree_path = tmp_path / directory
+        worktree_path.mkdir()
+        created = manager.create(
+            project_id=checkout.project.id,
+            branch_name=branch,
+            worktree_path=str(worktree_path),
+        )
+        temp_db.execute("UPDATE worktrees SET id = %s WHERE id = %s", (worktree_id, created.id))
+    return manager
+
+
+def _storage_registry(
+    storage_worktrees: LocalWorktreeManager,
+) -> tuple[InternalToolRegistry, MagicMock, MagicMock]:
+    git_manager = MagicMock(spec=WorktreeGitManager)
+    git_manager.run_git_command.return_value = _completed(returncode=0, stdout=".git")
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = None
+    registry = _make_registry(
+        worktree_manager=storage_worktrees,
+        git_manager=git_manager,
+        merge_storage=merge_storage,
+    )
+    return registry, git_manager, merge_storage
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "worktree_ref",
+    [
+        pytest.param(_STORAGE_FULL_ID, id="full-uuid"),
+        pytest.param(_STORAGE_UNIQUE_PREFIX, id="unique-prefix"),
+    ],
+)
+async def test_inspect_merge_state_accepts_refs_against_real_storage(
+    storage_worktrees: LocalWorktreeManager, worktree_ref: str
+) -> None:
+    """A full UUID and a unique prefix both land on the same stored worktree."""
+    registry, _git_manager, merge_storage = _storage_registry(storage_worktrees)
+
+    result = await registry.call("inspect_merge_state", {"worktree_id": worktree_ref})
+
+    assert result["success"] is True, result
+    assert result["state"] == "clean"
+    merge_storage.get_active_resolution.assert_called_once_with(_STORAGE_FULL_ID)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("worktree_ref", "error_needle"),
+    [
+        pytest.param(_STORAGE_AMBIGUOUS_PREFIX, "Ambiguous worktree reference", id="ambiguous"),
+        pytest.param(_STORAGE_UNKNOWN_PREFIX, "not found", id="unknown"),
+    ],
+)
+async def test_inspect_merge_state_rejects_refs_without_uuid_syntax_error(
+    storage_worktrees: LocalWorktreeManager, worktree_ref: str, error_needle: str
+) -> None:
+    """Ambiguous and unknown refs surface the resolver's message, not psycopg's."""
+    registry, git_manager, merge_storage = _storage_registry(storage_worktrees)
+
+    result = await registry.call("inspect_merge_state", {"worktree_id": worktree_ref})
+
+    assert result["success"] is False, result
+    assert error_needle in result["error"]
+    assert "invalid input syntax" not in result["error"]
+    git_manager.run_git_command.assert_not_called()
+    merge_storage.get_active_resolution.assert_not_called()
+    assert storage_worktrees.get(_STORAGE_FULL_ID) is not None
+    assert storage_worktrees.get(_STORAGE_SIBLING_ID) is not None
