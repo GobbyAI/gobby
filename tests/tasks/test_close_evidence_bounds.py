@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
-from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.agentic_close_review import build_agentic_review_prompt
+from gobby.tasks.close_checklist import (
+    REVIEW_COMMAND_BUDGET,
+    evaluate_validation_commands,
+)
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -18,6 +23,10 @@ from gobby.tasks.transcript_evidence_models import (
 )
 
 pytestmark = pytest.mark.unit
+
+# The close payloads that motivated this bound ran 70K-105K characters. One review
+# budget for the evidence sections plus the surrounding checklist fits well inside.
+DIAGNOSTIC_PAYLOAD_BOUND = 65_536
 
 
 def _run(
@@ -222,20 +231,255 @@ def test_oversized_script_is_omitted_without_exact_command_credit() -> None:
 
 
 @pytest.mark.parametrize("closed", [False, True])
-def test_concise_close_response_omits_bulk_review_evidence(closed: bool) -> None:
-    evaluation = CloseEvaluation("#42")
+@pytest.mark.parametrize("detail", ["concise", "diagnostic"])
+def test_close_response_omits_bulk_review_evidence(
+    closed: bool, detail: Literal["concise", "diagnostic"]
+) -> None:
+    evaluation = CloseEvaluation("#42", response_detail=detail)
     evaluation.extra = {
         "validation_commands": {"latest_runs": ["x" * 100_000]},
         "stable_facts": {"attributed_paths": ["a.py"]},
         "criteria_review_duration_ms": 3,
     }
     response = evaluation.response(preview=not closed, closed=closed)
+    # Both are internal carriers: validation_commands travels to the validator
+    # launch prompt and the checklist owns gate 10's record, and stable_facts is
+    # the persisted review's fingerprint input.
     assert "validation_commands" not in response
     assert "stable_facts" not in response
     assert response["criteria_review_duration_ms"] == 3
     assert len(json.dumps(response)) < 1_000
-    evaluation.response_detail = "diagnostic"
-    assert (
-        evaluation.response(preview=True)["validation_commands"]
-        == evaluation.extra["validation_commands"]
+
+
+def _stale_criterion_evidence(
+    command_count: int,
+    forms_per_command: int,
+) -> tuple[TranscriptEvidence, str]:
+    """Many criterion commands, each with many stale observed forms."""
+    criteria = " ".join(
+        f"`uv run pytest tests/close/bounds_{index}.py -q` passes."
+        for index in range(command_count)
     )
+    runs: list[TranscriptValidationRun] = []
+    order = 0
+    for index in range(command_count):
+        for repeat in range(forms_per_command):
+            order += 1
+            runs.append(
+                _run(
+                    f"GOBBY_TEST_PROTECT={repeat} uv run pytest tests/close/bounds_{index}.py -q",
+                    order,
+                )
+            )
+    edit = TranscriptEdit(
+        session_id="linked-session",
+        source="codex",
+        path="src/gobby/tasks/close_checklist.py",
+        timestamp=datetime(2026, 9, 5, tzinfo=UTC) + timedelta(seconds=order + 1),
+        order=order + 1,
+        tool_name="apply_patch",
+    )
+    return (
+        TranscriptEvidence(
+            validation_runs=tuple(runs), edits=(edit,), sessions=("linked-session",)
+        ),
+        criteria,
+    )
+
+
+def _duplicated_sections(payload: object, minimum_chars: int = 200) -> list[str]:
+    """Serialized sub-objects that the payload carries at more than one place."""
+    counts: dict[str, int] = {}
+
+    def walk(node: object) -> None:
+        if not isinstance(node, dict | list):
+            return
+        blob = json.dumps(node, sort_keys=True, default=str)
+        if len(blob) >= minimum_chars:
+            counts[blob] = counts.get(blob, 0) + 1
+        children = list(node.values()) if isinstance(node, dict) else node
+        for child in children:
+            walk(child)
+
+    walk(payload)
+    return [blob for blob, count in counts.items() if count > 1]
+
+
+def test_criterion_command_sections_share_the_review_budget() -> None:
+    evidence, criteria = _stale_criterion_evidence(command_count=16, forms_per_command=40)
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=criteria,
+    )
+
+    assert gate.status == "failed"
+    details = gate.details
+    # Gap entries are compact references; the full records stay in criterion_commands.
+    gaps = details["criterion_command_gaps"]
+    assert len(gaps) == 16
+    assert all(set(gap) == {"command", "core_command", "status"} for gap in gaps)
+    records = details["criterion_commands"]
+    # Every criterion keeps its verdict; only its observed evidence is shed.
+    assert len(records) == 16
+    assert all(len(record.get("observed_forms", ())) <= 16 for record in records)
+    assert details["omitted_criterion_observed_form_count"] >= 1
+    assert any(record.get("omitted_observed_form_count") for record in records)
+    assert len(json.dumps(details["criterion_commands"])) <= REVIEW_COMMAND_BUDGET
+    # One bounded blocker sentence, with an explicit truncation marker.
+    assert len(gate.message) < 4_000
+    assert "omitted here" in gate.message
+    assert not _duplicated_sections(details)
+
+
+def test_each_failed_gate_contributes_one_concise_gate_attributed_sentence() -> None:
+    evaluation = CloseEvaluation("#7")
+    evaluation.collect_failure(
+        9,
+        "uncommitted_task_edits",
+        "uncommitted_task_edits",
+        "Task-attributed files are dirty. Commit them and retry.",
+    )
+    evaluation.collect_failure(
+        10,
+        "validation_commands",
+        "validation_command_required",
+        "Run `uv run pytest tests/close_evidence_bounds.py -q` clean after the final edit.",
+        action="Rerun the focused bounds test after the final edit.",
+    )
+
+    response = evaluation.response(preview=True)
+
+    assert response["message"] == "Task-attributed files are dirty. Commit them and retry."
+    # Each blocker names its gate once; the headline is never restated verbatim.
+    assert response["blocking_reasons"] == [
+        "uncommitted_task_edits: Task-attributed files are dirty. Commit them and retry.",
+        "validation_commands: Run `uv run pytest tests/close_evidence_bounds.py -q` clean "
+        "after the final edit.",
+    ]
+    # Only the action a blocking sentence does not already state is carried.
+    assert response["required_actions"] == ["Rerun the focused bounds test after the final edit."]
+    assert response["message"] not in response["blocking_reasons"]
+    assert not set(response["required_actions"]) & set(response["blocking_reasons"])
+
+
+def test_gate_recorded_empty_blockers_are_not_refilled_from_the_message() -> None:
+    """A pending-external close blocks on nothing the caller can fix."""
+    pending_action = "End this agent run; the coordinator verifies the pending Live criteria."
+    evaluation = CloseEvaluation("#7")
+    evaluation.fail(
+        13,
+        "criteria_review",
+        "external_pending",
+        "Coordinator-owned live criteria remain pending verification.",
+        reasons=[],
+        actions=[pending_action],
+    )
+
+    response = evaluation.response(preview=True)
+
+    assert response["blocking_reasons"] == []
+    assert response["required_actions"] == [pending_action]
+    assert response["message"] == "Coordinator-owned live criteria remain pending verification."
+
+
+def test_diagnostic_close_payload_carries_each_section_once_within_bound() -> None:
+    """A close payload dense in paths, runs, and criterion commands stays bounded."""
+    evidence, criteria = _stale_criterion_evidence(command_count=16, forms_per_command=40)
+    command_gate = replace(
+        evaluate_validation_commands(
+            task_category="code",
+            evidence=evidence,
+            has_attributed_edits=True,
+            validation_criteria=criteria,
+        ),
+        item=10,
+    )
+    actual_paths = [f"src/gobby/tasks/module_{index}.py" for index in range(40)]
+    scope_details: dict[str, object] = {
+        "declared_scope": ["src/gobby/tasks/"],
+        "actual_paths": actual_paths,
+        "out_of_scope_paths": actual_paths[:5],
+        "advisory_scope": ["docs/"],
+        "advisory_scope_drift": ["docs/notes.md"],
+    }
+    scope_action = (
+        "Pass a specific scope_justification between 20 and 1000 characters "
+        "that explains why the listed paths belong in this task."
+    )
+    evaluation = CloseEvaluation("#22372", response_detail="diagnostic")
+    evaluation.commit_shas = ["a" * 40, "b" * 40]
+    evaluation.edited_paths = set(actual_paths)
+    evaluation.collect_failure(
+        8,
+        "task_scope",
+        "task_scope_mismatch",
+        "A scope_justification is required for out-of-scope paths.",
+        action=scope_action,
+        details=scope_details,
+        extra=dict(scope_details),
+    )
+    evaluation.extra["validation_commands"] = dict(command_gate.details)
+    evaluation.extra["stable_facts"] = {
+        "commit_count": 2,
+        "commit_shas": list(evaluation.commit_shas),
+        "had_attributed_edits": True,
+        "attributed_paths": sorted(evaluation.edited_paths),
+    }
+    evaluation.record_gate_failure(command_gate, error="validation_command_required")
+
+    response = evaluation.response(preview=True)
+    serialized = json.dumps(response)
+
+    assert len(serialized) < DIAGNOSTIC_PAYLOAD_BOUND
+    assert not _duplicated_sections(response)
+    # The scope inventory, gate 10's run record, and the fingerprint facts each live
+    # in exactly one section: the checklist gate details, never also at the top level.
+    assert not (
+        {
+            "declared_scope",
+            "actual_paths",
+            "out_of_scope_paths",
+            "advisory_scope",
+            "advisory_scope_drift",
+            "validation_commands",
+            "stable_facts",
+        }
+        & set(response)
+    )
+    checklist = {entry["name"]: entry for entry in response["checklist"]}
+    assert checklist["task_scope"]["details"] == scope_details
+    assert checklist["validation_commands"]["details"] == command_gate.details
+    assert checklist["validation_commands"]["item"] == 10
+    assert response["message"] == "A scope_justification is required for out-of-scope paths."
+    assert [reason.split(": ", 1)[0] for reason in response["blocking_reasons"]] == [
+        "task_scope",
+        "validation_commands",
+    ]
+    assert response["message"] not in response["blocking_reasons"]
+    assert response["required_actions"] == [scope_action]
+
+
+def test_agentic_review_launch_payload_serializes_the_record_once() -> None:
+    evidence, criteria = _stale_criterion_evidence(command_count=16, forms_per_command=40)
+    command_gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=criteria,
+    )
+
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["a" * 40, "b" * 40],
+        changes_summary="Deduplicated the close payload sections.",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        validation_commands=command_gate.details,
+    )
+
+    assert prompt.count("validation_commands=") == 1
+    assert len(prompt) < DIAGNOSTIC_PAYLOAD_BOUND
+    assert "criterion_command_gaps entries are compact references" in prompt

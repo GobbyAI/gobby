@@ -450,7 +450,9 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
     terminal = store.get(first_review.id)
     assert terminal is not None
     assert terminal.result_payload is not None
-    assert terminal.result_payload["verdict"] == submitted_verdict
+    assert terminal.result_payload["validation_status"] == "invalid"
+    # The wake payload references the rejection; it does not re-carry the verdict.
+    assert "verdict" not in terminal.result_payload
 
     registry = SimpleNamespace(
         call=AsyncMock(return_value={"success": True, "run_id": _SECOND_REVIEW_RUN_ID})

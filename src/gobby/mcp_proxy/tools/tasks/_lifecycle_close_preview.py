@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -12,6 +13,12 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_checklist import CloseGateResult
 from gobby.utils.daemon_git import normalize_commit_sha
+
+# Internal carriers, never part of a close response: ``validation_commands`` travels
+# to the validator launch prompt and the checklist already owns gate 10's record,
+# and ``stable_facts`` is the persisted review's fingerprint input, repeating
+# ``commit_shas`` and the scope inventory the checklist already carries.
+_INTERNAL_EXTRA_KEYS = frozenset({"validation_commands", "stable_facts"})
 
 
 @dataclass
@@ -78,6 +85,8 @@ class CloseEvaluation:
         message: str,
         *,
         action: str | None = None,
+        reasons: Sequence[str] | None = None,
+        actions: Sequence[str] | None = None,
         details: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> CloseEvaluation:
@@ -87,8 +96,24 @@ class CloseEvaluation:
             error,
             message,
             action=action,
+            reasons=reasons,
+            actions=actions,
             details=details,
             extra=extra,
+        )
+        return self
+
+    def record_gate_failure(
+        self,
+        gate: CloseGateResult,
+        *,
+        error: str,
+        action: str | None = None,
+    ) -> CloseEvaluation:
+        """Record an already-evaluated failed gate as this evaluation's blocker."""
+        self.gates.append(gate)
+        self._register_failure(
+            gate.name, error, gate.message, action=action, reasons=None, actions=None
         )
         return self
 
@@ -100,6 +125,8 @@ class CloseEvaluation:
         message: str,
         *,
         action: str | None = None,
+        reasons: Sequence[str] | None = None,
+        actions: Sequence[str] | None = None,
         details: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
@@ -112,15 +139,41 @@ class CloseEvaluation:
                 details=details or {},
             )
         )
-        required_action = action or message
+        self._register_failure(
+            name, error, message, action=action, reasons=reasons, actions=actions
+        )
+        if extra:
+            self.extra.update(extra)
+
+    def _register_failure(
+        self,
+        name: str,
+        error: str,
+        message: str,
+        *,
+        action: str | None,
+        reasons: Sequence[str] | None,
+        actions: Sequence[str] | None,
+    ) -> None:
+        """Contribute one concise gate-attributed sentence per blocker.
+
+        ``blocking_reasons`` names the gate that blocks, so the same sentence is
+        never repeated verbatim in ``message``. ``required_actions`` carries only an
+        action the blocking sentences do not already state; a self-actioning gate
+        message stands on its own. A caller that already computed its own reasons or
+        actions passes them, including an explicitly empty list.
+        """
         if self.error is None:
             self.error = error
             self.message = message
-            self.action = required_action
-        self.blocking_reasons.append(message)
-        self.required_actions.append(required_action)
-        if extra:
-            self.extra.update(extra)
+            self.action = action or message
+        self.blocking_reasons.extend(
+            f"{name}: {reason}" for reason in (reasons if reasons is not None else [message])
+        )
+        if actions is not None:
+            self.required_actions.extend(actions)
+        elif action and action != message:
+            self.required_actions.append(action)
 
     def response(self, *, preview: bool, closed: bool = False) -> dict[str, Any]:
         response: dict[str, Any] = {
@@ -132,8 +185,14 @@ class CloseEvaluation:
             "commit_shas": list(self.commit_shas),
         }
         if self.error:
-            blocking_reasons = self.blocking_reasons or ([self.message] if self.message else [])
-            required_actions = self.required_actions or ([self.action] if self.action else [])
+            blocking_reasons = self.blocking_reasons
+            required_actions = self.required_actions
+            if not any(not gate.passed for gate in self.gates):
+                # A failure recorded outside the gate API states itself once. A gate
+                # that recorded an explicitly empty list keeps it: external_pending
+                # blocks on nothing the caller can fix.
+                blocking_reasons = blocking_reasons or ([self.message] if self.message else [])
+                required_actions = required_actions or ([self.action] if self.action else [])
             response.update(
                 {
                     "error": self.error,
@@ -146,23 +205,46 @@ class CloseEvaluation:
             response["validation_status"] = self.validation_status
         if self.verdict:
             response["verdict"] = self.verdict
-        diagnostic_fields = {"validation_commands", "stable_facts"}
+        checklist = [gate.to_dict() for gate in self.gates] if self.diagnostic else None
+        carried = self._checklist_details(checklist)
         response.update(
             {
                 key: value
                 for key, value in self.extra.items()
-                if self.response_detail == "diagnostic" or key not in diagnostic_fields
+                if key not in _INTERNAL_EXTRA_KEYS
+                and not (key in carried and carried[key] == value)
             }
         )
-        if self.response_detail == "diagnostic":
+        if checklist is not None:
             response.update(
                 {
-                    "checklist": [gate.to_dict() for gate in self.gates],
+                    "checklist": checklist,
                     "transcript_evidence": dict(self.transcript_evidence),
                     "validation_feedback": self.validation_feedback,
                 }
             )
         return response
+
+    @property
+    def diagnostic(self) -> bool:
+        return self.response_detail == "diagnostic"
+
+    @staticmethod
+    def _checklist_details(checklist: list[dict[str, Any]] | None) -> dict[str, Any]:
+        """Collect the sections a serialized checklist already carries.
+
+        Gate details are the single home for per-gate inventories such as the task
+        scope paths. When the checklist ships, an ``extra`` entry holding the same
+        key and value is that section a second time, so the response drops it.
+        """
+        if checklist is None:
+            return {}
+        carried: dict[str, Any] = {}
+        for entry in checklist:
+            details = entry.get("details")
+            if isinstance(details, dict):
+                carried.update(details)
+        return carried
 
 
 async def resolve_close_commit_shas(
