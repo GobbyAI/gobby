@@ -24,7 +24,6 @@ import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
@@ -1120,10 +1119,10 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
     @pytest.mark.asyncio
-    async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(
+    async def test_codex_schema_lookup_rehydrates_without_task_skill_block(
         self, db: HubDatabase
     ) -> None:
-        """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill directive."""
+        """Codex AFTER_TOOL rehydrates get_tool_schema context; the lookup itself is never denied."""
         from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
@@ -1173,8 +1172,9 @@ class TestVariablePersistence:
         before_response = await handler._evaluate_rules(before_event)
         response = await handler._evaluate_rules(after_event)
 
-        assert before_response.decision == "block"
-        assert skill_fetch_directive("tasks") in (before_response.reason or "")
+        # The unmet task-skill gate targets gobby-tasks:close_task, but schema lookups
+        # stay callable so its recovery can run.
+        assert before_response.decision == "allow"
         assert response.decision == "allow"
         assert after_event.data["tool_input"] == {
             "server_name": "gobby-tasks",
@@ -1817,7 +1817,11 @@ class TestCodexToolContextRehydration:
             data={
                 "tool_use_id": "qwen-skill-1",
                 "tool_response": {
-                    "output": '{"result": {"success": true, "skill": {"name": "brevity"}}}',
+                    "output": (
+                        '{"result": {"success": true, "skill": {"name": "brevity", '
+                        '"content": "Be brief."}, "page": {"complete": true, '
+                        '"next_cursor": null}}}'
+                    ),
                 },
             },
             source=SessionSource.QWEN,
@@ -1827,7 +1831,11 @@ class TestCodexToolContextRehydration:
         assert after_event.data["mcp_server"] == "gobby-skills"
         assert after_event.data["mcp_tool"] == "get_skill"
         assert after_event.data["tool_output"] == {
-            "result": {"success": True, "skill": {"name": "brevity"}}
+            "result": {
+                "success": True,
+                "skill": {"name": "brevity", "content": "Be brief."},
+                "page": {"complete": True, "next_cursor": None},
+            }
         }
         variables = rule_engine.evaluate.await_args_list[-1].kwargs["variables"]
         assert variables["loaded_skills"] == ["brevity"]

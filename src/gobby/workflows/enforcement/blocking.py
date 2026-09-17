@@ -258,11 +258,25 @@ def is_operator_tool(tool_name: str | None) -> bool:
     return tool_name in OPERATOR_TOOLS if tool_name else False
 
 
+def schema_lease_key(tool_input: Any) -> str:
+    """Return the ``server:tool`` schema-lease key for a proxy tool input, or ``""``.
+
+    ``get_tool_schema`` and canonicalized ``call_tool`` inputs both carry the target
+    as top-level ``server_name``/``tool_name``; the lease recorder, the schema gate,
+    and its block reason all key on this one pair.
+    """
+    if not isinstance(tool_input, dict):
+        return ""
+    server = tool_input.get("server_name")
+    tool = tool_input.get("tool_name")
+    if not isinstance(server, str) or not server or not isinstance(tool, str) or not tool:
+        return ""
+    return f"{server}:{tool}"
+
+
 def is_argumentless_proxy_tool(tool_input: dict[str, Any]) -> bool:
     """Return whether a proxy-routed tool has no callable arguments."""
-    server = tool_input.get("server_name") or tool_input.get("server") or ""
-    tool = tool_input.get("tool_name") or tool_input.get("tool") or ""
-    return f"{server}:{tool}" in ARGUMENTLESS_PROXY_TOOLS
+    return schema_lease_key(tool_input) in ARGUMENTLESS_PROXY_TOOLS
 
 
 def is_tool_unlocked(
@@ -278,15 +292,11 @@ def is_tool_unlocked(
     Returns:
         True if the server:tool combo was previously unlocked via get_tool_schema
     """
-    # Support 'server' alias for 'server_name' and 'tool' alias for 'tool_name'
-    server = tool_input.get("server_name") or tool_input.get("server") or ""
-    tool = tool_input.get("tool_name") or tool_input.get("tool") or ""
-
-    if not server or not tool:
+    key = schema_lease_key(tool_input)
+    if not key:
         # Don't log here as it might be called speculatively
         return False
 
-    key = f"{server}:{tool}"
     unlocked = variables.get("unlocked_tools", [])
 
     is_unlocked = key in unlocked

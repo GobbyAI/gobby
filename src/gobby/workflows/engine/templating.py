@@ -4,7 +4,6 @@ Handles building eval context, Jinja2 rendering, SafeExpressionEvaluator
 integration, and helper function construction.
 """
 
-import json
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -13,6 +12,7 @@ import psycopg
 from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
+from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 from gobby.storage.hub.protocol import HubDatabase
@@ -30,6 +30,7 @@ from gobby.workflows.enforcement.blocking import (
     is_tool_unlocked,
     plan_write_paths_allowed,
     requires_task_for_any_touched_file,
+    schema_lease_key,
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.templates import TemplateEngine
@@ -120,29 +121,21 @@ class TemplatingMixin:
         if not isinstance(raw_tool_input, dict):
             raw_tool_input = {}
 
-        # For MCP call_tool, unwrap nested arguments so rule conditions
-        # can reference inner tool params (commit_sha, reason, etc.) directly.
-        # Preserve MCP routing fields (server_name, tool_name) so helpers like
-        # is_tool_unlocked / is_discovery_tool still work after unwrapping.
+        # For MCP call_tool, unwrap target arguments so rule conditions can
+        # reference inner tool params (commit_sha, reason, etc.) directly. The
+        # proxy's canonical routing fields (server_name, tool_name) are overlaid
+        # so is_tool_unlocked / schema_lease_key / block reasons key the same pair.
         tool_name = event.data.get("tool_name", "")
-        if is_gobby_call_tool(tool_name) and isinstance(raw_tool_input, dict):
-            original_tool_input = raw_tool_input
-            inner_args = raw_tool_input.get("arguments")
-            if inner_args is None:
-                inner_args = raw_tool_input.get("args")
-            if isinstance(inner_args, str):
-                try:
-                    parsed = json.loads(inner_args)
-                    if isinstance(parsed, dict):
-                        raw_tool_input = parsed
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            elif isinstance(inner_args, dict):
+        if is_gobby_call_tool(tool_name):
+            wrapper_input = canonical_call_tool_input(raw_tool_input)
+            inner_args = wrapper_input.get("arguments")
+            if isinstance(inner_args, dict):
                 raw_tool_input = dict(inner_args)
-            # Re-inject MCP routing fields so rule conditions can still access them
-            for field in ("server_name", "tool_name"):
-                if field in original_tool_input:
-                    raw_tool_input[field] = original_tool_input[field]
+                for field in ("server_name", "tool_name"):
+                    if field in wrapper_input:
+                        raw_tool_input[field] = wrapper_input[field]
+            else:
+                raw_tool_input = wrapper_input
 
         ctx: dict[str, Any] = {
             "variables": variables,
@@ -181,6 +174,7 @@ class TemplatingMixin:
         funcs["isinstance"] = isinstance
         funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)
         funcs["is_argumentless_proxy_tool"] = is_argumentless_proxy_tool
+        funcs["schema_lease_key"] = schema_lease_key
         funcs["is_discovery_tool"] = is_discovery_tool
         funcs["is_operator_tool"] = is_operator_tool
         funcs["is_plan_file"] = is_plan_file
