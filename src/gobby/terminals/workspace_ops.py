@@ -154,6 +154,16 @@ class PaneOutputWait:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceSnapshot:
+    """A swept workspace with every tab and pane row, and the node that owns it."""
+
+    node: Machine
+    workspace: Workspace
+    tabs: tuple[WorkspaceTab, ...]
+    panes: tuple[WorkspacePane, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _ShellSpawn:
     runtime: TerminalRuntime
     cwd: str
@@ -308,6 +318,27 @@ class WorkspaceOps:
             "focus_hints", hinted.id, workspace=hinted, tabs=() if focused is None else (focused,)
         )
         return hinted, focused
+
+    async def workspace_snapshot(
+        self, actor: str, workspace: str | None = None, *, node: str | None = None
+    ) -> WorkspaceSnapshot:
+        """Sweep and read a whole workspace; absent, the node's default, created on first use.
+
+        The rows are read after the sweep with no await in between, so a caller that
+        takes the lifecycle watermark before its next await holds rows and watermark
+        from the same moment.
+        """
+        if workspace is None:
+            workspace = (await self.workspace_create(actor, node=node)).id
+        target = await self._enter(workspace, node)
+        home = _workspace_of(target, workspace)
+        with _storage_errors():
+            return WorkspaceSnapshot(
+                node=target.node,
+                workspace=home,
+                tabs=tuple(self._workspaces.list_tabs(home.id)),
+                panes=tuple(self._workspaces.list_panes(home.id)),
+            )
 
     # -- tabs ---------------------------------------------------------------
 
@@ -559,6 +590,8 @@ class WorkspaceOps:
     async def pane_read(
         self, actor: str, pane: str, *, lines: int = 50, node: str | None = None
     ) -> SnapshotResult:
+        if lines < 1:
+            raise WorkspaceOpError("invalid_op", f"Pane read lines must be positive, not {lines}")
         _row, terminal = await self._pane_terminal(actor, pane, node)
         runtime = self._runtime(terminal)
         try:

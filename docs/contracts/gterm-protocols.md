@@ -102,6 +102,48 @@ position, not a terminal screen capture. The client pins page one's watermark,
 collects all pages, and reconciles buffered lifecycle events against it.
 `seq` is a JSON-safe integer; epoch rotation prevents sequence overflow.
 
+## Workspace messages
+
+The same `/ws` socket serves workspaces: a node's named tabs and split-pane
+layouts. The socket is authenticated as the local user, so every op runs as the
+operator actor and no message field can name another actor. A connection handles
+its messages in arrival order, so ops sent on one socket apply in that order, and
+a long `pane.wait_for_output` delays the messages behind it on that socket.
+
+| Message | Direction | Fields and behavior |
+| --- | --- | --- |
+| `workspace_attach` | Client → daemon | `request_id`, optional `workspace` and `node` references. Without `workspace`, the node's default workspace is used and created on first use; without `node`, the local node. The reply is `workspace_snapshot`, and the socket subscribes to `workspace_event:workspace_id=<id>`. |
+| `workspace_snapshot` | Client ↔ daemon | A request takes the `workspace_attach` fields without subscribing. The reply carries `workspace` (the row plus `node_ref`), every `tabs` and `panes` row, and `snapshot: {daemon_epoch, seq}`. Panes whose terminals ended are swept before the rows are read. |
+| `workspace_op` | Client ↔ daemon | A request carries `request_id`, `op`, and that op's fields. The reply carries `op` and `result`, the op's return value as JSON. |
+| `workspace_event` | Daemon → client | Lifecycle message with `daemon_epoch`, `seq`, `timestamp`, `kind`, `workspace_id`, `project_id` (the single project the event's tabs name, else null), and the changed `workspace`, `tabs`, and `panes` rows. Delivery follows the socket's subscriptions; attaching adds the one for that workspace. |
+| `workspace_error` | Daemon → client | Correlates `request_id` and carries `code` and `reason`. |
+
+`op` is one of `workspace.create`, `workspace.rename`, `workspace.close`,
+`workspace.set_focus_hints`, `tab.create`, `tab.rename`, `tab.move`, `tab.close`,
+`pane.split`, `pane.swap`, `pane.move`, `pane.resize`, `pane.rename`,
+`pane.close`, `pane.send_text`, `pane.send_keys`, `pane.read`, and
+`pane.wait_for_output`. Each name maps to the `WorkspaceOps` method of the same
+name with `_` for the first `.`, and its fields are that method's parameters
+after the actor.
+
+| `workspace_error.code` | Meaning |
+| --- | --- |
+| `not_found` | The node, workspace, tab, pane, or terminal does not exist, or a pane has no terminal. |
+| `invalid_ref` | A reference does not parse or names the wrong kind of object. |
+| `invalid_op` | Unknown op, unknown or missing field, wrong field type, or an op the layout rejects. |
+| `terminal_failed` | A pane terminal could not be spawned, read, or written, or workspace ops are not configured. |
+| `busy` | A pane is still spawning its terminal, or the terminal is held by another pane. |
+| `forbidden` | The actor may not act on the target. |
+
+Pin the `snapshot` watermark from the `workspace_snapshot` reply and apply
+`workspace_event` messages newer than it in the same epoch, as with
+`terminal_list`. Workspace events share the lifecycle sequence with
+`terminal_event`, so one ordering covers both. An event whose encoding exceeds
+1 MiB arrives as `terminal_ws_fragment` frames with `event: "workspace_event"`
+and the workspace id in both `terminal_id` and `attachment_id`. An event above
+the 16 MiB reassembly bound arrives with `workspace: null` and empty `tabs` and
+`panes`; the client requests `workspace_snapshot` again.
+
 ## Backpressure
 
 Each attachment has a droppable 64-entry / 2 MiB delta queue (overflow resyncs

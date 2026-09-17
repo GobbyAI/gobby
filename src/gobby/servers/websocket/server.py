@@ -37,9 +37,12 @@ from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
+from gobby.servers.websocket.workspace_ws import WorkspaceWsMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
+from gobby.storage.sessions import SessionManager
+from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -53,7 +56,6 @@ if TYPE_CHECKING:
     from gobby.hooks.webhooks import WebhookDispatcher
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.inter_session_messages import InterSessionMessageManager
-    from gobby.storage.sessions import SessionManager
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
@@ -61,6 +63,7 @@ if TYPE_CHECKING:
 class WebSocketServer(
     VoiceMixin,
     TmuxMixin,
+    WorkspaceWsMixin,
     SessionControlMixin,
     ChatMixin,
     HandlerMixin,
@@ -146,6 +149,7 @@ class WebSocketServer(
         self.terminal_config: Any | None = None
         self.terminal_host_manager: Any | None = None
         self.workspace_manager: WorkspaceManager | None = None
+        self.workspace_ops: WorkspaceOps | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:
             lifecycle = TurnLifecycleReducer(
@@ -231,6 +235,20 @@ class WebSocketServer(
         self.lease_registry = lease_registry
         self.write_coordinator = write_coordinator
         self.workspace_manager = workspace_manager
+        sessions = self.session_manager
+        # Actor scope resolves through sessions, so ops need both managers.
+        self.workspace_ops = (
+            WorkspaceOps(
+                workspaces=workspace_manager,
+                terminals=terminal_manager,
+                registry=runtime_registry,
+                coordinator=write_coordinator,
+                sessions=sessions,
+                publish=self.broadcast_workspace_event,
+            )
+            if workspace_manager is not None and isinstance(sessions, SessionManager)
+            else None
+        )
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
 
@@ -411,6 +429,9 @@ class WebSocketServer(
                 "terminal_set_viewport": self._handle_terminal_set_viewport,
                 "terminal_set_scroll_offset": self._handle_terminal_set_scroll_offset,
                 "terminal_paste": self._handle_terminal_paste,
+                "workspace_attach": self._handle_workspace_attach,
+                "workspace_snapshot": self._handle_workspace_snapshot,
+                "workspace_op": self._handle_workspace_op,
                 "clear_chat": self._handle_clear_chat,
                 "delete_chat": self._handle_delete_chat,
                 "set_mode": self._handle_set_mode,

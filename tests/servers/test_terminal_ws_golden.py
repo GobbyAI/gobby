@@ -22,8 +22,11 @@ from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
+from gobby.storage.machines import Machine
 from gobby.storage.terminals import AttachLocator
+from gobby.storage.workspaces import Workspace, WorkspacePane, WorkspaceTab
 from gobby.terminals import web_spawn
+from gobby.terminals.actor_scope import OPERATOR_ACTOR
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     Delivered,
@@ -32,6 +35,12 @@ from gobby.terminals.runtime import (
     Suppressed,
     TerminalHandle,
     TerminalSpawnRequest,
+)
+from gobby.terminals.workspace_ops import (
+    WorkspaceEvent,
+    WorkspaceOpError,
+    WorkspaceOps,
+    WorkspaceSnapshot,
 )
 from gobby.terminals.ws_protocol import (
     TERMINAL_WS_SAFE_INTEGER_MAX,
@@ -47,6 +56,13 @@ DAEMON_EPOCH = "00000000-0000-4000-8000-000000000000"
 TERMINAL_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 ATTACHMENT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 HOLDER_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+WORKSPACE_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+TAB_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+PANE_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+SPLIT_PANE_ID = "11111111-1111-4111-8111-111111111111"
+SPLIT_TERMINAL_ID = "22222222-2222-4222-8222-222222222222"
+PROJECT_ID = "33333333-3333-4333-8333-333333333333"
+MACHINE_ID = "55555555-5555-4555-8555-555555555555"
 FIXTURE_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 
 pytestmark = pytest.mark.unit
@@ -273,11 +289,11 @@ async def _assert_write_outcome(
 
 def test_python_matches_terminal_ws_golden_corpus() -> None:
     names = _manifest_names()
-    assert len(names) == len(set(names)) == 38
+    assert len(names) == len(set(names)) == 43
     assert "manifest.json" not in names
     on_disk = {path.name for path in GOLDEN_DIR.iterdir() if path.name != "manifest.json"}
     assert on_disk == set(names)
-    assert len(list(GOLDEN_DIR.iterdir())) == 39
+    assert len(list(GOLDEN_DIR.iterdir())) == 44
     assert not OLD_GOLDEN_DIR.exists() or not any(OLD_GOLDEN_DIR.iterdir())
 
     for name in names:
@@ -474,6 +490,101 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     )
     _assert_golden("fragment.json", fragments[0])
     _assert_golden("fragment_last.json", fragments[1])
+
+
+@pytest.mark.asyncio
+async def test_workspace_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = MagicMock()
+    clock.now.return_value = FIXTURE_TIME
+    monkeypatch.setattr(broadcast_module, "datetime", clock)
+    tab = WorkspaceTab(
+        id=TAB_ID,
+        workspace_id=WORKSPACE_ID,
+        ref=1,
+        title=None,
+        project_id=PROJECT_ID,
+        worktree_id=None,
+        position=0,
+        focused_pane_id=SPLIT_PANE_ID,
+        layout={
+            "kind": "split",
+            "axis": "horizontal",
+            "ratio": 0.5,
+            "children": [
+                {"kind": "pane", "pane_id": PANE_ID},
+                {"kind": "pane", "pane_id": SPLIT_PANE_ID},
+            ],
+        },
+        created_at=FIXTURE_TIME,
+        updated_at=FIXTURE_TIME,
+    )
+    first, split = (
+        WorkspacePane(
+            id=pane_id,
+            tab_id=TAB_ID,
+            ref=ref,
+            terminal_id=terminal_id,
+            owns_terminal=True,
+            label=None,
+            created_at=FIXTURE_TIME,
+            updated_at=FIXTURE_TIME,
+        )
+        for ref, pane_id, terminal_id in (
+            (1, PANE_ID, TERMINAL_ID),
+            (2, SPLIT_PANE_ID, SPLIT_TERMINAL_ID),
+        )
+    )
+    home = Workspace(
+        id=WORKSPACE_ID,
+        machine_id=MACHINE_ID,
+        ref=1,
+        name="default",
+        focused_project_id=PROJECT_ID,
+        focused_tab_id=TAB_ID,
+        created_at=FIXTURE_TIME,
+        updated_at=FIXTURE_TIME,
+    )
+    node = Machine(
+        id=MACHINE_ID,
+        hostname=None,
+        os=None,
+        label=None,
+        tailscale_name=None,
+        owner_user_id="test-user",
+        first_seen=FIXTURE_TIME,
+        last_seen=FIXTURE_TIME,
+        ref=1,
+    )
+    reason = f"Pane {PANE_ID} is still spawning; retry after its split replies"
+    ops = MagicMock(spec=WorkspaceOps)
+    ops.workspace_snapshot = AsyncMock(
+        return_value=WorkspaceSnapshot(node=node, workspace=home, tabs=(tab,), panes=(first, split))
+    )
+    ops.pane_split = AsyncMock(side_effect=WorkspaceOpError("busy", reason))
+    server, _, _ = _server()
+    server.workspace_ops = ops
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+
+    await server._handle_message(websocket, _load("workspace_attach.json").decode())
+    _assert_golden("workspace_snapshot.json", _sent(websocket))
+    ops.workspace_snapshot.assert_awaited_once_with(OPERATOR_ACTOR)
+
+    await server._handle_message(websocket, _load("workspace_op.json").decode())
+    _assert_golden("workspace_error.json", _sent(websocket))
+    ops.pane_split.assert_awaited_once_with(OPERATOR_ACTOR, pane=PANE_ID, axis="horizontal")
+
+    await server.broadcast_workspace_event(
+        WorkspaceEvent(
+            kind="pane.added",
+            workspace_id=WORKSPACE_ID,
+            workspace=None,
+            tabs=[tab.to_dict()],
+            panes=[split.to_dict()],
+        )
+    )
+    _assert_golden("workspace_event.json", _sent(websocket))
+    await server.lease_registry.shutdown_lifecycle_publication()
 
 
 def test_seq_and_lease_generation_are_safe_integers() -> None:

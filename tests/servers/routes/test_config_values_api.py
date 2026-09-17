@@ -1,7 +1,7 @@
 """Acceptance coverage for the public revisioned configuration API."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import pytest
@@ -279,7 +279,9 @@ class _RecordingBroadcaster(BroadcastMixin):
     def __init__(self) -> None:
         self.messages: list[dict[str, object]] = []
 
-    async def broadcast(self, message: dict[str, Any]) -> None:
+    async def broadcast(
+        self, message: dict[str, Any], *, frames: Sequence[dict[str, Any]] = ()
+    ) -> None:
         self.messages.append(message)
 
 

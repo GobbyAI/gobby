@@ -165,7 +165,7 @@ describe("useTmuxSessions", () => {
   it("replays every canonical terminal WS fixture from the manifest", () => {
     const manifest = readGoldenManifest();
     expect(Object.keys(manifest)).toEqual(["fixtures"]);
-    expect(manifest.fixtures).toHaveLength(38);
+    expect(manifest.fixtures).toHaveLength(43);
     expect(manifest.fixtures).not.toContain("manifest.json");
     expect(
       readdirSync(GOLDEN_DIR)
@@ -187,6 +187,9 @@ describe("useTmuxSessions", () => {
         "terminal_frame",
         "terminal_kill_result",
         "terminal_detach_result",
+        "workspace_snapshot",
+        "workspace_event",
+        "workspace_error",
       ]),
     );
     mount.unmount();

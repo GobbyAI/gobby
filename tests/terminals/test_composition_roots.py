@@ -220,3 +220,5 @@ def test_wiring_hands_one_workspace_manager_to_both_servers() -> None:
         workspace_manager=services.workspace_manager,
     )
     assert server.workspace_manager is workspace_manager
+    # Without a session manager no actor can be scoped, so the server serves no ops.
+    assert server.workspace_ops is None
