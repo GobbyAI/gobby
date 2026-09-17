@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.agents.constants import GOBBY_TERMINAL_ID
 from gobby.storage.terminals import AttachLocator, native_locator_key
 from gobby.terminals.frame_client import decode_frame
 from gobby.terminals.host_client import (
@@ -615,6 +616,33 @@ async def test_spawn_prepare_commit_survives_host_death() -> None:
     host.available = False
     host.children_alive = False
     assert host.children_alive is False
+
+
+@pytest.mark.asyncio
+async def test_spawn_env_carries_terminal_id() -> None:
+    runtime, host = _runtime()
+    bare = uuid4()
+    shadowed = uuid4()
+    caller_env = {GOBBY_TERMINAL_ID: "caller-shadow", "EDITOR": "vi"}
+    for terminal_id, env in ((bare, None), (shadowed, caller_env)):
+        await runtime.prepare_spawn(
+            TerminalSpawnRequest(
+                terminal_id=terminal_id,
+                spawn_key="gobby-native",
+                command=["/bin/sh"],
+                env=env,
+                reservation_id="rsv",
+                reserve_key="rk",
+            )
+        )
+
+    assert [spawn["env"] for spawn in host.spawns] == [
+        {GOBBY_TERMINAL_ID: str(bare)},
+        {GOBBY_TERMINAL_ID: str(shadowed), "EDITOR": "vi"},
+    ]
+    assert caller_env == {GOBBY_TERMINAL_ID: "caller-shadow", "EDITOR": "vi"}, (
+        "caller env is copied"
+    )
 
 
 @pytest.mark.asyncio

@@ -548,6 +548,14 @@ def _force_exit_after_expired_settlement() -> None:
 
 
 def main(config_path: Path | None = None, verbose: bool = False) -> None:
+    # A daemon started from a pane inherits that pane's identity; every
+    # os.environ copy below would hand it to agent terminals, web shells,
+    # tmux servers, and the gterm host.
+    from gobby.agents.constants import IDENTITY_ENV_VARS
+
+    for name in IDENTITY_ENV_VARS:
+        os.environ.pop(name, None)
+
     # Must precede any torch import (torch is lazy, voice-only): PyTorch's
     # default MPS high watermark is 1.7x Metal's recommended working set,
     # which lets unified-memory allocations balloon past physical RAM.
@@ -581,6 +589,7 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     from gobby.cli.utils import get_gobby_home
     from gobby.runner_pid_file import (
         SERVICE_LAUNCH_ENV,
+        SERVICE_NONCE_ENV,
         ProbeState,
         SingletonError,
         adopt_inherited_claim,
@@ -600,6 +609,10 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     except SingletonError as exc:
         print(f"Gobby daemon lock {pid_file} failed closed: {exc}", file=sys.stderr)
         sys.exit(1)
+    # The service marker admits only this process; a runner started from any
+    # daemon child must take the ordinary start path.
+    os.environ.pop(SERVICE_LAUNCH_ENV, None)
+    os.environ.pop(SERVICE_NONCE_ENV, None)
     if ownership_resolution is None:
         owner = probe_daemon_lock(pid_file)
         if owner.state is ProbeState.DAEMON:

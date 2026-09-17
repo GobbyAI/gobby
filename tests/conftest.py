@@ -97,6 +97,20 @@ def _allow_worktree_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test outside the service-admission branch.
+
+    A service-launched daemon that predates the runner's marker scrub exports
+    the marker to every agent shell, sending ``runner.main``/``run_gobby`` tests
+    down the service-claim path. Service-admission tests set it explicitly.
+    """
+    from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV
+
+    monkeypatch.delenv(SERVICE_LAUNCH_ENV, raising=False)
+    monkeypatch.delenv(SERVICE_NONCE_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _assert_postgres_pools_bounded() -> Iterator[None]:
     """Require each test to release every PostgreSQL pool it creates."""
     from gobby.storage.hub.postgres import _OPEN_DATABASES
