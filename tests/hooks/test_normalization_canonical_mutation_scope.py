@@ -9,8 +9,8 @@ from gobby.hooks._normalization_canonical import (
     _classify_shell_segment_without_redirection,
     _merge_shell_segment_metadata,
     _set_canonical_tool_metadata,
-    _ShellSegmentMetadata,
 )
+from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 
 pytestmark = pytest.mark.unit
 
