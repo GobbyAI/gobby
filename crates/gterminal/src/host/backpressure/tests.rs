@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -15,11 +16,14 @@ use super::{
     FrameMailbox, PushResult,
 };
 use crate::host::config::HostConfig;
-use crate::host::state::HostState;
+use crate::host::helpers::push_terminal_ansi;
+use crate::host::state::{
+    Attachment, CommitState, HostState, Identity, ObserverBind, TerminalSlot,
+};
 use crate::host::{control, frames};
 use crate::protocol::{
-    ServerMessage, TerminalFrame, DELTA_QUEUE_BYTES, MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE,
-    PROTOCOL_VERSION,
+    CellData, FrameData, ObservationState, PaneModes, RenderEncoding, ServerMessage, TerminalFrame,
+    DELTA_QUEUE_BYTES, MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 
 const CONTROL_TOKEN: &str = "test-control-token";
@@ -603,4 +607,160 @@ async fn write_outbound_distinguishes_disconnect_from_peer_error() {
     drop(tx);
     let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
     assert_eq!(errored, ControlClose::Overflow);
+}
+
+/// A committed native slot with no child: `resize` only needs the slot's
+/// bookkeeping, so this runs with and without `vt-engine`.
+async fn insert_native_slot(state: &HostState, host_terminal_id: &str, rows: u16, cols: u16) {
+    let identity = Identity {
+        terminal_id: format!("term-{host_terminal_id}"),
+        spawn_key: format!("spawn-{host_terminal_id}"),
+    };
+    let slot = TerminalSlot {
+        identity: identity.clone(),
+        host_terminal_id: host_terminal_id.to_owned(),
+        commit_state: CommitState::Committed,
+        pgid: 0,
+        start_time: 0.0,
+        title: String::new(),
+        rows,
+        cols,
+        last_seq: 0,
+        observation_state: ObservationState::Live,
+        observation_reason: None,
+        observation_generation: 1,
+        fingerprint: 0,
+        reservation_id: String::new(),
+        reserve_key: String::new(),
+        reserve_generation: 0,
+        observer_bind: ObserverBind::None,
+        commit_deadline: None,
+        #[cfg(feature = "vt-engine")]
+        child: None,
+        #[cfg(feature = "vt-engine")]
+        written_bytes: 0,
+        #[cfg(feature = "vt-engine")]
+        dropped_bytes: 0,
+        #[cfg(feature = "vt-engine")]
+        total_bytes: 0,
+        #[cfg(feature = "vt-engine")]
+        truncated: false,
+        user_attachments: HashSet::new(),
+        locator: None,
+        tmux_history_bytes: 0,
+        history: None,
+        last_frame: None,
+        #[cfg(feature = "vt-engine")]
+        observer_generation: 1,
+        consecutive_failures: 0,
+    };
+    let mut inner = state.inner.lock().await;
+    inner
+        .by_host_id
+        .insert(host_terminal_id.to_owned(), identity.clone());
+    inner.terminals.insert(identity, slot);
+}
+
+/// A frame of the attachment's viewport, as the frame pass renders one, with
+/// `marks` written into its leading cells.
+fn viewport_frame(att: &Attachment, marks: &str) -> FrameData {
+    let blank = CellData {
+        symbol: " ".to_owned(),
+        fg: 0,
+        bg: 0,
+        modifier: 0,
+        skip: false,
+        hyperlink: None,
+    };
+    let mut cells = vec![blank; usize::from(att.cols) * usize::from(att.rows)];
+    for (cell, mark) in cells.iter_mut().zip(marks.chars()) {
+        cell.symbol = mark.to_string();
+    }
+    FrameData {
+        cells,
+        width: att.cols,
+        height: att.rows,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes: PaneModes::default(),
+    }
+}
+
+/// Take the next queued frame and finish writing it, as the frame writer does.
+fn pop_terminal(mailbox: &FrameMailbox) -> TerminalFrame {
+    let msg = mailbox.try_pop().expect("a frame was queued");
+    mailbox.note_drain();
+    match msg {
+        ServerMessage::Terminal(frame) => frame,
+        other => panic!("expected a terminal frame, got {other:?}"),
+    }
+}
+
+/// Two viewers already streaming deltas at the geometry the PTY is resized to.
+/// The resize reflows the grid both peers painted, so each viewer's next frame
+/// must be one full keyframe at that geometry, never a delta over the reflowed
+/// screen. A viewer of another terminal keeps streaming deltas.
+#[tokio::test]
+async fn resize_resyncs_every_attachment_with_a_keyframe() {
+    let state = test_state(HostConfig::default());
+    insert_native_slot(&state, "ht-resized", 24, 80).await;
+    insert_native_slot(&state, "ht-other", 40, 120).await;
+    let mut viewers = Vec::new();
+    for host_terminal_id in ["ht-resized", "ht-resized", "ht-other"] {
+        let (id, mailbox) = state
+            .attach(
+                host_terminal_id,
+                None,
+                RenderEncoding::TerminalAnsi,
+                40,
+                120,
+            )
+            .await
+            .expect("a native terminal admits the viewer");
+        viewers.push((id, mailbox));
+    }
+    {
+        let mut inner = state.inner.lock().await;
+        for (id, mailbox) in &viewers {
+            let att = inner.attachments.get_mut(id).expect("attached");
+            let settled = viewport_frame(att, "prompt");
+            assert!(push_terminal_ansi(att, &settled, 1, usize::MAX));
+            assert!(pop_terminal(mailbox).full, "attach starts with a keyframe");
+            let typed = viewport_frame(att, "prompt$");
+            assert!(push_terminal_ansi(att, &typed, 2, usize::MAX));
+            assert!(
+                !pop_terminal(mailbox).full,
+                "a synced viewer streams deltas"
+            );
+        }
+    }
+
+    let request = json!({"host_terminal_id": "ht-resized", "rows": 40, "cols": 120});
+    let resized = state
+        .resize(request.as_object().expect("request is an object"))
+        .await;
+    assert_eq!(resized, json!({"ok": true, "rows": 40, "cols": 120}));
+
+    let mut inner = state.inner.lock().await;
+    for (id, mailbox) in &viewers {
+        let att = inner.attachments.get_mut(id).expect("attached");
+        let resynced = att.host_terminal_id == "ht-resized";
+        let reflowed = viewport_frame(att, "prompt$ ls");
+        assert!(push_terminal_ansi(att, &reflowed, 3, usize::MAX));
+        let sent = pop_terminal(mailbox);
+        assert_eq!(
+            sent.full, resynced,
+            "viewer {id} of {}: full={}",
+            att.host_terminal_id, sent.full
+        );
+        if resynced {
+            assert_eq!((sent.width, sent.height), (120, 40));
+        }
+        assert!(mailbox.try_pop().is_none(), "one frame per viewer");
+        assert!(
+            !push_terminal_ansi(att, &reflowed, 3, usize::MAX),
+            "the keyframe is the new baseline, so an unchanged frame sends nothing"
+        );
+    }
 }

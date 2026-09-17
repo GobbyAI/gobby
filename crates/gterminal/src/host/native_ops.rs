@@ -519,6 +519,16 @@ impl HostState {
         slot.rows = dims.0;
         slot.cols = dims.1;
         slot.last_seq += 1;
+        // A resize reflows the grid every peer last painted, so no encoder
+        // baseline still matches its peer's screen: the next frame pass sends
+        // each attachment one keyframe before any further delta.
+        for att in inner
+            .attachments
+            .values_mut()
+            .filter(|att| att.host_terminal_id == host_terminal_id)
+        {
+            att.desynced = true;
+        }
         json!({"ok": true, "rows": dims.0, "cols": dims.1})
     }
 
