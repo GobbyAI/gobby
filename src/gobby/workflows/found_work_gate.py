@@ -399,8 +399,10 @@ class FoundWorkStopAnalyzer:
         A taskless session is disarmed. Once it claims or closes a task, later
         loose tasks count as found work. A task graph the session authored is
         still excluded: an epic it created and also gave children, plus every
-        descendant of that epic. Refs in ``deferred`` were already deferred by
-        the user and stay excluded.
+        descendant of that epic. Children the plan expansion pipeline created
+        on the session's behalf count as given: the pipeline runs in its own
+        session and labels each child ``expansion-run:<id>``. Refs in
+        ``deferred`` were already deferred by the user and stay excluded.
         """
         task_duty_started_at = found_work_gate_armed_at(armed_at)
         if (
@@ -441,7 +443,17 @@ class FoundWorkStopAnalyzer:
                           SELECT 1
                           FROM tasks child
                           WHERE child.parent_task_id = ch.node_id
-                            AND child.created_in_session_id = %s
+                            AND (
+                                child.created_in_session_id = %s
+                                OR (
+                                    jsonb_typeof(child.labels) = 'array'
+                                    AND EXISTS (
+                                        SELECT 1
+                                        FROM jsonb_array_elements_text(child.labels) AS label
+                                        WHERE label LIKE 'expansion-run:%%'
+                                    )
+                                )
+                            )
                       )
                 )
                 SELECT c.seq_num, c.labels
