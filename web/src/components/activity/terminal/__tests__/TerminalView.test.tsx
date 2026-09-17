@@ -943,6 +943,37 @@ describe("native scroll offset", () => {
     }
   });
 
+  it("scrolls line-mode wheel deltas one row per line", async () => {
+    const rectSpy = measuredRows(16);
+    try {
+      const onScrollRows = vi.fn();
+      const onReady = vi.fn();
+      render(
+        <TerminalView
+          onReady={onReady}
+          scrollOffsetRows={0}
+          onScrollRows={onScrollRows}
+        />,
+      );
+      await waitFor(() => expect(onReady).toHaveBeenCalled());
+
+      // DOM_DELTA_LINE already counts lines: a Firefox notch reports 3.
+      act(() => {
+        latestInstance().element.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: -3,
+            deltaMode: 1,
+            cancelable: true,
+            bubbles: true,
+          }),
+        );
+      });
+      expect(onScrollRows).toHaveBeenCalledWith(3);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("accumulates sub-row trackpad deltas instead of dropping them", async () => {
     const rectSpy = measuredRows(20);
     try {

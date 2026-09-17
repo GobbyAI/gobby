@@ -1198,6 +1198,49 @@ describe("native scroll offset", () => {
     expect(vi.mocked(hookState.setScrollOffset).mock.calls).toHaveLength(sent);
   });
 
+  it("keeps the ceiling unknown when the daemon echoes the requested rows", async () => {
+    const user = userEvent.setup();
+    await attachNative(user);
+
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(3, 0);
+
+    // The daemon answers a max_rows 0 request with the requested rows as the
+    // ceiling before gterm's real depth is relayed; that echo must not clamp
+    // the next notch to 3.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 3,
+        maxRows: 3,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(6, 0);
+
+    // gterm's relayed reply carries the real ceiling.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 6,
+        maxRows: 300,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(9, 300);
+
+    // A late echo below the confirmed ceiling does not lower it.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 9,
+        maxRows: 9,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(12, 300);
+  });
+
   it("ignores a superseded attachment's applied reply", async () => {
     const user = userEvent.setup();
     await attachNative(user);

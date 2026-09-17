@@ -23,13 +23,6 @@ import {
 
 import type { TerminalScrollApplied } from "../../../hooks/terminalOutputSink";
 
-/**
- * One wheel notch in line mode, matching gclient's `MOUSE_SCROLL_LINES`. Pixel
- * mode divides by the measured row height instead, so a trackpad pans a row
- * per row rather than in notches.
- */
-const WHEEL_SCROLL_ROWS = 3;
-
 interface ScrollOffsetState {
   /** Rows the rendered window sits back from the live edge. */
   rows: number;
@@ -51,14 +44,18 @@ function clampScrollRows(state: ScrollOffsetState, requested: number): number {
 
 /**
  * A wheel or touch delta in rows away from the live edge: positive scrolls
- * back into history, which is the direction the wire counts in.
+ * back into history, which is the direction the wire counts in. Line mode
+ * passes the browser's line count through; pixel mode divides by the
+ * measured row height, so a trackpad pans a row per row rather than in
+ * notches.
  */
 function wheelScrollRows(
   event: { deltaY: number; deltaMode: number },
   rowHeight: number,
   pageRows: number,
 ): number {
-  if (event.deltaMode === 1) return -event.deltaY * WHEEL_SCROLL_ROWS;
+  // DOM_DELTA_LINE already counts lines (Firefox sends 3 per notch).
+  if (event.deltaMode === 1) return -event.deltaY;
   if (event.deltaMode === 2) return -event.deltaY * Math.max(pageRows, 1);
   return -event.deltaY / Math.max(rowHeight, 1);
 }
@@ -137,10 +134,16 @@ export function useTerminalScrollOffset({
       // Same stale-attachment filter the output stream uses: a superseded
       // attachment's reply must not move the replacement's window.
       if (applied.streamingId !== streamingIdRef.current) return;
-      setState({
-        rows: Math.max(0, applied.appliedRows),
-        maxRows: Math.max(0, applied.maxRows),
-      });
+      const rows = Math.max(0, applied.appliedRows);
+      const reported = Math.max(0, applied.maxRows);
+      const known = stateRef.current.maxRows;
+      // A request sent with max_rows 0 comes back from the daemon as
+      // {applied_rows: n, max_rows: n} before gterm's real depth is relayed;
+      // it can also land after that relay. A ceiling equal to its own applied
+      // rows that is unknown or below the confirmed one is that echo, not a
+      // limit, so the known ceiling stands.
+      const echo = reported === rows && (known === 0 || reported < known);
+      setState({ rows, maxRows: echo ? known : reported });
     });
     return () => onScrollOffsetApplied(() => undefined);
   }, [onScrollOffsetApplied]);
