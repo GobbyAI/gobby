@@ -181,6 +181,47 @@ async def test_sweep_leaves_gobby_owned_rows_to_their_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_sweep_expires_a_gobby_row_whose_pane_left_a_readable_socket(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    manager = TerminalManager(temp_db)
+    dead_server = pane(GOBBY_SOCKET, "%9", session_name="gobby-old", server_pid=69149)
+    row = manager.create_pending(
+        terminal_id=str(uuid.uuid4()),
+        project_id=sample_project["id"],
+        backend="tmux",
+        ownership="gobby",
+        spawn_key="gobby-old",
+    )
+    manager.promote_to_live(
+        row.id,
+        locator={
+            "socket_path": dead_server.socket_path,
+            "server_pid": dead_server.server_pid,
+            "server_start_time": dead_server.server_start_time,
+            "pane_id": dead_server.pane_id,
+        },
+        locator_key=key_of(dead_server),
+        session_name="gobby-old",
+        title="web shell",
+    )
+    # The gobby socket now belongs to a fresh server that never had this pane.
+    current = pane(GOBBY_SOCKET, "%1", session_name="gobby-new", server_pid=41709)
+
+    seen = await sweep_tmux_terminals(
+        manager,
+        [FakeTmux("gobby", [current]), FakeTmux("", None)],
+        machine_id=LOCAL_MACHINE_ID,
+        owners={},
+        fallback_project_id=sample_project["id"],
+    )
+
+    assert set(seen) == {key_of(current)}
+    expired = manager.get(row.id)
+    assert expired is not None
+    assert (expired.ownership, expired.state) == ("gobby", "exited")
+
+
 async def test_sweep_expires_vanished_panes_only_on_sockets_it_could_read(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:

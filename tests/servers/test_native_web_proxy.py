@@ -437,15 +437,8 @@ async def test_web_attach_native_terminal(
     assert frame.reservation_ids == [None]
     assert frame.encoding == "terminal_ansi"
     await _take(harness, ws, harness.native_row, attachment)
-    await frame.queue.put(
-        {
-            "type": "attach_history",
-            "text": "hi\n",
-            "truncated": False,
-            "dropped_bytes": 0,
-            "total_bytes": 3,
-        }
-    )
+    # The host captures attach history only for tmux panes, so the fake host
+    # sends none; the daemon owes the viewer one empty history frame anyway.
     await frame.queue.put(
         {
             "type": "terminal",
@@ -459,9 +452,22 @@ async def test_web_attach_native_terminal(
     await _until(lambda: ws.messages_of_type("terminal_output"))
     history = ws.messages_of_type("terminal_attach_history")
     output = ws.messages_of_type("terminal_output")
-    assert history
-    assert history[0]["text"] == "hi\n"
+    assert len(history) == 1
+    assert history[0]["attachment_id"] == attachment
+    assert (history[0]["text"], history[0]["truncated"], history[0]["total_bytes"]) == (
+        "",
+        False,
+        0,
+    )
     assert output[0]["data"] == "ready.\n"
+    # The client learns the attachment id from the attach result, so nothing
+    # keyed by it may precede the result; the history frame precedes output.
+    kinds = [item.get("type") for item in ws.all_messages()]
+    assert (
+        kinds.index("terminal_attach_result")
+        < kinds.index("terminal_attach_history")
+        < kinds.index("terminal_output")
+    )
     await _send(
         harness.server,
         ws,
@@ -945,7 +951,10 @@ async def test_scroll_offset_and_wrapped_attach_history(
             "total_bytes": len(wrapped.encode()),
         }
     )
-    await _until(lambda: wrap_ws.messages_of_type("terminal_attach_history"))
+    # The daemon's own empty frame arrives first; the host-mapped one carries text.
+    await _until(
+        lambda: any(item["text"] for item in wrap_ws.messages_of_type("terminal_attach_history"))
+    )
     text = wrap_ws.messages_of_type("terminal_attach_history")[-1]["text"]
     assert "\n" in text
     assert "宽" in text

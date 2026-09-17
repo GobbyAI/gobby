@@ -226,6 +226,7 @@ class TerminalWsMixin:
                 "success": True,
             },
         )
+        self._proxy().start_pump(record.attachment_id)
 
     async def _handle_terminal_detach(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")

@@ -119,6 +119,7 @@ async def test_proxy_socket_failure_applies_re_elected_size(
         websocket=websocket,
         frame=frame,
         encoding="json",
+        backend="native",
     )
     hub.by_socket[websocket] = {web.attachment_id}
 
