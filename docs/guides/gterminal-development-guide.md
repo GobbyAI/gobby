@@ -37,6 +37,32 @@ fallback for `gterm` builds `--features vt-engine` with a 600s timeout; if
 `zig` is missing it skips that step with an explicit reason and continues to
 Gobby-hosted GitHub assets. `gclient`'s local build is ordinary cargo.
 
+### Sandboxed Zig caches
+
+Guard set G wraps groups 2 and 3 with a run-scoped environment. When a machine
+Zig package cache exists (`~/.cache/zig/p`), the guard first materializes
+every package into a writable `zig-cache/p/` directory under the run root and
+then exports the cache variables:
+
+- `ZIG_GLOBAL_CACHE_DIR` points at the run-scoped `zig-cache` directory.
+- `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` points at its `p` subdirectory and becomes
+  `zig build --system <dir>` in `crates/gterminal/build.rs`.
+
+Zig resolves a `--system` directory by package id (`<name>-<version>-<hash>`,
+matching the `.hash` fields in the vendored `build.zig.zon`) with fetching
+disabled, so every entry there must be an extracted directory. Tarball-only
+entries from the machine cache are unpacked (reusing an extraction from the
+vendored `zig-pkg/` directory when the id matches) and already-extracted
+entries are copied, never symlinked. If any package cannot be materialized,
+`LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` stays unset so Zig fetches normally instead of
+resolving against a directory with unusable entries.
+
+The vendored `libsystem_override.sh` honors the same environment: it creates
+its scratch directory with `mktemp` under `${TMPDIR:-/tmp}`, which Guard set G
+exports as the run root. macOS `mktemp` without a template resolves
+`_CS_DARWIN_USER_TEMP_DIR` first and would ignore the run `TMPDIR`; the
+vendored patch is recorded in `crates/gterminal/vendor/libghostty-vt.patches.md`.
+
 ### Rebuild and reinstall
 
 A crate change is live only after rebuild **and** reinstall:

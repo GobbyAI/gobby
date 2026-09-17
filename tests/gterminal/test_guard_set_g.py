@@ -308,7 +308,12 @@ def test_host_wrap_group_fails_closed_when_temp_parent_unavailable(
     assert run_group(2) == 1
 
 
-def test_isolated_child_env_keeps_explicit_zig_cache(tmp_path: Path) -> None:
+def test_isolated_child_env_keeps_explicit_zig_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / ".cache" / "zig" / "p").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
     run_root = tmp_path / "run"
     run_root.mkdir()
     env = _isolated_child_env(
@@ -324,16 +329,6 @@ def test_isolated_child_env_keeps_explicit_zig_cache(tmp_path: Path) -> None:
     assert env["CLAUDE_CODE_TMPDIR"] == str(run_root)
     assert env["ZIG_GLOBAL_CACHE_DIR"] == "/custom/zig"
     assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == "/custom/zig/p"
-
-
-def test_isolated_child_env_uses_vendored_zig_cache_when_unset(tmp_path: Path) -> None:
-    run_root = tmp_path / "run"
-    run_root.mkdir()
-    repo = tmp_path / "repo"
-    vendor_cache = repo / "crates" / "gterminal" / "vendor" / "libghostty-vt" / ".zig-cache"
-    env = _isolated_child_env(run_root, {"PATH": "/bin"}, repo=repo)
-    assert env["ZIG_GLOBAL_CACHE_DIR"] == str(vendor_cache)
-    assert vendor_cache.is_dir()
 
 
 def test_isolated_run_roots_read_env_paths(tmp_path: Path) -> None:

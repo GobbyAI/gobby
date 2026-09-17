@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gobby maintainers <maintainers@gobby.ai>
+Date: Wed, 17 Sep 2026 00:00:00 +0000
+Subject: [PATCH] honor the run TMPDIR in libsystem_override
+
+macOS mktemp without a template resolves _CS_DARWIN_USER_TEMP_DIR before
+TMPDIR, so Guard set G's run-scoped TMPDIR was ignored and the scratch
+directory escaped the run root. Pass an explicit template under
+${TMPDIR:-/tmp} so the temporary directory stays inside the run grant.
+
+Vendored base: 7aab0a0392369613472bd5dcfd66bef58e78c3ec
+---
+diff --git a/crates/gterminal/vendor/libghostty-vt/src/build/libsystem_override.sh b/crates/gterminal/vendor/libghostty-vt/src/build/libsystem_override.sh
+index 14ed191b8d..1b637e12b0 100755
+--- a/crates/gterminal/vendor/libghostty-vt/src/build/libsystem_override.sh
++++ b/crates/gterminal/vendor/libghostty-vt/src/build/libsystem_override.sh
+@@ -28,7 +28,9 @@ set -eu
+ in="$1"
+ out="$2"
+ 
+-tmp="$(mktemp -d)"
++# Use an explicit template under the run TMPDIR: macOS mktemp without a
++# template resolves _CS_DARWIN_USER_TEMP_DIR first and ignores TMPDIR.
++tmp="$(mktemp -d "${TMPDIR:-/tmp}/libsystem_override.XXXXXX")"
+ trap 'rm -rf "$tmp"' EXIT
+ 
+ cp -f "$in" "$out"

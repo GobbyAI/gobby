@@ -28,7 +28,9 @@ set -eu
 in="$1"
 out="$2"
 
-tmp="$(mktemp -d)"
+# Use an explicit template under the run TMPDIR: macOS mktemp without a
+# template resolves _CS_DARWIN_USER_TEMP_DIR first and ignores TMPDIR.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/libsystem_override.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
 cp -f "$in" "$out"
