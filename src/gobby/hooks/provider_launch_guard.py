@@ -25,6 +25,95 @@ _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 _MAX_DEPTH = 24
 _MAX_LENGTH = 131_072
 
+# Subcommands that answer a literal help request, by provider. A word maps to
+# its child subcommands; an empty mapping is a leaf, which may take a prompt.
+type _Subcommands = dict[str, _Subcommands]
+_MCP: _Subcommands = {"add": {}, "get": {}, "list": {}, "remove": {}}
+_SUBCOMMANDS: dict[str, _Subcommands] = {
+    "codex": {
+        "exec": {},
+        "review": {},
+        "login": {"status": {}},
+        "logout": {},
+        "mcp": {**_MCP, "login": {}, "logout": {}},
+        "resume": {},
+        "fork": {},
+    },
+    "claude": {
+        "auth": {"login": {}, "logout": {}, "status": {}},
+        "mcp": {
+            **_MCP,
+            "add-from-claude-desktop": {},
+            "add-json": {},
+            "reset-project-choices": {},
+            "serve": {},
+        },
+        "plugin": {
+            "disable": {},
+            "enable": {},
+            "install": {},
+            "list": {},
+            "marketplace": {"add": {}, "list": {}, "remove": {}, "update": {}},
+            "uninstall": {},
+            "update": {},
+            "validate": {},
+        },
+        "doctor": {},
+        "install": {},
+        "update": {},
+    },
+    "droid": {
+        "exec": {},
+        "daemon": {},
+        "search": {},
+        "update": {},
+        "mcp": _MCP,
+        "plugin": {},
+        "computer": {},
+    },
+    "grok": {
+        "agent": {},
+        "login": {},
+        "logout": {},
+        "mcp": _MCP,
+        "models": {},
+        "sessions": {},
+        "doctor": {},
+        "version": {},
+    },
+    "qwen": {
+        "auth": {},
+        "channel": {},
+        "extensions": {
+            "disable": {},
+            "enable": {},
+            "install": {},
+            "link": {},
+            "list": {},
+            "new": {},
+            "uninstall": {},
+            "update": {},
+        },
+        "hooks": {},
+        "mcp": _MCP,
+        "review": {},
+        "serve": {},
+        "sessions": {},
+        "update": {},
+    },
+    "agy": {
+        "agent": {},
+        "agents": {},
+        "mcp": _MCP,
+        "models": {},
+        "plugin": {},
+        "plugins": {},
+        "update": {},
+    },
+}
+# Providers whose `help <subcommand>` form prints that subcommand's help.
+_HELP_COMMAND_PROVIDERS = frozenset({"codex", "droid", "grok", "agy"})
+
 
 def blocks_direct_provider_launch(tool_name: Any, tool_input: Any) -> bool:
     """Rule predicate, independent of session variables and launch preferences."""
@@ -272,45 +361,40 @@ def _unwrap(words: list[str]) -> list[str]:
 
 def _administration(args: list[str], provider: str) -> bool:
     # Only complete, literal forms: a help flag buried in a launch is not an exemption.
-    help_commands = {
-        "codex": {"exec", "review", "login", "logout", "mcp", "resume", "fork"},
-        "claude": {"auth", "mcp", "plugin", "doctor", "install", "update"},
-        "droid": {"exec", "daemon", "search", "update", "mcp", "plugin", "computer"},
-        "grok": {"agent", "login", "logout", "mcp", "sessions", "doctor", "version"},
-        "qwen": {
-            "auth",
-            "channel",
-            "extensions",
-            "hooks",
-            "mcp",
-            "review",
-            "serve",
-            "sessions",
-            "update",
-        },
-        "agy": {"agent", "agents", "mcp", "models", "plugin", "plugins", "update"},
-    }
-    help_path = args[:-1] if args and args[-1] in {"--help", "-h"} else []
-    if provider in {"codex", "droid", "grok", "agy"} and args[:1] == ["help"]:
-        help_path = args[1:]
-    if len(help_path) == 1 and help_path[0] in help_commands[provider]:
-        return True
-    if (provider, help_path) in [("codex", ["login", "status"]), ("claude", ["auth", "status"])]:
+    if _help_request(args, provider):
         return True
     if provider == "claude" and args in [
+        ["auth", "status"],
         ["auth", "status", "--json"],
         ["auth", "status", "--text"],
     ]:
         return True
     if provider == "grok" and args in [["version"], ["v"]]:
         return True
-    return args in [["--help"], ["-h"], ["--version"]] or (
-        (provider == "codex" and args == ["login", "status"])
-        or (provider == "claude" and args == ["auth", "status"])
-        or (provider == "codex" and args == ["-V"])
+    return args == ["--version"] or (
+        (provider == "codex" and args in [["login", "status"], ["-V"]])
         or (provider in {"claude", "droid", "grok", "qwen"} and args == ["-v"])
-        or (provider in {"codex", "droid", "grok", "agy"} and args == ["help"])
     )
+
+
+def _help_request(args: list[str], provider: str) -> bool:
+    """Return whether ``args`` only ask for help on a chain of known subcommands."""
+    wants_group = False
+    if provider in _HELP_COMMAND_PROVIDERS and args[:1] == ["help"]:
+        path = args[1:]
+    elif args[-1:] in (["--help"], ["-h"]):
+        path = args[:-1]
+    elif args[-1:] == ["help"]:
+        path, wants_group = args[:-1], True
+    else:
+        return False
+    node = _SUBCOMMANDS[provider]
+    for word in path:
+        if word not in node:
+            return False
+        node = node[word]
+    # A leaf subcommand can take `help` as its prompt; only a group answers it.
+    return bool(node) or not wants_group
 
 
 def _shell_stdin(words: list[str]) -> bool:

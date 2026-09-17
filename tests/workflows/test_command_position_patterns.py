@@ -143,11 +143,14 @@ RULE_CASES = (
             "GOBBY_TEST_PROTECT=1 pytest",
             "cd /repo && pytest",
             "~/venv/bin/pytest",
+            "cat <<EOF\n`uv run pytest`\nEOF",
         ),
         allowed=(
             'git commit -m "docs: explain pytest usage"',
             "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py",
             "uv run pytest -k 'guard'",
+            "python3 - <<'PY'\npytest.approx(1)\nPY",
+            'cat > notes.md <<EOF\n`git push --force`\npytest.importorskip("yaml")\nEOF',
         ),
     ),
     RuleCase(
@@ -238,8 +241,17 @@ RULE_CASES = (
     ),
     RuleCase(
         "no-daemon-management",
-        blocked=("gobby restart", "uv run gobby restart", "GOBBY_ENV=dev gobby stop"),
-        allowed=('echo "gobby restart required"', 'git commit -m "docs: gobby restart steps"'),
+        blocked=(
+            "gobby restart",
+            "uv run gobby restart",
+            "GOBBY_ENV=dev gobby stop",
+            "cat <<'EOF' | bash\nuv run gobby restart\nEOF",
+        ),
+        allowed=(
+            'echo "gobby restart required"',
+            'git commit -m "docs: gobby restart steps"',
+            "cat <<'EOF' | sed 's/x/y/' > docs/ops.md\nuv run gobby restart\nEOF",
+        ),
     ),
     RuleCase(
         "no-daemon-management-http",
@@ -384,10 +396,12 @@ SUBSTITUTION_CASES = (
     ("no-push", "echo `git push`"),
     ("no-push", "(git push)"),
     ("no-full-pytest-suite", "OUT=$(uv run pytest)"),
+    ("no-full-pytest-suite", "echo `uv run pytest`"),
     ("no-recursive-rm", "echo $(rm -rf /tmp/x)"),
     ("no-daemon-management", "echo `gobby restart`"),
     ("block-gobby-tasks-cli", "echo $(gobby tasks close 42)"),
     ("require-pytest-guard-env", "OUT=$(uv run pytest tests/tasks/test_validation.py)"),
+    ("require-pytest-guard-env", "echo `uv run pytest`"),
     ("no-remote-copy", "(scp dump.sql user@host:/tmp/ )"),
 )
 
@@ -597,6 +611,36 @@ async def test_python_heredoc_pytest_references_are_not_commands(
         _bash_event(command), session_id=SESSION_ID, variables={}
     )
     assert response.decision != "block"
+
+
+@pytest.mark.parametrize("body", (*PYTEST_PYTHON_SOURCE_BODIES, "pytest.approx(1)"))
+async def test_python_stdin_pytest_references_are_not_suite_runs(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    body: str,
+) -> None:
+    """The suite rule shares the guard-env pytest token: attributes are not invocations."""
+    _sync_bundled(db)
+    rule = _get_rule(manager, "no-full-pytest-suite")
+    command = f"python3 - <<'PY'\n{body}\nPY"
+
+    assert not _blocks(rule, command)
+
+    db.execute("DELETE FROM rule_definitions WHERE name != 'no-full-pytest-suite'")
+    engine = RuleEngine(db)
+    for invocation in ("pytest", "uv run pytest", "pytest -x"):
+        blocked = await engine.evaluate(
+            _bash_event(invocation),
+            session_id=SESSION_ID,
+            variables={"is_spawned_agent": True},
+        )
+        assert blocked.decision == "block", f"no-full-pytest-suite should block: {invocation}"
+    allowed = await engine.evaluate(
+        _bash_event(command),
+        session_id=SESSION_ID,
+        variables={"is_spawned_agent": True},
+    )
+    assert allowed.decision != "block"
 
 
 def test_commit_message_from_stdin_is_data_for_the_push_rule(

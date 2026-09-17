@@ -6,10 +6,12 @@ separators, quotes, pipes and substitutions intact, so the segment-anchored
 bundled patterns keep their meaning and a ``curl … | sh`` shape still reads as
 one command. Heredoc bodies are stdin data and stay out of the subject unless
 something can run them: a body is re-attached to its opener segment (after a
-newline, so line-start anchors still see it) when any pipeline stage is not a
-known data sink, when the segment process-substitutes output, when an unquoted
-delimiter leaves ``$(`` or backtick expansion live, or when the heredoc never
-terminates.
+newline, so line-start anchors still see it) when its consumer is not a known
+data sink, when the segment process-substitutes output, when a downstream
+pipeline stage is a shell or ``eval``, or when the heredoc never terminates. A
+data sink's body stays data even when its output pipes onward, and an unquoted
+body contributes only its command-substitution spans — the shell runs those,
+never the literal body.
 
 ``command_pattern`` must match one subject. Quoted ``;``, ``&``, ``|``, ``(``,
 and backticks in that subject are not command boundaries — they are blanked
@@ -37,12 +39,12 @@ from gobby.hooks._normalization_shell import (
     scan_shell_command,
 )
 from gobby.hooks.code_navigation import shell_command_name
+from gobby.hooks.provider_launch_guard import _SHELLS, _prepare, _unwrap
 
 # Commands whose standard input is never interpreted as code. Every other
 # consumer — shells, language interpreters, ``ssh``, ``xargs``, ``eval``,
 # unknown tools — fails closed and keeps its heredoc body in the subject.
 HEREDOC_DATA_CONSUMERS = frozenset({"cat", "tee", "git", "gh"})
-_LIVE_EXPANSION_RE = re.compile(r"\$\(|`")
 _OUTPUT_PROCESS_SUBSTITUTION_RE = re.compile(r">\(")
 # A newline right after one of these continues the same command list.
 _CONTINUATION_OPERATORS = frozenset({"|", "&&", "||"})
@@ -155,8 +157,11 @@ def executable_command_subjects(command: str) -> list[str]:
             if segment.first <= heredoc.opener <= segment.last
         )
         segment = segments[owner]
-        if _heredoc_may_execute(scan.tokens[segment.first : segment.last + 1], raw[owner], heredoc):
+        tokens = scan.tokens[segment.first : segment.last + 1]
+        if _heredoc_may_execute(tokens, raw[owner], heredoc, heredoc.opener - segment.first):
             subjects[owner] = f"{subjects[owner]}\n{heredoc.text}"
+        elif not heredoc.quoted:
+            subjects[owner] += "".join(f"\n{span}" for span in _substitution_spans(heredoc.text))
     return subjects
 
 
@@ -182,18 +187,35 @@ def _is_continuation_operator(token: ShellToken) -> bool:
     return not token.quoted and token.value in _CONTINUATION_OPERATORS
 
 
-def _heredoc_may_execute(tokens: list[ShellToken], raw: str, heredoc: HeredocBody) -> bool:
+def _heredoc_may_execute(
+    tokens: list[ShellToken], raw: str, heredoc: HeredocBody, opener: int
+) -> bool:
     if not heredoc.terminated:
-        return True
-    if not heredoc.quoted and _LIVE_EXPANSION_RE.search(heredoc.text):
         return True
     if _OUTPUT_PROCESS_SUBSTITUTION_RE.search(raw):
         return True
-    for stage in _pipeline_stages(tokens):
-        consumer = _stage_command(stage)
-        if consumer is not None and shell_command_name(consumer) not in HEREDOC_DATA_CONSUMERS:
+    stages = _pipeline_stages(tokens)
+    owner = sum(not token.quoted and token.value == "|" for token in tokens[:opener])
+    consumer = _strip_shell_wrappers(_stage_words(stages[owner]))
+    if consumer and shell_command_name(consumer[0]) not in HEREDOC_DATA_CONSUMERS:
+        return True
+    # A data consumer's output is still data downstream, unless a shell runs it.
+    for stage in stages[owner + 1 :]:
+        words = _unwrap(_stage_words(stage))
+        if words and shell_command_name(words[0]) in _SHELLS:
             return True
     return False
+
+
+def _substitution_spans(body: str) -> list[str]:
+    """Return the command substitutions an unquoted heredoc body runs.
+
+    A body whose substitutions cannot be delimited is matched whole.
+    """
+    try:
+        return _prepare(body, 0, data=True)[1]
+    except ValueError:
+        return [body]
 
 
 def _pipeline_stages(tokens: list[ShellToken]) -> list[list[ShellToken]]:
@@ -206,8 +228,8 @@ def _pipeline_stages(tokens: list[ShellToken]) -> list[list[ShellToken]]:
     return stages
 
 
-def _stage_command(tokens: list[ShellToken]) -> str | None:
-    """Return a pipeline stage's command word, or None for a bare redirection."""
+def _stage_words(tokens: list[ShellToken]) -> list[str]:
+    """Return a pipeline stage's words without its redirections."""
     words: list[str] = []
     skip_operand = False
     for token in tokens:
@@ -220,5 +242,4 @@ def _stage_command(tokens: list[ShellToken]) -> str | None:
             skip_operand = True
             continue
         words.append(token.value)
-    words = _strip_shell_wrappers(words)
-    return words[0] if words else None
+    return words

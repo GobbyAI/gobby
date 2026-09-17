@@ -20,6 +20,9 @@ pytestmark = pytest.mark.unit
 PROSE_BODY = "Run `git commit` in the shared checkout, never `git push --force`."
 COMMIT_PATTERN = r"(^|(?<=[;&|(`\n]))\s*git\s+commit\b"
 PYTEST_PATTERN = r"(^|(?<=[;&|(`\n]))\s*(?:uv\s+run\s+)?pytest\b"
+DAEMON_PATTERN = (
+    r"(^|(?<=[;&|(`\n]))\s*(?:[^\s;&|]*/)?(?:uv\s+run\s+)?gobby\s+(start|stop|restart)\b"
+)
 GUARD_EXEMPTION = r"(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
 
 
@@ -77,25 +80,50 @@ class TestExecutableCommandSubjects:
         assert executable_command_subjects("cat <<'EOF' | tee out.txt\nbody\nEOF") == [
             "cat <<'EOF' | tee out.txt"
         ]
+        # A data stage — sed only transforms the bytes — keeps the body data.
+        assert executable_command_subjects("cat <<'EOF' | sed s/x/y/ > docs/ops.md\nbody\nEOF") == [
+            "cat <<'EOF' | sed s/x/y/ > docs/ops.md"
+        ]
         # A pipeline continuation defers the body past the next stage; the
         # pipeline is still one segment and its downstream shell runs the body.
         assert executable_command_subjects("cat <<'EOF' |\n  bash\nbody\nEOF") == [
             "cat <<'EOF' |\n  bash\nbody"
         ]
 
+    def test_data_consumer_heredoc_stays_data_except_into_interpreters(self) -> None:
+        body = "uv run gobby restart"
+
+        piped_through_sed = f"cat <<'EOF' | sed 's/x/y/' > docs/ops.md\n{body}\nEOF"
+        assert executable_command_subjects(piped_through_sed) == [
+            "cat <<'EOF' | sed 's/x/y/' > docs/ops.md"
+        ]
+        assert not command_patterns_match(piped_through_sed, pattern=DAEMON_PATTERN)
+        wrapped = ("sudo bash", "env -i bash", "xargs -0 sh -c")
+        for interpreter in ("bash", "sh", "zsh", "eval", *wrapped):
+            into_shell = f"cat <<'EOF' | {interpreter}\n{body}\nEOF"
+            assert command_patterns_match(into_shell, pattern=DAEMON_PATTERN), interpreter
+
     def test_output_process_substitution_keeps_the_body(self) -> None:
         command = "cat <<'EOF' > >(bash)\nbody\nEOF"
 
         assert executable_command_subjects(command) == ["cat <<'EOF' > >(bash)\nbody"]
 
-    def test_unquoted_delimiter_keeps_the_body_only_with_live_expansion(self) -> None:
+    def test_unquoted_delimiter_contributes_only_substitution_spans(self) -> None:
         assert executable_command_subjects("cat <<EOF\n$(git push --force)\nEOF") == [
-            "cat <<EOF\n$(git push --force)"
+            "cat <<EOF\ngit push --force"
         ]
         assert executable_command_subjects("cat <<EOF\n`git push --force`\nEOF") == [
-            "cat <<EOF\n`git push --force`"
+            "cat <<EOF\ngit push --force"
         ]
         assert executable_command_subjects("cat <<EOF\nplain $HOME prose\nEOF") == ["cat <<EOF"]
+
+    def test_unquoted_body_text_beside_a_substitution_stays_out(self) -> None:
+        command = 'cat > notes.md <<EOF\n`git push --force`\npytest.importorskip("yaml")\nEOF'
+
+        assert executable_command_subjects(command) == ["cat > notes.md <<EOF\ngit push --force"]
+        assert not command_patterns_match(command, pattern=PYTEST_PATTERN)
+        # A substitution span carrying a real invocation still selects a block.
+        assert command_patterns_match("cat <<EOF\n`uv run pytest`\nEOF", pattern=PYTEST_PATTERN)
 
     def test_unterminated_heredoc_keeps_its_swallowed_text(self) -> None:
         command = "cat <<'EOF'\ngit push --force"
