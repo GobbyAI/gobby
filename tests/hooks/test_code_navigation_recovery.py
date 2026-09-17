@@ -182,6 +182,30 @@ def test_full_file_reads_follow_the_verified_line_count(
     assert broad_read_blocked(repo, command) is blocked
 
 
+@pytest.mark.parametrize(
+    ("lines", "trailing_newline", "blocked"),
+    [
+        (40, True, False),
+        (41, True, True),
+        (40, False, False),
+        (41, False, True),
+    ],
+)
+def test_whole_file_reads_stop_at_the_narrow_line_ceiling(
+    repo: Path, lines: int, trailing_newline: bool, blocked: bool
+) -> None:
+    """A trailing partial line counts, so the ceiling holds without a final newline."""
+    body = "value = 1\n" * (lines - 1) + ("value = 1\n" if trailing_newline else "value = 1")
+    (repo / "src/boundary.py").write_text(body)
+    assert broad_read_blocked(repo, "cat src/boundary.py") is blocked
+
+
+def test_whole_file_reads_stay_blocked_past_the_scan_limit(repo: Path) -> None:
+    """A one-line file too large to scan cheaply stays unverified, so it stays broad."""
+    (repo / "src/minified.py").write_text("x = 1;" * 50_000 + "\n")
+    assert broad_read_blocked(repo, "cat src/minified.py")
+
+
 def test_read_tool_without_limit_follows_the_file_size(repo: Path) -> None:
     variables = {"code_index_navigation_used_this_turn": True}
     assert not navigation_requires_index(
