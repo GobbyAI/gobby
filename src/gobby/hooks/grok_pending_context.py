@@ -6,13 +6,20 @@ import json
 import logging
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import envelope_terminal_response
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    CONTEXT_SEPARATOR,
+    ContextPart,
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+)
 from gobby.hooks.pending_messages import render_pending_messages
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
@@ -49,6 +56,8 @@ class PendingContextComponent(TypedDict):
     text: str
     message_ids: list[str]
     staged_effects: NotRequired[dict[str, Any]]
+    # Labeled contributors whose separator join equals ``text``.
+    parts: NotRequired[list[ContextPart]]
 
 
 class PendingContextHandler(Protocol):
@@ -68,8 +77,7 @@ class PendingDelivery(TypedDict):
 @dataclass(frozen=True)
 class _FlushPlan:
     kind: Literal["pretool_context", "stop_briefing", "stop_turn", "drop"]
-    briefing: str | None = None
-    turn_context: str | None = None
+    context_parts: list[ContextPart] = field(default_factory=list)
     staged_effects: dict[str, Any] | None = None
 
 
@@ -83,13 +91,27 @@ def _source_envelope_id(event: HookEvent) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _response_text(response: HookResponse) -> str | None:
-    parts = [
-        value.strip()
-        for value in (response.context, response.system_message)
-        if isinstance(value, str) and value.strip()
-    ]
-    return "\n\n".join(parts) or None
+def _response_parts(response: HookResponse) -> list[ContextPart]:
+    parts = [(label, text.strip()) for label, text in response.context_contributors()]
+    if isinstance(response.system_message, str):
+        parts.append(("system_message", response.system_message.strip()))
+    return [(label, text) for label, text in parts if text]
+
+
+def _stored_parts(value: object, text: str) -> list[ContextPart] | None:
+    if not isinstance(value, list):
+        return None
+    parts: list[ContextPart] = []
+    for item in value:
+        if not (
+            isinstance(item, list | tuple)
+            and len(item) == 2
+            and isinstance(item[0], str)
+            and isinstance(item[1], str)
+        ):
+            return None
+        parts.append((item[0], item[1]))
+    return parts if CONTEXT_SEPARATOR.join(part for _, part in parts) == text else None
 
 
 def _components(value: object) -> list[PendingContextComponent]:
@@ -118,6 +140,9 @@ def _components(value: object) -> list[PendingContextComponent]:
         staged = item.get("staged_effects")
         if isinstance(staged, dict) and staged:
             result[-1]["staged_effects"] = staged
+        parts = _stored_parts(item.get("parts"), text)
+        if parts:
+            result[-1]["parts"] = parts
     return result
 
 
@@ -133,6 +158,11 @@ def _delivery(value: object) -> PendingDelivery | None:
 
 def _serialized_size(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _budget_view(component: PendingContextComponent) -> dict[str, Any]:
+    # ``parts`` repeats ``text`` with labels; budgets count the text once.
+    return {key: value for key, value in component.items() if key != "parts"}
 
 
 def _next_context_id(components: list[PendingContextComponent], envelope_id: str) -> str:
@@ -154,8 +184,17 @@ def _briefing_component_id(event: HookEvent, session_id: str) -> str:
     return f"turn:{envelope_id}"
 
 
-def _component_text(components: Sequence[PendingContextComponent]) -> str | None:
-    return "\n\n".join(component["text"] for component in components if component["text"]) or None
+def _component_parts(components: Sequence[PendingContextComponent]) -> list[ContextPart]:
+    parts: list[ContextPart] = []
+    for component in components:
+        if component["text"]:
+            parts.extend(component.get("parts") or [(component["id"], component["text"])])
+    return parts
+
+
+def _keep_first_directive(text: str, directive: str, keep: bool) -> str:
+    before, _, after = text.partition(directive)
+    return before + (directive if keep else "") + after.replace(directive, "")
 
 
 def _inbox_path(envelope_id: str) -> Path:
@@ -218,9 +257,10 @@ def stash_response(
     """Move passive Grok response text into its durable pending buffers."""
     if event.source != SessionSource.GROK:
         return
-    text = _response_text(response)
+    parts = _response_parts(response)
+    text = CONTEXT_SEPARATOR.join(part for _, part in parts)
     session_id = _platform_session_id(event)
-    if text is None or session_id is None:
+    if not text or session_id is None:
         return
 
     variable_manager = SessionVariableManager(handler._session_manager.db)
@@ -257,6 +297,7 @@ def stash_response(
             "id": component_id,
             "text": text,
             "message_ids": [],
+            "parts": parts,
         }
         if staged:
             component["staged_effects"] = staged
@@ -270,7 +311,7 @@ def stash_response(
                 return None, False
             components.append(component)
         else:
-            if _serialized_size(component) > TURN_CONTEXT_MAX_COMPONENT_BYTES:
+            if _serialized_size(_budget_view(component)) > TURN_CONTEXT_MAX_COMPONENT_BYTES:
                 logger.debug(
                     "Dropping oversized Grok turn-context component: session=%s id=%s",
                     session_id,
@@ -280,7 +321,8 @@ def stash_response(
             components.append(component)
             while (
                 len(components) > TURN_CONTEXT_MAX_COMPONENTS
-                or _serialized_size(components) > TURN_CONTEXT_MAX_TOTAL_BYTES
+                or _serialized_size([_budget_view(item) for item in components])
+                > TURN_CONTEXT_MAX_TOTAL_BYTES
             ):
                 dropped = components.pop(0)
                 logger.debug(
@@ -439,10 +481,19 @@ def _flush_plan(
             continue
         if directive not in component["text"]:
             continue
-        before, _, after = component["text"].partition(directive)
-        component["text"] = (
-            before + (directive if needs_plan else "") + after.replace(directive, "")
-        )
+        if "parts" in component:
+            keep = needs_plan
+            rewritten: list[ContextPart] = []
+            for label, part in component["parts"]:
+                if directive in part:
+                    part = _keep_first_directive(part, directive, keep)
+                    keep = False
+                if part.strip():
+                    rewritten.append((label, part))
+            component["parts"] = rewritten
+            component["text"] = CONTEXT_SEPARATOR.join(part for _, part in rewritten)
+        else:
+            component["text"] = _keep_first_directive(component["text"], directive, needs_plan)
         if not needs_plan:
             updates = dict(updates)
             updates.pop("plan_skill_directive_delivered")
@@ -494,8 +545,7 @@ def _flush_plan(
         return (
             _FlushPlan(
                 "pretool_context",
-                briefing=_component_text(briefing),
-                turn_context=_component_text(turn_context),
+                context_parts=_component_parts([*briefing, *turn_context]),
                 staged_effects=staged,
             ),
             True,
@@ -513,8 +563,7 @@ def _flush_plan(
         return (
             _FlushPlan(
                 "stop_briefing",
-                briefing=_component_text(briefing),
-                turn_context=_component_text(turn_context),
+                context_parts=_component_parts([*briefing, *turn_context]),
                 staged_effects=staged,
             ),
             True,
@@ -524,7 +573,7 @@ def _flush_plan(
         return None, changed
     variables[TURN_CONTEXT_VARIABLE] = []
     if real_gate:
-        return _FlushPlan("stop_turn", turn_context=_component_text(turn_context)), True
+        return _FlushPlan("stop_turn", context_parts=_component_parts(turn_context)), True
     return _FlushPlan("drop"), True
 
 
@@ -559,12 +608,8 @@ def flush_response(
         )
         record_worker_staging(plan.staged_effects)
 
-    if plan.kind in {"pretool_context", "stop_briefing"}:
-        response.context = "\n\n".join(
-            part for part in (plan.briefing, plan.turn_context) if isinstance(part, str) and part
-        )
-        return
-    response.context = plan.turn_context
+    response.context = None
+    response.add_context(*plan.context_parts)
 
 
 def process_response(

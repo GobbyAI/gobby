@@ -18,6 +18,7 @@ from gobby.hooks.events import SessionSource
 from gobby.servers.chat_session_helpers import (
     _PLAN_FILE_PATTERN,
     _bound_resp_context,
+    _resp_context_parts,
     _response_to_compact_output,
     _response_to_post_tool_output,
     _response_to_pre_tool_output,
@@ -95,31 +96,18 @@ class ChatSessionHooksMixin:
                             )
 
                 data = {"prompt": inp.get("prompt", ""), "source": "claude"}
-                resp = await cb(data)
+                raw_resp = await cb(data)
+                resp = raw_resp if isinstance(raw_resp, dict) else None
                 persist = self._additional_context_persist()
-                output = _response_to_prompt_output(
-                    resp if isinstance(resp, dict) else None, persist=persist
-                )
-
-                context_parts: list[tuple[str, str]] = []
-
-                hook_specific = output.get("hookSpecificOutput")
-                if hook_specific and isinstance(hook_specific, dict):
-                    existing = hook_specific.get("additionalContext")
-                    if existing:
-                        context_parts.append(("hook_context", str(existing)))
+                output = _response_to_prompt_output(resp, persist=persist)
 
                 plan_ctx = getattr(self, "_consume_plan_mode_context", lambda: None)()
                 if plan_ctx:
-                    context_parts.append(("plan_mode", str(plan_ctx)))
-
-                if context_parts:
                     output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
                         hookEventName="UserPromptSubmit",
                         additionalContext=_bound_resp_context(
-                            resp if isinstance(resp, dict) else None,
-                            "\n\n".join(part for _, part in context_parts).strip(),
-                            contributor_sizes={label: len(part) for label, part in context_parts},
+                            resp,
+                            [*_resp_context_parts(resp), ("plan_mode", str(plan_ctx))],
                             persist=persist,
                         ),
                     )
@@ -139,20 +127,11 @@ class ChatSessionHooksMixin:
                             max_total_chars=history_budget
                         )
                         if history_ctx:
-                            combined = (
-                                (existing + "\n\n" + history_ctx).strip()
-                                if existing
-                                else history_ctx
-                            )
                             output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
                                 hookEventName="UserPromptSubmit",
                                 additionalContext=_bound_resp_context(
-                                    resp if isinstance(resp, dict) else None,
-                                    combined,
-                                    contributor_sizes={
-                                        "existing": len(existing),
-                                        "history": len(history_ctx),
-                                    },
+                                    resp,
+                                    [("existing", existing), ("history", history_ctx)],
                                     persist=persist,
                                 ),
                             )

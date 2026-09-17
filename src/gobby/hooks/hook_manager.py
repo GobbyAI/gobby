@@ -24,6 +24,7 @@ from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import (
+    ContextPart,
     HookEvent,
     HookEventType,
     HookIngressError,
@@ -589,7 +590,10 @@ class HookManager(HookManagerDispatchMixin):
         return self._complete_response(event, response, workflow_context)
 
     async def _complete_async_handler(
-        self, event: HookEvent, response: Awaitable[HookResponse], workflow_context: str | None
+        self,
+        event: HookEvent,
+        response: Awaitable[HookResponse],
+        workflow_context: list[ContextPart] | None,
     ) -> HookResponse:
         try:
             resolved = await response
@@ -602,7 +606,7 @@ class HookManager(HookManagerDispatchMixin):
         self,
         event: HookEvent,
         response: HookResponse,
-        workflow_context: str | None,
+        workflow_context: list[ContextPart] | None,
         *,
         preserve_original: bool = False,
         suppress_webhooks: bool = False,
@@ -610,11 +614,8 @@ class HookManager(HookManagerDispatchMixin):
         """Enrich and notify observers, preserving terminal block responses."""
         startup_context = event.metadata.pop("_startup_context", None)
         startup_system_message = event.metadata.pop("_startup_system_message", None)
-        if isinstance(startup_context, str) and startup_context:
-            if response.context:
-                response.context = f"{startup_context}\n\n{response.context}"
-            else:
-                response.context = startup_context
+        if isinstance(startup_context, list):
+            response.add_context(*startup_context, prepend=True)
         if (
             response.system_message is None
             and isinstance(startup_system_message, str)
@@ -763,7 +764,9 @@ class HookManager(HookManagerDispatchMixin):
             mcp_calls,
         )
 
-    def evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
+    def evaluate_workflow_rules(
+        self, event: HookEvent
+    ) -> tuple[list[ContextPart] | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._evaluate_workflow_rules(event)
 
@@ -771,7 +774,7 @@ class HookManager(HookManagerDispatchMixin):
         self,
         event: HookEvent,
         blocking_deadline: BlockingEffectDeadline | None = None,
-    ) -> tuple[str | None, HookResponse | None]:
+    ) -> tuple[list[ContextPart] | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._create_rule_evaluator(blocking_deadline).evaluate(event)
 

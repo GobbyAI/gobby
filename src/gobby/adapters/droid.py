@@ -284,8 +284,7 @@ class DroidAdapter(BaseAdapter):
         if response.system_message and session_start_hook:
             parts.append(("system_message", response.system_message))
 
-        if response.context:
-            parts.append(("response.context", response.context))
+        parts.extend(response.context_contributors())
 
         if response.metadata:
             context_lines = build_first_hook_session_metadata_lines(
@@ -302,11 +301,10 @@ class DroidAdapter(BaseAdapter):
             return None
 
         return truncate_context_for_adapter(
-            "\n\n".join(part for _, part in parts),
+            parts,
             provider=self.source,
             hook_type=hook_type,
             destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-            contributor_sizes={label: len(part) for label, part in parts},
             event_logger=logger,
             **persist_kwargs_from_hook_response(response, self._hook_manager),
         )
@@ -314,7 +312,6 @@ class DroidAdapter(BaseAdapter):
     def _deny_reason_with_context(
         self,
         response: HookResponse,
-        context: str,
         reason: str | None,
         *,
         hook_type: str | None,
@@ -329,11 +326,10 @@ class DroidAdapter(BaseAdapter):
             event_logger=logger,
         )
         bounded = truncate_context_for_adapter(
-            context,
+            response.context_contributors(),
             provider=self.source,
             hook_type=hook_type,
             destination_channel="permissionDecisionReason",
-            contributor_sizes={"response.context": len(context)},
             event_logger=logger,
             **persist_kwargs_from_hook_response(response, self._hook_manager),
         )
@@ -415,7 +411,7 @@ class DroidAdapter(BaseAdapter):
                         and not additional_context
                     ):
                         decision_reason = self._deny_reason_with_context(
-                            response, response.context, normalized_reason, hook_type=hook_type
+                            response, normalized_reason, hook_type=hook_type
                         )
                     if decision_reason:
                         hook_output["permissionDecisionReason"] = decision_reason

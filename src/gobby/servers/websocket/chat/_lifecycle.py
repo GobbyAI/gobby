@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.events import (
+    ContextPart,
     HookEvent,
     HookEventType,
     HookResponse,
@@ -272,6 +273,7 @@ class ChatLifecycleMixin:
                 return {
                     "decision": response.decision,
                     "context": response.context,
+                    "context_parts": response.context_contributors(),
                     "reason": response.reason,
                     "system_message": response.system_message,
                 }
@@ -283,7 +285,7 @@ class ChatLifecycleMixin:
 
             # Dispatch mcp_call effects from rule engine (parity with CLI path)
             mcp_calls = (response.metadata or {}).get("mcp_calls", [])
-            mcp_context: list[str] = []
+            mcp_context: list[ContextPart] = []
             if mcp_calls:
                 dispatch_results = await self._dispatch_mcp_calls(mcp_calls, event)
                 from gobby.hooks.dispatchers.mcp import format_discovery_result
@@ -299,6 +301,7 @@ class ChatLifecycleMixin:
                     return {
                         "decision": mcp_block.decision,
                         "context": mcp_block.context,
+                        "context_parts": mcp_block.context_contributors(),
                         "reason": mcp_block.reason,
                         "system_message": mcp_block.system_message,
                     }
@@ -307,20 +310,9 @@ class ChatLifecycleMixin:
             # This is where skill interception lives (handle_before_agent)
             handler_context = await self._dispatch_event_handlers(event_type, event)
 
-            # Merge handler context with rule engine context
-            merged_context = response.context
-            if mcp_context:
-                captured_context = "\n\n".join(mcp_context)
-                merged_context = (
-                    f"{merged_context}\n\n{captured_context}"
-                    if merged_context
-                    else captured_context
-                )
-            if handler_context:
-                if merged_context:
-                    merged_context = merged_context + "\n\n" + handler_context
-                else:
-                    merged_context = handler_context
+            # Merge rule engine, captured MCP, and handler context as labeled parts
+            merged = HookResponse()
+            merged.add_context(*response.context_contributors(), *mcp_context, *handler_context)
 
             # --- Inter-session message piggyback (parity with CLI path D6) ---
             pending_message_ids: list[str] = []
@@ -333,7 +325,6 @@ class ChatLifecycleMixin:
             # Build result dict
             result: dict[str, Any] = {
                 "decision": response.decision,
-                "context": merged_context,
                 "reason": response.reason,
                 "system_message": response.system_message,
             }
@@ -352,7 +343,6 @@ class ChatLifecycleMixin:
                 and event_type not in (HookEventType.STOP, HookEventType.SUBAGENT_STOP)
             ):
                 session_ref = session.session_ref or db_session_id
-                ctx = result.get("context")
                 if event_type == HookEventType.PRE_COMPACT:
                     # Richer context for compaction survival
                     from gobby.servers.chat_session_helpers import build_compaction_context
@@ -365,13 +355,12 @@ class ChatLifecycleMixin:
                     )
                 else:
                     enrichment = f"Gobby Session ID: {session_ref}"
-                result["context"] = f"{enrichment}\n\n{ctx}" if ctx else enrichment
+                merged.add_context(("session_context", enrichment), prepend=True)
 
             if msg_context:
-                existing_context = result.get("context")
-                result["context"] = (
-                    f"{msg_context}\n\n{existing_context}" if existing_context else msg_context
-                )
+                merged.add_context(("pending_messages", msg_context), prepend=True)
+            result["context"] = merged.context
+            result["context_parts"] = merged.context_parts
 
             # --- Event broadcasting for audit trail (parity with CLI path D2) ---
             hook_broadcaster = getattr(self, "hook_broadcaster", None)
@@ -514,27 +503,27 @@ class ChatLifecycleMixin:
         self,
         event_type: HookEventType,
         event: HookEvent,
-    ) -> str | None:
-        """Dispatch to CLI event handlers and return their context."""
+    ) -> list[ContextPart]:
+        """Dispatch to CLI event handlers and return their labeled context."""
         event_handlers = getattr(self, "event_handlers", None)
         if not event_handlers:
-            return None
+            return []
 
         handler = event_handlers.get_handler(event_type)
         if not handler:
-            return None
+            return []
 
         try:
             handler_response: HookResponse = await run_db(self, handler, event)
-            if handler_response and handler_response.context:
-                return handler_response.context
+            if handler_response:
+                return handler_response.context_contributors()
         except Exception as exc:
             logger.exception(
                 "_fire_lifecycle: event handler %s failed: %s",
                 event_type.name,
                 exc,
             )
-        return None
+        return []
 
     async def _dispatch_non_blocking_webhooks(self, event: HookEvent) -> None:
         """Dispatch non-blocking webhooks (fire-and-forget).

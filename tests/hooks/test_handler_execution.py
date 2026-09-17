@@ -97,7 +97,7 @@ class TestReturnValues:
             is None
         )
 
-        assert event.metadata["_startup_context"] is None
+        assert event.metadata["_startup_context"] == []
         system_message = event.metadata["_startup_system_message"]
         assert system_message is not None
         assert "Gobby Session ID" in system_message

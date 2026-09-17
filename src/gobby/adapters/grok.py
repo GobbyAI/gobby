@@ -200,17 +200,15 @@ class GrokAdapter(ACPHookAdapter):
     def _stop_keep_working_context(
         self, response: HookResponse, hook_type: str | None, canonical_hook: str
     ) -> dict[str, Any]:
-        context = response.context or ""
         return {
             "continue": True,
             "hookSpecificOutput": {
                 "hookEventName": ("Stop" if canonical_hook == "stop" else "SubagentStop"),
                 "additionalContext": truncate_context_for_adapter(
-                    context,
+                    response.context_contributors(),
                     provider=self.source,
                     hook_type=hook_type,
                     destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-                    contributor_sizes={"response.context": len(context)},
                     event_logger=self._event_logger(),
                     **persist_kwargs_from_hook_response(response, self._hook_manager),
                 ),

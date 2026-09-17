@@ -21,6 +21,7 @@ pytestmark = pytest.mark.unit
 # Session id columns are native uuid in PostgreSQL; synthetic ids like
 # SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+BUILD_COORDINATION_REFERENCE = "gobby:references/build/coordination.md"
 
 
 @pytest.fixture
@@ -121,14 +122,14 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
         assert body.event.value == "before_tool"
         assert body.when is not None
-        assert "not skill_loaded('build-coordinator')" in body.when
+        assert "not skill_loaded('gobby:references/build/coordination.md')" in body.when
         assert "source != 'pipeline'" in body.when
         assert "is_spawned_agent" in body.when
         assert "session_type" in body.when
         assert "is_gobby_build_command" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == _skill_fetch_template("build-coordinator")
+        assert body.effects[0].reason == _skill_fetch_template(BUILD_COORDINATION_REFERENCE)
 
     @pytest.mark.asyncio
     async def test_blocks_tmux_agent_gobby_build_before_skill_load(
@@ -153,7 +154,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.decision == "block"
         assert response.reason is not None
         assert "require-build-coordinator-for-gobby-build" in response.reason
-        assert skill_fetch_directive("build-coordinator") in response.reason
+        assert skill_fetch_directive(BUILD_COORDINATION_REFERENCE) in response.reason
 
     @pytest.mark.asyncio
     async def test_normalized_bash_gobby_build_triggers_build_coordinator_rule(
@@ -215,7 +216,10 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         response = await RuleEngine(temp_db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"is_spawned_agent": True, "loaded_skills": ["build-coordinator"]},
+            variables={
+                "is_spawned_agent": True,
+                "loaded_skill_references": [BUILD_COORDINATION_REFERENCE],
+            },
         )
 
         assert response.decision == "allow"

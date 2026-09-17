@@ -19,7 +19,10 @@ from gobby.adapters.base import (
     system_message_has_session_banner,
 )
 from gobby.adapters.capabilities import ContextChannel
-from gobby.adapters.degradation import truncate_context_for_adapter
+from gobby.adapters.degradation import (
+    persist_kwargs_from_hook_response,
+    truncate_context_for_adapter,
+)
 from gobby.hooks.events import (
     HookEvent,
     HookEventType,
@@ -173,11 +176,16 @@ class AgyAdapter(ACPHookAdapter):
             start_system_message = None
         merged = replace(
             original_response,
-            context=_join_response_text(start_response.context, original_response.context),
+            context=None,
+            context_parts=[],
             system_message=_join_response_text(
                 start_system_message,
                 original_response.system_message,
             ),
+        )
+        merged.add_context(
+            *start_response.context_contributors(),
+            *original_response.context_contributors(),
         )
         return self.translate_from_hook_response(merged, hook_type="PreInvocation")
 
@@ -204,15 +212,14 @@ class AgyAdapter(ACPHookAdapter):
 
         if event_name in {"PreInvocation", "PostInvocation"}:
             steps: list[dict[str, str]] = []
-            context = response.context
-            if context:
+            if response.context:
                 context = truncate_context_for_adapter(
-                    context,
+                    response.context_contributors(),
                     provider=self.source,
                     hook_type=hook_type,
                     destination_channel=ContextChannel.INJECT_STEPS,
-                    contributor_sizes={"response.context": len(context)},
                     event_logger=logger,
+                    **persist_kwargs_from_hook_response(response, self._hook_manager),
                 )
                 steps.append({"ephemeralMessage": context})
             if response.system_message:

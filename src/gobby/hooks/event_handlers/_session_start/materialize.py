@@ -7,7 +7,7 @@ from typing import Any
 
 import psycopg
 
-from gobby.hooks.events import HookEvent
+from gobby.hooks.events import ContextPart, HookEvent
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
     hook_cwd,
@@ -268,7 +268,7 @@ def activate_materialized_session(
     project_id: str | None = None,
     transcript_path: str | None = None,
     terminal_context: dict[str, Any] | None = None,
-) -> list[str]:
+) -> list[ContextPart]:
     """Activate agents, seeds, code index, and transcript processing.
 
     This is the behavior-preserving SessionStart activation body. The return
@@ -431,7 +431,7 @@ def activate_materialized_session(
         except Exception as exc:
             handler.logger.warning("Failed to register session with message processor: %s", exc)
 
-    additional_context: list[str] = []
+    additional_context: list[ContextPart] = []
     if context_decision.mode == "full":
         _reset_agent_context_injection(handler, session_id)
 
@@ -447,7 +447,7 @@ def activate_materialized_session(
             compact=context_decision.mode == "live",
         )
         if claimed_ctx:
-            additional_context.append(claimed_ctx)
+            additional_context.append(("claimed_tasks", claimed_ctx))
 
     if event.task_id and handler._session_manager:
         task_title = event.metadata.get("_task_title", "Unknown Task")
@@ -464,8 +464,12 @@ def activate_materialized_session(
 
     if event.task_id:
         task_title = event.metadata.get("_task_title", "Unknown Task")
-        additional_context.append("\n## Active Task Context\n")
-        additional_context.append(f"You are working on task: {task_title} ({event.task_id})")
+        additional_context.append(
+            (
+                "active_task",
+                f"## Active Task Context\n\nYou are working on task: {task_title} ({event.task_id})",
+            )
+        )
 
     if session_obj:
         _consume_pending_handoff_compact_continuation(

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
-from gobby.hooks.events import HookResponse
+from gobby.hooks.events import ContextPart, HookResponse
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
     get_claimed_session_id,
@@ -201,7 +201,7 @@ def compose_session_response(
     machine_id: str,
     project_id: str | None = None,
     task_id: str | None = None,
-    additional_context: list[str] | None = None,
+    additional_context: list[ContextPart] | None = None,
     is_pre_created: bool = False,
     terminal_context: dict[str, Any] | None = None,
 ) -> HookResponse:
@@ -219,7 +219,7 @@ def compose_session_response(
         machine_id: Machine ID
         project_id: Project ID
         task_id: Task ID if any
-        additional_context: Additional context strings to append (e.g., task/skill context)
+        additional_context: Labeled context parts to append (e.g., claimed/active task)
         is_pre_created: Whether this is a pre-created session
         terminal_context: Terminal context dict to add to metadata
 
@@ -227,9 +227,9 @@ def compose_session_response(
         HookResponse with system_message, context, and metadata
     """
     # Build context_parts
-    context_parts: list[str] = []
+    context_parts: list[ContextPart] = []
     if parent_session_id:
-        context_parts.append(f"Parent session: {parent_session_id}")
+        context_parts.append(("parent_session", f"Parent session: {parent_session_id}"))
     if additional_context:
         context_parts.extend(additional_context)
 
@@ -266,13 +266,11 @@ def compose_session_response(
             if value is not None:
                 metadata[f"terminal_{key}"] = value
 
-    final_context = "\n".join(context_parts) if context_parts else None
-
     response = HookResponse(
         decision="allow",
-        context=final_context,
         system_message=system_message,
         metadata=metadata,
     )
+    response.add_context(*context_parts)
     handler._apply_debug_echo(response)
     return response

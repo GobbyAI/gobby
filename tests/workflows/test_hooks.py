@@ -1800,6 +1800,13 @@ class TestCodexToolContextRehydration:
     async def test_qwen_get_skill_output_envelope_tracks_loaded_skill(self) -> None:
         """Qwen get_skill results wrapped in output JSON still update loaded_skills."""
         handler, rule_engine = self._make_handler()
+        completed_skill_result = {
+            "result": {
+                "success": True,
+                "skill": {"name": "brevity", "content": "Be brief."},
+                "page": {"complete": True, "next_cursor": None},
+            }
+        }
 
         before_event = self._make_event(
             HookEventType.BEFORE_TOOL,
@@ -1817,11 +1824,7 @@ class TestCodexToolContextRehydration:
             data={
                 "tool_use_id": "qwen-skill-1",
                 "tool_response": {
-                    "output": (
-                        '{"result": {"success": true, "skill": {"name": "brevity", '
-                        '"content": "Be brief."}, "page": {"complete": true, '
-                        '"next_cursor": null}}}'
-                    ),
+                    "output": json.dumps(completed_skill_result),
                 },
             },
             source=SessionSource.QWEN,
@@ -1830,13 +1833,7 @@ class TestCodexToolContextRehydration:
 
         assert after_event.data["mcp_server"] == "gobby-skills"
         assert after_event.data["mcp_tool"] == "get_skill"
-        assert after_event.data["tool_output"] == {
-            "result": {
-                "success": True,
-                "skill": {"name": "brevity", "content": "Be brief."},
-                "page": {"complete": True, "next_cursor": None},
-            }
-        }
+        assert after_event.data["tool_output"] == completed_skill_result
         variables = rule_engine.evaluate.await_args_list[-1].kwargs["variables"]
         assert variables["loaded_skills"] == ["brevity"]
         assert variables["mcp_calls"]["gobby-skills"] == ["get_skill"]

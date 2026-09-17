@@ -16,7 +16,13 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    ContextPart,
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+)
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
 from gobby.storage.hub.protocol import HubDatabase
@@ -2696,7 +2702,7 @@ def test_first_pre_tool_use_without_ups_registers_session(
         patch.object(
             manager._event_handlers,
             "_activate_materialized_session",
-            return_value=["claimed-task-context"],
+            return_value=[("claimed_tasks", "claimed-task-context")],
         ),
         patch.object(
             manager._event_handlers,
@@ -2740,10 +2746,10 @@ def test_copied_session_start_uses_deferred_identity_schema(
     def evaluate(
         copied_or_live: HookEvent,
         _deadline: BlockingEffectDeadline,
-    ) -> tuple[str | None, None]:
+    ) -> tuple[list[ContextPart] | None, None]:
         evaluated.append(copied_or_live)
         if copied_or_live.metadata.get("_synthetic_session_start"):
-            return "copied-rule-context", None
+            return [("rule:copied", "copied-rule-context")], None
         return None, None
 
     with (
@@ -2757,7 +2763,7 @@ def test_copied_session_start_uses_deferred_identity_schema(
         patch.object(
             manager._event_handlers,
             "_activate_materialized_session",
-            return_value=["claimed-task-context"],
+            return_value=[("claimed_tasks", "claimed-task-context")],
         ),
         patch.object(
             manager._event_handlers,
@@ -2783,9 +2789,12 @@ def test_copied_session_start_uses_deferred_identity_schema(
         "_synthetic_session_start": True,
     }
     assert event.event_type is HookEventType.BEFORE_AGENT
-    context = response.context or ""
-    assert context.index("claimed-task-context") < context.index("copied-rule-context")
-    assert context.index("copied-rule-context") < context.index("live-handler-context")
+    expected = [
+        ("claimed_tasks", "claimed-task-context"),
+        ("rule:copied", "copied-rule-context"),
+        ("response.context", "live-handler-context"),
+    ]
+    assert [part for part in response.context_contributors() if part in expected] == expected
     assert any(
         call.args[0].metadata.get("_synthetic_session_start") is True
         for call in dispatch.call_args_list
@@ -2991,16 +3000,16 @@ def test_first_activity_startup_context_provider_matrix(
     def evaluate(
         copied_or_live: HookEvent,
         _deadline: BlockingEffectDeadline,
-    ) -> tuple[str | None, None]:
+    ) -> tuple[list[ContextPart] | None, None]:
         if copied_or_live.metadata.get("_synthetic_session_start"):
-            return "copied-rule-context", None
+            return [("rule:copied", "copied-rule-context")], None
         return None, None
 
     with (
         patch.object(
             manager._event_handlers,
             "_activate_materialized_session",
-            return_value=["claimed-task-context"],
+            return_value=[("claimed_tasks", "claimed-task-context")],
         ),
         patch.object(
             manager._event_handlers,

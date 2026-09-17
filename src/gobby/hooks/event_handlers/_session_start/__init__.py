@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import ContextPart, HookEvent, HookResponse
 from gobby.sessions.compact_continuation import consume_and_schedule_handoff_compact_continuation
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 
@@ -92,7 +92,7 @@ class SessionStartMixin(EventHandlersBase):
         project_id: str | None = None,
         transcript_path: str | None = None,
         terminal_context: dict[str, Any] | None = None,
-    ) -> list[str]:
+    ) -> list[ContextPart]:
         """Activate a registered session and build its startup context."""
         from .materialize import activate_materialized_session
 
@@ -216,7 +216,7 @@ class SessionStartMixin(EventHandlersBase):
         machine_id: str,
         project_id: str | None = None,
         task_id: str | None = None,
-        additional_context: list[str] | None = None,
+        additional_context: list[ContextPart] | None = None,
         is_pre_created: bool = False,
         terminal_context: dict[str, Any] | None = None,
     ) -> HookResponse:

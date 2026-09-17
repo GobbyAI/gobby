@@ -1029,6 +1029,48 @@ class TestTranslateFromHookResponse:
         assert "omitted contributors=[response.context]" in additional_context
         assert len(additional_context) <= ADDITIONAL_CONTEXT_LIMIT
 
+    def test_session_start_context_ships_as_separate_contributors(self) -> None:
+        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+
+        adapter = ClaudeCodeAdapter()
+        banner = "Gobby Session ID: #6273 (sess-live-123)"
+        parent = "Parent session: parent-123"
+        claimed = "## Claimed Tasks\n- #42 [in_progress] Fix auth bug"
+        response = HookResponse(decision="allow", system_message=banner)
+        response.add_context(
+            ("parent_session", parent),
+            ("claimed_tasks", claimed),
+            ("rule:oversized", "r" * ADDITIONAL_CONTEXT_LIMIT),
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="session-start")
+
+        assert result["hookSpecificOutput"]["additionalContext"] == "\n\n".join(
+            [banner, parent, claimed, "omitted contributors=[rule:oversized]"]
+        )
+
+    def test_spawned_agent_first_prompt_12169_drops_only_agent_prompt(self) -> None:
+        # Measured composition of the dropped plan-adversary-taskless first prompt:
+        # agent prompt 10580 + five rule-emitted parts 1579 + 5 separators = 12169.
+        adapter = ClaudeCodeAdapter()
+        rule_parts = [
+            ("skill:gobby:references/skills/loading.md", "l" * 496),
+            ("skill:gobby:references/memory/overview.md", "m" * 497),
+            ("skill:brevity", "b" * 134),
+            ("skill:restraint", "r" * 136),
+            ("mcp:gobby-skills/list_hubs", "h" * 316),
+        ]
+        response = HookResponse(decision="allow")
+        response.add_context(*rule_parts)
+        response.add_context(("agent_prompt", "p" * 10_580), prepend=True)
+        assert len(response.context or "") == 12_169
+
+        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+
+        assert result["hookSpecificOutput"]["additionalContext"] == "\n\n".join(
+            [*(text for _, text in rule_parts), "omitted contributors=[agent_prompt]"]
+        )
+
     def test_context_injection_session_start(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow", context="Welcome context")

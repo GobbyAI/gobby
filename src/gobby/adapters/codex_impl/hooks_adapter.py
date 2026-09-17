@@ -35,18 +35,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CONTEXT_SEPARATOR = "\n\n"
-
-
-def _join_context_parts(
-    context_parts: list[tuple[str, str]],
-) -> tuple[str, dict[str, int]]:
-    """Join whole context parts. Overflow is handled by the shared converter."""
-    return (
-        _CONTEXT_SEPARATOR.join(part for _, part in context_parts),
-        {label: len(part) for label, part in context_parts},
-    )
-
 
 class CodexHooksAdapter(BaseAdapter):
     """Adapter for Codex CLI hooks.json lifecycle events.
@@ -189,11 +177,10 @@ class CodexHooksAdapter(BaseAdapter):
                         normalized_reason
                     )
 
-                system_parts: list[str] = []
+                system_parts: list[tuple[str, str]] = []
                 if response.system_message:
-                    system_parts.append(response.system_message)
-                if response.context:
-                    system_parts.append(response.context)
+                    system_parts.append(("system_message", response.system_message))
+                system_parts.extend(response.context_contributors())
                 if system_parts:
                     if response.context:
                         record_adapter_degradation(
@@ -205,14 +192,10 @@ class CodexHooksAdapter(BaseAdapter):
                             event_logger=logger,
                         )
                     deny_result["systemMessage"] = truncate_context_for_adapter(
-                        "\n\n".join(system_parts),
+                        system_parts,
                         provider=self.source,
                         hook_type=hook_type,
                         destination_channel=ContextChannel.SYSTEM_MESSAGE,
-                        contributor_sizes={
-                            f"system_part_{idx}": len(part)
-                            for idx, part in enumerate(system_parts, start=1)
-                        },
                         event_logger=logger,
                         **persist_kwargs_from_hook_response(response, self._hook_manager),
                     )
@@ -298,18 +281,15 @@ class CodexHooksAdapter(BaseAdapter):
 
         # Workflow-injected context (inject_context action). This can be large,
         # so place it after session-critical context before applying the budget.
-        if response.context:
-            context_parts.append(("response.context", response.context))
+        context_parts.extend(response.context_contributors())
 
         # Build hookSpecificOutput or systemMessage based on event type.
         if context_parts:
-            joined_context, contributor_sizes = _join_context_parts(context_parts)
             combined_context = truncate_context_for_adapter(
-                joined_context,
+                context_parts,
                 provider=self.source,
                 hook_type=hook_type,
                 destination_channel=context_channel,
-                contributor_sizes=contributor_sizes,
                 event_logger=logger,
                 **persist_kwargs_from_hook_response(response, self._hook_manager),
             )

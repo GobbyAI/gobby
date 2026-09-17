@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, truncate_additional_context
 from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
@@ -149,3 +150,19 @@ def test_rejection_template_carries_location_and_repairs() -> None:
     prose = " ".join(instructions.split())
     assert "Repair class vs design class" in prose
     assert "Never apply a repair yourself" in prose
+
+
+def test_agent_prompt_ships_whole_with_first_prompt_parts() -> None:
+    # Rule-emitted first-prompt parts measured in the 12169-char drop (#22481).
+    first_prompt_parts = [
+        ("skill:gobby:references/skills/loading.md", "l" * 496),
+        ("skill:gobby:references/memory/overview.md", "m" * 497),
+        ("skill:brevity", "b" * 134),
+        ("skill:restraint", "r" * 136),
+        ("mcp:gobby-skills/list_hubs", "h" * 316),
+    ]
+    parts = [("agent_prompt", _agent()["prompts"]["agent"]), *first_prompt_parts]
+    whole = "\n\n".join(text for _, text in parts)
+
+    assert len(whole) <= ADDITIONAL_CONTEXT_LIMIT
+    assert truncate_additional_context(parts) == whole
