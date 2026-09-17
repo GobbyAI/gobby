@@ -467,6 +467,9 @@ async def _evaluate_close(
                     "that explains why the listed paths belong in this task."
                 ),
                 details=scope.details(),
+                # Concise responses carry no checklist, so the scope inventory rides
+                # here; a diagnostic response drops this copy because the gate
+                # details already carry the identical section.
                 extra=scope.details(),
             )
         else:
@@ -578,13 +581,10 @@ async def _evaluate_close(
             ),
             item=10,
         )
-    evaluation.gates.append(command_gate)
     evaluation.extra["validation_commands"] = command_gate.details
     if not command_gate.passed:
-        evaluation.error = "validation_command_required"
-        evaluation.message = command_gate.message
-        evaluation.action = command_gate.message
-        return evaluation
+        return evaluation.record_gate_failure(command_gate, error="validation_command_required")
+    evaluation.gates.append(command_gate)
 
     try:
         diff_text = await collect_commit_diff_text(commit_shas, cwd=repo_path)
@@ -761,18 +761,22 @@ async def _evaluate_close(
     evaluation.validation_reset_reason = llm_result.reset_reason
     evaluation.verdict = llm_result.extra.get("verdict")
     if not llm_result.can_close:
-        reasons = llm_result.extra.get("blocking_reasons")
-        message = (
-            str(reasons[0])
-            if isinstance(reasons, list) and reasons
-            else llm_result.message or "Criteria review did not pass."
-        )
+        extra = dict(llm_result.extra)
+        # The verdict's own reasons and actions become this gate's blockers; leaving
+        # them in extra would restate every one of them a second time in the response.
+        raw_reasons = extra.pop("blocking_reasons", None)
+        raw_actions = extra.pop("required_actions", None)
+        reasons = [str(reason) for reason in raw_reasons] if isinstance(raw_reasons, list) else None
+        actions = [str(action) for action in raw_actions] if isinstance(raw_actions, list) else None
+        message = reasons[0] if reasons else llm_result.message or "Criteria review did not pass."
         return evaluation.fail(
             13,
             "criteria_review",
             llm_result.error_type or "validation_failed",
             message,
-            extra=llm_result.extra,
+            reasons=reasons,
+            actions=actions,
+            extra=extra,
         )
     evaluation.pass_gate(13, "criteria_review", "Task-close criteria review passed.")
     evaluation.extra.update(llm_result.extra)

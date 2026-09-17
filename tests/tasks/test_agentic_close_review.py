@@ -338,8 +338,8 @@ def test_external_pending_payload_names_coordinator_owned_criteria() -> None:
 
 
 def test_terminal_payload_references_blockers_without_recopying_diagnostics() -> None:
-    """The wake contract carries blockers once, never the verdict or bulk sections."""
-    blocker = "Criterion 1 is unmet."
+    """The wake contract references blockers; it never re-carries bulk evidence."""
+    blocker = "validation_commands: Run `uv run pytest tests/close.py -q` clean."
     payload = build_terminal_review_payload(
         _review(status="running"),
         status="invalid",
@@ -352,22 +352,26 @@ def test_terminal_payload_references_blockers_without_recopying_diagnostics() ->
             "commit_shas": ["abc"],
             "message": blocker,
             "blocking_reasons": [blocker],
-            "required_actions": [blocker],
         },
         message=blocker,
     )
 
     assert payload["blocking_reasons"] == [blocker]
-    # A required_actions copy of the blocker list is dropped; the generic
-    # remediation default replaces it.
+    assert payload["commit_shas"] == ["abc"]
+    assert payload["outstanding_finding_count"] == 1
+    # The blocker already states its action, so the generic remediation stands in.
     assert payload["required_actions"] == [
         "Address every blocking reason, rerun focused validation, commit fixes, and call "
         "close_task again."
     ]
-    for key in ("verdict", "checklist", "transcript_evidence", "validation_commands",
-                "stable_facts"):
+    for key in (
+        "verdict",
+        "checklist",
+        "transcript_evidence",
+        "validation_commands",
+        "stable_facts",
+    ):
         assert key not in payload
-    assert payload["outstanding_finding_count"] == 1
     assert len(json.dumps(payload)) < 4_000
 
 

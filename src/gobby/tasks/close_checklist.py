@@ -19,6 +19,7 @@ from gobby.tasks.criterion_commands import (
     execution_details,
     expand_successful_and_segments,
     first_invalidating_edit,
+    fit_sentences,
 )
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
@@ -34,7 +35,9 @@ GateStatus = Literal["passed", "failed", "skipped"]
 
 _TEST_REQUIRED_CATEGORIES = frozenset({"code", "refactor", "test"})
 _AUTO_PASS_CATEGORIES = frozenset({"docs", "planning", "research", "manual"})
-_REVIEW_COMMAND_BUDGET = 48_000
+# Character budget shared by every bounded evidence section of one gate-10 record.
+REVIEW_COMMAND_BUDGET = 48_000
+_OBSERVED_MESSAGE_BUDGET = 1_000
 _REVIEW_COMMAND_LIMIT = 64
 _DIAGNOSTIC_COMMAND_LIMIT = 2_048
 _TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
@@ -131,7 +134,7 @@ def evaluate_validation_commands(
 
     records = excluded_validation_records(evidence, uncovered, tuple(changed_tests))
     gaps = gate.details.get("criterion_command_gaps", [])
-    for gap in gaps:
+    for gap in _unsatisfied_criterion_records(gate.details):
         for observation in gap.get("observed_forms", []):
             if not str(observation.get("reason", "")).startswith(SCOPE_MISMATCH_REASON):
                 continue
@@ -200,7 +203,13 @@ def evaluate_validation_commands(
             if observation is not None:
                 explanation = observed_message(_bound_diagnostic_record(observation))
                 messages.append(explanation.split("Run `", 1)[0].rstrip())
-        message = gate.message + " " + " ".join(messages)
+        kept, omitted, _ = fit_sentences(messages, _OBSERVED_MESSAGE_BUDGET)
+        if omitted:
+            kept.append(
+                f"{omitted} more observed commands are omitted here; criterion_commands "
+                "holds the full records."
+            )
+        message = " ".join([gate.message, *kept])
     elif gate.status == "failed" and nearest_observed is not None:
         message += " " + observed_message(nearest_observed)
     return replace(gate, message=message, details=details)
@@ -327,7 +336,16 @@ def _evaluate_validation_commands(
             else None
         ),
         "criterion_commands": criterion_commands,
-        "criterion_command_gaps": criterion_command_gaps,
+        # Compact references only: every gap's full record, including its observed
+        # forms, is the matching unsatisfied entry in ``criterion_commands``.
+        "criterion_command_gaps": [
+            {
+                "command": record["command"],
+                "core_command": record["core_command"],
+                "status": record["status"],
+            }
+            for record in criterion_command_gaps
+        ],
     }
 
     if criterion_command_gaps:
@@ -665,6 +683,63 @@ def _select_command_records(
     return [record for _, record in sorted(selected)], budget
 
 
+def _unsatisfied_criterion_records(details: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the full record behind each compact ``criterion_command_gaps`` entry."""
+    records = details.get("criterion_commands")
+    if not isinstance(records, list):
+        return []
+    return [record for record in records if not record.get("satisfied")]
+
+
+def _record_size(record: Mapping[str, Any]) -> int:
+    """Measure a record as the response serializes it, not in compact form."""
+    return len(json.dumps(record, default=str))
+
+
+def _bound_criterion_commands(
+    records: list[dict[str, Any]],
+    budget: int,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Fit the criterion verdicts into ``budget`` by shedding observed evidence only.
+
+    Every criterion keeps its own record, so a satisfied entry stays authoritative
+    and no required command silently disappears. Only the diagnostic
+    ``observed_forms`` list shrinks, oldest form first, and each record counts what
+    it dropped in ``omitted_observed_form_count``.
+    """
+    bounded: list[dict[str, Any]] = []
+    for record in records:
+        copied = dict(record)
+        forms = copied.get("observed_forms")
+        if isinstance(forms, list):
+            copied["observed_forms"] = list(forms)
+        bounded.append(copied)
+    sizes = [_record_size(record) for record in bounded]
+    shrinkable = {
+        index
+        for index, record in enumerate(bounded)
+        if isinstance(record.get("observed_forms"), list) and record["observed_forms"]
+    }
+    total = sum(sizes)
+    omitted = 0
+    while total > budget and shrinkable:
+        index = max(shrinkable, key=lambda key: (sizes[key], key))
+        record = bounded[index]
+        forms = record["observed_forms"]
+        forms.pop(0)
+        record["omitted_observed_form_count"] = (
+            int(record.get("omitted_observed_form_count") or 0) + 1
+        )
+        omitted += 1
+        if not forms:
+            del record["observed_forms"]
+            shrinkable.discard(index)
+        size = _record_size(record)
+        total += size - sizes[index]
+        sizes[index] = size
+    return bounded, omitted, max(0, budget - total)
+
+
 def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, Any]:
     """Bound presentation only; gate decisions retain all definitive category outcomes.
 
@@ -695,7 +770,14 @@ def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, A
         for entries in records.values()
         for record in entries
     }
-    remaining = _REVIEW_COMMAND_BUDGET
+    remaining = REVIEW_COMMAND_BUDGET
+    criterion_records = details.get("criterion_commands")
+    if isinstance(criterion_records, list):
+        details["criterion_commands"], omitted_forms, remaining = _bound_criterion_commands(
+            criterion_records, remaining
+        )
+        if omitted_forms:
+            details["omitted_criterion_observed_form_count"] = omitted_forms
     key_order = [
         key for key in ("excluded_runs", "latest_runs", "uncredited_runs") if key in records
     ]
@@ -865,6 +947,7 @@ def _degraded_message(evidence: TranscriptEvidence) -> str:
 
 
 __all__ = [
+    "REVIEW_COMMAND_BUDGET",
     "CloseChecklist",
     "CloseGateResult",
     "GateStatus",

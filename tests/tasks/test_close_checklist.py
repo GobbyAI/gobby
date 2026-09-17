@@ -841,7 +841,12 @@ def test_criterion_command_gaps_are_aggregated_with_causal_diagnostics() -> None
         (stale_command, "stale"),
         (missing_command, "missing"),
     ]
-    stale_execution = gaps[0]["execution"]
+    # Gaps are compact references; the execution record stays in criterion_commands.
+    assert all(set(gap) == {"command", "core_command", "status"} for gap in gaps)
+    unsatisfied = [
+        record for record in gate.details["criterion_commands"] if not record["satisfied"]
+    ]
+    stale_execution = unsatisfied[0]["execution"]
     assert stale_execution["order"] == 1
     assert stale_execution["completed_at"] == (BASE_TIME + timedelta(seconds=1)).isoformat()
     assert stale_execution["invalidating_edit"] == {
