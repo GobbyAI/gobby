@@ -262,10 +262,17 @@ stdin data and are left out when every pipeline stage is `cat`, `tee`, `git`,
 `gh`, or a bare redirection; a body reaching anything else (shells,
 interpreters, `ssh`, unknown tools), process-substituted onward, expanded
 through an unquoted delimiter with `$(` or a backtick, or never terminated
-stays attached to its segment. A
+stays attached to its segment. A command substitution is resolved by the same
+rules before it rejoins its segment, so a commit message built from
+`"$(cat <<'EOF' … EOF)"` drops its body while `"$(uv run pytest)"` keeps its
+invocation; a segment that runs what a substitution prints (`sh -c`, `eval`)
+keeps the body whole. A
 `command_not_pattern` exempts the command when it matches the executable text
 as a whole, so an environment exported in an earlier segment still counts.
-`mask_quoted: true` blanks quoted string data before either pattern runs.
+`mask_quoted: true` blanks quoted string data before `command_pattern` runs,
+which keeps a commit message or echo mentioning a command from reading as one.
+The exemption always reads the unmasked text, so a quoted target such as
+`pytest 'tests/x.py'` still exempts.
 
 Only one `block` effect is allowed per rule. With `rules.aggregate_blocks=false`,
 the first blocking rule ends evaluation. With aggregation enabled (the default),

@@ -125,6 +125,33 @@ class TestExecutableCommandSubjects:
         # A substitution span carrying a real invocation still selects a block.
         assert command_patterns_match("cat <<EOF\n`uv run pytest`\nEOF", pattern=PYTEST_PATTERN)
 
+    def test_substitution_heredoc_to_a_data_consumer_is_dropped(self) -> None:
+        """A commit message built from `cat <<'EOF'` is data one level in."""
+        command = "git commit -m \"$(cat <<'EOF'\nfix: guard\n\npytest now passes\nEOF\n)\""
+
+        assert executable_command_subjects(command) == ["git commit -m \"$(cat <<'EOF')\""]
+        assert not command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
+
+    def test_substitution_that_runs_a_command_keeps_it(self) -> None:
+        command = 'git commit -m "$(uv run pytest)"'
+
+        assert executable_command_subjects(command) == [command]
+        assert command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
+
+    def test_a_shell_segment_keeps_its_substitution_body(self) -> None:
+        """``sh -c "$(cat ...)"`` executes what the substitution prints."""
+        for runner in ("bash -c", "sh -c", "eval"):
+            command = f"{runner} \"$(cat <<'EOF'\npytest\nEOF\n)\""
+
+            assert executable_command_subjects(command) == [command]
+            assert command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
+
+    def test_single_quoted_substitution_is_literal_text(self) -> None:
+        command = "echo '$(uv run pytest)'"
+
+        assert executable_command_subjects(command) == [command]
+        assert not command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
+
     def test_unterminated_heredoc_keeps_its_swallowed_text(self) -> None:
         command = "cat <<'EOF'\ngit push --force"
 
@@ -205,4 +232,24 @@ class TestCommandPatternsMatch:
             "pytest",
             pattern=PYTEST_PATTERN,
             not_pattern=not_pattern,
+        )
+
+    def test_masked_matching_still_exempts_over_the_unmasked_text(self) -> None:
+        """Masking hides prose from the pattern, never a path from the exemption."""
+        not_pattern = (
+            r"\bpytest\b[^\n;&|]*\s(?:-k|[^\s;&|-]\S*\.py\b|"
+            r"['\"]?(?:[^\s;&|'\"-][^\s;&|]*/)?tests/[^\s/;&|'\"]+)"
+        )
+
+        assert not command_patterns_match(
+            "pytest 'tests/x/test_y.py'",
+            pattern=PYTEST_PATTERN,
+            not_pattern=not_pattern,
+            mask_quoted=True,
+        )
+        assert command_patterns_match(
+            "pytest",
+            pattern=PYTEST_PATTERN,
+            not_pattern=not_pattern,
+            mask_quoted=True,
         )

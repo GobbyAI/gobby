@@ -39,6 +39,12 @@ GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 
 SEGMENT_ANCHOR_PREFIX = "(^|(?<=[;&|(`\\n]))"
 
+# `git commit -m "$(cat <<'EOF' … EOF)"`: the substitution only feeds a data
+# consumer, so its message body is data for every command-position rule.
+HEREDOC_COMMIT_MESSAGE = (
+    "git commit -m \"$(cat <<'EOF'\n[gobby-#22467] fix: guard\n\nuv run pytest ran clean\nEOF\n)\""
+)
+
 GIT_GLOBAL_OPTION_PREFIXES = (
     "git -C /repo",
     "git -c core.pager=cat",
@@ -144,6 +150,9 @@ RULE_CASES = (
             "cd /repo && pytest",
             "~/venv/bin/pytest",
             "cat <<EOF\n`uv run pytest`\nEOF",
+            "pytest -x",
+            "bash <<'EOF'\npytest\nEOF",
+            'git commit -m "$(uv run pytest)"',
         ),
         allowed=(
             'git commit -m "docs: explain pytest usage"',
@@ -151,14 +160,33 @@ RULE_CASES = (
             "uv run pytest -k 'guard'",
             "python3 - <<'PY'\npytest.approx(1)\nPY",
             'cat > notes.md <<EOF\n`git push --force`\npytest.importorskip("yaml")\nEOF',
+            # Quoted message data, single- and double-quoted, one line of it an
+            # invocation shape: prose, not a command.
+            'git commit -m "fix: guard\n\npytest ran clean"',
+            "git commit -m 'fix: guard\n\npytest ran clean'",
+            'echo "checked the guard\npytest ran clean"',
+            HEREDOC_COMMIT_MESSAGE,
+            # Informational probes run no suite.
+            "pytest --version",
+            "uv run pytest --version",
+            "uv run pytest --help",
         ),
     ),
     RuleCase(
         "no-full-vitest-suite",
-        blocked=("npx vitest", "CI=1 jest"),
+        blocked=("npx vitest", "CI=1 jest", "npx vitest run"),
         allowed=(
             'echo "vitest is configured"',
             "npx vitest src/components/__tests__/App.test.tsx",
+            'git commit -m "fix: guard\n\nvitest ran clean"',
+            "git commit -m 'fix: guard\n\nvitest ran clean'",
+            "vitest --version",
+            "vitest --help",
+            "jest --version",
+            "npx vitest --version",
+            "npx vitest --help",
+            "npx jest --version",
+            "npx jest --help",
         ),
     ),
     RuleCase(
@@ -385,6 +413,10 @@ RULE_CASES = (
             # misfire that forced #20880's agent onto `git commit -F` (#20887).
             'git commit -m "[gobby-#20880] fix: x\n\nuv run pytest tests/tasks ran clean"',
             "git commit -m '[gobby-#20880] fix: x\n\npython -m pytest tests ran clean'",
+            HEREDOC_COMMIT_MESSAGE,
+            "pytest --version",
+            "uv run pytest --version",
+            "uv run pytest --help",
         ),
     ),
 )

@@ -21,7 +21,9 @@ rules:
       # substitution inside double quotes stays visible and still blocks.
       mask_quoted: true
       command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest(?=$|[\\s;&|<>()`])"
-      command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
+      # Exempt the guarded prefix, or an informational `--version` / `--help`
+      # probe, which starts no test session to protect.
+      command_not_pattern: "(?s)(?:(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)|\\bpytest\\b[^\\n;&|]*\\s--(?:version|help)\\b)"
       reason: >-
         Run pytest through the test env prefix:
         DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test
