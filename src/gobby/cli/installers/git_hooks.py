@@ -50,7 +50,7 @@ HOOK_TEMPLATES = {
 # Gobby smart pre-commit wrapper
 # - Runs gobby verification commands (if configured)
 # - Runs pre-commit framework if available
-# - Auto-commits formatting fixes separately
+# - Restages auto-fixes into the in-progress commit; never commits on its own
 # - Task/memory JSONL sync moved to pre-push
 
 # Run Gobby verification commands for pre-commit stage
@@ -63,41 +63,67 @@ if command -v gobby >/dev/null 2>&1; then
     fi
 fi
 
-# Record which files have unstaged changes before pre-commit runs
-UNSTAGED_BEFORE=$(git diff --name-only 2>/dev/null | sort)
-
 # Run pre-commit if available and config exists
 if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+    # git reads GIT_INDEX_FILE, the index this commit is built from, so plain,
+    # -a, and path-limited commits each snapshot and restage their own path set.
+    _gobby_paths() {
+        git -c core.quotePath=false diff --name-only --ignore-submodules "$@" | LC_ALL=C sort
+    }
+    # "<worktree blob> <path>" for each unstaged path, to see what pre-commit rewrote
+    _gobby_worktree_states() {
+        local paths
+        paths=$(_gobby_paths --diff-filter=d)
+        [ -n "$paths" ] || return 0
+        paste -d ' ' <(printf '%s\n' "$paths" | git hash-object --stdin-paths) \
+            <(printf '%s\n' "$paths") | LC_ALL=C sort
+    }
+
+    STAGED_BEFORE=$(_gobby_paths --cached)
+    UNSTAGED_BEFORE=$(_gobby_paths)
+    STATES_BEFORE=$(_gobby_worktree_states)
+
     pre-commit run --hook-stage pre-commit
     PRECOMMIT_EXIT=$?
 
     if [ $PRECOMMIT_EXIT -ne 0 ]; then
-        # Check if files were auto-fixed (new unstaged changes appeared)
-        UNSTAGED_AFTER=$(git diff --name-only 2>/dev/null | sort)
-
-        if [ "$UNSTAGED_BEFORE" != "$UNSTAGED_AFTER" ]; then
-            # Find files that were auto-fixed (newly unstaged)
-            AUTO_FIXED=$(comm -13 <(echo "$UNSTAGED_BEFORE") <(echo "$UNSTAGED_AFTER") 2>/dev/null)
-
-            if [ -n "$AUTO_FIXED" ]; then
-                echo ""
-                echo "Pre-commit auto-fixed files. Creating separate commit..."
-
-                # Stage only the auto-fixed files (handle filenames with spaces/special chars)
-                echo "$AUTO_FIXED" | while IFS= read -r file; do
-                    [ -n "$file" ] && git add -- "$file"
-                done
-
-                # Commit them with --no-verify to skip hooks
-                git commit --no-verify -m "style: auto-format (pre-commit)" >/dev/null
-
-                echo "Auto-format committed. Please run 'git commit' again for your changes."
-                exit 1
-            fi
+        AUTO_FIXED=$(LC_ALL=C comm -13 <(printf '%s\n' "$STATES_BEFORE") \
+            <(_gobby_worktree_states) | cut -d ' ' -f 2- | LC_ALL=C sort)
+        if [ -z "$AUTO_FIXED" ]; then
+            exit $PRECOMMIT_EXIT
         fi
 
-        # Pre-commit failed for other reasons
-        exit $PRECOMMIT_EXIT
+        # A fix may join the commit only if its path was fully staged; anything
+        # else would sweep unstaged hunks or unstaged paths into the commit.
+        FULLY_STAGED=$(LC_ALL=C comm -23 <(printf '%s\n' "$STAGED_BEFORE") \
+            <(printf '%s\n' "$UNSTAGED_BEFORE"))
+        NOT_RESTAGEABLE=$(LC_ALL=C comm -23 <(printf '%s\n' "$AUTO_FIXED") \
+            <(printf '%s\n' "$FULLY_STAGED"))
+        if [ -n "$NOT_RESTAGEABLE" ]; then
+            echo ""
+            echo "Pre-commit auto-fixed files that were not fully staged:"
+            printf '%s\n' "$NOT_RESTAGEABLE" | sed 's/^/  /'
+            echo "Nothing was restaged. Stage the fixes that belong in this commit, then retry."
+            exit 1
+        fi
+
+        echo ""
+        echo "Pre-commit auto-fixed staged files. Restaging the fixes into this commit..."
+        printf '%s\n' "$AUTO_FIXED" | git --literal-pathspecs add --pathspec-from-file=- || exit 1
+
+        # A path-limited commit is built from a temporary index while git holds
+        # the caller's real index at index.lock, to install after the commit.
+        # Restage there too so the caller's index keeps the committed fixes.
+        REAL_INDEX=$(unset GIT_INDEX_FILE; git rev-parse --git-path index)
+        if [ -n "${GIT_INDEX_FILE:-}" ] && [ -f "$REAL_INDEX.lock" ] \
+            && ! [ "$GIT_INDEX_FILE" -ef "$REAL_INDEX" ] \
+            && ! [ "$GIT_INDEX_FILE" -ef "$REAL_INDEX.lock" ]; then
+            printf '%s\n' "$AUTO_FIXED" | GIT_INDEX_FILE="$REAL_INDEX.lock" \
+                git --literal-pathspecs add --pathspec-from-file=- || exit 1
+        fi
+
+        # Re-run so failures pre-commit could not fix still block the commit
+        pre-commit run --hook-stage pre-commit || exit $?
     fi
 fi
 """,
@@ -458,7 +484,7 @@ def install_git_hooks(
 
     # Note: We intentionally DON'T run `pre-commit install` here.
     # Our smart pre-commit hook wrapper calls `pre-commit run` directly,
-    # which allows us to handle auto-fixes by creating separate commits.
+    # which allows us to restage auto-fixes into the in-progress commit.
     # Running `pre-commit install` would overwrite our wrapper.
     #
     # We also don't run `pre-commit install --hook-type pre-push` because

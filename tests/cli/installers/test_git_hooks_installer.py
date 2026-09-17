@@ -679,9 +679,7 @@ class TestInstallGitHooks:
         for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
             assert hook_name in result["installed"]
             content = (hooks_dir / hook_name).read_text()
-            assert (
-                'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1'
-            ) in content
+            assert 'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1' in content
             assert "/api/code-index/codewiki/refresh" not in content
             assert "GOBBY HOOK START" in content
 
@@ -1091,9 +1089,7 @@ class TestHookTemplates:
         content = HOOK_TEMPLATES["post-commit"]
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
-        assert (
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1'
-        ) in content
+        assert 'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1' in content
         assert "/api/code-index/codewiki/refresh" not in content
 
         git_dir = tmp_path / ".git"
@@ -1107,9 +1103,7 @@ class TestHookTemplates:
         installed = (hooks_dir / "post-commit").read_text()
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
-        assert (
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1'
-        ) in installed
+        assert 'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1' in installed
         assert "/api/code-index/codewiki/refresh" not in installed
 
     def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:
@@ -1117,8 +1111,9 @@ class TestHookTemplates:
         post_commit = HOOK_TEMPLATES["post-commit"]
         shared_snippets = (
             'GCODE="$HOME/.gobby/bin/gcode"',
+            "sed 's/^/--files=/'",
             r"tr '\n' '\0'",
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1',
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1',
         )
 
         for snippet in shared_snippets:
