@@ -30,7 +30,7 @@ fn corpus_replays_from_canonical_manifest() {
         .iter()
         .map(|name| name.as_str().expect("fixture name must be a string"))
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 38);
+    assert_eq!(names.len(), 43);
     assert_eq!(names, GOLDEN_NAMES);
     assert!(!names.contains(&"manifest.json"));
 

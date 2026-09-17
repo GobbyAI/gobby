@@ -45,6 +45,11 @@ pub const GOLDEN_NAMES: &[&str] = &[
     "attachment_finalized.json",
     "event.json",
     "typed_error.json",
+    "workspace_attach.json",
+    "workspace_snapshot.json",
+    "workspace_op.json",
+    "workspace_event.json",
+    "workspace_error.json",
 ];
 
 const SAFE_INTEGER_FIELDS: &[&str] = &[

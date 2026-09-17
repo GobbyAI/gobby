@@ -11,6 +11,7 @@ from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.terminals.leases import TerminalLeaseRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -57,7 +58,10 @@ def mock_mcp_manager() -> MagicMock:
 
 @pytest.fixture
 def server(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> WebSocketServer:
-    return WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+    # Disconnect cleanup finalizes the socket's attachments in the lease registry.
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    return server
 
 
 @pytest.mark.asyncio

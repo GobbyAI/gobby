@@ -15,13 +15,21 @@ from websockets.exceptions import ConnectionClosed
 
 from gobby.storage.attention import AttentionOrderingCoordinator
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.ws_protocol import (
+    TERMINAL_LIST_MAX_ENCODED_BYTES,
+    TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+    canonical_json,
+    fragment_event,
+)
+from gobby.utils.datetime import to_json_safe_dict
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.storage.executor import DatabaseExecutor
+    from gobby.terminals.workspace_ops import WorkspaceEvent
 
 logger = logging.getLogger(__name__)
 BROADCAST_SEND_TIMEOUT_SECONDS = 2.0
@@ -91,6 +99,7 @@ class BroadcastMixin:
             "agent_event",
             "agent_message",
             "worktree_event",
+            "workspace_event",
             "autonomous_event",
             "pipeline_event",
             "terminal_output",
@@ -164,7 +173,9 @@ class BroadcastMixin:
             return False
         return True
 
-    async def broadcast(self, message: dict[str, Any]) -> None:
+    async def broadcast(
+        self, message: dict[str, Any], *, frames: Sequence[dict[str, Any]] = ()
+    ) -> None:
         """
         Broadcast message to all connected clients.
 
@@ -172,12 +183,14 @@ class BroadcastMixin:
 
         Args:
             message: Dictionary to serialize and send
+            frames: Wire frames each recipient of ``message`` receives in order
+                instead of it, for a message sent as fragments
         """
         if not self.clients:
             return
 
         try:
-            message_str = json_dumps(message)
+            payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]
         except (TypeError, ValueError) as exc:
             logger.warning("Broadcast payload is not JSON serializable: %s", exc)
             return
@@ -193,7 +206,7 @@ class BroadcastMixin:
                 failed_count += 1
 
         results = await asyncio.gather(
-            *(self._send_broadcast(websocket, message_str) for websocket in recipients)
+            *(self._send_payloads(websocket, payloads) for websocket in recipients)
         )
         sent_count = sum(results)
         failed_count += len(results) - sent_count
@@ -205,6 +218,12 @@ class BroadcastMixin:
             logger.debug(
                 "Broadcast %s: %s sent, %s failed", message.get("type"), sent_count, failed_count
             )
+
+    async def _send_payloads(self, websocket: Any, payloads: list[str]) -> bool:
+        for payload in payloads:
+            if not await self._send_broadcast(websocket, payload):
+                return False
+        return True
 
     async def broadcast_session_event(
         self,
@@ -413,6 +432,47 @@ class BroadcastMixin:
             **kwargs,
         }
         await self.broadcast(message)
+
+    async def broadcast_workspace_event(self, event: WorkspaceEvent) -> None:
+        """Publish a workspace op's rows in one lifecycle order with the terminal events.
+
+        ``workspace_id`` and ``project_id`` (the one project the event's tabs name,
+        else null) sit at the top level for the parametric filter.
+        """
+        projects = {tab["project_id"] for tab in event["tabs"]}
+        message = {
+            **to_json_safe_dict(event),
+            "type": "workspace_event",
+            "project_id": projects.pop() if len(projects) == 1 else None,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        await self.lease_registry.publish_lifecycle(message, self._publish_workspace_event)
+
+    async def _publish_workspace_event(self, message: dict[str, Any]) -> None:
+        raw = canonical_json(message)
+        if len(raw) <= TERMINAL_LIST_MAX_ENCODED_BYTES:
+            await self.broadcast(message)
+        elif len(raw) <= TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
+            workspace_id = message["workspace_id"]
+            frames = fragment_event(
+                event="workspace_event",
+                terminal_id=workspace_id,
+                attachment_id=workspace_id,
+                message_seq=message["seq"],
+                complete_json=raw,
+            )
+            await self.broadcast(message, frames=frames)
+        else:
+            # No client can reassemble these rows. Raising here would stop every
+            # lifecycle publication, so the event goes out without them and the
+            # client re-reads the workspace with workspace_snapshot.
+            logger.warning(
+                "workspace_event %s for %s is %d bytes; sending it without rows",
+                message["kind"],
+                message["workspace_id"],
+                len(raw),
+            )
+            await self.broadcast({**message, "workspace": None, "tabs": [], "panes": []})
 
     async def broadcast_autonomous_event(
         self,

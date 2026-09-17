@@ -12,6 +12,7 @@ from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer, websockets_logger
+from gobby.terminals.leases import TerminalLeaseRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -167,12 +168,15 @@ async def test_start_passes_warning_level_websockets_logger() -> None:
         auth_callback=AsyncMock(return_value="test-user"),
     )
     server._cleanup_idle_sessions = AsyncMock()
+    # Start publishes lifecycle events, so the server needs its lease registry first.
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
 
     with patch("gobby.servers.websocket.server.serve", new_callable=AsyncMock) as mock_serve:
         await server.start()
 
     assert server._cleanup_task is not None
     await server._cleanup_task
+    await server.lease_registry.shutdown_lifecycle_publication()
     mock_serve.assert_awaited_once()
     serve_call = mock_serve.await_args
     assert serve_call is not None
