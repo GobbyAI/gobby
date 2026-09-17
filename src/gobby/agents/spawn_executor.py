@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 from gobby.agents.spawn_executor_providers import (
-    _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
-    _NATIVE_SUBAGENT_RESEARCH_AGENTS,
     ProviderSpawnPlan,
     _prepare_managed_code_index,
     agy_support_refusal,
@@ -67,7 +65,6 @@ __all__ = [
     "execute_spawn",
     "reap_stale_pending_terminals",
     "wrap_provider_command",
-    "_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS",
     "_CODEX_PREAPPROVED_GOBBY_TOOLS",
     "_apply_extra_env",
     "_prepare_managed_code_index",
@@ -77,7 +74,6 @@ __all__ = [
 _COMPAT_PRIVATE_EXPORTS = (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
-    _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     _prepare_managed_code_index,
     _apply_extra_env,
     _record_resume_launch_details,
@@ -164,17 +160,6 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     try:
         result = _unsupported_sandbox_request_error(request)
         if result is None:
-            if (
-                request.provider == "claude"
-                and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS
-            ):
-                logger.warning(
-                    "Agent %s requests provider-native internal subagents, but the managed "
-                    "Claude runtime strips the native Task facility; internal research lanes "
-                    "will be unavailable",
-                    request.agent_name,
-                )
-
             if request.provider == "grok":
                 result = await _spawn_grok_terminal(request)
             elif request.provider == "qwen":

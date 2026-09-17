@@ -23,7 +23,6 @@ def build_cli_command(
     output_format: str | None = None,
     env_overrides: dict[str, str] | None = None,
     config_overrides: list[str] | None = None,
-    disallowed_tools: list[str] | None = None,
     codex_oss_provider: str | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """
@@ -61,8 +60,6 @@ def build_cli_command(
             for merging inherited environment variables if needed.
         config_overrides: CLI configuration overrides for providers that
             support `-c key=value` flags. Currently used by Codex.
-        disallowed_tools: Provider-native tool names to remove from the toolset.
-            Currently supported for Claude.
         codex_oss_provider: Optional Codex OSS local provider (lmstudio or ollama).
 
     Returns:
@@ -90,8 +87,6 @@ def build_cli_command(
             command.extend(["--model", model])
         if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "claude-effort":
             command.extend(["--effort", reasoning_effort])
-        if disallowed_tools:
-            command.extend(["--disallowedTools", *disallowed_tools])
         if auto_approve:
             command.append("--dangerously-skip-permissions")
         if mode == "interactive":

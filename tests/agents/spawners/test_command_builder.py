@@ -49,21 +49,9 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("claude", reasoning_effort="high", prompt="hello")
         assert cmd == ["claude", "--effort", "high", "hello"]
 
-    def test_claude_with_disallowed_tools(self) -> None:
-        cmd, _env = build_cli_command(
-            "claude",
-            auto_approve=True,
-            disallowed_tools=["Workflow", "Task"],
-            prompt="hello",
-        )
-        assert cmd == [
-            "claude",
-            "--disallowedTools",
-            "Workflow",
-            "Task",
-            "--dangerously-skip-permissions",
-            "hello",
-        ]
+    def test_claude_keeps_native_tools(self) -> None:
+        cmd, _env = build_cli_command("claude", auto_approve=True, prompt="hello")
+        assert cmd == ["claude", "--dangerously-skip-permissions", "hello"]
 
     def test_unsupported_provider_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported CLI: unsupported"):

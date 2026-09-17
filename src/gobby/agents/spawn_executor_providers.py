@@ -51,9 +51,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
-_NATIVE_SUBAGENT_RESEARCH_AGENTS = frozenset({"plan-adversary", "plan-adversary-taskless"})
-
 
 @dataclass
 class ProviderSpawnPlan:
@@ -260,7 +257,6 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         auto_approve=request.auto_approve,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
-        disallowed_tools=_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     )
     claude_mcp_config_path = Path(request.cwd) / ".mcp.json"
     claude_mcp_config_arg: str | None = None

@@ -29,7 +29,6 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn,
 )
 from gobby.agents.spawn_executor import (
-    _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
     SpawnRequest,
     SpawnResult,
@@ -287,31 +286,6 @@ async def test_best_effort_preflight_records_warning_without_operator_credential
         "child",
         request.initial_variables,
     )
-
-
-@pytest.mark.asyncio
-async def test_native_subagent_strip_warns(caplog: pytest.LogCaptureFixture) -> None:
-    request = SpawnRequest(
-        prompt="Review the plan",
-        cwd="/path",
-        provider="claude",
-        session_id="sess",
-        run_id="run",
-        parent_session_id="parent",
-        project_id="proj",
-        agent_name="plan-adversary",
-        prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
-    )
-
-    with caplog.at_level(logging.WARNING, logger="gobby.agents.spawn_executor"):
-        result = await execute_spawn(request)
-
-    assert result.success is False
-    warning = " ".join(caplog.messages)
-    assert "plan-adversary" in warning
-    assert "provider-native internal subagents" in warning
-    assert "Task" in warning
 
 
 def test_codex_preapproved_gobby_tools_exist_on_mcp_handler() -> None:
@@ -2450,11 +2424,11 @@ class TestExecuteSpawnErrorPaths:
 
         command = _spawn_kwargs(request)["command"]
         assert result.success is True
-        assert "--disallowedTools" in command
-        start = command.index("--disallowedTools") + 1
-        stop = start + len(_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS)
-        assert command[start:stop] == _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS
-        assert command.index("--disallowedTools") < command.index("--dangerously-skip-permissions")
+        # Managed agents keep Claude's native toolset; per-agent denial belongs to
+        # agent-definition blocked_tools, which the rule engine enforces.
+        assert "--disallowedTools" not in command
+        assert "Workflow" not in command
+        assert "Task" not in command
         assert command.index("--dangerously-skip-permissions") < command.index("Test")
 
     @pytest.mark.asyncio
