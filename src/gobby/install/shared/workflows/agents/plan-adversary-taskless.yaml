@@ -100,7 +100,8 @@ prompts:
     During every round, including rejection, call
     `derive_plan_review_manifest(evidence_id, routing_decisions)`. Then call
     `validate_plan_review_coverage` with the three lane results, all candidate
-    dispositions, and the exact shadow-manifest status returned by derivation.
+    dispositions, and the exact shadow-manifest status returned by derivation (the
+    unmodified `derive_plan_review_manifest` result, `ok` included).
     Put its `coverage_attestation` in `round_result`. Approval also returns the
     exact server-derived `routing_decisions` and `manifest_entries`.
 

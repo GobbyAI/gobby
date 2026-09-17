@@ -440,6 +440,8 @@ async def test_plan_tool_schemas_and_happy_path(
     assert coverage_schema is not None
     coverage_properties = coverage_schema["inputSchema"]["properties"]
     assert "shadow_manifest_status" in coverage_properties
+    shadow_description = coverage_properties["shadow_manifest_status"]["description"]
+    assert "exact derive_plan_review_manifest result" in shadow_description
     assert "routing_decisions" not in coverage_properties
     append_schema = registry.get_schema("append_plan_changelog_round")
     assert append_schema is not None

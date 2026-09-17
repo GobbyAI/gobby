@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -7,6 +8,9 @@ from typing import Never
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
+from gobby.plans.review_coverage import REVIEW_LANES
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
     _validate_round_entry_plan,
@@ -799,6 +803,81 @@ def test_manifest_compare_and_apply(
     )
     assert rereview.evidence_id != drift_prepared.evidence_id
     assert service.get_evidence(drift_prepared.evidence_id).expired_at is not None
+
+
+async def test_validate_plan_review_coverage_accepts_exact_manifest_tool_result(
+    temp_db: HubDatabase,
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    source = plan_path.parents[2] / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    citation = {
+        "path": "src/example.py",
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "line_start": 1,
+        "line_end": 1,
+    }
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    registry = InternalToolRegistry(name="test-review-evidence")
+    register_review_evidence_tools(
+        registry, temp_db, resolve_project_id=lambda _project: project_id
+    )
+    tool_result = await registry.call(
+        "derive_plan_review_manifest",
+        {"evidence_id": prepared.evidence_id, "routing_decisions": {}},
+    )
+    assert tool_result["ok"] is True
+    assert tool_result["status"] == "valid"
+    service_result = service.derive_plan_review_manifest(prepared.evidence_id, {})
+    mutated = {**tool_result, "entry_count": tool_result["entry_count"] + 1}
+    lanes = [
+        {
+            "lane_id": lane_id,
+            "status": (
+                "delegated-verified" if lane_id == "repository_blast_radius" else "completed"
+            ),
+            "section_ids_checked": ["1.1"],
+            "source_citations": [citation],
+            "candidate_issues": [],
+        }
+        for lane_id in REVIEW_LANES
+    ]
+    dispositions = {
+        "cross_lane_interaction_complete": True,
+        "adjacent_variant_complete": True,
+        "items": [],
+    }
+
+    results = [
+        await registry.call(
+            "validate_plan_review_coverage",
+            {
+                "evidence_id": prepared.evidence_id,
+                "lane_results": lanes,
+                "candidate_dispositions": dispositions,
+                "shadow_manifest_status": shadow,
+            },
+        )
+        for shadow in (tool_result, service_result, mutated)
+    ]
+
+    accepted_envelope, accepted_inner, rejected = results
+    assert accepted_envelope["ok"] is True
+    assert accepted_inner == accepted_envelope
+    assert accepted_envelope["coverage_attestation"]["shadow_manifest_status"] == {
+        "status": "valid",
+        "manifest_digest": tool_result["manifest_digest"],
+        "entry_count": tool_result["entry_count"],
+    }
+    assert rejected["ok"] is False
+    assert rejected["error"] == "shadow_manifest_mismatch"
 
 
 def test_two_phase_run_binding(

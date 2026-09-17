@@ -80,6 +80,9 @@ def validate_review_coverage(
     lanes = _validate_lanes(document, lane_results)
     disposition_counts = _validate_dispositions(lanes, candidate_dispositions)
     canonical_shadow = canonical_json_object(shadow_manifest_status)
+    # The successful derive_plan_review_manifest tool result adds the transport-only `ok` flag.
+    if canonical_shadow.get("ok") is True:
+        del canonical_shadow["ok"]
     expected_shadow = canonical_json_object(expected_shadow_manifest_status)
     if canonical_shadow != expected_shadow:
         raise ReviewEvidenceError(

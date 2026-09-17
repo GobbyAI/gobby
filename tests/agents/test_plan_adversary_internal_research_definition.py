@@ -63,6 +63,7 @@ def test_adversaries_read_one_complete_evidence_snapshot() -> None:
         assert "three lane results" in instructions
         assert "candidate dispositions" in instructions
         assert "shadow-manifest status" in instructions
+        assert "unmodified `derive_plan_review_manifest` result, `ok` included" in instructions
 
 
 def test_removed_researcher_is_absent_from_inventory() -> None:
