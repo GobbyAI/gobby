@@ -433,6 +433,37 @@ fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
     }
 }
 
+/// Setsid and dup2 faults report and exit before the gate, so a commit that
+/// arrives after the child is gone cannot deliver the gate byte. Waiting for
+/// the exit pins that ordering: the child's reported stage must still win.
+#[test]
+fn precommit_failure_reports_child_stage_after_child_exits() {
+    let (_dir, mut host, mut stream) = test_host("control-token-precommit-exit");
+    for (index, (stage, code)) in [("setsid", "EINVAL"), ("dup2", "EBADF")]
+        .into_iter()
+        .enumerate()
+    {
+        let (terminal_id, spawn_key, _, pid) = prepare_terminal(
+            &mut stream,
+            &mut host,
+            index as u64 + 1,
+            stage,
+            &["/usr/bin/true"],
+            BTreeMap::from([("GTERM_GATE_FAULT", stage)]),
+        );
+        assert!(
+            process_exits_within(pid, Duration::from_secs(1)),
+            "the {stage} fault exits before commit"
+        );
+        let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(response["error"], "exec_failed", "{response}");
+        assert_eq!(response["stage"], stage, "{response}");
+        assert_eq!(response["code"], code, "{response}");
+        assert_no_terminals(&mut stream);
+    }
+}
+
 #[test]
 fn fast_exit_after_exec_is_committed_then_exited() {
     let (_dir, mut host, mut stream) = test_host("control-token-fast-exit");
