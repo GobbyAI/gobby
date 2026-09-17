@@ -556,6 +556,8 @@ GROUP_1_PYTEST = (
 GROUP_2_PYTEST = (
     "tests/terminals",
     "tests/storage/test_terminals.py",
+    "tests/storage/test_machines.py",
+    "tests/storage/test_workspaces.py",
     "tests/servers/test_terminal_ws_create.py",
     "tests/servers/test_terminal_ws_golden.py",
     "tests/servers/test_terminal_ws_lease.py",

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
 
 
@@ -29,9 +30,27 @@ class MachineNotRegisteredError(RuntimeError):
     """Raised when untrusted ingress references an unknown machine."""
 
 
+_NODE_REF_RE = re.compile(r"n([1-9][0-9]*)")
+
+
 def _clean_optional_text(value: str | None) -> str | None:
     normalized = (value or "").strip()
     return normalized or None
+
+
+def parse_node_ref(reference: str) -> int | None:
+    """Return the number of an ``n#`` node ref, or None for any other text."""
+    match = _NODE_REF_RE.fullmatch(reference.strip())
+    return int(match.group(1)) if match else None
+
+
+def lowest_free_ref(taken: Iterable[int]) -> int:
+    """Return the lowest positive integer absent from ``taken``, so released refs are reused."""
+    used = set(taken)
+    ref = 1
+    while ref in used:
+        ref += 1
+    return ref
 
 
 @normalize_datetime_model(
@@ -52,6 +71,7 @@ class Machine:
     owner_user_id: str
     first_seen: datetime
     last_seen: datetime
+    ref: int | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> Machine:
@@ -68,6 +88,7 @@ class Machine:
             owner_user_id=str(owner_user_id),
             first_seen=row["first_seen"],
             last_seen=row["last_seen"],
+            ref=row["ref"],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +102,7 @@ class Machine:
             "owner_user_id": self.owner_user_id,
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
+            "ref": self.ref,
         }
 
 
@@ -101,7 +123,10 @@ class LocalMachineManager:
         tailscale_name: str | None = None,
         seen_at: datetime | str | None = None,
     ) -> Machine:
-        """Register a machine or refresh it when the canonical owner matches."""
+        """Register a machine or refresh it when the canonical owner matches.
+
+        A machine without a node ref gets the lowest ref free for its owner.
+        """
         normalized_machine_id = str(UUID(machine_id.strip()))
         normalized_owner_id = str(UUID(owner_user_id.strip()))
 
@@ -156,6 +181,9 @@ class LocalMachineManager:
                 normalized_owner_id,
             ),
         )
+        if row is not None and row["ref"] is None:
+            with self.db.transaction() as conn:
+                row = _allocate_node_ref(conn, normalized_machine_id, normalized_owner_id)
         if row is None:
             existing = self.get(normalized_machine_id)
             if existing is None:
@@ -224,13 +252,21 @@ class LocalMachineManager:
         )
         return Machine.from_row(row) if row else None
 
-    def get(self, machine_id: str) -> Machine | None:
-        """Return a machine by id."""
-        normalized_id = str(UUID(machine_id.strip()))
-        row = self.db.fetchone(
-            "SELECT * FROM machines WHERE id = %s",
-            (normalized_id,),
-        )
+    def get(self, machine_id: str, *, owner_user_id: str | None = None) -> Machine | None:
+        """Return a machine by id, or by ``n#`` node ref within one owner's machines."""
+        node_ref = parse_node_ref(machine_id)
+        if node_ref is None:
+            row = self.db.fetchone(
+                "SELECT * FROM machines WHERE id = %s",
+                (str(UUID(machine_id.strip())),),
+            )
+        elif owner_user_id is None:
+            raise ValueError(f"Node ref {machine_id.strip()!r} needs an owner to resolve")
+        else:
+            row = self.db.fetchone(
+                "SELECT * FROM machines WHERE owner_user_id = %s AND ref = %s",
+                (str(UUID(owner_user_id.strip())), node_ref),
+            )
         return Machine.from_row(row) if row else None
 
     def list_for_user(self, user_id: str) -> list[Machine]:
@@ -241,3 +277,20 @@ class LocalMachineManager:
             (normalized_user_id,),
         )
         return [Machine.from_row(row) for row in rows]
+
+
+def _allocate_node_ref(conn: Transaction, machine_id: str, owner_user_id: str) -> Row | None:
+    """Assign the owner's lowest free node ref while holding the owner row lock."""
+    conn.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (owner_user_id,))
+    taken = conn.execute(
+        "SELECT ref FROM machines WHERE owner_user_id = %s AND ref IS NOT NULL",
+        (owner_user_id,),
+    ).fetchall()
+    row = conn.execute(
+        "UPDATE machines SET ref = %s WHERE id = %s AND ref IS NULL RETURNING *",
+        (lowest_free_ref(int(item["ref"]) for item in taken), machine_id),
+    ).fetchone()
+    if row is not None:
+        return row
+    # A concurrent upsert assigned the ref first; its commit is visible now.
+    return conn.execute("SELECT * FROM machines WHERE id = %s", (machine_id,)).fetchone()

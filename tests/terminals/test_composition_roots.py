@@ -178,3 +178,45 @@ def test_orchestration_gives_the_wake_dispatcher_its_terminal_lookup() -> None:
     source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
     flattened = " ".join(source.split())
     assert "runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)" in flattened
+
+
+def test_wiring_hands_one_workspace_manager_to_both_servers() -> None:
+    """The in-flight spawn guard lives on one manager, so every surface must share it."""
+    from gobby.runner_init import servers, terminal_wiring
+    from gobby.storage.workspaces import WorkspaceManager
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.leases import TerminalLeaseRegistry
+
+    assert "workspace_manager" in GobbyRunner.__annotations__
+    assert "workspace_manager" in {item.name for item in fields(ServiceContainer)}
+    wiring_source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
+    servers_source = " ".join(Path(servers.__file__).read_text(encoding="utf-8").split())
+    assert wiring_source.count("WorkspaceManager(") == 1
+    assert "runner.workspace_manager = WorkspaceManager(runner.database)" in wiring_source
+    assert servers_source.count("WorkspaceManager(") == 0
+    assert 'workspace_manager=getattr(runner, "workspace_manager", None),' in servers_source
+    assert "workspace_manager=services.workspace_manager," in servers_source
+
+    workspace_manager = WorkspaceManager(MagicMock(spec=HubDatabase))
+    services = ServiceContainer(
+        database=MagicMock(spec=HubDatabase),
+        session_manager=MagicMock(spec=SessionManager),
+        task_manager=MagicMock(spec=LocalTaskManager),
+        workspace_manager=workspace_manager,
+    )
+    ws_config = MagicMock(spec=WebSocketConfig)
+    ws_config.host = "localhost"
+    ws_config.port = 60888
+    ws_config.ping_interval = 30
+    ws_config.ping_timeout = 10
+    ws_config.max_message_size = 1024
+    server = WebSocketServer(ws_config, MagicMock(), AsyncMock(return_value="test-user"))
+    assert server.workspace_manager is None
+    server.configure_terminals(
+        MagicMock(),
+        TerminalRuntimeRegistry(),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+        write_coordinator=MagicMock(),
+        workspace_manager=services.workspace_manager,
+    )
+    assert server.workspace_manager is workspace_manager
