@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 from gobby.config.build import load_build_config
@@ -128,6 +128,56 @@ def max_active_agents_for_project(project_path: str) -> int:
         return MAX_ACTIVE_AGENTS
 
 
+def agent_slot_cap_refusal(
+    db: Any,
+    *,
+    project_id: str,
+    project_path: str,
+    caller_session_id: str | None,
+) -> dict[str, Any] | None:
+    """Return the cap-reached refusal when the project has no free agent slot."""
+    cap = max_active_agents_for_project(project_path)
+    active_count = _count_active_agents(db, project_id)
+    if active_count < cap:
+        return None
+    caller_active_count = 0
+    if caller_session_id:
+        caller_active_count = _count_active_agents(
+            db, project_id, parent_session_id=caller_session_id
+        )
+    return {
+        "success": False,
+        "error": (
+            f"max_active_agents cap reached ({active_count}/{cap}); "
+            f"{caller_active_count} of these were spawned by this session"
+        ),
+        "cap_reached": True,
+    }
+
+
+def slot_cap_response(
+    db: Any,
+    project_context: Mapping[str, object] | None,
+    parent_session_id: str,
+) -> dict[str, Any] | None:
+    """Return a can_spawn_agent refusal when the context project has no free slot."""
+    if not project_context:
+        return None
+    project_id = project_context.get("id") or project_context.get("project_id")
+    project_path = project_context.get("project_path")
+    if not isinstance(project_id, str) or not isinstance(project_path, str):
+        return None
+    refusal = agent_slot_cap_refusal(
+        db,
+        project_id=project_id,
+        project_path=project_path,
+        caller_session_id=parent_session_id,
+    )
+    if refusal is None:
+        return None
+    return {"success": True, "can_spawn": False, "reason": refusal["error"], "cap_reached": True}
+
+
 @contextlib.asynccontextmanager
 async def reserve_agent_slot(
     *,
@@ -139,30 +189,16 @@ async def reserve_agent_slot(
         yield None
         return
 
-    cap = max_active_agents_for_project(project_path)
+    caller_session_id = get_current_session_id()
     lock = _SLOT_LOCKS.setdefault(project_id, asyncio.Lock())
     async with lock:
-        active_count = await asyncio.to_thread(_count_active_agents, db, project_id)
-        if active_count >= cap:
-            caller_session_id = get_current_session_id()
-            caller_active_count = 0
-            if caller_session_id:
-                caller_active_count = await asyncio.to_thread(
-                    _count_active_agents,
-                    db,
-                    project_id,
-                    parent_session_id=caller_session_id,
-                )
-            yield {
-                "success": False,
-                "error": (
-                    f"max_active_agents cap reached ({active_count}/{cap}); "
-                    f"{caller_active_count} of these were spawned by this session"
-                ),
-                "cap_reached": True,
-            }
-            return
-        yield None
+        yield await asyncio.to_thread(
+            agent_slot_cap_refusal,
+            db,
+            project_id=project_id,
+            project_path=project_path,
+            caller_session_id=caller_session_id,
+        )
 
 
 def active_task_response_if_blocked(

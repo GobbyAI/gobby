@@ -46,6 +46,7 @@ from gobby.mcp_proxy.tools.agents_payloads import (
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.headless_waits import headless_wait_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import slot_cap_response
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
     clamp_wait_tool_timeout,
@@ -779,6 +780,10 @@ def register_agent_query_tools(
             return {"success": False, "can_spawn": False, "reason": str(e)}
 
         can_spawn, reason, _parent_depth = ctx.runner.can_spawn(resolved_parent_id)
+        if can_spawn and ctx.db is not None:
+            refusal = slot_cap_response(ctx.db, ctx.get_project_context(), resolved_parent_id)
+            if refusal is not None:
+                return refusal
         return {
             "success": True,
             "can_spawn": can_spawn,

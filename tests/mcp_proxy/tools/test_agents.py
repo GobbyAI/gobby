@@ -38,9 +38,12 @@ from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.events import CompletionEventRegistry
 from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import session_context_for_test
 from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
@@ -946,6 +949,70 @@ class TestCanSpawnAgent:
 
         assert result["can_spawn"] is False
         assert result["reason"] == "Max depth reached"
+
+    @staticmethod
+    def _slot_probe(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        *,
+        active_runs: int,
+        cap: int,
+    ) -> dict[str, Any]:
+        project_id = str(sample_project["id"])
+        sessions = SessionManager(temp_db)
+        parent = sessions.register(
+            external_id=f"slot-probe-{active_runs}-{cap}",
+            machine_id=None,
+            source="test",
+            project_id=project_id,
+        )
+        runs = LocalAgentRunManager(temp_db)
+        for index in range(active_runs):
+            runs.create(
+                parent_session_id=parent.id,
+                provider="codex",
+                prompt=f"run-{index}",
+                agent_name="backend-developer",
+            )
+        monkeypatch.setattr(
+            "gobby.utils.project_context.get_project_context",
+            lambda *_args, **_kwargs: {"id": project_id, "project_path": "/tmp/slot-probe"},
+        )
+        monkeypatch.setattr(_spawn_guards, "max_active_agents_for_project", lambda _path: cap)
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "OK", 0)
+
+        registry = create_agents_registry(runner, session_manager=sessions, db=temp_db)
+        can_spawn = registry._tools["can_spawn_agent"].func
+        with session_context_for_test(parent.id):
+            result: dict[str, Any] = can_spawn(parent_session_id=parent.id)
+        return result
+
+    def test_cannot_spawn_when_project_slot_cap_reached(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        result = self._slot_probe(monkeypatch, temp_db, sample_project, active_runs=2, cap=2)
+
+        assert result["can_spawn"] is False
+        assert result["cap_reached"] is True
+        assert result["reason"] == (
+            "max_active_agents cap reached (2/2); 2 of these were spawned by this session"
+        )
+
+    def test_can_spawn_when_project_has_free_slots(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        result = self._slot_probe(monkeypatch, temp_db, sample_project, active_runs=1, cap=2)
+
+        assert result["can_spawn"] is True
+        assert result["reason"] == "OK"
 
 
 class TestListRunningAgents:
