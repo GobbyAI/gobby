@@ -13,14 +13,21 @@ data sink's body stays data even when its output pipes onward, and an unquoted
 body contributes only its command-substitution spans — the shell runs those,
 never the literal body.
 
+A command substitution is a command list of its own, and the scanner reads it
+as a single token, so its body is resolved through these same rules before it
+re-enters the segment: ``git commit -m "$(cat <<'EOF' … EOF)"`` keeps only
+``cat <<'EOF'`` while ``"$(uv run pytest)"`` keeps its invocation. A segment
+that runs what a substitution prints (``sh -c``, ``eval``) keeps the body
+whole, the fail-closed reading.
+
 ``command_pattern`` must match one subject. Quoted ``;``, ``&``, ``|``, ``(``,
 and backticks in that subject are not command boundaries — they are blanked
 before the pattern runs — so a lookbehind such as ``(?<=[;&|(`\\n])`` cannot
 treat ``gcode grep -E 'pytest|vitest'`` as a ``vitest`` invocation.
-``command_not_pattern`` exempts over the unblanked executable text, because an
-exemption such as an exported test environment can be established by an
-earlier segment (#21056) and a quoted path such as ``pytest 'tests/x.py'``
-must still exempt.
+``command_not_pattern`` exempts over the unblanked executable text — masked or
+not — because an exemption such as an exported test environment can be
+established by an earlier segment (#21056) and a quoted path such as
+``pytest 'tests/x.py'`` must still exempt under ``mask_quoted``.
 """
 
 from __future__ import annotations
@@ -39,7 +46,12 @@ from gobby.hooks._normalization_shell import (
     scan_shell_command,
 )
 from gobby.hooks.code_navigation import shell_command_name
-from gobby.hooks.provider_launch_guard import _SHELLS, _prepare, _unwrap
+from gobby.hooks.provider_launch_guard import (
+    _SHELLS,
+    _prepare,
+    _substitution_end,
+    _unwrap,
+)
 
 # Commands whose standard input is never interpreted as code. Every other
 # consumer — shells, language interpreters, ``ssh``, ``xargs``, ``eval``,
@@ -88,12 +100,11 @@ def command_patterns_match(
     if not pattern:
         return True
     subjects = executable_command_subjects(command)
+    exemption_text = "\n".join(subjects)
     if mask_quoted:
         pattern_subjects = [mask_quoted_spans(subject) for subject in subjects]
-        exemption_text = "\n".join(pattern_subjects)
     else:
         pattern_subjects = [_mask_quoted_command_boundaries(subject) for subject in subjects]
-        exemption_text = "\n".join(subjects)
     if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False
     return not (not_pattern and re.search(not_pattern, exemption_text))
@@ -139,6 +150,10 @@ def executable_command_subjects(command: str) -> list[str]:
     A command the scanner cannot parse (unclosed quote) or that has no tokens
     is matched whole, the fail-closed reading.
     """
+    return _subjects(command, 0)
+
+
+def _subjects(command: str, depth: int) -> list[str]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
@@ -149,7 +164,12 @@ def executable_command_subjects(command: str) -> list[str]:
     raw = [
         command[scan.spans[segment.first][0] : scan.spans[segment.last][1]] for segment in segments
     ]
-    subjects = list(raw)
+    subjects = [
+        text
+        if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1])
+        else _resolve_substitutions(text, depth)
+        for text, segment in zip(raw, segments, strict=True)
+    ]
     for heredoc in scan.heredocs:
         owner = next(
             index
@@ -163,6 +183,51 @@ def executable_command_subjects(command: str) -> list[str]:
         elif not heredoc.quoted:
             subjects[owner] += "".join(f"\n{span}" for span in _substitution_spans(heredoc.text))
     return subjects
+
+
+def _resolve_substitutions(subject: str, depth: int) -> str:
+    """Replace each command substitution with the commands it actually runs.
+
+    The scanner reads ``"$(cat <<'EOF' … EOF)"`` as one quoted token, so a
+    heredoc opened inside a substitution never reaches the data-sink check.
+    Running the body through the same segment rules drops what it only prints
+    and keeps what it executes. A body that cannot be delimited stays whole,
+    and single quotes make a substitution literal text.
+    """
+    out: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(subject):
+        char = subject[index]
+        if char == "\\" and quote != "'":
+            out.append(subject[index : index + 2])
+            index += 2
+            continue
+        if quote != "'" and (subject.startswith("$(", index) or char == "`"):
+            tick = char == "`"
+            start = index + (1 if tick else 2)
+            try:
+                end = _substitution_end(subject, start, tick, depth + 1)
+            except ValueError:
+                return subject
+            body = "\n".join(_subjects(subject[start:end], depth + 1))
+            out.append(f"{subject[index:start]}{body}{subject[end]}")
+            index = end + 1
+            continue
+        if char in "\"'":
+            quote = "" if quote == char else quote or char
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _runs_substitution_output(tokens: list[ShellToken]) -> bool:
+    """Whether a segment runs what its substitutions print (``sh -c "$(…)"``)."""
+    for stage in _pipeline_stages(tokens):
+        words = _unwrap(_stage_words(stage))
+        if words and shell_command_name(words[0]) in _SHELLS:
+            return True
+    return False
 
 
 def _split_segments(tokens: list[ShellToken]) -> list[_Segment]:

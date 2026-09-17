@@ -9,8 +9,14 @@ rules:
     effects:
       - type: block
         tools: [Bash]
+        # mask_quoted blanks quoted string data before matching, so a commit
+        # message or echo whose own line starts `pytest` is prose, not a run.
+        # The exemption still reads the unmasked text, keeping a quoted target
+        # such as `pytest 'tests/x.py'` exempt.
+        mask_quoted: true
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?(?:python3?\\s+-m\\s+)?pytest(?=$|[\\s;&|<>()`])"
-        command_not_pattern: "\\bpytest\\b[^\\n;&|]*\\s(?:-k|[^\\s;&|-]\\S*\\.py\\b|['\"]?(?:[^\\s;&|'\"-][^\\s;&|]*/)?tests/[^\\s/;&|'\"]+)"
+        # `--version` / `--help` answer a question and run no suite.
+        command_not_pattern: "\\bpytest\\b[^\\n;&|]*\\s(?:-k|--version\\b|--help\\b|[^\\s;&|-]\\S*\\.py\\b|['\"]?(?:[^\\s;&|'\"-][^\\s;&|]*/)?tests/[^\\s/;&|'\"]+)"
         reason: >-
           Run targeted tests: `GOBBY_TEST_PROTECT=1 pytest tests/path/test_file.py`
           or `GOBBY_TEST_PROTECT=1 pytest -k 'pattern'`
@@ -24,8 +30,11 @@ rules:
     effects:
       - type: block
         tools: [Bash]
+        # Same quoted-data reading as no-full-pytest-suite above.
+        mask_quoted: true
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:npx\\s+|pnpm\\s+(?:exec\\s+)?|yarn\\s+|npm\\s+exec\\s+)?(vitest|jest)\\b"
-        command_not_pattern: "\\b(vitest|jest)\\b[^;&|]*(?:__tests__/\\S+\\.(ts|js|tsx|jsx)|\\S+\\.(test|spec)\\.(ts|js|tsx|jsx))\\b|\\b(vitest|jest)\\b[^;&|]*(-t|--testNamePattern|--testPathPattern)(\\s+|=)"
+        # Third alternative: `--version` / `--help` answer a question.
+        command_not_pattern: "\\b(vitest|jest)\\b[^;&|]*(?:__tests__/\\S+\\.(ts|js|tsx|jsx)|\\S+\\.(test|spec)\\.(ts|js|tsx|jsx))\\b|\\b(vitest|jest)\\b[^;&|]*(-t|--testNamePattern|--testPathPattern)(\\s+|=)|\\b(vitest|jest)\\b[^;&|]*\\s--(?:version|help)\\b"
         reason: >-
           Run targeted tests: name specific test files or use `-t` /
           `--testNamePattern` filters.
