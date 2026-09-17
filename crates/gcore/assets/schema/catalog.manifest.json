@@ -2121,6 +2121,10 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "machines.ref",
+      "definition": "integer|int4|YES||NEVER"
+    },
+    {
       "name": "machines.tailscale_name",
       "definition": "text|text|YES||NEVER"
     },
@@ -5945,6 +5949,114 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "workspace_panes.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "workspace_panes.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspace_panes.label",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "workspace_panes.owns_terminal",
+      "definition": "boolean|bool|NO||NEVER"
+    },
+    {
+      "name": "workspace_panes.ref",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "workspace_panes.tab_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspace_panes.terminal_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "workspace_panes.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "workspace_tabs.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "workspace_tabs.focused_pane_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "workspace_tabs.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspace_tabs.layout",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "workspace_tabs.position",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "workspace_tabs.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspace_tabs.ref",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "workspace_tabs.title",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "workspace_tabs.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "workspace_tabs.workspace_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspace_tabs.worktree_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "workspaces.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "workspaces.focused_project_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "workspaces.focused_tab_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "workspaces.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspaces.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "workspaces.name",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "workspaces.ref",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "workspaces.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "worktrees.agent_session_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -7939,6 +8051,66 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) DEFERRABLE"
     },
     {
+      "name": "workspace_panes.workspace_panes_label_byte_limit",
+      "definition": "CHECK (label IS NULL OR octet_length(label) <= 1024)"
+    },
+    {
+      "name": "workspace_panes.workspace_panes_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "workspace_panes.workspace_panes_tab_id_fkey",
+      "definition": "FOREIGN KEY (tab_id) REFERENCES workspace_tabs(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "workspace_panes.workspace_panes_tab_id_ref_key",
+      "definition": "UNIQUE (tab_id, ref)"
+    },
+    {
+      "name": "workspace_panes.workspace_panes_terminal_id_fkey",
+      "definition": "FOREIGN KEY (terminal_id) REFERENCES terminals(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "workspace_tabs.workspace_tabs_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "workspace_tabs.workspace_tabs_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "workspace_tabs.workspace_tabs_workspace_id_fkey",
+      "definition": "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "workspace_tabs.workspace_tabs_workspace_id_ref_key",
+      "definition": "UNIQUE (workspace_id, ref)"
+    },
+    {
+      "name": "workspace_tabs.workspace_tabs_worktree_id_fkey",
+      "definition": "FOREIGN KEY (worktree_id) REFERENCES worktrees(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "workspaces.workspaces_focused_project_id_fkey",
+      "definition": "FOREIGN KEY (focused_project_id) REFERENCES projects(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "workspaces.workspaces_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
+    },
+    {
+      "name": "workspaces.workspaces_machine_id_name_key",
+      "definition": "UNIQUE (machine_id, name)"
+    },
+    {
+      "name": "workspaces.workspaces_machine_id_ref_key",
+      "definition": "UNIQUE (machine_id, ref)"
+    },
+    {
+      "name": "workspaces.workspaces_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
       "name": "worktrees.worktrees_agent_session_id_machine_id_fkey",
       "definition": "FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE"
     },
@@ -8839,6 +9011,10 @@
       "definition": "CREATE INDEX idx_machines_last_seen ON $schema.machines USING btree (last_seen)"
     },
     {
+      "name": "idx_machines_owner_ref",
+      "definition": "CREATE UNIQUE INDEX idx_machines_owner_ref ON $schema.machines USING btree (owner_user_id, ref) WHERE (ref IS NOT NULL)"
+    },
+    {
       "name": "idx_machines_owner_user_id",
       "definition": "CREATE INDEX idx_machines_owner_user_id ON $schema.machines USING btree (owner_user_id)"
     },
@@ -9463,6 +9639,10 @@
       "definition": "CREATE INDEX idx_validation_history_task ON $schema.task_validation_history USING btree (task_id)"
     },
     {
+      "name": "idx_workspace_panes_terminal",
+      "definition": "CREATE UNIQUE INDEX idx_workspace_panes_terminal ON $schema.workspace_panes USING btree (terminal_id) WHERE (terminal_id IS NOT NULL)"
+    },
+    {
       "name": "idx_worktrees_branch",
       "definition": "CREATE UNIQUE INDEX idx_worktrees_branch ON $schema.worktrees USING btree (project_id, branch_name, machine_id)"
     },
@@ -9965,6 +10145,34 @@
     {
       "name": "workflow_audit_log_pkey",
       "definition": "CREATE UNIQUE INDEX workflow_audit_log_pkey ON $schema.workflow_audit_log USING btree (id)"
+    },
+    {
+      "name": "workspace_panes_pkey",
+      "definition": "CREATE UNIQUE INDEX workspace_panes_pkey ON $schema.workspace_panes USING btree (id)"
+    },
+    {
+      "name": "workspace_panes_tab_id_ref_key",
+      "definition": "CREATE UNIQUE INDEX workspace_panes_tab_id_ref_key ON $schema.workspace_panes USING btree (tab_id, ref)"
+    },
+    {
+      "name": "workspace_tabs_pkey",
+      "definition": "CREATE UNIQUE INDEX workspace_tabs_pkey ON $schema.workspace_tabs USING btree (id)"
+    },
+    {
+      "name": "workspace_tabs_workspace_id_ref_key",
+      "definition": "CREATE UNIQUE INDEX workspace_tabs_workspace_id_ref_key ON $schema.workspace_tabs USING btree (workspace_id, ref)"
+    },
+    {
+      "name": "workspaces_machine_id_name_key",
+      "definition": "CREATE UNIQUE INDEX workspaces_machine_id_name_key ON $schema.workspaces USING btree (machine_id, name)"
+    },
+    {
+      "name": "workspaces_machine_id_ref_key",
+      "definition": "CREATE UNIQUE INDEX workspaces_machine_id_ref_key ON $schema.workspaces USING btree (machine_id, ref)"
+    },
+    {
+      "name": "workspaces_pkey",
+      "definition": "CREATE UNIQUE INDEX workspaces_pkey ON $schema.workspaces USING btree (id)"
     },
     {
       "name": "worktrees_pkey",

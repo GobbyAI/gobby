@@ -1203,6 +1203,165 @@ fn task_config_alias_upgrade_preserves_overrides_and_stamps_receipt() -> anyhow:
 }
 
 #[test]
+fn workspaces_migration_scopes_refs_and_pane_terminals() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    for table in ["workspaces", "workspace_tabs", "workspace_panes"] {
+        let created: Option<String> = client
+            .query_one("SELECT to_regclass($1::text)::text", &[&table])?
+            .get(0);
+        assert_eq!(
+            created.as_deref(),
+            Some(table),
+            "migration 440 creates {table}"
+        );
+        assert_runtime_crud_privileges(&mut client, table)?;
+    }
+
+    client.batch_execute(
+        "
+        INSERT INTO users (id, email, name, password_hash)
+        VALUES ('99999999-9999-4999-8999-999999999999', 'workspaces@test.local', 'ws', 'x');
+        INSERT INTO machines (id, hostname, owner_user_id) VALUES
+            ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'node-a', '99999999-9999-4999-8999-999999999999'),
+            ('22222222-2222-4222-8222-222222222222', 'node-b', '99999999-9999-4999-8999-999999999999');
+        INSERT INTO projects (id, name) VALUES
+            ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'tab-project'),
+            ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'focus-project');
+        INSERT INTO worktrees (id, project_id, machine_id, worktree_path)
+        VALUES ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '/tmp/workspace-tab');
+        INSERT INTO terminals (id, backend, ownership, state, spawn_key, machine_id, project_id)
+        VALUES ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'native', 'gobby', 'pending', 'pane-1',
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+        UPDATE machines SET ref = 1 WHERE id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        INSERT INTO workspaces (id, machine_id, ref, name, focused_project_id) VALUES
+            ('ffffffff-ffff-4fff-8fff-ffffffffffff', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1,
+             'main', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+            ('66666666-6666-4666-8666-666666666666', '22222222-2222-4222-8222-222222222222', 1,
+             'main', NULL);
+        INSERT INTO workspace_tabs (id, workspace_id, ref, project_id, worktree_id, position, layout)
+        VALUES
+            ('11111111-1111-4111-8111-111111111111', 'ffffffff-ffff-4fff-8fff-ffffffffffff', 1,
+             'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 0,
+             '{\"kind\":\"pane\",\"pane_id\":\"33333333-3333-4333-8333-333333333333\"}'),
+            ('77777777-7777-4777-8777-777777777777', '66666666-6666-4666-8666-666666666666', 1,
+             'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', NULL, 0,
+             '{\"kind\":\"pane\",\"pane_id\":\"88888888-8888-4888-8888-888888888888\"}');
+        INSERT INTO workspace_panes (id, tab_id, ref, terminal_id, owns_terminal) VALUES
+            ('33333333-3333-4333-8333-333333333333', '11111111-1111-4111-8111-111111111111', 1,
+             'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', true),
+            ('44444444-4444-4444-8444-444444444444', '11111111-1111-4111-8111-111111111111', 2,
+             NULL, false),
+            ('55555555-5555-4555-8555-555555555555', '11111111-1111-4111-8111-111111111111', 3,
+             NULL, false),
+            ('88888888-8888-4888-8888-888888888888', '77777777-7777-4777-8777-777777777777', 1,
+             NULL, true);
+        ",
+    )?;
+
+    // Refs are unique per scope: node per owner, workspace per node, tab and pane per parent.
+    for (duplicate, expected) in [
+        (
+            "UPDATE machines SET ref = 1 WHERE id = '22222222-2222-4222-8222-222222222222'",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+        (
+            "INSERT INTO workspaces (id, machine_id, ref, name) VALUES (gen_random_uuid(), \
+             'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, 'other')",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+        (
+            "INSERT INTO workspaces (id, machine_id, ref, name) VALUES (gen_random_uuid(), \
+             'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 2, 'main')",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+        (
+            "INSERT INTO workspace_tabs (id, workspace_id, ref, project_id, position, layout) \
+             VALUES (gen_random_uuid(), 'ffffffff-ffff-4fff-8fff-ffffffffffff', 1, \
+             'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 1, '{}')",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+        (
+            "INSERT INTO workspace_tabs (id, workspace_id, ref, project_id, position, layout) \
+             VALUES (gen_random_uuid(), 'ffffffff-ffff-4fff-8fff-ffffffffffff', 2, NULL, 1, '{}')",
+            SqlState::NOT_NULL_VIOLATION,
+        ),
+        (
+            "INSERT INTO workspace_panes (id, tab_id, ref, owns_terminal) VALUES \
+             (gen_random_uuid(), '11111111-1111-4111-8111-111111111111', 1, false)",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+        // One terminal sits in at most one pane, so a racing adopt loses.
+        (
+            "INSERT INTO workspace_panes (id, tab_id, ref, terminal_id, owns_terminal) VALUES \
+             (gen_random_uuid(), '11111111-1111-4111-8111-111111111111', 4, \
+             'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', false)",
+            SqlState::UNIQUE_VIOLATION,
+        ),
+    ] {
+        let error = client.batch_execute(duplicate).expect_err(duplicate);
+        assert_eq!(error.code(), Some(&expected), "{duplicate}");
+    }
+
+    let pane_label = "UPDATE workspace_panes SET label = $1 \
+                      WHERE id = '33333333-3333-4333-8333-333333333333'";
+    client.execute(pane_label, &[&"é".repeat(512)])?;
+    let error = client
+        .execute(pane_label, &[&"é".repeat(513)])
+        .expect_err("a label over 1024 bytes must fail the byte limit");
+    assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
+
+    // Removing a referenced worktree, terminal, or focus project clears the reference.
+    client.batch_execute(
+        "DELETE FROM worktrees WHERE id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+         DELETE FROM terminals WHERE id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+         DELETE FROM projects WHERE id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';",
+    )?;
+    let cleared = client.query_one(
+        "SELECT \
+             (SELECT worktree_id IS NULL FROM workspace_tabs \
+              WHERE id = '11111111-1111-4111-8111-111111111111'), \
+             (SELECT terminal_id IS NULL FROM workspace_panes \
+              WHERE id = '33333333-3333-4333-8333-333333333333'), \
+             (SELECT focused_project_id IS NULL FROM workspaces \
+              WHERE id = 'ffffffff-ffff-4fff-8fff-ffffffffffff')",
+        &[],
+    )?;
+    assert!(cleared.get::<_, bool>(0), "worktree delete clears the tab");
+    assert!(cleared.get::<_, bool>(1), "terminal delete clears the pane");
+    assert!(
+        cleared.get::<_, bool>(2),
+        "project delete clears the focus hint"
+    );
+
+    // A workspace delete cascades through its tabs and panes; a project delete removes its tabs.
+    client.batch_execute(
+        "DELETE FROM workspaces WHERE id = '66666666-6666-4666-8666-666666666666';
+         DELETE FROM projects WHERE id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';",
+    )?;
+    let remaining = client.query_one(
+        "SELECT (SELECT count(*) FROM workspaces), (SELECT count(*) FROM workspace_tabs), \
+                (SELECT count(*) FROM workspace_panes)",
+        &[],
+    )?;
+    assert_eq!(
+        (
+            remaining.get::<_, i64>(0),
+            remaining.get::<_, i64>(1),
+            remaining.get::<_, i64>(2)
+        ),
+        (1, 0, 0)
+    );
+    Ok(())
+}
+
+#[test]
 fn docker_pgaudit_probe_database_is_still_a_fresh_lineage() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
