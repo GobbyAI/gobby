@@ -353,7 +353,7 @@ def create_spawn_agent_registry(
             branch_name: Git branch name (auto-generated from task if not provided)
             base_branch: Base branch for worktree/clone
             clone_id: Existing clone ID to reuse
-            worktree_id: Existing worktree ID to reuse
+            worktree_id: Existing worktree to reuse (full UUID or unique id prefix)
             cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
             workflow: Workflow/pipeline to use
             provider: Required when model is supplied. Otherwise resolved from
@@ -618,7 +618,7 @@ def create_spawn_agent_registry(
         Args:
             suggestions: Task briefs from suggest_next_task output
             agent: Agent definition name (default: "backend-developer")
-            worktree_id: Shared worktree ID for all agents
+            worktree_id: Shared worktree for all agents (full UUID or unique id prefix)
             clone_id: Existing clone ID for all agents
             isolation: Isolation mode (none/worktree/clone)
             branch_name: Git branch name for isolation
