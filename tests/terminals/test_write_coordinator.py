@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Literal, cast
 
 import pytest
@@ -942,4 +943,56 @@ async def test_unlatched_sequence_still_honours_quarantine() -> None:
     )
 
     assert isinstance(outcome, AutomaticWriteQuarantined)
+    assert runtime.write_log == []
+
+
+@pytest.mark.asyncio
+async def test_input_with_a_client_fd_writes_the_attach_client_pty() -> None:
+    """A request carrying the attach client's PTY bypasses the pane runtime."""
+    coordinator, runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    read_fd, write_fd = os.pipe()
+    try:
+        outcome = await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key="ws:att:1",
+                origin="automatic",
+                kind="input",
+                payload="\x1b[<64;13;12M",
+                client_fd=write_fd,
+            )
+        )
+
+        assert isinstance(outcome, Delivered)
+        assert os.read(read_fd, 64) == b"\x1b[<64;13;12M"
+        assert runtime.write_log == []
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+@pytest.mark.asyncio
+async def test_client_fd_write_failure_before_any_byte_is_stage_none() -> None:
+    """A dead attach client refuses the write instead of reporting bytes it never sent."""
+    coordinator, runtime, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    os.close(write_fd)
+
+    with pytest.raises(TerminalWriteError) as excinfo:
+        await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal_id,
+                action_key="ws:att:2",
+                origin="automatic",
+                kind="input",
+                payload="x",
+                client_fd=write_fd,
+            )
+        )
+
+    assert excinfo.value.stage == "none"
+    assert isinstance(excinfo.value.__cause__, OSError)
     assert runtime.write_log == []

@@ -539,6 +539,10 @@ class TerminalWsMixin:
                 WriteRequest,
             )
 
+            client_fd: int | None = None
+            bridge = getattr(self, "_tmux_bridge", None)
+            if kind == "input" and bridge is not None:
+                client_fd = await bridge.get_master_fd(attachment_id)
             result = await coordinator.write(
                 WriteRequest(
                     terminal_id=terminal_id,
@@ -548,6 +552,7 @@ class TerminalWsMixin:
                     payload=payload,
                     attachment_id=attachment_id,
                     expected_lease_generation=generation,
+                    client_fd=client_fd,
                 )
             )
         except RuntimeUnavailableError:

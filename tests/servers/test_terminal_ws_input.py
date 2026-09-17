@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import MethodType
+from types import MethodType, SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -380,3 +381,66 @@ async def test_operator_writes_route_through_coordinator() -> None:
     assert ".write_input(" not in source
     assert ".write_paste(" not in source
     assert ".write_text(" not in source
+
+
+@pytest.mark.asyncio
+async def test_tmux_attachment_input_goes_to_the_attach_client_pty() -> None:
+    """Raw input for a tmux attachment reaches the attach client, not the pane.
+
+    The web attach turns tmux mouse reporting on, so a wheel over the pane
+    arrives as an SGR mouse report. Only tmux can turn that into copy-mode
+    scrolling; ``send-keys`` would hand it to the pane's program instead.
+    """
+    terminal = make_memory_terminal()
+    runtime = _RecordingRuntime()
+    server, attachment_id = await _server(terminal, runtime)
+    read_fd, write_fd = os.pipe()
+    try:
+        server._tmux_bridge = cast(
+            Any,
+            SimpleNamespace(
+                get_master_fd=AsyncMock(
+                    side_effect=lambda aid: write_fd if aid == attachment_id else None
+                )
+            ),
+        )
+        websocket = _WebSocket()
+
+        await server._handle_terminal_input(
+            websocket, _input_message(terminal, attachment_id, seq=1, data="\x1b[<64;13;12M")
+        )
+
+        assert os.read(read_fd, 64) == b"\x1b[<64;13;12M"
+        assert runtime.inputs == []
+        assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+
+        # Paste keeps the pane path: bracketed paste is the runtime's contract.
+        await server._handle_terminal_paste(
+            websocket,
+            {
+                "terminal_id": terminal.id,
+                "attachment_id": attachment_id,
+                "client_write_seq": 2,
+                "text": "pasted",
+            },
+        )
+        assert runtime.pastes == ["pasted"]
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+@pytest.mark.asyncio
+async def test_input_without_an_attach_client_stays_on_the_runtime() -> None:
+    """A native attachment has no tmux client, so raw input still uses the runtime."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    server, attachment_id = await _server(terminal, runtime)
+    websocket = _WebSocket()
+
+    await server._handle_terminal_input(
+        websocket, _input_message(terminal, attachment_id, seq=1, data="\x1b[<64;13;12M")
+    )
+
+    assert runtime.inputs == [b"\x1b[<64;13;12M"]
+    assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
