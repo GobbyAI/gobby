@@ -6,20 +6,21 @@
 1. ``static_replay_params()`` — the frozen constants shipping today, pulled
    from their production sources so this module can never drift from them.
 2. ``refit_grid()`` — an interpretable sweep anchored at the static point:
-   single-axis half-life and graph-discount variations plus the full
+   single-axis graph-discount variations plus the full
    (``cooccur_alpha`` × ``cooccur_support_cap``) product (the two edge-blend
-   parameters plausibly interact; the others are swept one axis at a time so
-   every fitted point stays directly comparable to today's constants). The
-   grid is ordered ``[logged-baseline, static, ...]`` and the fit keeps the
+   parameters plausibly interact; the discount is swept on its own so every
+   fitted point stays directly comparable to today's constants). Half-life is
+   not swept: live search orders on undecayed similarity (#21010), so no
+   half-life can change a replayed order (see :mod:`gobby.memory.recall_replay`).
+   The grid is ordered ``[logged-baseline, static, ...]`` and the fit keeps the
    first strict maximum, so ties regularize toward no-change.
 3. ``judge_independent_guard_rows()`` — a constructed planted-truth battery.
    Ground truth comes from construction, never from a judge, so a fit that
    exploits judge-label artifacts (reward hacking, arXiv:2210.10760) cannot
    also satisfy it by construction. Static constants score 1.0 on the
    battery; parameter regions that violate the encoded domain priors
-   (half-life 7d, support-only or cosine-only edge blends, collapsed graph
-   discounts) score below 1.0 and are unshippable (safe exploration,
-   arXiv:2002.00467).
+   (support-only or cosine-only edge blends, collapsed graph discounts)
+   score below 1.0 and are unshippable (safe exploration, arXiv:2002.00467).
 4. ``GateDecision`` — the serialized, digest-bound record of one gate run.
 
 The gate execution path that consumes all four — ``run_ship_gate()`` and
@@ -42,12 +43,11 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.recall_fit import (
     PairwiseEvalResult,
-    ReplayParams,
-    ReplayRow,
     WeightingMode,
     evaluate_pairwise,
 )
 from gobby.memory.recall_fit_shrinkage import FittedParams, LabeledFitReport
+from gobby.memory.recall_replay import ReplayParams, ReplayRow
 from gobby.memory.recall_ship_gate import (
     AUDIT_MIN_AGREEMENT,
     AUDIT_MIN_WILSON_LOWER_BOUND,
@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 
 # Below these floors a grid argmax is noise, not signal: with one preference
 # pair per labeled request, 50 train pairs ≈ 50 requests — roughly the point
-# where a 19-point grid stops overfitting coin flips — and 20 holdout pairs
+# where a 15-point grid stops overfitting coin flips — and 20 holdout pairs
 # bound the comparison's standard error under ~0.11. Data-starved fits are
 # rejected with an explicit reason instead of shipping on vapor.
 MIN_TRAIN_PAIRS = 50
@@ -76,7 +76,6 @@ MIN_TRAIN_MIXED_REQUESTS = 20
 MIN_EVAL_MIXED_REQUESTS = 10
 
 
-HALF_LIFE_GRID: tuple[float, ...] = (7.0, 14.0, 60.0, 120.0)
 DISCOUNT_GRID: tuple[float, ...] = (0.8, 1.0)
 ALPHA_GRID: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0)
 CAP_GRID: tuple[int, ...] = (3, 5, 8)
@@ -103,7 +102,6 @@ def refit_grid() -> list[ReplayParams]:
     """
     static = static_replay_params()
     grid: list[ReplayParams] = [ReplayParams(), static]
-    grid.extend(replace(static, half_life_days=h) for h in HALF_LIFE_GRID)
     grid.extend(replace(static, graph_synthetic_discount=d) for d in DISCOUNT_GRID)
     grid.extend(
         replace(static, cooccur_alpha=alpha, cooccur_support_cap=cap)
@@ -185,18 +183,12 @@ def judge_independent_guard_rows() -> list[ReplayRow]:
     """Planted-truth ranking priors; no judge output anywhere in the labels.
 
     Each pair lives in its own request and probes one parameter axis (the
-    other axes cancel within the pair: temporal pairs are semantic-only,
-    graph pairs share their decay factor). Logged at half-life 30d, discount
-    0.9, alpha 0.5, cap 5 — the static point, which scores 1.0 by
-    construction. The encoded envelope:
+    pair shares its decay factor, so age cancels). Logged at half-life 30d,
+    discount 0.9, alpha 0.5, cap 5 — the static point, which scores 1.0 by
+    construction. No pair probes half-life: live search orders on undecayed
+    similarity (#21010), so no half-life can reorder a pair. The encoded
+    envelope:
 
-    - T1: a strong semantic match beats a weak fresh one at any sane
-      half-life (fails only for sub-week recency collapse).
-    - T2: a 12-day-old raw-0.95 match beats a fresh raw-0.45 one — half-life
-      7d violates this prior and is unshippable; 14d+ passes.
-    - T3: a fresh decent match beats a month-old marginally-stronger one —
-      guards against decay effectively disabling (very long half-lives
-      within the grid still pass).
     - G1/G2: graph-synthetic discounts collapsing toward 0 (or inflating
       past 1) flip the semantic/graph ordering.
     - E1: a strong-cosine weak-support edge must beat a weak-cosine
@@ -205,15 +197,6 @@ def judge_independent_guard_rows() -> list[ReplayRow]:
       borderline-cosine edge — cosine-only blends (alpha 1.0) fail.
     """
     return [
-        # T1 — semantic anchor: relevant .95 raw at 4.6d vs irrelevant .35 raw fresh.
-        _guard_semantic("guard-T1", "t1-rel", raw=0.95, decay=0.9, useful=True),
-        _guard_semantic("guard-T1", "t1-irr", raw=0.35, decay=0.98, useful=False),
-        # T2 — stale-relevant prior: .95 raw at 12.5d vs .45 raw fresh.
-        _guard_semantic("guard-T2", "t2-rel", raw=0.95, decay=0.75, useful=True),
-        _guard_semantic("guard-T2", "t2-irr", raw=0.45, decay=0.96, useful=False),
-        # T3 — fresh-relevant prior: .6 raw fresh vs .65 raw at 30d.
-        _guard_semantic("guard-T3", "t3-rel", raw=0.6, decay=0.95, useful=True),
-        _guard_semantic("guard-T3", "t3-irr", raw=0.65, decay=0.5, useful=False),
         # G1 — a real graph neighbor must survive discounts down to 0.8.
         _guard_graph("guard-G1", "g1-rel", graph=0.9, decay=0.9, useful=True),
         _guard_semantic("guard-G1", "g1-irr", raw=0.5, decay=0.9, useful=False),

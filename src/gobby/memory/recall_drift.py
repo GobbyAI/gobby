@@ -42,14 +42,12 @@ from gobby.memory.recall_constants import (
 )
 from gobby.memory.recall_fit import (
     PAIRWISE_EVALUATOR_VERSION,
-    ReplayParams,
-    ReplayRow,
     WeightingMode,
     estimate_position_propensities,
     evaluate_pairwise,
-    replay_row_from_signal_row,
 )
 from gobby.memory.recall_refit import MIN_EVAL_MIXED_REQUESTS, MIN_EVAL_PAIRS
+from gobby.memory.recall_replay import ReplayParams, ReplayRow, replay_row_from_signal_row
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:

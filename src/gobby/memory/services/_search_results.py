@@ -93,8 +93,9 @@ def build_results(
         # `cosine * boost * decay`, which at the live corpus median age of 25.9 days
         # demanded `cosine >= 1.002` to clear 0.55 -- unreachable, so every candidate
         # aged past the median was cut before the selection gate saw it while
-        # null-similarity keyword hits, exempt below, kept their slots. Ranking still
-        # uses the decayed value: age orders results, it no longer decides eligibility.
+        # null-similarity keyword hits, exempt below, kept their slots. Ordering
+        # reads the undecayed score too (#21010); the decayed value only breaks
+        # ties, so age neither decides eligibility nor orders results.
         #
         # A graph-expander find is judged on its confidence instead. Since
         # #20858 fills a real cosine in for every scorable candidate, the

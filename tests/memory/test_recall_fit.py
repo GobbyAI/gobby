@@ -17,8 +17,6 @@ import pytest
 from gobby.memory.recall_fit import (
     CandidateFilterParams,
     CandidateFilterReplayReport,
-    ReplayParams,
-    ReplayRow,
     _match_static_threshold,
     candidate_filter_score,
     candidate_replay_rows_from_signal_rows,
@@ -26,9 +24,6 @@ from gobby.memory.recall_fit import (
     evaluate_pairwise,
     ips_weight,
     replay_candidate_filter,
-    replay_row_from_signal_row,
-    replayed_similarity,
-    replayed_sort_key,
     select_by_candidate_filter,
     select_by_static_constants,
     split_requests_per_project,
@@ -41,7 +36,15 @@ from gobby.memory.recall_fit_shrinkage import (
     fit_partial_pooled,
     select_shrinkage_requests,
 )
+from gobby.memory.recall_replay import (
+    ReplayParams,
+    ReplayRow,
+    replay_row_from_signal_row,
+    replayed_order,
+    replayed_similarity,
+)
 from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
+from gobby.memory.services._search_ranking import HitScores, order_results
 
 pytestmark = pytest.mark.unit
 
@@ -107,6 +110,32 @@ def _semantic_row(
         ranking_mode="semantic_only",
         ranking_score=ranking_score,
         **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def _graph_row(
+    *,
+    graph: float,
+    decay: float,
+    discount: float,
+    request_id: str = "req-1",
+    memory_id: str = "mem-1",
+    project_id: str | None = "proj-a",
+    judge_useful: bool | None = None,
+    injection_position: int | None = 0,
+) -> ReplayRow:
+    """A graph-only hit whose logged similarity is graph * discount * decay."""
+    return _row(
+        request_id,
+        memory_id,
+        project_id=project_id,
+        similarity=graph * discount * decay,
+        temporal_decay_factor=decay,
+        ranking_mode="graph_synthetic",
+        graph_score=graph,
+        logged_graph_discount=discount,
+        judge_useful=judge_useful,
+        injection_position=injection_position,
     )
 
 
@@ -206,14 +235,54 @@ class TestReplayAlgebra:
 
         assert replayed == pytest.approx(0.8 * (0.9 / 0.7) * 0.9)
 
-    def test_sort_key_semantic_first_then_ranking_tiebreak(self) -> None:
-        params = ReplayParams()
-        with_sim = _semantic_row(raw=0.3, decay=1.0, ranking_score=0.1)
-        no_sim = _row(ranking_score=0.9, ranking_mode="nonsemantic_fallback")
-        tied_low = _semantic_row(raw=0.3, decay=1.0, ranking_score=0.05)
+    def test_a_counterfactual_half_life_never_reorders_a_request(self) -> None:
+        # Binary-exact scores, so the two 0.5 rows tie before decay at every half-life.
+        rows = [
+            _semantic_row(raw=0.5, decay=0.25, memory_id="tied-older"),
+            _semantic_row(raw=0.5, decay=0.5, memory_id="tied-fresher"),
+            _semantic_row(raw=0.75, decay=0.125, memory_id="stale-but-closest"),
+        ]
+        expected = ["stale-but-closest", "tied-fresher", "tied-older"]
 
-        assert replayed_sort_key(with_sim, params) > replayed_sort_key(no_sim, params)
-        assert replayed_sort_key(with_sim, params) > replayed_sort_key(tied_low, params)
+        assert [row.memory_id for row in replayed_order(rows, ReplayParams())] == expected
+        for half_life in (1.0, 7.0, 120.0):
+            replayed = replayed_order(rows, ReplayParams(half_life_days=half_life))
+            assert [row.memory_id for row in replayed] == expected, half_life
+
+    def test_a_graph_discount_moves_a_graph_hit_past_a_semantic_one(self) -> None:
+        rows = [
+            _semantic_row(raw=0.6, decay=1.0, memory_id="semantic"),
+            _graph_row(graph=0.8, decay=1.0, discount=0.5, memory_id="graph"),
+        ]
+
+        logged = replayed_order(rows, ReplayParams())
+        lifted = replayed_order(rows, ReplayParams(graph_synthetic_discount=0.9))
+
+        assert [row.memory_id for row in logged] == ["semantic", "graph"]
+        assert [row.memory_id for row in lifted] == ["graph", "semantic"]
+
+
+def test_replayed_order_matches_live_sort_key() -> None:
+    # "stale" leads before decay and trails after it, "confirmed" leads only the fused
+    # order, and "keyword" carries no similarity at all.
+    rows = [
+        _row(memory_id="keyword", ranking_score=0.030, ranking_mode="nonsemantic_fallback"),
+        _semantic_row(raw=0.6, decay=1.0, ranking_score=0.048, memory_id="confirmed"),
+        _semantic_row(raw=0.7, decay=0.95, ranking_score=0.016, memory_id="fresh"),
+        _semantic_row(raw=0.8, decay=0.5, ranking_score=0.015, memory_id="stale"),
+    ]
+
+    def live_scores(row: ReplayRow) -> HitScores:
+        if row.similarity is None or row.temporal_decay_factor is None:
+            return HitScores(None, None, row.ranking_score)
+        undecayed = row.similarity / row.temporal_decay_factor
+        return HitScores(undecayed, row.similarity, row.ranking_score)
+
+    live = [row.memory_id for row in order_results(rows, live_scores)]
+    replayed = [row.memory_id for row in replayed_order(rows, ReplayParams())]
+
+    assert replayed == live
+    assert replayed == ["stale", "confirmed", "fresh", "keyword"]
 
 
 class TestPropensities:
@@ -433,6 +502,35 @@ class TestPairwiseObjective:
         assert low.accuracy == pytest.approx(0.0)
         assert half.accuracy == pytest.approx(0.5)
 
+    def test_a_fused_lift_above_a_more_similar_row_earns_the_pair(self) -> None:
+        rows = [
+            _semantic_row(
+                raw=0.8, decay=1.0, ranking_score=0.015, request_id="r1", memory_id="similar"
+            ),
+            _semantic_row(
+                raw=0.7,
+                decay=1.0,
+                ranking_score=0.016,
+                request_id="r1",
+                memory_id="middling",
+                judge_useful=False,
+            ),
+            _semantic_row(
+                raw=0.6,
+                decay=1.0,
+                ranking_score=0.048,
+                request_id="r1",
+                memory_id="confirmed",
+                judge_useful=True,
+            ),
+        ]
+
+        result = evaluate_pairwise(rows, {}, {}, default_params=ReplayParams())
+
+        # The fused order lifts "confirmed" to second, above the more similar "middling".
+        assert result.pair_count == 1
+        assert result.accuracy == pytest.approx(1.0)
+
     def test_pairs_never_cross_requests(self) -> None:
         rows = [
             _semantic_row(
@@ -447,23 +545,24 @@ class TestPairwiseObjective:
         assert result.accuracy == 0.0
 
     def test_per_project_params_override_default(self) -> None:
-        # Misordered under logged params; project override flips ordering.
-        decay_useful = 0.9
-        decay_bad = 0.7
+        # Misordered under logged params; the project's discount lifts the graph hit.
         rows = [
-            _semantic_row(
-                raw=0.6, decay=decay_useful, request_id="r1", memory_id="useful", judge_useful=True
+            _graph_row(
+                graph=0.8,
+                decay=1.0,
+                discount=0.5,
+                request_id="r1",
+                memory_id="useful",
+                judge_useful=True,
             ),
-            _semantic_row(
-                raw=0.8, decay=decay_bad, request_id="r1", memory_id="bad", judge_useful=False
-            ),
+            _semantic_row(raw=0.6, decay=1.0, request_id="r1", memory_id="bad", judge_useful=False),
         ]
         assert rows[0].similarity is not None and rows[1].similarity is not None
         assert rows[0].similarity < rows[1].similarity
 
         fixed = evaluate_pairwise(
             rows,
-            {"proj-a": ReplayParams(half_life_days=7.0)},
+            {"proj-a": ReplayParams(graph_synthetic_discount=0.9)},
             {},
             default_params=ReplayParams(),
         )
@@ -516,35 +615,38 @@ class TestSplitAndPartialPooling:
         }
 
     def test_small_project_shrinks_toward_pooled(self) -> None:
-        # proj-big: many pairs preferring h=7; proj-tiny: one pair preferring
-        # h=120. Pooled fit lands on 7; tiny's fit must shrink ~all the way.
+        # Every request holds graph hits (0.8, logged at discount 0.5) beside raw-0.6
+        # semantic hits: discount 1.0 puts the graph hits first, 0.5 the semantic ones.
+        # proj-big: many pairs preferring 1.0; proj-tiny: one request preferring 0.5.
+        # Pooled fit lands on 1.0; tiny's fit must shrink ~all the way.
         rows: list[ReplayRow] = []
         for i in range(10):
             rows += [
-                _semantic_row(
-                    raw=0.6,
-                    decay=0.9,
+                _graph_row(
+                    graph=0.8,
+                    decay=1.0,
+                    discount=0.5,
                     request_id=f"big-{i}",
                     memory_id="useful",
                     project_id="proj-big",
                     judge_useful=True,
                 ),
                 _semantic_row(
-                    raw=0.8,
-                    decay=0.7,
+                    raw=0.6,
+                    decay=1.0,
                     request_id=f"big-{i}",
                     memory_id="bad",
                     project_id="proj-big",
                     judge_useful=False,
                 ),
             ]
-        # Tiny project has one 4x4 request preferring the long half-life.
+        # Tiny project has one 4x4 request preferring the low discount.
         # Its 16 raw pairs remain one independent shrinkage unit.
         rows += [
             *[
                 _semantic_row(
-                    raw=0.8,
-                    decay=0.7,
+                    raw=0.6,
+                    decay=1.0,
                     request_id="tiny-1",
                     memory_id=f"useful-{index}",
                     project_id="proj-tiny",
@@ -553,9 +655,10 @@ class TestSplitAndPartialPooling:
                 for index in range(4)
             ],
             *[
-                _semantic_row(
-                    raw=0.6,
-                    decay=0.9,
+                _graph_row(
+                    graph=0.8,
+                    decay=1.0,
+                    discount=0.5,
                     request_id="tiny-1",
                     memory_id=f"bad-{index}",
                     project_id="proj-tiny",
@@ -564,21 +667,24 @@ class TestSplitAndPartialPooling:
                 for index in range(4)
             ],
         ]
-        grid = [ReplayParams(half_life_days=7.0), ReplayParams(half_life_days=120.0)]
+        grid = [
+            ReplayParams(graph_synthetic_discount=1.0),
+            ReplayParams(graph_synthetic_discount=0.5),
+        ]
 
         fitted = fit_partial_pooled(rows, grid, {}, shrinkage_requests=50.0)
 
         assert isinstance(fitted, FittedParams)
-        assert fitted.pooled.half_life_days == 7.0
+        assert fitted.pooled.graph_synthetic_discount == 1.0
         assert fitted.project_pairs["proj-tiny"] == 16
         assert fitted.project_mixed_requests["proj-tiny"] == 1
         tiny = fitted.per_project["proj-tiny"]
-        assert tiny.half_life_days is not None
-        # lam = 1/51 -> 7 + (120-7)/51 ≈ 9.2: pinned to pooled, not to 120.
-        assert tiny.half_life_days == pytest.approx(7.0 + 113.0 / 51.0)
+        assert tiny.graph_synthetic_discount is not None
+        # lam = 1/51 -> 1.0 - 0.5/51 ≈ 0.99: pinned to pooled, not to 0.5.
+        assert tiny.graph_synthetic_discount == pytest.approx(1.0 - 0.5 / 51.0)
         big = fitted.per_project["proj-big"]
-        assert big.half_life_days is not None
-        assert big.half_life_days < tiny.half_life_days
+        assert big.graph_synthetic_discount is not None
+        assert big.graph_synthetic_discount > tiny.graph_synthetic_discount
 
     def test_project_without_labeled_pairs_rides_pooled(self) -> None:
         rows = [
@@ -610,19 +716,20 @@ class TestSplitAndPartialPooling:
 
 class TestFitAndEvaluate:
     def _planted_rows(self) -> list[ReplayRow]:
-        """Useful is recent, unuseful is old, logged ordering is inverted.
+        """Useful is a graph hit logged under a collapsed discount, so logged ordering is inverted.
 
-        Under the logged half-life (30d) the stale-but-high-raw memory wins
-        (0.56 > 0.54); any shorter replayed half-life flips every request.
+        Under the logged discount (0.5) the semantic memory wins (0.6 > 0.4);
+        every discount the default grid sweeps flips every request.
         """
         rows: list[ReplayRow] = []
         for project in ("proj-a", "proj-b"):
             for i in range(4):
                 request = f"{project}-req-{i}"
                 rows += [
-                    _semantic_row(
-                        raw=0.6,
+                    _graph_row(
+                        graph=0.8,
                         decay=0.9,
+                        discount=0.5,
                         request_id=request,
                         memory_id="useful",
                         project_id=project,
@@ -630,8 +737,8 @@ class TestFitAndEvaluate:
                         injection_position=0,
                     ),
                     _semantic_row(
-                        raw=0.8,
-                        decay=0.7,
+                        raw=0.6,
+                        decay=0.9,
                         request_id=request,
                         memory_id="bad",
                         project_id=project,
@@ -649,7 +756,7 @@ class TestFitAndEvaluate:
                 ]
         return rows
 
-    def test_recovers_planted_half_life_and_beats_baseline_on_holdout(self) -> None:
+    def test_recovers_planted_discount_and_beats_baseline_on_holdout(self) -> None:
         report = fit_and_evaluate(
             self._planted_rows(), default_replay_grid(), weighting_mode="injected"
         )
@@ -658,7 +765,7 @@ class TestFitAndEvaluate:
         assert report.rows_labeled == 16
         assert report.train_requests == 4
         assert report.eval_requests == 4
-        assert report.fitted.pooled.half_life_days == 7.0
+        assert report.fitted.pooled.graph_synthetic_discount == 0.8
         assert report.baseline_eval.accuracy == pytest.approx(0.0)
         assert report.fitted_eval.accuracy == pytest.approx(1.0)
         assert set(report.fitted_eval.per_project) == {"proj-a", "proj-b"}

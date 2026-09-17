@@ -1,10 +1,10 @@
 """Partial-pooled parameter fitting over logged recall-signal rows (#17197).
 
-``recall_fit`` owns the replay algebra and the evaluation metrics; this module
-owns the search procedure that consumes them. Fitting grid-searches pooled
-constants, refits per project, and shrinks each project toward the pooled fit
-in proportion to its own mixed-request support, so a project with three
-labeled requests cannot drag the constants around.
+``recall_replay`` owns the replay algebra and ``recall_fit`` the evaluation
+metrics; this module owns the search procedure that consumes them. Fitting
+grid-searches pooled constants, refits per project, and shrinks each project
+toward the pooled fit in proportion to its own mixed-request support, so a
+project with three labeled requests cannot drag the constants around.
 
 Shrinkage strength is itself fitted, on planted synthetic data plus a
 validation split nested *inside* training, so the outer holdout stays
@@ -20,13 +20,12 @@ from gobby.memory.recall_fit import (
     REQUEST_SPLIT_VERSION,
     PairwiseEvalResult,
     PropensityKey,
-    ReplayParams,
-    ReplayRow,
     WeightingMode,
     estimate_position_propensities,
     evaluate_pairwise,
     split_requests_per_project,
 )
+from gobby.memory.recall_replay import ReplayParams, ReplayRow
 
 SHRINKAGE_SELECTION_METHOD = "synthetic+nested-training-v1"
 SHRINKAGE_REQUEST_CANDIDATES: tuple[float, ...] = (2.0, 5.0, 10.0, 20.0, 50.0)
@@ -359,12 +358,14 @@ def fit_and_evaluate(
 
 
 def default_replay_grid() -> list[ReplayParams]:
-    """Half-life sweep around today's defaults; other constants stay logged.
+    """Graph-discount sweep around today's default; other constants stay logged.
 
     #17198 widens this to the (alpha, cap) dimensions; the harness default
-    keeps the exactly-replayable axis so grid size stays trivial.
+    keeps the exactly-replayable axis so grid size stays trivial. Half-life
+    replays exactly too and is left out: it cannot change the replayed order
+    (see ``recall_replay``).
     """
     baseline = ReplayParams()
     return [baseline] + [
-        replace(baseline, half_life_days=half_life) for half_life in (7.0, 14.0, 30.0, 60.0, 120.0)
+        replace(baseline, graph_synthetic_discount=discount) for discount in (0.8, 0.9, 1.0)
     ]

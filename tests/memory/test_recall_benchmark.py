@@ -58,18 +58,17 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
-from gobby.memory.recall_fit import (
-    replay_row_from_signal_row,
-    split_request_ids_per_project,
-)
+from gobby.memory.recall_fit import split_request_ids_per_project
 from gobby.memory.recall_fit_shrinkage import (
     LabeledFitReport,
     default_replay_grid,
     fit_and_evaluate,
 )
 from gobby.memory.recall_refit import static_replay_params
+from gobby.memory.recall_replay import replay_row_from_signal_row
 from gobby.memory.recall_ship_gate import GateCohort, build_ship_audit_sample
 from gobby.memory.recall_ship_gate_run import run_ship_gate_from_store
+from gobby.memory.services._search_constants import _GRAPH_SYNTHETIC_SIM_DISCOUNT
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
@@ -228,14 +227,34 @@ def _labeled_hit(memory_id: str, *, rank: int, raw: float, decay: float) -> dict
     }
 
 
+def _graph_hit(
+    memory_id: str, *, rank: int, graph: float, discount: float, decay: float
+) -> dict[str, object]:
+    """A graph-only hit: the graph score at ``discount``, then decayed."""
+    hit = _labeled_hit(memory_id, rank=rank, raw=graph, decay=decay)
+    hit.update(
+        search_via="graph",
+        similarity=graph * discount * decay,
+        raw_semantic_score=None,
+        ranking_mode="graph_synthetic",
+        graph_score=graph,
+    )
+    return hit
+
+
+# Live search orders on undecayed similarity, so the plantings below move the order
+# through the graph discount: age (half-life) cannot reorder a request.
+_LOGGED_GRAPH_DISCOUNT = 0.5
+
+
 def _seed_labeled_signal_rows(store: RecallSignalStore) -> None:
     """Plant real hub rows where the logged ranking inverts usefulness.
 
-    Per request: the useful memory is recent but lower-raw-scored (0.6 * 0.9),
-    the not-useful one is stale but higher-raw-scored (0.8 * 0.7 -> logged
-    winner), plus one unlabeled hit that only feeds propensity denominators.
-    Any replayed half-life shorter than the logged 30d flips every request,
-    so the fit must beat the logged-params baseline on the holdout.
+    Per request: the useful memory is a graph hit logged under a harsh 0.5 discount
+    (0.8 -> 0.4), the not-useful one a semantic hit at raw 0.6 (the logged winner),
+    plus one unlabeled hit that only feeds propensity denominators. Every discount
+    in the default grid lifts the graph hit past 0.6 (0.8 * 0.8 = 0.64), so the
+    fit must beat the logged-params baseline on the holdout.
     """
     for project in ("proj-fit-a", "proj-fit-b"):
         for i in range(4):
@@ -253,13 +272,19 @@ def _seed_labeled_signal_rows(store: RecallSignalStore) -> None:
                     "merged_ids": ["mem-bad", "mem-useful", "mem-unlabeled"],
                     "returned_ids": ["mem-bad", "mem-useful", "mem-unlabeled"],
                     "rrf_applied": False,
-                    "graph_synthetic_similarity_discount": None,
+                    "graph_synthetic_similarity_discount": _LOGGED_GRAPH_DISCOUNT,
                     "ranking_score_map": {},
                     "graph_score_map": {},
                     "weighting": {"temporal_decay_half_life_days": _LOGGED_HALF_LIFE},
                     "hits": [
-                        _labeled_hit("mem-bad", rank=0, raw=0.8, decay=0.7),
-                        _labeled_hit("mem-useful", rank=1, raw=0.6, decay=0.9),
+                        _labeled_hit("mem-bad", rank=0, raw=0.6, decay=0.7),
+                        _graph_hit(
+                            "mem-useful",
+                            rank=1,
+                            graph=0.8,
+                            discount=_LOGGED_GRAPH_DISCOUNT,
+                            decay=0.9,
+                        ),
                         _labeled_hit("mem-unlabeled", rank=2, raw=0.5, decay=0.8),
                     ],
                 }
@@ -304,27 +329,32 @@ _SHADOW_DATA_CUTOFF = datetime(2026, 7, 10, 12, tzinfo=UTC)
 _SHADOW_COMPLETION_CUTOFF = datetime(2026, 7, 10, 13, tzinfo=UTC)
 
 
-def _shadow_hit(
-    memory_id: str,
-    *,
-    rank: int,
-    raw: float,
-    decay: float,
-) -> dict[str, object]:
-    hit = _labeled_hit(memory_id, rank=rank, raw=raw, decay=decay)
-    hit["content_hash"] = f"content-{memory_id}"
+def _shadow_hit(hit: dict[str, object]) -> dict[str, object]:
+    hit["content_hash"] = f"content-{hit['memory_id']}"
     return hit
 
 
 def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
-    """Seed a complete fenced shadow cohort plus its bound 50-unit audit."""
+    """Seed a complete fenced shadow cohort plus its bound 50-unit audit.
+
+    The useful graph hit enters at 0.8 * discount: it trails the not-useful raw
+    0.75 at the static 0.9 (0.72) and leads at discount 1.0, so the gate ships.
+    """
     for index in range(120):
         project = f"proj-shadow-{index % 2}"
         request_id = f"shadow-request-{index:03d}"
         session_id = f"shadow-session-{index % 2}"
         hits = [
-            _shadow_hit("mem-bad", rank=0, raw=0.5, decay=0.95),
-            _shadow_hit("mem-useful", rank=1, raw=0.75, decay=0.6),
+            _shadow_hit(_labeled_hit("mem-bad", rank=0, raw=0.75, decay=0.9)),
+            _shadow_hit(
+                _graph_hit(
+                    "mem-useful",
+                    rank=1,
+                    graph=0.8,
+                    discount=_GRAPH_SYNTHETIC_SIM_DISCOUNT,
+                    decay=0.9,
+                )
+            ),
         ]
         store.insert_signal_event(
             {
@@ -338,7 +368,7 @@ def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
                 "merged_ids": ["mem-bad", "mem-useful"],
                 "returned_ids": ["mem-bad", "mem-useful"],
                 "rrf_applied": False,
-                "graph_synthetic_similarity_discount": None,
+                "graph_synthetic_similarity_discount": _GRAPH_SYNTHETIC_SIM_DISCOUNT,
                 "ranking_score_map": {},
                 "graph_score_map": {},
                 "weighting": {"temporal_decay_half_life_days": _LOGGED_HALF_LIFE},
@@ -705,9 +735,9 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     assert report.train_requests == 4
     assert report.eval_requests == 4
 
-    # The fit recovers a shorter half-life and must beat the logged-params
+    # The fit recovers a lifted graph discount and must beat the logged-params
     # baseline on the per-project holdout (the #17198 gate comparison).
-    assert report.fitted.pooled.half_life_days == 7.0
+    assert report.fitted.pooled.graph_synthetic_discount == 0.8
     assert report.baseline_eval.accuracy == pytest.approx(0.0)
     assert report.fitted_eval.accuracy == pytest.approx(1.0)
     assert set(report.fitted_eval.per_project) == {"proj-fit-a", "proj-fit-b"}
@@ -726,8 +756,9 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     fit_rows = [
         replay_row_from_signal_row(row) for row in store.fetch_replay_rows(label_source="ablation")
     ]
-    assert all(row.ranking_mode == "semantic_only" for row in fit_rows)
+    assert {row.ranking_mode for row in fit_rows} == {"semantic_only", "graph_synthetic"}
     assert all(row.temporal_decay_factor is not None for row in fit_rows)
+    assert all(row.logged_graph_discount == _LOGGED_GRAPH_DISCOUNT for row in fit_rows)
 
     # Production ship-gate path over complete shadow labels, immutable prompt
     # snapshots, bound audit verdicts, and one atomic holdout reservation.
@@ -748,7 +779,9 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     repeated = run_ship_gate_from_store(store, **gate_args)
 
     print(f"ship gate: ship={decision.ship} reasons={list(decision.reasons)}")
-    assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=60.0)
+    assert decision.report.fitted.pooled == replace(
+        static_replay_params(), graph_synthetic_discount=1.0
+    )
     assert decision.audit_ok is True
     assert decision.sufficient_data is True
     assert decision.beats_static is True

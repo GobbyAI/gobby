@@ -14,12 +14,9 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.memory.recall_fit import (
     REQUEST_SPLIT_VERSION,
-    ReplayParams,
-    ReplayRow,
     WeightingMode,
     estimate_position_propensities,
     evaluate_pairwise,
-    replay_row_from_signal_row,
     split_request_ids_per_project,
     split_requests_per_project,
 )
@@ -35,6 +32,7 @@ from gobby.memory.recall_refit import (
     refit_grid,
     static_replay_params,
 )
+from gobby.memory.recall_replay import ReplayParams, ReplayRow, replay_row_from_signal_row
 from gobby.memory.recall_ship_gate import (
     AUDIT_SAMPLE_REQUESTS,
     GateCohort,

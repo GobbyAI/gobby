@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
-from gobby.memory.recall_fit import ReplayParams, ReplayRow, split_requests_per_project
+from gobby.memory.recall_fit import split_requests_per_project
 from gobby.memory.recall_refit import (
     MIN_EVAL_PAIRS,
     MIN_TRAIN_PAIRS,
@@ -28,6 +28,7 @@ from gobby.memory.recall_refit import (
     refit_grid,
     static_replay_params,
 )
+from gobby.memory.recall_replay import ReplayParams, ReplayRow
 from gobby.memory.recall_ship_gate import (
     AUDIT_SAMPLE_REQUESTS,
     GateCohort,
@@ -285,23 +286,80 @@ def _semantic(
     )
 
 
-def _planted_requests(
-    count: int,
+# Every planted row shares one decay: age cannot reorder a request, so the plantings
+# move the order through the constants that can (the graph discount and the edge blend).
+_DECAY = 0.9
+
+
+def _graph(
+    request_id: str,
+    memory_id: str,
     *,
-    rel_raw: float,
-    rel_decay: float,
-    irr_raw: float,
-    irr_decay: float,
-) -> list[ReplayRow]:
-    """``count`` requests, each one labeled (useful, not-useful) pair."""
+    graph: float,
+    useful: bool,
+    position: int,
+    edge_cosine: float | None = None,
+    edge_support_norm: float | None = None,
+) -> ReplayRow:
+    """A graph-only hit logged at the static discount and edge blend."""
+    blend: float | None = None
+    if edge_cosine is not None and edge_support_norm is not None:
+        blend = COOCCUR_ALPHA * edge_cosine + (1.0 - COOCCUR_ALPHA) * edge_support_norm
+    return replace(
+        _semantic(request_id, memory_id, raw=0.0, decay=_DECAY, useful=useful, position=position),
+        similarity=graph * _GRAPH_SYNTHETIC_SIM_DISCOUNT * _DECAY,
+        raw_semantic_score=None,
+        ranking_mode="graph_synthetic",
+        graph_score=graph,
+        edge_cosine=edge_cosine,
+        edge_support_norm=edge_support_norm,
+        edge_weight_blend=blend,
+        logged_graph_discount=_GRAPH_SYNTHETIC_SIM_DISCOUNT,
+    )
+
+
+def _planted_requests(count: int, *, rel_graph: float, irr_raw: float) -> list[ReplayRow]:
+    """``count`` requests, each one labeled (useful graph hit, not-useful semantic hit) pair.
+
+    The graph hit enters at ``rel_graph * discount``: 0.8 against a raw 0.75 trails at the
+    static 0.9 (0.72) and leads at discount 1.0, which is the shippable planting.
+    """
+    rows: list[ReplayRow] = []
+    for i in range(count):
+        request_id = f"req-{i:02d}"
+        rows.append(_graph(request_id, "mem-rel", graph=rel_graph, useful=True, position=0))
+        rows.append(
+            _semantic(request_id, "mem-irr", raw=irr_raw, decay=_DECAY, useful=False, position=1)
+        )
+    return rows
+
+
+def _popularity_hacked_requests(count: int) -> list[ReplayRow]:
+    """Labels that prefer a weak-cosine popularity edge over a strong-cosine one."""
     rows: list[ReplayRow] = []
     for i in range(count):
         request_id = f"req-{i:02d}"
         rows.append(
-            _semantic(request_id, "mem-rel", raw=rel_raw, decay=rel_decay, useful=True, position=0)
+            _graph(
+                request_id,
+                "mem-rel",
+                graph=0.6,
+                useful=True,
+                position=0,
+                edge_cosine=0.2,
+                edge_support_norm=1.0,
+            )
         )
         rows.append(
-            _semantic(request_id, "mem-irr", raw=irr_raw, decay=irr_decay, useful=False, position=1)
+            _graph(
+                request_id,
+                "mem-irr",
+                graph=0.8,
+                useful=False,
+                position=1,
+                edge_cosine=0.9,
+                edge_support_norm=0.2,
+            )
         )
     return rows
 
@@ -337,13 +395,7 @@ class TestShipAuditSample:
         assert default_candidate_scope(label_source) == expected
 
     def test_is_deterministic_and_uses_only_training_requests(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         train, evaluation = split_requests_per_project(rows)
         train_ids = {row.recall_request_id for row in train}
         evaluation_ids = {row.recall_request_id for row in evaluation}
@@ -370,13 +422,7 @@ class TestShipAuditSample:
 
 class TestStoreShipGate:
     def test_reserves_before_reading_holdout_and_completes_once(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         store = _RecordingGateStore(rows)
         decision = _run_recording_store_gate(store)
 
@@ -392,13 +438,7 @@ class TestStoreShipGate:
         ]
 
     def test_failed_audit_never_reserves_or_reads_holdout(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         store = _IncompleteAuditStore(rows)
 
         decision = _run_recording_store_gate(store)
@@ -409,13 +449,7 @@ class TestStoreShipGate:
         assert "holdout_rows" not in store.calls
 
     def test_completed_rerun_rehydrates_stored_decision_without_holdout_read(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         record = run_ship_gate(rows, **_ship_gate_kwargs(rows)).to_record()
         store = _CompletedGateStore(rows, record)
 
@@ -444,10 +478,9 @@ class TestRefitGrid:
     def test_grid_covers_axes_without_duplicates(self) -> None:
         grid = refit_grid()
         static = static_replay_params()
-        # 2 anchors + 4 half-life singles + 2 discount singles + (4*3 - 1) alpha×cap.
-        assert len(grid) == 19
-        assert len(set(grid)) == 19
-        assert replace(static, half_life_days=60.0) in grid
+        # 2 anchors + 2 discount singles + (4*3 - 1) alpha×cap.
+        assert len(grid) == 15
+        assert len(set(grid)) == 15
         assert replace(static, graph_synthetic_discount=1.0) in grid
         assert replace(static, cooccur_alpha=0.75, cooccur_support_cap=8) in grid
 
@@ -465,9 +498,9 @@ class TestGuardBattery:
         assert guard_accuracy(ReplayParams()) == 1.0
 
     def test_grid_envelope_is_exactly_the_documented_one(self) -> None:
-        """h=7, alpha=0.25, and alpha=1.0 each violate one encoded prior."""
+        """alpha=0.25 and alpha=1.0 each violate one encoded prior."""
         for params in refit_grid():
-            outside = params.half_life_days == 7.0 or params.cooccur_alpha in (0.25, 1.0)
+            outside = params.cooccur_alpha in (0.25, 1.0)
             accuracy = guard_accuracy(params)
             if outside:
                 assert accuracy < 1.0, params
@@ -476,8 +509,14 @@ class TestGuardBattery:
 
     def test_degenerate_parameters_fail_the_battery(self) -> None:
         static = static_replay_params()
-        assert guard_accuracy(replace(static, half_life_days=1.0)) < 1.0
         assert guard_accuracy(replace(static, graph_synthetic_discount=0.1)) < 1.0
+        assert guard_accuracy(replace(static, graph_synthetic_discount=1.5)) < 1.0
+
+    def test_no_half_life_can_fail_the_battery(self) -> None:
+        """Age cannot reorder a request, so the battery holds no half-life prior."""
+        static = static_replay_params()
+        for half_life in (1.0, 7.0, 365.0):
+            assert guard_accuracy(replace(static, half_life_days=half_life)) == 1.0
 
     def test_guard_rows_carry_no_judge_labels(self) -> None:
         for row in judge_independent_guard_rows():
@@ -486,18 +525,14 @@ class TestGuardBattery:
 
 
 class TestShipGate:
-    def test_ship_path_fits_sixty_day_half_life(self) -> None:
-        # Logged (h=30): useful .75*.6=.45 < not-useful .5*.95=.475 — inverted.
-        # h=60 re-exponentiation fixes it (.581 vs .487); h=7/14 do not.
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+    def test_ship_path_fits_the_full_graph_discount(self) -> None:
+        # Logged (discount 0.9): useful .8*.9=.72 < not-useful .75 — inverted.
+        # Discount 1.0 fixes it (.8 vs .75); 0.8 does not.
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
-        assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=60.0)
+        assert decision.report.fitted.pooled == replace(
+            static_replay_params(), graph_synthetic_discount=1.0
+        )
         assert decision.sufficient_data is True
         assert decision.audit_ok is True
         assert decision.beats_static is True
@@ -508,13 +543,7 @@ class TestShipGate:
         assert any("beat the static constants" in reason for reason in decision.reasons)
 
     def test_rejects_incomplete_or_below_threshold_audit(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         incomplete_kwargs = _ship_gate_kwargs(rows)
         incomplete_kwargs["audit_verdicts"] = list(incomplete_kwargs["audit_verdicts"])[:-1]
 
@@ -538,13 +567,7 @@ class TestShipGate:
         assert below.ship is False
 
     def test_rejects_stale_prompt_or_digest_mismatch(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         stale_kwargs = _ship_gate_kwargs(rows)
         stale_verdicts = [dict(row) for row in stale_kwargs["audit_verdicts"]]
         stale_verdicts[0]["prompt_hash"] = "stale-prompt"
@@ -566,13 +589,7 @@ class TestShipGate:
         assert mismatched.ship is False
 
     def test_decision_digest_and_cohort_record_are_canonical(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
 
         record = decision.to_record()
@@ -593,7 +610,7 @@ class TestShipGate:
         assert record["audit"]["status"] == "passed"
 
     def test_reject_insufficient_data_with_default_floors(self) -> None:
-        rows = _planted_requests(12, rel_raw=0.75, rel_decay=0.6, irr_raw=0.5, irr_decay=0.95)
+        rows = _planted_requests(12, rel_graph=0.8, irr_raw=0.75)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
         assert decision.report.fitted.pooled_pairs < MIN_TRAIN_PAIRS
         assert decision.static_eval.pair_count < MIN_EVAL_PAIRS
@@ -602,13 +619,7 @@ class TestShipGate:
         assert any("insufficient labeled data" in reason for reason in decision.reasons)
 
     def test_rejects_when_raw_pair_floor_passes_but_mixed_request_floor_fails(self) -> None:
-        rows = _planted_requests(
-            120,
-            rel_raw=0.75,
-            rel_decay=0.6,
-            irr_raw=0.5,
-            irr_decay=0.95,
-        )
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         train, _evaluation = split_requests_per_project(rows)
         mixed_train_ids = sorted({row.recall_request_id for row in train})[:19]
         mixed_rows = [
@@ -630,14 +641,17 @@ class TestShipGate:
         assert decision.sufficient_data is False
         assert decision.ship is False
 
-    def test_reject_guard_regression_on_recency_hacked_labels(self) -> None:
-        # Labels systematically favor recency: fresh mediocre useful, staler
-        # stronger not-useful. The grid's best judge-label fit is h=7, which
-        # violates the constructed stale-relevant prior (guard pair T2) — the
-        # reward-hacking gate must reject even though the holdout improves.
-        rows = _planted_requests(120, rel_raw=0.6, rel_decay=0.9, irr_raw=0.8, irr_decay=0.7)
+    def test_reject_guard_regression_on_popularity_hacked_labels(self) -> None:
+        # Labels systematically favor popularity: a weak-cosine, fully supported
+        # edge useful, a strong-cosine weakly supported one not-useful. The
+        # grid's best judge-label fit is the support-dominant blend (alpha 0.25),
+        # which violates the constructed cosine-must-carry prior (guard pair E1) —
+        # the reward-hacking gate must reject even though the holdout improves.
+        rows = _popularity_hacked_requests(120)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
-        assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=7.0)
+        assert decision.report.fitted.pooled == replace(
+            static_replay_params(), cooccur_alpha=0.25, cooccur_support_cap=3
+        )
         assert decision.beats_static is True
         assert decision.guard_fitted < decision.guard_static == 1.0
         assert decision.guard_ok is False
@@ -648,7 +662,7 @@ class TestShipGate:
         # Correctly ordered at the logged constants: every grid point ties at
         # 1.0, the first-strict-max rule keeps the logged baseline, and the
         # fitted arm cannot strictly beat static — no-change wins.
-        rows = _planted_requests(120, rel_raw=0.9, rel_decay=0.9, irr_raw=0.3, irr_decay=0.9)
+        rows = _planted_requests(120, rel_graph=0.9, irr_raw=0.3)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
         assert decision.report.fitted.pooled == ReplayParams()
         assert decision.beats_static is False
@@ -657,7 +671,7 @@ class TestShipGate:
         assert any("do not beat the static constants" in r for r in decision.reasons)
 
     def test_static_eval_scores_the_same_holdout_as_fitted(self) -> None:
-        rows = _planted_requests(120, rel_raw=0.75, rel_decay=0.6, irr_raw=0.5, irr_decay=0.95)
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
         assert decision.static_eval.pair_count == decision.report.fitted_eval.pair_count
         assert decision.static_eval.weighted_pair_count == pytest.approx(
@@ -665,7 +679,7 @@ class TestShipGate:
         )
 
     def test_to_record_is_json_serializable_and_complete(self) -> None:
-        rows = _planted_requests(120, rel_raw=0.75, rel_decay=0.6, irr_raw=0.5, irr_decay=0.95)
+        rows = _planted_requests(120, rel_graph=0.8, irr_raw=0.75)
         decision = run_ship_gate(rows, **_ship_gate_kwargs(rows))
         record = decision.to_record()
         parsed = json.loads(json.dumps(record))
@@ -673,7 +687,7 @@ class TestShipGate:
         assert parsed["label_source"] == "digest_shadow"
         assert parsed["cohort_identity"] == _gate_cohort().identity()
         assert parsed["ship"] is True
-        assert parsed["fitted_params"]["half_life_days"] == 60.0
+        assert parsed["fitted_params"]["graph_synthetic_discount"] == 1.0
         assert parsed["static_params"]["half_life_days"] == 30.0
         assert parsed["gates"] == {
             "sufficient_data": True,

@@ -24,7 +24,8 @@ from gobby.memory.recall_drift import (
     replay_params_from_constants,
     run_drift_check_from_store,
 )
-from gobby.memory.recall_fit import ReplayRow, evaluation_protocol_identity
+from gobby.memory.recall_fit import evaluation_protocol_identity
+from gobby.memory.recall_replay import ReplayRow
 from gobby.runner_maintenance import recall_drift_monitor_loop
 from tests.config_runtime_helpers import static_runtime_capture
 

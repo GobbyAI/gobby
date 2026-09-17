@@ -2,11 +2,10 @@
 
 This module generalizes the offline recall benchmark harness to real labeled
 data. It consumes request-aligned per-hit feature rows from the promoted hub
-tables and replays the FULL ranking path —
-the ``SearchService`` blend ordering from ``build_results`` (semantic-first on
-the similarity axis with temporal decay and ``ranking_mode`` semantics, RRF
-``ranking_score`` as tiebreak) — under counterfactual parameters, without
-re-running retrieval.
+tables and replays the FULL ranking path — counterfactual scores ordered by the
+policy live ``build_results`` orders on — without re-running retrieval. The
+replay model itself (rows, parameters, algebra, ordering) lives in
+``recall_replay``.
 
 Scope and semantics (contract: docs/contracts/memory-usefulness-label.md):
 
@@ -21,24 +20,8 @@ Scope and semantics (contract: docs/contracts/memory-usefulness-label.md):
 - **Per-project splits.** Requests are split train/eval within each project.
   The fitting procedure that consumes those splits — grid search with
   per-project shrinkage toward the pooled fit — lives in
-  ``recall_fit_shrinkage``; this module owns the replay algebra and the
-  metrics both it and the candidate-filter replay score against.
-
-Replay algebra (exact unless noted):
-
-- Temporal decay is exponential (``0.5 ** (age / half_life)``), so a row
-  logged under half-life ``h0`` replays under ``h1`` as
-  ``decay ** (h0 / h1)`` — exact, no timestamps needed.
-- Semantic rows: ``similarity = base * decay`` where ``base`` preserves every
-  pre-decay factor (raw score, user-source boost) at its logged value.
-- ``graph_synthetic`` rows: ``similarity = graph_score * discount * decay``;
-  the logged discount is recovered algebraically when the request row lacks
-  it. Re-blending ``COOCCUR_ALPHA``/``COOCCUR_SUPPORT_CAP`` rescales
-  ``graph_score`` by the attributed edge's new/old blend ratio — first-order:
-  exact for single-edge attribution, approximate for multi-hop aggregates.
-  Raw support is recovered from ``edge_support_norm`` under the logging-time
-  cap; a saturated norm (1.0) only lower-bounds support, so re-caps upward
-  are conservative there.
+  ``recall_fit_shrinkage``; this module owns the metrics both it and the
+  candidate-filter replay score against.
 
 Selection replay reproduces two admission axes, because live selection has
 had two since #20873. A graph-expander find -- a memory the graph surfaced and
@@ -57,13 +40,14 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal
 
-from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
-from gobby.memory.services.knowledge_graph.writer import (
-    COOCCUR_ALPHA,
-    COOCCUR_SUPPORT_CAP,
+from gobby.memory.recall_replay import (
+    ReplayParams,
+    ReplayRow,
+    float_or_none,
+    replayed_order,
+    replayed_scores,
 )
-
-_SORT_NONE_SIM = float("-inf")
+from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
 
 # Propensity keys are (injection_group, injection_position); position is the
 # rendered ordinal within the injection block, per the label contract §5.
@@ -71,7 +55,9 @@ PropensityKey = tuple[str | None, int]
 WeightingMode = Literal["full", "injected"]
 
 REQUEST_SPLIT_VERSION = "recall-request-hash-split-v1"
-PAIRWISE_EVALUATOR_VERSION = "recall-request-normalized-pairwise-v1"
+# v2 (#22491): pairs are credited on the live interleaved order, where v1 compared a
+# decayed-similarity key live search stopped ordering on in #21010.
+PAIRWISE_EVALUATOR_VERSION = "recall-request-normalized-pairwise-v2"
 AUDIT_SAMPLER_VERSION = "recall-training-request-sampler-v1"
 
 
@@ -82,181 +68,6 @@ def evaluation_protocol_identity(*, split_version: str = REQUEST_SPLIT_VERSION) 
         "evaluator_version": PAIRWISE_EVALUATOR_VERSION,
         "audit_sampler_version": AUDIT_SAMPLER_VERSION,
     }
-
-
-@dataclass(frozen=True)
-class ReplayRow:
-    """One injected hit with its logged full-ranking-path features.
-
-    ``judge_useful is None`` means unlabeled: the row informs propensity
-    estimation only and never forms preference pairs.
-    """
-
-    recall_request_id: str
-    memory_id: str
-    project_id: str | None
-    rank: int
-    similarity: float | None
-    raw_semantic_score: float | None
-    temporal_decay_factor: float | None
-    ranking_score: float
-    ranking_mode: str | None
-    graph_score: float | None
-    edge_cosine: float | None
-    edge_support_norm: float | None
-    edge_weight_blend: float | None
-    injection_position: int | None
-    injection_group: str | None
-    judge_useful: bool | None
-    label_source: str | None
-    logged_half_life_days: float | None
-    logged_graph_discount: float | None
-    logged_cooccur_alpha: float = COOCCUR_ALPHA
-    logged_cooccur_support_cap: int = COOCCUR_SUPPORT_CAP
-
-
-@dataclass(frozen=True)
-class ReplayParams:
-    """Counterfactual recall constants. ``None`` keeps the logged value.
-
-    ``half_life_days`` and ``graph_synthetic_discount`` replay exactly;
-    ``cooccur_alpha``/``cooccur_support_cap`` rescale ``graph_synthetic`` rows
-    to first order via the attributed edge components.
-    """
-
-    half_life_days: float | None = None
-    graph_synthetic_discount: float | None = None
-    cooccur_alpha: float | None = None
-    cooccur_support_cap: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.half_life_days is not None and self.half_life_days <= 0:
-            raise ValueError(f"half_life_days must be positive, got {self.half_life_days}")
-        if self.cooccur_support_cap is not None and self.cooccur_support_cap <= 0:
-            raise ValueError(
-                f"cooccur_support_cap must be positive, got {self.cooccur_support_cap}"
-            )
-        if self.cooccur_alpha is not None and not 0.0 < self.cooccur_alpha <= 1.0:
-            raise ValueError(f"cooccur_alpha must be in (0, 1], got {self.cooccur_alpha}")
-
-
-def replay_row_from_signal_row(row: Mapping[str, Any]) -> ReplayRow:
-    """Adapt one ``RecallSignalStore.fetch_replay_rows`` dict to a ``ReplayRow``.
-
-    The logging-time half-life comes from the request ``weighting`` snapshot;
-    the logging-time co-occurrence constants are not logged (they were frozen
-    module constants), so the writer's current values are assumed.
-    """
-    weighting = row.get("weighting") or {}
-    half_life = weighting.get("temporal_decay_half_life_days")
-    return ReplayRow(
-        recall_request_id=str(row["recall_request_id"]),
-        memory_id=str(row["memory_id"]),
-        project_id=row.get("project_id"),
-        rank=int(row["rank"]),
-        similarity=_float_or_none(row.get("similarity")),
-        raw_semantic_score=_float_or_none(row.get("raw_semantic_score")),
-        temporal_decay_factor=_float_or_none(row.get("temporal_decay_factor")),
-        ranking_score=_float_or_none(row.get("ranking_score")) or 0.0,
-        ranking_mode=row.get("ranking_mode"),
-        graph_score=_float_or_none(row.get("graph_score")),
-        edge_cosine=_float_or_none(row.get("edge_cosine")),
-        edge_support_norm=_float_or_none(row.get("edge_support_norm")),
-        edge_weight_blend=_float_or_none(row.get("edge_weight_blend")),
-        injection_position=row.get("injection_position"),
-        injection_group=row.get("injection_group"),
-        judge_useful=row.get("judge_useful"),
-        label_source=row.get("label_source"),
-        logged_half_life_days=_float_or_none(half_life),
-        logged_graph_discount=_float_or_none(row.get("graph_synthetic_similarity_discount")),
-    )
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-# --------------------------------------------------------------------------- #
-# Replay: counterfactual similarity + build_results ordering                   #
-# --------------------------------------------------------------------------- #
-
-
-def _replayed_decay(row: ReplayRow, params: ReplayParams) -> float | None:
-    """Logged decay factor re-exponentiated to the counterfactual half-life."""
-    decay = row.temporal_decay_factor
-    if decay is None:
-        return None
-    if params.half_life_days is None or row.logged_half_life_days is None:
-        return decay
-    if decay <= 0.0:
-        return decay
-    return float(decay ** (row.logged_half_life_days / params.half_life_days))
-
-
-def _replayed_edge_blend_ratio(row: ReplayRow, params: ReplayParams) -> float:
-    """First-order graph-score rescale from the attributed edge components."""
-    if params.cooccur_alpha is None and params.cooccur_support_cap is None:
-        return 1.0
-    if row.edge_cosine is None or row.edge_support_norm is None or not row.edge_weight_blend:
-        return 1.0
-    alpha = params.cooccur_alpha if params.cooccur_alpha is not None else row.logged_cooccur_alpha
-    cap = (
-        params.cooccur_support_cap
-        if params.cooccur_support_cap is not None
-        else row.logged_cooccur_support_cap
-    )
-    # Recover raw support under the logging-time cap; a saturated norm only
-    # lower-bounds it, so re-caps upward are conservative for those rows.
-    raw_support = row.edge_support_norm * row.logged_cooccur_support_cap
-    support_norm = min(raw_support, float(cap)) / float(cap)
-    new_blend = alpha * row.edge_cosine + (1.0 - alpha) * support_norm
-    return new_blend / row.edge_weight_blend
-
-
-def replayed_similarity(row: ReplayRow, params: ReplayParams) -> float | None:
-    """Recompute the blended similarity under counterfactual parameters."""
-    decay = _replayed_decay(row, params)
-    if row.ranking_mode == "graph_synthetic":
-        return _replayed_graph_synthetic(row, params, decay)
-    if row.raw_semantic_score is not None and row.similarity is not None:
-        logged_decay = row.temporal_decay_factor
-        if decay is None or logged_decay is None or logged_decay <= 0.0:
-            return row.similarity
-        # base preserves every pre-decay factor (raw score, user boost).
-        base = row.similarity / logged_decay
-        return base * decay
-    return row.similarity
-
-
-def _replayed_graph_synthetic(
-    row: ReplayRow, params: ReplayParams, decay: float | None
-) -> float | None:
-    if row.graph_score is None or row.similarity is None:
-        return row.similarity
-    logged_decay = row.temporal_decay_factor
-    if decay is None or logged_decay is None or logged_decay <= 0.0:
-        return row.similarity
-    discount = params.graph_synthetic_discount
-    if discount is None:
-        discount = row.logged_graph_discount
-    if discount is None:
-        # Recover the logged discount algebraically from the logged blend.
-        if row.graph_score <= 0.0:
-            return row.similarity
-        discount = row.similarity / (row.graph_score * logged_decay)
-    graph_score = row.graph_score * _replayed_edge_blend_ratio(row, params)
-    return graph_score * discount * decay
-
-
-def replayed_sort_key(row: ReplayRow, params: ReplayParams) -> tuple[bool, float, float]:
-    """The ``build_results`` ordering: semantic-first, RRF as tiebreak."""
-    sim = replayed_similarity(row, params)
-    return (sim is not None, sim if sim is not None else _SORT_NONE_SIM, row.ranking_score)
 
 
 # --------------------------------------------------------------------------- #
@@ -331,11 +142,12 @@ def evaluate_pairwise(
 ) -> PairwiseEvalResult:
     """Score (useful, not-useful) pairs within each request under replay.
 
-    A pair is correct when the useful row sorts strictly above the not-useful
-    row under the ``build_results`` key; exact key ties earn half credit.
-    Every mixed request has total weight 1. Full-candidate cohorts weight each
-    pair uniformly; injected cohorts preserve relative positive-row IPS weights
-    within that request. Unlabeled rows never form preference pairs.
+    A pair is correct when the useful row lands above the not-useful row in the
+    request's replayed live order; two rows with equal replayed scores have no
+    order of their own and earn half credit. Every mixed request has total
+    weight 1. Full-candidate cohorts weight each pair uniformly; injected
+    cohorts preserve relative positive-row IPS weights within that request.
+    Unlabeled rows never form preference pairs.
     """
     if weighting_mode not in ("full", "injected"):
         raise ValueError(f"unsupported weighting_mode: {weighting_mode}")
@@ -354,7 +166,11 @@ def evaluate_pairwise(
     for request_rows in by_request.values():
         project_id = request_rows[0].project_id
         params = params_for_project.get(project_id, default_params)
-        keys = {row.memory_id: replayed_sort_key(row, params) for row in request_rows}
+        scores = {row.memory_id: replayed_scores(row, params) for row in request_rows}
+        standing = {
+            row.memory_id: -position
+            for position, row in enumerate(replayed_order(request_rows, params))
+        }
         positives = [r for r in request_rows if r.judge_useful is True]
         negatives = [r for r in request_rows if r.judge_useful is False]
         if not positives or not negatives:
@@ -372,7 +188,10 @@ def evaluate_pairwise(
             pair_weight = positive_weight / request_denominator
             for neg in negatives:
                 pair_count += 1
-                credit = _pair_credit(keys[pos.memory_id], keys[neg.memory_id])
+                if scores[pos.memory_id] == scores[neg.memory_id]:
+                    credit = 0.5
+                else:
+                    credit = 1.0 if standing[pos.memory_id] > standing[neg.memory_id] else 0.0
                 weighted_correct += pair_weight * credit
                 project_correct[bucket] = project_correct.get(bucket, 0.0) + pair_weight * credit
         weighted_total += 1.0
@@ -613,11 +432,11 @@ def candidate_replay_rows_from_signal_rows(
                 rank=int(row["rank"]),
                 query_text=query_text,
                 excerpt=excerpt,
-                similarity=_float_or_none(row.get("similarity")),
+                similarity=float_or_none(row.get("similarity")),
                 judge_useful=judge_useful if isinstance(judge_useful, bool) else None,
-                temporal_decay_factor=_float_or_none(row.get("temporal_decay_factor")),
+                temporal_decay_factor=float_or_none(row.get("temporal_decay_factor")),
                 search_via=str(search_via) if isinstance(search_via, str) else None,
-                graph_score=_float_or_none(row.get("graph_score")),
+                graph_score=float_or_none(row.get("graph_score")),
             )
         )
     return adapted
