@@ -20,7 +20,9 @@ from gobby.agents.constants import (
     GOBBY_PROMPT,
     GOBBY_PROMPT_FILE,
     GOBBY_SESSION_ID,
+    GOBBY_TERMINAL_ID,
     GOBBY_WORKFLOW_NAME,
+    IDENTITY_ENV_VARS,
     UV_CACHE_DIR,
     get_agent_cargo_home_dir,
     get_agent_uv_cache_dir,
@@ -88,8 +90,22 @@ class TestEnvironmentVariableConstants:
             UV_CACHE_DIR,
             CARGO_HOME,
             CARGO_TARGET_DIR,
+            *IDENTITY_ENV_VARS,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
+
+    def test_identity_env_vars_name_the_terminal_and_pane(self) -> None:
+        """Identity names stay distinct from the agent-only project and daemon variables."""
+        assert IDENTITY_ENV_VARS == (
+            "GOBBY_TERMINAL_ID",
+            "GOBBY_NODE_ID",
+            "GOBBY_NODE_REF",
+            "GOBBY_WORKSPACE_ID",
+            "GOBBY_TAB_ID",
+            "GOBBY_PANE_ID",
+            "GOBBY_PANE_REF",
+        )
+        assert GOBBY_TERMINAL_ID == "GOBBY_TERMINAL_ID"
 
 
 class TestGetTerminalEnvVars:

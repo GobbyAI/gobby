@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
+from gobby.agents.constants import GOBBY_TERMINAL_ID
 from gobby.storage.terminals import AttachLocator, Terminal, native_locator_key
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.frame_client import FrameClient
@@ -384,7 +385,8 @@ class NativeTerminalRuntime:
                 reservation_id=reservation_id,
                 reserve_key=reserve_key,
                 argv=list(request.command),
-                env=dict(request.env or {}),
+                # After the caller env so nothing shadows the minted identity.
+                env={**(request.env or {}), GOBBY_TERMINAL_ID: str(request.terminal_id)},
                 cwd=request.cwd or "/tmp",
                 rows=request.rows or 24,
                 cols=request.cols or 80,

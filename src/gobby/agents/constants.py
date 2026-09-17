@@ -25,6 +25,27 @@ from gobby.utils.machine_id import get_machine_id
 # The spawned CLI uses this to connect to its session via hooks
 GOBBY_SESSION_ID = "GOBBY_SESSION_ID"
 
+# Terminal and pane identity, scoped to the process it names. The native
+# runtime sets GOBBY_TERMINAL_ID on every spawn; workspace pane spawns add the
+# pane names (GOBBY_PANE_REF is `n1:w1:t2:p3`). The daemon pops all of them
+# from its own environment at startup so no child inherits a pane's identity.
+GOBBY_TERMINAL_ID = "GOBBY_TERMINAL_ID"
+GOBBY_NODE_ID = "GOBBY_NODE_ID"
+GOBBY_NODE_REF = "GOBBY_NODE_REF"
+GOBBY_WORKSPACE_ID = "GOBBY_WORKSPACE_ID"
+GOBBY_TAB_ID = "GOBBY_TAB_ID"
+GOBBY_PANE_ID = "GOBBY_PANE_ID"
+GOBBY_PANE_REF = "GOBBY_PANE_REF"
+IDENTITY_ENV_VARS = (
+    GOBBY_TERMINAL_ID,
+    GOBBY_NODE_ID,
+    GOBBY_NODE_REF,
+    GOBBY_WORKSPACE_ID,
+    GOBBY_TAB_ID,
+    GOBBY_PANE_ID,
+    GOBBY_PANE_REF,
+)
+
 # Parent session identifier for context resolution
 # Used to look up parent session for context injection
 GOBBY_PARENT_SESSION_ID = "GOBBY_PARENT_SESSION_ID"
@@ -221,4 +242,5 @@ ALL_TERMINAL_ENV_VARS = [
     UV_CACHE_DIR,
     CARGO_HOME,
     CARGO_TARGET_DIR,
+    *IDENTITY_ENV_VARS,
 ]
