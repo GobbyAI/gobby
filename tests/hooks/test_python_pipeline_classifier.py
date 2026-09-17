@@ -321,6 +321,44 @@ def test_metadata_dunder_attribute_load_is_not_mutation(command: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -c 'import statistics as st; print(st.mean([1, 2]))'",
+        "python3 -c 'import json as j; print(j.dumps({}))'",
+        "python3 - <<'EOF'\nimport math, statistics as st\nprint(st.mean([math.pi]))\nEOF",
+    ],
+)
+def test_a_fresh_import_alias_is_not_mutation(command: str) -> None:
+    """``import statistics as st`` rebinds nothing the analysis trusts (#22410 found work)."""
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_tool_confidence"] == "low"
+    assert "canonical_repo_mutation" not in data
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import sys as math\nprint(math.argv)",
+        "import builtins as re\nre.compile('x')",
+        "import os as json\nprint(json.getcwd())",
+        # A fresh alias must not hide a pure module's reach into io or sys.
+        "import csv as c\nwriter = c.io.open\nwriter('x', 'w')",
+        "import datetime as d\nheld = d.sys\nheld.exit()",
+    ],
+)
+def test_an_import_alias_cannot_hide_an_escape(script: str) -> None:
+    """An alias that shadows a reserved name, or reaches past a pure module, is still an escape."""
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
     "attribute",
     [
         "__import__",

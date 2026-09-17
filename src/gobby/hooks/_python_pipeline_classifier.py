@@ -692,19 +692,23 @@ def _proven_python_mutation(
                 root = (attribute_name or "").partition(".")[0]
                 if root in imported_bindings or root in _PYTHON_PIPELINE_RESERVED_NAMES:
                     return _UNKNOWN_SCOPE_MUTATION
-            if attribute_name:
-                parts = attribute_name.split(".")
+            # Resolve an alias first: `import csv as c; c.io` reaches what `csv.io` does.
+            canonical_name = _canonical_imported_name(attribute_name, imported_bindings)
+            if canonical_name:
+                parts = canonical_name.split(".")
                 if parts[0] in _PYTHON_PIPELINE_PURE_MODULES and any(
                     part in {"io", "sys"} for part in parts[1:]
                 ):
                     return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if (
-                    alias.name in _PYTHON_PIPELINE_MODULES | _PYTHON_PIPELINE_PURE_MODULES
-                    and alias.asname not in {None, alias.name}
-                ):
-                    return _UNKNOWN_SCOPE_MUTATION
+            # A fresh alias (`import statistics as st`) rebinds nothing the analysis
+            # trusts, so it only withholds the read-only proof. An alias that shadows
+            # a reserved name is rebinding by another route.
+            if any(
+                alias.asname in _PYTHON_PIPELINE_RESERVED_NAMES and alias.asname != alias.name
+                for alias in node.names
+            ):
+                return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.ImportFrom):
             if any(alias.name == "*" or alias.name.startswith("_") for alias in node.names):
                 return _UNKNOWN_SCOPE_MUTATION
