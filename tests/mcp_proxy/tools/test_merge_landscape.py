@@ -26,7 +26,7 @@ from gobby.mcp_proxy.tools.merge_landscape import (
     _active_merge_resolution_payload,
     register_merge_landscape_tools,
 )
-from gobby.storage.worktrees import Worktree
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.worktrees.git import WorktreeGitManager
 from tests._timing import wait_forever
 
@@ -1162,3 +1162,149 @@ async def test_inspect_merge_state_worktree_missing() -> None:
     result = await registry.call("inspect_merge_state", {"worktree_id": "missing"})
     assert result["success"] is False
     assert "not found" in result["error"]
+
+
+# --- worktree reference resolution (#22377) ---
+
+_RESOLVE_FULL_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
+_RESOLVE_UNIQUE_PREFIX = "eeeeeeee"
+_RESOLVE_AMBIGUOUS_PREFIX = "eeee"
+
+_RESOLVE_ERROR_REFS = [
+    pytest.param(
+        _RESOLVE_AMBIGUOUS_PREFIX, "Ambiguous worktree reference", id="ambiguous-prefix"
+    ),
+    pytest.param("deadbeef", "not found", id="unknown-prefix"),
+]
+
+_REF_TAKING_TOOLS: list[tuple[str, dict[str, Any]]] = [
+    ("cherry_pick_into_worktree", {"commits": ["abcdef1"]}),
+    ("merge_subset", {"source_branch": "feat/x", "paths": ["src/a.py"]}),
+    ("verify_in_worktree", {"command": "true"}),
+    ("inspect_merge_state", {}),
+]
+
+
+def _resolving_worktree_manager() -> MagicMock:
+    """A manager whose resolver mirrors ``LocalWorktreeManager.resolve_reference``."""
+    manager = MagicMock(spec=LocalWorktreeManager)
+
+    def resolve(ref: str) -> str:
+        if ref in (_RESOLVE_FULL_ID, _RESOLVE_UNIQUE_PREFIX):
+            return _RESOLVE_FULL_ID
+        if ref == _RESOLVE_AMBIGUOUS_PREFIX:
+            raise ValueError(
+                f"Ambiguous worktree reference '{ref}' matches: a, b. "
+                "Pass the full worktree UUID to disambiguate."
+            )
+        raise ValueError(f"Worktree '{ref}' not found")
+
+    manager.resolve_reference.side_effect = resolve
+    return manager
+
+
+def _merge_ref_registry(
+    tmp_path: Path,
+) -> tuple[InternalToolRegistry, MagicMock, MagicMock]:
+    """Registry whose manager resolves refs and whose git side always succeeds."""
+    worktree_manager = _resolving_worktree_manager()
+    worktree_manager.get.return_value = _make_worktree(
+        id=_RESOLVE_FULL_ID, path=str(tmp_path)
+    )
+    git_manager = MagicMock(spec=WorktreeGitManager)
+    git_manager.repo_path = str(tmp_path)
+    git_manager.run_git_command.return_value = _completed(returncode=0)
+    merge_storage = MagicMock()
+    merge_storage.get_active_resolution.return_value = None
+    registry = _make_registry(
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+        merge_storage=merge_storage,
+    )
+    return registry, worktree_manager, git_manager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments"), _REF_TAKING_TOOLS, ids=[tool for tool, _ in _REF_TAKING_TOOLS]
+)
+@pytest.mark.parametrize(
+    ("worktree_ref", "resolved_id"),
+    [
+        pytest.param(_RESOLVE_FULL_ID, _RESOLVE_FULL_ID, id="full-uuid"),
+        pytest.param(_RESOLVE_UNIQUE_PREFIX, _RESOLVE_FULL_ID, id="unique-prefix"),
+    ],
+)
+async def test_ref_taking_tools_resolve_before_storage_lookup(
+    tool: str,
+    arguments: dict[str, Any],
+    worktree_ref: str,
+    resolved_id: str,
+    tmp_path: Path,
+) -> None:
+    """Full UUIDs and unique prefixes act on the resolved worktree row."""
+    registry, worktree_manager, _git_manager = _merge_ref_registry(tmp_path)
+    result = await registry.call(tool, {"worktree_id": worktree_ref, **arguments})
+    assert result["success"] is True, result
+    worktree_manager.resolve_reference.assert_called_once_with(worktree_ref)
+    worktree_manager.get.assert_called_once_with(resolved_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments"), _REF_TAKING_TOOLS, ids=[tool for tool, _ in _REF_TAKING_TOOLS]
+)
+@pytest.mark.parametrize(("worktree_ref", "error_needle"), _RESOLVE_ERROR_REFS)
+async def test_ref_taking_tools_return_resolver_error_without_side_effects(
+    tool: str,
+    arguments: dict[str, Any],
+    worktree_ref: str,
+    error_needle: str,
+    tmp_path: Path,
+) -> None:
+    """Ambiguous or unknown refs fail cleanly before any storage or git call."""
+    registry, worktree_manager, git_manager = _merge_ref_registry(tmp_path)
+    result = await registry.call(tool, {"worktree_id": worktree_ref, **arguments})
+    assert result["success"] is False, result
+    assert error_needle in result["error"]
+    assert "invalid input syntax" not in result["error"]
+    worktree_manager.resolve_reference.assert_called_once_with(worktree_ref)
+    worktree_manager.get.assert_not_called()
+    git_manager.run_git_command.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_predict_conflicts_resolves_refs_before_storage_lookup(
+    tmp_path: Path,
+) -> None:
+    registry, worktree_manager, _git_manager = _merge_ref_registry(tmp_path)
+    result = await registry.call(
+        "predict_conflicts",
+        {"worktree_ids": [_RESOLVE_FULL_ID, _RESOLVE_UNIQUE_PREFIX]},
+    )
+    assert result["success"] is True, result
+    assert result["errors"] == []
+    assert [call.args[0] for call in worktree_manager.get.call_args_list] == [
+        _RESOLVE_FULL_ID,
+        _RESOLVE_FULL_ID,
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("worktree_ref", "error_needle"), _RESOLVE_ERROR_REFS)
+async def test_predict_conflicts_reports_resolver_error_per_ref(
+    worktree_ref: str, error_needle: str, tmp_path: Path
+) -> None:
+    registry, worktree_manager, _git_manager = _merge_ref_registry(tmp_path)
+    result = await registry.call(
+        "predict_conflicts",
+        {"worktree_ids": [worktree_ref, _RESOLVE_UNIQUE_PREFIX]},
+    )
+    assert result["success"] is True, result
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["worktree_id"] == worktree_ref
+    assert error_needle in result["errors"][0]["error"]
+    assert "invalid input syntax" not in result["errors"][0]["error"]
+    assert [call.args[0] for call in worktree_manager.get.call_args_list] == [
+        _RESOLVE_FULL_ID
+    ]
