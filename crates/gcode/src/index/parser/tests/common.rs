@@ -118,3 +118,14 @@ pub(super) fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
         .filter(|path| languages::detect_language(&path.to_string_lossy()).is_some())
         .collect()
 }
+
+/// Every parsed symbol as `(name, kind)`, sorted so assertions read as a set.
+pub(super) fn sorted_symbol_kinds(parsed: &ParseResult) -> Vec<(&str, &str)> {
+    let mut symbols: Vec<_> = parsed
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
+        .collect();
+    symbols.sort_unstable();
+    symbols
+}

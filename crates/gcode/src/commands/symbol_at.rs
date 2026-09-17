@@ -651,4 +651,43 @@ mod tests {
         lookup.match_kind = MatchKind::Containing;
         assert!(fallback_diagnostic(&sym, &lookup, false).is_none());
     }
+
+    /// A line inside a multi-line module-level assignment resolves to that
+    /// assignment rather than falling back to the nearest function below it.
+    #[test]
+    fn containing_selection_resolves_a_line_inside_a_python_module_assignment() {
+        let tempdir = tempfile::TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        let path = root.join("settings.py");
+        std::fs::write(
+            &path,
+            "TABLE = {\n    \"a\": 1,\n    \"b\": 2,\n}\n\n\ndef configure():\n    return TABLE\n",
+        )
+        .expect("write source");
+        let import_context = crate::index::parser::build_import_resolution_context(
+            root,
+            std::slice::from_ref(&path),
+        );
+        let parsed = crate::index::parser::parse_file_with_semantic(
+            &path,
+            "project",
+            root,
+            &[] as &[&str],
+            &import_context,
+            None,
+        )
+        .expect("parse result")
+        .expect("parsed file");
+
+        let selected = select_symbol(
+            &parsed.symbols,
+            SymbolAtTarget {
+                line: 3,
+                byte_offset: None,
+            },
+        )
+        .expect("selected symbol");
+        assert_eq!(selected.symbol.name, "TABLE");
+        assert_eq!(selected.match_kind, MatchKind::Containing);
+    }
 }

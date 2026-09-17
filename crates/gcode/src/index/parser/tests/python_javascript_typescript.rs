@@ -1,4 +1,6 @@
-use super::common::{parse_javascript, parse_python, parse_source, parse_tsx, parse_typescript};
+use super::common::{
+    parse_javascript, parse_python, parse_source, parse_tsx, parse_typescript, sorted_symbol_kinds,
+};
 use crate::models::CallRelation;
 
 /// A cross-file local import is now recorded at parse time as a pending
@@ -377,16 +379,6 @@ const ArrowComponent = () => <aside />;
     }
 }
 
-fn sorted_symbol_kinds(parsed: &crate::models::ParseResult) -> Vec<(&str, &str)> {
-    let mut symbols: Vec<_> = parsed
-        .symbols
-        .iter()
-        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
-        .collect();
-    symbols.sort_unstable();
-    symbols
-}
-
 #[test]
 fn indexes_top_level_typescript_variables_once() {
     let parsed = parse_typescript(
@@ -464,7 +456,7 @@ function build() {
 fn indexes_module_level_python_assignments() {
     let parsed = parse_python(
         r#"
-_RUN_ROOT_ENV = "GHOBBY_RUN_ROOT"
+_RUN_ROOT_ENV = "GOBBY_RUN_ROOT"
 _LIMIT: int = 5
 _PREFIX: str
 _TABLE = {
@@ -492,10 +484,10 @@ class Guard:
         sorted_symbol_kinds(&parsed),
         vec![
             ("Guard", "class"),
-            ("_LIMIT", "constant"),
-            ("_PREFIX", "constant"),
-            ("_RUN_ROOT_ENV", "constant"),
-            ("_TABLE", "constant"),
+            ("_LIMIT", "variable"),
+            ("_PREFIX", "variable"),
+            ("_RUN_ROOT_ENV", "variable"),
+            ("_TABLE", "variable"),
             ("configure", "function"),
         ]
     );
@@ -508,7 +500,7 @@ class Guard:
     assert_eq!(
         (table.line_start, table.line_end),
         (5, 8),
-        "module-level constants span their full statement"
+        "module-level assignments span their full statement"
     );
     assert!(
         table.parent_symbol_id.is_none(),

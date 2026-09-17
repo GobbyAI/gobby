@@ -1,4 +1,6 @@
-use super::common::{parse_csharp, parse_go, parse_java, parse_rust, parse_source};
+use super::common::{
+    parse_csharp, parse_go, parse_java, parse_rust, parse_source, sorted_symbol_kinds,
+};
 use crate::models::ParseResult;
 
 fn parsed_symbol_id(parsed: &ParseResult, file_path: &str, name: &str, kind: &str) -> String {
@@ -1298,16 +1300,6 @@ fn attributed_rust_definitions_extract_and_resolve_as_local_imports() {
     assert_rust_local_import!(&caller, "rust_target", "src/service.rs");
 }
 
-fn sorted_symbol_kinds(parsed: &ParseResult) -> Vec<(&str, &str)> {
-    let mut symbols: Vec<_> = parsed
-        .symbols
-        .iter()
-        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
-        .collect();
-    symbols.sort_unstable();
-    symbols
-}
-
 #[test]
 fn indexes_rust_const_and_static_items() {
     let parsed = parse_rust(
@@ -1332,12 +1324,12 @@ impl Capabilities {
     assert_eq!(
         sorted_symbol_kinds(&parsed),
         vec![
-            ("COUNTER", "constant"),
+            ("COUNTER", "variable"),
             ("Capabilities", "class"),
-            ("DEFAULT_TIMEOUT_MS", "constant"),
-            ("MAX_RETRIES", "constant"),
-            ("PLUGIN_NAME", "constant"),
-            ("TABLE", "constant"),
+            ("DEFAULT_TIMEOUT_MS", "variable"),
+            ("MAX_RETRIES", "variable"),
+            ("PLUGIN_NAME", "variable"),
+            ("TABLE", "variable"),
         ]
     );
 
