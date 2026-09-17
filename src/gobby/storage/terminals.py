@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.terminal_settlement import (
     ALLOWED_EDGES as ALLOWED_EDGES,
 )
@@ -34,6 +35,7 @@ from gobby.storage.terminal_settlement import (
 from gobby.storage.terminal_settlement import (
     UnresolvedWriteCapacityError as UnresolvedWriteCapacityError,
 )
+from gobby.terminal_ownership import recorded_process_is_alive
 from gobby.utils.datetime import normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
@@ -561,6 +563,71 @@ class TerminalManager(TerminalSettlementMixin):
             LIMIT 1
             """,
             (str(UUID(session_id)),),
+        )
+        return None if row is None else Terminal.from_row(row)
+
+    def bind_session(self, terminal_id: str, session_id: str, project_id: str) -> Terminal | None:
+        """Bind a CLI session to the terminal it started in, or refuse with None.
+
+        Agent terminals are bound at spawn. Only a ``terminal`` session of the
+        row's project binds, and a row bound to another session rebinds only
+        once that session is no longer active or paused or its recorded CLI
+        process is gone, so a nested CLI never takes its parent's pane. The
+        terminal id comes from the pane environment, so a malformed one refuses.
+        """
+        try:
+            terminal_id = str(UUID(terminal_id))
+        except ValueError:
+            return None
+        previous = self.db.fetchone(
+            """
+            SELECT s.* FROM terminals t JOIN sessions s ON s.id = t.session_id
+            WHERE t.id = %s AND t.session_id <> %s
+            """,
+            (terminal_id, str(UUID(session_id))),
+        )
+        previous_session_id = None
+        if previous is not None:
+            holder = Session.from_row(previous)
+            if holder.status in ("active", "paused") and recorded_process_is_alive(holder):
+                return None
+            previous_session_id = holder.id
+        row = self.db.fetchone(
+            """
+            UPDATE terminals t
+            SET session_id = s.id, updated_at = now()
+            FROM sessions s
+            WHERE t.id = %s AND s.id = %s
+              AND t.agent_run_id IS NULL
+              AND t.project_id = %s
+              AND s.session_type = 'terminal'
+              AND (t.session_id IS NOT DISTINCT FROM %s OR t.session_id = s.id)
+            RETURNING t.*
+            """,
+            (
+                terminal_id,
+                str(UUID(session_id)),
+                str(UUID(project_id)),
+                previous_session_id,
+            ),
+        )
+        return None if row is None else Terminal.from_row(row)
+
+    def release_session(self, terminal_id: str, session_id: str) -> Terminal | None:
+        """Unbind an ended session from a gobby-owned terminal with no agent run.
+
+        The terminal outlives the CLI, so the row stays live for the next
+        session that starts in it; a row already rebound is left alone.
+        """
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET session_id = NULL, updated_at = now()
+            WHERE id = %s AND session_id = %s
+              AND ownership = 'gobby' AND agent_run_id IS NULL
+            RETURNING *
+            """,
+            (str(UUID(terminal_id)), str(UUID(session_id))),
         )
         return None if row is None else Terminal.from_row(row)
 

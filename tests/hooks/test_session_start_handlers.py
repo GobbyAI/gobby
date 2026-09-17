@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, call, patch
 
+import psutil
 import psycopg
 import pytest
 
@@ -23,10 +26,12 @@ from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     session_start_is_native_subagent_child,
 )
 from gobby.hooks.events import HookEventType, MissingHookMachineIdError
+from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.storage.terminals import TerminalManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager, StartupContextClaim
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -1981,3 +1986,106 @@ def test_resolve_agent_name_reads_config_without_resolving_secrets(
     assert repository.read.call_count == 1
     assert repository.read.call_args == call(resolve_secrets=False)
     assert variables.get_variables.return_value == {}
+
+
+def _cli_process(pid: int) -> dict[str, object]:
+    return {"parent_pid": pid, "parent_create_time": psutil.Process(pid).create_time()}
+
+
+def _activate_with_context(
+    handlers: EventHandlers,
+    session_manager: SessionManager,
+    project_id: str,
+    terminal_context: dict[str, object],
+) -> str:
+    session = session_manager.register(
+        external_id=f"native-bind-{uuid.uuid4()}",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
+    event = make_event(
+        HookEventType.SESSION_START,
+        session_id=session.external_id,
+        data={"terminal_context": terminal_context},
+    )
+    with patch.object(handlers, "_setup_code_index"):
+        handlers._activate_materialized_session(
+            event,
+            session.id,
+            session_obj=session,
+            project_id=project_id,
+            terminal_context=terminal_context,
+        )
+    return session.id
+
+
+def test_native_terminal_id_binds_unless_tmux_or_nested(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, session_manager),
+        terminal_manager=terminals,
+        get_machine_id=require_machine_id,
+        resolve_project_id=lambda _project_id, _cwd: project_id,
+    )
+
+    def pane_row() -> str:
+        terminal_id = str(uuid.uuid4())
+        terminals.create_pending(
+            terminal_id=terminal_id,
+            project_id=project_id,
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+        )
+        return terminal_id
+
+    pane = pane_row()
+    outer_cli = _activate_with_context(
+        handlers,
+        session_manager,
+        project_id,
+        {"gobby_terminal_id": pane, **_cli_process(os.getppid())},
+    )
+    bound = terminals.get(pane)
+    assert bound is not None
+    assert bound.session_id == outer_cli
+
+    nested_cli = _activate_with_context(
+        handlers,
+        session_manager,
+        project_id,
+        {"gobby_terminal_id": pane, **_cli_process(os.getpid())},
+    )
+    still_bound = terminals.get(pane)
+    assert still_bound is not None
+    assert still_bound.session_id == outer_cli
+    assert terminals.get_live_for_session(nested_cli) is None
+
+    tmux_host_pane = pane_row()
+    tmux_cli = _activate_with_context(
+        handlers,
+        session_manager,
+        project_id,
+        {
+            "gobby_terminal_id": tmux_host_pane,
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/private/tmp/tmux-501/default",
+            "tmux_session": "by-hand",
+            "tmux_server_pid": 1658,
+            "tmux_server_start_time": 1784592177,
+            **_cli_process(os.getpid()),
+        },
+    )
+    unbound = terminals.get(tmux_host_pane)
+    assert unbound is not None
+    assert unbound.session_id is None
+    tmux_row = terminals.get_live_for_session(tmux_cli)
+    assert tmux_row is not None
+    assert tmux_row.backend == "tmux"

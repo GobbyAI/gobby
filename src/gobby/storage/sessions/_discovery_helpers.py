@@ -13,6 +13,7 @@ _TERMINAL_CONTEXT_FILTER_FIELDS = (
     "tmux_session",
     "tty",
     "term_session_id",
+    "gobby_terminal_id",
 )
 
 

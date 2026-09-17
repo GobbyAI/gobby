@@ -290,18 +290,33 @@ The drain never replays quarantined envelopes — they surface via `gobby status
 **File:** `src/terminal_context.rs`
 
 Captures the caller's process context for normalized `SessionStart`,
-`SessionEnd`, `Stop`, `AfterAgent`, and `PostInvocation` aliases. Tool hooks
-remain unenriched. `TMUX` must be set and `TMUX_PANE` must match `^%\d+$` for
-the tmux-specific fields; the pane value is passed through verbatim.
+`UserPromptSubmit`, `BeforeAgent`, `PreInvocation`, `SessionEnd`, `Stop`,
+`StopCancelled`, `AfterAgent`, `PostInvocation`, `SubagentStart`,
+`SubagentStop`, and `SubagentEnd` aliases. Tool hooks remain unenriched. `TMUX`
+must be set and `TMUX_PANE` must match `^%\d+$` for the tmux-specific fields;
+the pane value is passed through verbatim.
 
-| Field | Source | Notes |
-|-------|--------|-------|
-| `parent_pid` | `libc::getppid()` (Unix) / null (Windows) | The host CLI's PID — daemon uses this to reconcile spawned-terminal agents. |
-| `tty` | `libc::ttyname(0)` | Controlling terminal device path. |
-| `tmux_pane` | `TMUX_PANE` env var, **only if `TMUX` is set and the pane matches `^%\d+$`** | Sharp edge from dispatcher `:205` — `TMUX_PANE` is inherited by children spawned into *other* terminals (e.g. Ghostty), so emitting it without checking `TMUX` would point `kill_agent` at the parent's pane. |
-| `tmux_socket_path` | First comma-separated segment of `TMUX` | Mirror of `gobby.sessions.tmux_context.parse_tmux_socket_path`. |
-| `term_program` | `TERM_PROGRAM` env var | |
-| `gobby_session_id`, `gobby_parent_session_id`, `gobby_agent_run_id`, `gobby_project_id`, `gobby_workflow_name` | Eponymous env vars | Set by the Gobby daemon when it spawns the host CLI; let us correlate hooks back to the spawning context. |
+The daemon receives terminal context from two producers: ghook's
+`build_context` on lifecycle hooks, and the MCP stdio proxy's
+`current_terminal_context` (`src/gobby/mcp_proxy/terminal_context.py`), which
+sends the `X-Gobby-Terminal-Context` header. The HTTP endpoint rejects header
+keys outside the proxy's `TERMINAL_CONTEXT_KEYS`. The table is the union; the
+Producer column says which side emits each key.
+
+| Field | Producer | Source | Notes |
+|-------|----------|--------|-------|
+| `parent_pid` | ghook, proxy | `libc::getppid()` (Unix) / null (Windows); `os.getppid()` | The host CLI's PID — daemon uses this to reconcile spawned-terminal agents. |
+| `tty` | ghook, proxy | `libc::ttyname(0)`; `TTY` env var | Controlling terminal device path. |
+| `tmux_pane` | ghook, proxy | `TMUX_PANE` env var, **ghook only if `TMUX` is set and the pane matches `^%\d+$`** | Sharp edge from dispatcher `:205` — `TMUX_PANE` is inherited by children spawned into *other* terminals (e.g. Ghostty), so emitting it without checking `TMUX` would point `kill_agent` at the parent's pane. A context carrying `tmux_pane` binds to its tmux row, never to an outer native terminal. |
+| `tmux_socket_path` | ghook, proxy | First comma-separated segment of `TMUX` | Mirror of `gobby.sessions.tmux_context.parse_tmux_socket_path`. |
+| `tmux_window_id`, `tmux_session` | ghook, proxy | `tmux display-message` for the pane; proxy also reads `TMUX_SESSION` | Null when tmux cannot be queried. |
+| `tmux_server_pid`, `tmux_server_start_time` | proxy | `query_tmux_generation` | Distinguishes a restarted tmux server that reuses a socket path. |
+| `term_program` | ghook, proxy | `TERM_PROGRAM` env var | |
+| `term_session_id` | proxy | `TERM_SESSION_ID` env var | |
+| `gobby_terminal_id` | ghook, proxy | `GOBBY_TERMINAL_ID` env var | Exported into every native pane Gobby spawns. `SESSION_START` binds a `terminal` session to that row unless the context also has `tmux_pane`. |
+| `gobby_pane_ref` | ghook, proxy | `GOBBY_PANE_REF` env var | Workspace pane name such as `n1:w1:t2:p3`, set on workspace pane spawns beside `GOBBY_TERMINAL_ID`. |
+| `gobby_session_id`, `gobby_parent_session_id`, `gobby_agent_run_id`, `gobby_project_id`, `gobby_workflow_name` | ghook | Eponymous env vars | Set by the Gobby daemon when it spawns the host CLI; let us correlate hooks back to the spawning context. |
+| `gobby_acp_child` | ghook | `GOBBY_ACP_CHILD` env var | Lets `SESSION_START` drop registrations from daemon-spawned ACP subprocesses. |
 
 `inject(input_data)` enriches terminal context when:
 

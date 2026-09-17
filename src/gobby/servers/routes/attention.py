@@ -527,9 +527,10 @@ async def _load_roster_entries(
             continue
         terminal_context = session.terminal_context
         if not isinstance(terminal_context, Mapping):
-            continue
+            terminal_context = {}
+        terminal = _session_terminal_block(server, session)
         pane = terminal_context.get("tmux_pane")
-        if not isinstance(pane, str) or not pane:
+        if terminal is None and (not isinstance(pane, str) or not pane):
             continue
         entry_id = f"session:{session.id}"
         entries.append(
@@ -542,7 +543,7 @@ async def _load_roster_entries(
                 "task": None,
                 "provider": session.source,
                 "model": session.model,
-                "terminal": _session_terminal_block(server, session),
+                "terminal": terminal,
                 "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
                 **_metadata_payload(snapshot, entry_id),

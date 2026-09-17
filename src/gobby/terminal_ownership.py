@@ -229,6 +229,25 @@ def inspect_foreground_ownership(
     return ForegroundOwnershipInspection(OwnershipState.OWNED, process)
 
 
+def recorded_process_is_alive(session: object) -> bool:
+    """Whether the session's recorded CLI process still runs on this node.
+
+    The recorded start time guards against PID reuse; a process that cannot be
+    inspected counts as alive.
+    """
+    pid = _normalized_parent_pid(session)
+    expected_create_time = _recorded_create_time(session)
+    if pid is None or expected_create_time is None:
+        return False
+    try:
+        process: _ProcessLike = psutil.Process(pid)
+        return abs(process.create_time() - expected_create_time) < 1.0
+    except (psutil.NoSuchProcess, psutil.ZombieProcess, ProcessLookupError):
+        return False
+    except (psutil.AccessDenied, PermissionError, OSError):
+        return True
+
+
 def _process_ancestor_pids(process: _ProcessLike) -> set[int] | None:
     try:
         return {
