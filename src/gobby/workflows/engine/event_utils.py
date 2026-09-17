@@ -1,9 +1,9 @@
 """Event helpers for rule-engine evaluation."""
 
-import json
 from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
 from gobby.workflows.definitions import RuleTriggerEvent
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 
@@ -59,16 +59,8 @@ def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
 
     tool_name = data.get("tool_name", "")
     if is_gobby_call_tool(tool_name):
-        inner_args = raw_tool_input.get("arguments")
-        if isinstance(inner_args, dict):
-            return inner_args
-        if isinstance(inner_args, str):
-            try:
-                parsed = json.loads(inner_args)
-            except (json.JSONDecodeError, TypeError):
-                return {}
-            if isinstance(parsed, dict):
-                return parsed
+        inner_args = canonical_call_tool_input(raw_tool_input).get("arguments")
+        return inner_args if isinstance(inner_args, dict) else {}
     return raw_tool_input
 
 

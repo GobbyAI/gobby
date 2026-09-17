@@ -10,5 +10,6 @@ rules:
     effects:
       - type: block
         reason: >-
-          Run get_tool_schema(server_name='{{ tool_input.get('server_name', '?') }}', tool_name='{{ tool_input.get('tool_name', '?') }}') first.
-          The lease remains valid until context is cleared or compacted.
+          Run {% if schema_lease_key(tool_input) %}get_tool_schema(server_name='{{ tool_input.get('server_name') }}', tool_name='{{ tool_input.get('tool_name') }}') first.
+          The lease remains valid until context is cleared or compacted.{% else %}call_tool again with server_name and tool_name as top-level parameters beside arguments.
+          The blocked payload has no complete target route, so no schema lease can match it.{% endif %}

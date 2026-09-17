@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -173,3 +174,50 @@ def canonicalize_call_tool_wrapper(
         project_id=canonical_project_id,
         intent=canonical_intent,
     )
+
+
+def _wrapper_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def canonical_call_tool_input(tool_input: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a ``call_tool`` hook ``tool_input`` in the shape the proxy dispatches.
+
+    Hook consumers (normalization, rule context, schema leases, block reasons) read
+    this instead of re-parsing wrapper routing. Routing lands in top-level
+    ``server_name``/``tool_name``, target arguments in ``arguments`` (the ``args``
+    alias is folded in), and non-wrapper keys are kept. Inputs the proxy would
+    reject before dispatch are returned as an unchanged copy.
+    """
+    raw_arguments = tool_input.get("arguments")
+    raw_args = tool_input.get("args")
+    if not all(
+        value is None or isinstance(value, str | dict) for value in (raw_arguments, raw_args)
+    ):
+        return dict(tool_input)
+    try:
+        wrapper = canonicalize_call_tool_wrapper(
+            server_name=_wrapper_string(tool_input.get("server_name")),
+            tool_name=_wrapper_string(tool_input.get("tool_name")),
+            arguments=raw_arguments,
+            args=raw_args,
+            project_id=_wrapper_string(tool_input.get("project_id")),
+            intent=_wrapper_string(tool_input.get("intent")),
+        )
+    except CallToolWrapperInputError:
+        return dict(tool_input)
+
+    canonical = {key: value for key, value in tool_input.items() if key != "args"}
+    fields: dict[str, Any] = {
+        "server_name": wrapper.server_name,
+        "tool_name": wrapper.tool_name,
+        "arguments": wrapper.arguments,
+        "project_id": wrapper.project_id,
+        "intent": wrapper.intent,
+    }
+    for field, value in fields.items():
+        if value is None:
+            canonical.pop(field, None)
+        else:
+            canonical[field] = value
+    return canonical

@@ -10,6 +10,7 @@ from gobby.workflows.enforcement.blocking import (
     is_infrastructure_tool,
     is_provider_discovery_tool,
     is_tool_unlocked,
+    schema_lease_key,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "is_infrastructure_tool",
     "is_provider_discovery_tool",
     "is_tool_unlocked",
+    "schema_lease_key",
 ]

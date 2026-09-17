@@ -704,9 +704,13 @@ class TestGrokCurrentHookContract:
 
         assert event.data["toolInput"] == envelope
         assert event.data["tool_name"] == "mcp__gobby__call_tool"
-        assert event.data["tool_input"]["server_name"] == "gobby-sessions"
-        assert event.data["tool_input"]["tool_name"] == "set_handoff"
-        assert event.data["tool_input"]["args"] == {"clear_session": False}
+        # Hook consumers read the proxy's canonical wrapper: the args alias lands in arguments.
+        assert event.data["tool_input"] == {
+            "server_name": "gobby-sessions",
+            "tool_name": "set_handoff",
+            "arguments": {"clear_session": False},
+        }
+        assert event.data["_raw_tool_input"] == envelope["tool_input"]
         assert event.data["mcp_server"] == "gobby-sessions"
         assert event.data["mcp_tool"] == "set_handoff"
 

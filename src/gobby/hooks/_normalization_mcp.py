@@ -3,6 +3,8 @@
 import json as _json
 from typing import Any
 
+from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
+
 
 def _parse_json_object(text: Any) -> dict[str, Any] | None:
     if not isinstance(text, str):
@@ -12,38 +14,6 @@ def _parse_json_object(text: Any) -> dict[str, Any] | None:
     except (ValueError, TypeError):
         return None
     return parsed if isinstance(parsed, dict) else None
-
-
-def _call_tool_route(tool_input: Any) -> tuple[str | None, str | None]:
-    """Resolve wrapper routing with the proxy's top-level/nested precedence."""
-    if not isinstance(tool_input, dict):
-        return None, None
-
-    raw_nested = tool_input.get("arguments")
-    if raw_nested is None:
-        raw_nested = tool_input.get("args")
-    nested = raw_nested if isinstance(raw_nested, dict) else _parse_json_object(raw_nested)
-    nested = nested or {}
-
-    top_server = tool_input.get("server_name")
-    top_tool = tool_input.get("tool_name")
-    nested_server = nested.get("server_name")
-    nested_tool = nested.get("tool_name")
-    server = (
-        top_server
-        if isinstance(top_server, str) and top_server
-        else nested_server
-        if isinstance(nested_server, str) and nested_server
-        else None
-    )
-    tool = (
-        top_tool
-        if isinstance(top_tool, str) and top_tool
-        else nested_tool
-        if isinstance(nested_tool, str) and nested_tool
-        else None
-    )
-    return server, tool
 
 
 def _extract_mcp_content_object(content: Any) -> dict[str, Any] | None:
@@ -123,9 +93,10 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
     0.  Drop a non-string ``mcp_server`` (Claude Code's ``{name, source}``
         object) so the canonical server-name string is derived below.
     1a. ``mcp__<server>__<tool>`` prefix -> ``mcp_server`` / ``mcp_tool``
-    1b. For ``call_tool`` / ``mcp__gobby__call_tool``, extract inner
-        ``server_name`` / ``tool_name`` from ``tool_input`` (with override
-        logic when the ``mcp__`` prefix is present).
+    1b. For ``call_tool`` / ``mcp__gobby__call_tool``, replace ``tool_input``
+        with the proxy's canonical wrapper shape and derive ``mcp_server`` /
+        ``mcp_tool`` from its route (with override logic when the ``mcp__``
+        prefix is present).
     2.  Normalize both ``tool_result`` and ``tool_response`` -> ``tool_output``
         (CLI uses ``tool_result``; chat SDK uses ``tool_response``).
 
@@ -188,9 +159,22 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
             data.setdefault("mcp_server", parts[1])
             data.setdefault("mcp_tool", parts[2])
 
-    # 1b. Extract MCP info from nested tool_input for call_tool calls
+    # 1b. Canonicalize call_tool wrapper routing exactly as the proxy dispatches it,
+    # so every downstream consumer (rules, schema leases, block reasons) reads the
+    # same top-level server_name/tool_name and target arguments.
     if tool_name in ("call_tool", "mcp__gobby__call_tool"):
-        inner_server, inner_tool = _call_tool_route(tool_input)
+        if isinstance(raw_tool_input, dict):
+            tool_input = canonical_call_tool_input(raw_tool_input)
+            data["tool_input"] = tool_input
+            raw_arguments = raw_tool_input.get("arguments")
+            if raw_arguments is None:
+                raw_arguments = raw_tool_input.get("args")
+            if isinstance(raw_arguments, str) and isinstance(tool_input.get("arguments"), dict):
+                data["_input_coerced"] = True
+        inner_server = tool_input.get("server_name")
+        inner_tool = tool_input.get("tool_name")
+        inner_server = inner_server if isinstance(inner_server, str) and inner_server else None
+        inner_tool = inner_tool if isinstance(inner_tool, str) and inner_tool else None
         if tool_name.startswith("mcp__") and (inner_server or inner_tool):
             # The gobby call_tool wrapper is not the semantic target. Clear
             # prefix-parsed wrapper fields, then set the inner target when present.
@@ -206,17 +190,6 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
                 data["mcp_server"] = inner_server
             if inner_tool and "mcp_tool" not in data:
                 data["mcp_tool"] = inner_tool
-
-        # Coerce string arguments to dict (agents often stringify JSON)
-        inner_arguments = tool_input.get("arguments")
-        if isinstance(inner_arguments, str):
-            try:
-                parsed = _json.loads(inner_arguments)
-                if isinstance(parsed, dict):
-                    tool_input["arguments"] = parsed
-                    data["_input_coerced"] = True
-            except (ValueError, TypeError):
-                pass  # Leave as-is; server-side defense will catch it
 
     # 2. Normalize tool_result -> tool_output (CLI path)
     if "tool_result" in data and "tool_output" not in data:

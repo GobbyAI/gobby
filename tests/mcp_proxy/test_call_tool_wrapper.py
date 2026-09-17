@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
+    canonical_call_tool_input,
     canonicalize_call_tool_wrapper,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools
@@ -161,6 +164,43 @@ def test_invalid_wrapper_json_still_raises_without_top_level_route() -> None:
         )
 
 
+def test_canonical_call_tool_input_hoists_route_and_keeps_hook_fields() -> None:
+    canonical = canonical_call_tool_input(
+        {
+            "args": '{"server_name": "gobby-tasks", "tool_name": "add_label", '
+            '"intent": "label it", "args": {"task_id": "#1"}}',
+            "session_id": "#7",
+            "preflight_enabled": True,
+        }
+    )
+
+    assert canonical == {
+        "server_name": "gobby-tasks",
+        "tool_name": "add_label",
+        "arguments": {"task_id": "#1"},
+        "intent": "label it",
+        "session_id": "#7",
+        "preflight_enabled": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {"args": "{not-json", "preflight_enabled": True},
+        {"server_name": "gobby-tasks", "tool_name": "add_label", "arguments": ["task"]},
+    ],
+    ids=["unroutable-invalid-json", "non-object-arguments"],
+)
+def test_canonical_call_tool_input_leaves_undispatchable_input_unchanged(
+    tool_input: dict[str, object],
+) -> None:
+    canonical = canonical_call_tool_input(tool_input)
+
+    assert canonical == tool_input
+    assert canonical is not tool_input
+
+
 class _SchemaErrorProxy:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, object, object, bool, str | None]] = []
@@ -172,8 +212,10 @@ class _SchemaErrorProxy:
         arguments: object,
         session_id: object,
         *,
+        enforce_workflow: bool = False,
         wrapper_originated: bool = False,
         intent: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, object]:
         self.calls.append(
             (server_name, tool_name, arguments, session_id, wrapper_originated, intent)
@@ -200,6 +242,7 @@ async def test_bad_end_agent_run_wrapper_call_returns_schema_help() -> None:
     tools = object.__new__(GobbyDaemonTools)
     tools.tool_proxy = proxy
     tools._session_manager = None
+    tools._mcp_manager = MagicMock(project_id=None)
 
     result = await GobbyDaemonTools.call_tool(
         tools,

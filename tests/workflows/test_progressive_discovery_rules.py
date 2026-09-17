@@ -868,11 +868,11 @@ class TestRuleEngineIntegration:
         assert f"gobby-tasks:{mcp_tool}" in variables.get("unlocked_tools", [])
 
     @pytest.mark.asyncio
-    async def test_tracking_schema_lookup_uses_server_and_tool_aliases(
+    async def test_tracking_schema_lookup_ignores_server_and_tool_aliases(
         self,
         engine: RuleEngine,
     ) -> None:
-        """track-schema-lookup should accept the same aliases as is_tool_unlocked."""
+        """The proxy accepts only server_name/tool_name, so alias spellings never lease."""
         variables: dict = {
             "enforce_tool_schema_check": True,
         }
@@ -884,7 +884,20 @@ class TestRuleEngineIntegration:
         )
         result = await engine.evaluate(after_schema, SESSION_ID, variables)
         assert result.decision == "allow"
-        assert "gobby-tasks:add_label" in variables.get("unlocked_tools", [])
+        assert variables.get("unlocked_tools", []) == []
+
+        call_event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "add_label",
+                "arguments": {"task_id": "#1", "label": "x"},
+            },
+        )
+        blocked = await engine.evaluate(call_event, SESSION_ID, variables)
+        assert blocked.decision == "block"
+        assert "server_name='gobby-tasks', tool_name='add_label'" in (blocked.reason or "")
 
     @pytest.mark.asyncio
     async def test_direct_schema_flow_blocks_then_reuses_lease(self, engine: RuleEngine) -> None:
