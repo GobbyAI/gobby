@@ -20,9 +20,24 @@ export interface TerminalAttachHistory {
   totalBytes: number;
 }
 
+/**
+ * The daemon's answer to `terminal_set_scroll_offset`. It arrives twice for a
+ * proxied native attachment — once as the daemon's own clamp against the
+ * ceiling the client proposed, then once relayed from gterm, which owns the
+ * real scrollback depth. Both are applied the same way; the later one wins.
+ */
+export interface TerminalScrollApplied {
+  streamingId: string;
+  appliedRows: number;
+  maxRows: number;
+}
+
 export interface TerminalOutputSink {
   onOutput: (callback: (runId: string, data: string) => void) => void;
   onAttachHistory: (callback: (history: TerminalAttachHistory) => void) => void;
+  onScrollOffsetApplied: (
+    callback: (applied: TerminalScrollApplied) => void,
+  ) => void;
   /** True when the frame belonged to the output plane. */
   handle: (message: Record<string, unknown>) => boolean;
 }
@@ -30,6 +45,7 @@ export interface TerminalOutputSink {
 export function createTerminalOutputSink(): TerminalOutputSink {
   let output: ((runId: string, data: string) => void) | null = null;
   let history: ((history: TerminalAttachHistory) => void) | null = null;
+  let scrolled: ((applied: TerminalScrollApplied) => void) | null = null;
 
   const onHistoryFrame = (message: Record<string, unknown>): void => {
     // The host proxy keys history on the attachment; that id doubles as the
@@ -77,9 +93,31 @@ export function createTerminalOutputSink(): TerminalOutputSink {
       history = callback;
     },
 
+    onScrollOffsetApplied: (callback) => {
+      scrolled = callback;
+    },
+
     handle: (message) => {
       if (message.type === "terminal_attach_history") {
         onHistoryFrame(message);
+        return true;
+      }
+      if (message.type === "terminal_scroll_offset_applied") {
+        const attachmentId = message.attachment_id;
+        // Wire input, so both counters are checked rather than asserted: a
+        // frame missing either would otherwise unpin the pane at NaN rows.
+        if (
+          scrolled !== null &&
+          typeof attachmentId === "string" &&
+          typeof message.applied_rows === "number" &&
+          typeof message.max_rows === "number"
+        ) {
+          scrolled({
+            streamingId: attachmentId,
+            appliedRows: message.applied_rows,
+            maxRows: message.max_rows,
+          });
+        }
         return true;
       }
       if (message.type !== "terminal_output") return false;

@@ -148,6 +148,30 @@ function setScrollMetrics(
   });
 }
 
+function measuredRows(rowHeight: number) {
+  // jsdom measures every box at zero, so the fit — and the row height the
+  // wheel divides pixel deltas by — needs real numbers stubbed in.
+  const rect = (width: number, height: number): DOMRect =>
+    ({
+      width,
+      height,
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      bottom: height,
+      right: width,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  return vi
+    .spyOn(Element.prototype, "getBoundingClientRect")
+    .mockImplementation(function (this: Element) {
+      if (this instanceof HTMLSpanElement) return rect(8, rowHeight);
+      if (this.classList.contains("term-row")) return rect(800, rowHeight);
+      return rect(800, rowHeight * 20);
+    });
+}
+
 function TerminalFocusHarness({ children }: { children: ReactNode }) {
   return (
     <>
@@ -844,5 +868,277 @@ describe("lifecycle destroy", () => {
     expect(scrollElement.scrollTop).toBe(900);
     // Focus returns to the terminal so typing keeps flowing to the PTY.
     expect(latestInstance().textarea).toHaveFocus();
+  });
+});
+
+describe("native scroll offset", () => {
+  it("turns wheel deltas into rows for a native pane and leaves a tmux pane alone", async () => {
+    const rectSpy = measuredRows(16);
+    try {
+      const onScrollRows = vi.fn();
+      const onReady = vi.fn();
+      const { rerender } = render(
+        <TerminalView
+          onReady={onReady}
+          scrollOffsetRows={0}
+          onScrollRows={onScrollRows}
+        />,
+      );
+      await waitFor(() => expect(onReady).toHaveBeenCalled());
+
+      const mount = latestInstance().element;
+      // Three rows at 16px each, wheeled up: up is back into history, which
+      // the wire counts as a positive offset from the live edge.
+      const wheelUp = new WheelEvent("wheel", {
+        deltaY: -48,
+        deltaMode: 0,
+        cancelable: true,
+        bubbles: true,
+      });
+      act(() => {
+        mount.dispatchEvent(wheelUp);
+      });
+      expect(onScrollRows).toHaveBeenCalledWith(3);
+      // The renderer's own few mirrored rows must not scroll under the
+      // gesture, so the browser default is claimed.
+      expect(wheelUp.defaultPrevented).toBe(true);
+      expect(mount.style.touchAction).toBe("pinch-zoom");
+
+      act(() => {
+        mount.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: 32,
+            deltaMode: 0,
+            cancelable: true,
+            bubbles: true,
+          }),
+        );
+      });
+      expect(onScrollRows).toHaveBeenLastCalledWith(-2);
+
+      // A tmux attachment keeps the renderer's own wheel handling, which turns
+      // it into the SGR mouse reports the attach client already answers.
+      onScrollRows.mockClear();
+      rerender(
+        <TerminalView
+          onReady={onReady}
+          scrollOffsetRows={null}
+          onScrollRows={onScrollRows}
+        />,
+      );
+      const tmuxWheel = new WheelEvent("wheel", {
+        deltaY: -48,
+        deltaMode: 0,
+        cancelable: true,
+        bubbles: true,
+      });
+      act(() => {
+        mount.dispatchEvent(tmuxWheel);
+      });
+      expect(onScrollRows).not.toHaveBeenCalled();
+      expect(tmuxWheel.defaultPrevented).toBe(false);
+      expect(mount.style.touchAction).toBe("pan-y pinch-zoom");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("scrolls line-mode wheel deltas one row per line", async () => {
+    const rectSpy = measuredRows(16);
+    try {
+      const onScrollRows = vi.fn();
+      const onReady = vi.fn();
+      render(
+        <TerminalView
+          onReady={onReady}
+          scrollOffsetRows={0}
+          onScrollRows={onScrollRows}
+        />,
+      );
+      await waitFor(() => expect(onReady).toHaveBeenCalled());
+
+      // DOM_DELTA_LINE already counts lines: a Firefox notch reports 3.
+      act(() => {
+        latestInstance().element.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: -3,
+            deltaMode: 1,
+            cancelable: true,
+            bubbles: true,
+          }),
+        );
+      });
+      expect(onScrollRows).toHaveBeenCalledWith(3);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("accumulates sub-row trackpad deltas instead of dropping them", async () => {
+    const rectSpy = measuredRows(20);
+    try {
+      const onScrollRows = vi.fn();
+      const onReady = vi.fn();
+      render(
+        <TerminalView
+          onReady={onReady}
+          scrollOffsetRows={0}
+          onScrollRows={onScrollRows}
+        />,
+      );
+      await waitFor(() => expect(onReady).toHaveBeenCalled());
+
+      const mount = latestInstance().element;
+      const flick = () => {
+        act(() => {
+          mount.dispatchEvent(
+            new WheelEvent("wheel", {
+              deltaY: -8,
+              deltaMode: 0,
+              cancelable: true,
+              bubbles: true,
+            }),
+          );
+        });
+      };
+      // 8px of a 20px row is under one row: dropped per event, a slow pan
+      // would never move. Two more events carry the remainder over.
+      flick();
+      expect(onScrollRows).not.toHaveBeenCalled();
+      flick();
+      expect(onScrollRows).not.toHaveBeenCalled();
+      flick();
+      expect(onScrollRows).toHaveBeenCalledWith(1);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("names how far back the pane is and offers the live edge", async () => {
+    const user = userEvent.setup();
+    const onJumpToLive = vi.fn();
+    const onReady = vi.fn();
+    const { rerender } = render(
+      <TerminalView
+        onReady={onReady}
+        scrollOffsetRows={0}
+        onJumpToLive={onJumpToLive}
+      />,
+    );
+    await waitFor(() => expect(onReady).toHaveBeenCalled());
+    expect(
+      screen.queryByTestId("terminal-scrolled-indicator"),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <TerminalView
+        onReady={onReady}
+        scrollOffsetRows={1}
+        onJumpToLive={onJumpToLive}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("1 row back");
+
+    rerender(
+      <TerminalView
+        onReady={onReady}
+        scrollOffsetRows={124}
+        onJumpToLive={onJumpToLive}
+      />,
+    );
+    const indicator = screen.getByTestId("terminal-scrolled-indicator");
+    // Opaque, tokenized surface: the pane behind it is arbitrary cell colour.
+    expect(indicator).toHaveClass("bg-[var(--bg-secondary)]");
+    expect(indicator).toHaveClass("text-[var(--text-primary)]");
+    expect(screen.getByRole("status")).toHaveTextContent("124 rows back");
+
+    const jump = screen.getByTestId("terminal-jump-to-live");
+    // The button stays outside the atomic live region, which would otherwise
+    // re-announce the whole notice on every scrolled row.
+    expect(screen.getByRole("status")).not.toContainElement(jump);
+    await user.click(jump);
+    expect(onJumpToLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the renderer's own jump control out of a native pane", async () => {
+    const onReady = vi.fn();
+    render(<TerminalView onReady={onReady} scrollOffsetRows={0} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalled());
+
+    const scrollElement = latestInstance().element;
+    setScrollMetrics(scrollElement, {
+      scrollTop: 0,
+      clientHeight: 100,
+      scrollHeight: 900,
+    });
+    act(() => {
+      scrollElement.dispatchEvent(new Event("scroll"));
+    });
+
+    // The daemon owns the offset, so the renderer's few mirrored rows are
+    // pinned to the bottom and the DOM jump control has nothing to say.
+    expect(
+      screen.queryByRole("button", { name: "Jump to newest terminal output" }),
+    ).not.toBeInTheDocument();
+    expect(scrollElement.scrollTop).toBe(900);
+  });
+
+  it("pins the renderer viewport to the live edge on every native frame", async () => {
+    const onReady = vi.fn();
+    const ref = createRef<TerminalViewHandle>();
+    render(<TerminalView ref={ref} onReady={onReady} scrollOffsetRows={4} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalled());
+
+    const scrollElement = latestInstance().element;
+    setScrollMetrics(scrollElement, {
+      scrollTop: 0,
+      clientHeight: 100,
+      scrollHeight: 640,
+    });
+    act(() => ref.current?.write("frame"));
+    expect(scrollElement.scrollTop).toBe(640);
+  });
+
+  it("pages with Shift+PageUp and Shift+PageDown without reaching the PTY", async () => {
+    const user = userEvent.setup();
+    const onScrollRows = vi.fn();
+    const onProtocolResponse = vi.fn();
+    const onReady = vi.fn();
+    const { rerender } = render(
+      <TerminalView
+        onReady={onReady}
+        onProtocolResponse={onProtocolResponse}
+        scrollOffsetRows={0}
+        onScrollRows={onScrollRows}
+      />,
+    );
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
+
+    act(() => latestInstance().textarea.focus());
+    // A page is the grid less one row of overlap, so the reader keeps a line
+    // of context across the jump.
+    await user.keyboard("{Shift>}{PageUp}{/Shift}");
+    expect(onScrollRows).toHaveBeenCalledWith(56);
+    await user.keyboard("{Shift>}{PageDown}{/Shift}");
+    expect(onScrollRows).toHaveBeenLastCalledWith(-56);
+    expect(onProtocolResponse).not.toHaveBeenCalled();
+
+    // Unshifted page keys stay application input, and a tmux pane never sees
+    // the scroll path at all.
+    onScrollRows.mockClear();
+    await user.keyboard("{PageUp}");
+    expect(onScrollRows).not.toHaveBeenCalled();
+
+    rerender(
+      <TerminalView
+        onReady={onReady}
+        onProtocolResponse={onProtocolResponse}
+        scrollOffsetRows={null}
+        onScrollRows={onScrollRows}
+      />,
+    );
+    act(() => latestInstance().textarea.focus());
+    await user.keyboard("{Shift>}{PageUp}{/Shift}");
+    expect(onScrollRows).not.toHaveBeenCalled();
   });
 });

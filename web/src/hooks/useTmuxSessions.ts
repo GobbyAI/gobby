@@ -26,6 +26,7 @@ import {
 import {
   createTerminalOutputSink,
   type TerminalAttachHistory,
+  type TerminalScrollApplied,
 } from "./terminalOutputSink";
 import {
   terminalAttachMessage,
@@ -34,6 +35,7 @@ import {
   terminalKillMessage,
   terminalListMessage,
   terminalResizeMessage,
+  terminalSetScrollOffsetMessage,
   terminalSetViewportMessage,
 } from "./tmuxSessionMessages";
 
@@ -90,8 +92,17 @@ interface TmuxSessionsResult {
   discardWrite: (attachmentId: string, seq: number) => void;
   dismissWriteRefusal: () => void;
   resizeTerminal: (rows: number, cols: number) => void;
+  /**
+   * Move a native attachment's rendered window back from the live edge. The
+   * daemon owns the scrollback, so this is the only way to scroll one; a tmux
+   * attachment scrolls through its own mouse reports and must never send it.
+   */
+  setScrollOffset: (rowsFromLiveEdge: number, maxRows: number) => void;
   onOutput: (callback: (runId: string, data: string) => void) => void;
   onAttachHistory: (callback: (history: TerminalAttachHistory) => void) => void;
+  onScrollOffsetApplied: (
+    callback: (applied: TerminalScrollApplied) => void,
+  ) => void;
 }
 
 export function useTmuxSessions(
@@ -718,6 +729,27 @@ export function useTmuxSessions(
     );
   }, []);
 
+  const setScrollOffset = useCallback(
+    (rowsFromLiveEdge: number, maxRows: number) => {
+      const currentStreamingId = streamingIdRef.current;
+      if (
+        !wsRef.current ||
+        wsRef.current.readyState !== WebSocket.OPEN ||
+        !currentStreamingId
+      )
+        return;
+      wsRef.current.send(
+        terminalSetScrollOffsetMessage(
+          attachedTargetRef.current?.terminal_id,
+          currentStreamingId,
+          rowsFromLiveEdge,
+          maxRows,
+        ),
+      );
+    },
+    [],
+  );
+
   useEffect(() => {
     connectRef.current();
     return () => {
@@ -790,7 +822,9 @@ export function useTmuxSessions(
     discardWrite,
     dismissWriteRefusal,
     resizeTerminal,
+    setScrollOffset,
     onOutput: sink.onOutput,
     onAttachHistory: sink.onAttachHistory,
+    onScrollOffsetApplied: sink.onScrollOffsetApplied,
   };
 }

@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { TerminalAttachHistory } from "../../../../hooks/terminalOutputSink";
+import type {
+  TerminalAttachHistory,
+  TerminalScrollApplied,
+} from "../../../../hooks/terminalOutputSink";
 import type { GobbySession } from "../../../../types/sessions";
 import type { JoinedTerminalSession } from "../terminalSessions";
 import type { TerminalViewHandle, TerminalViewProps } from "../TerminalView";
@@ -114,6 +117,21 @@ vi.mock("../TerminalView", () => ({
           <button type="button" onClick={() => props.onSizeChange?.(33, 101)}>
             Renderer resized
           </button>
+          <output aria-label="Terminal scroll offset">
+            {props.scrollOffsetRows ?? "none"}
+          </output>
+          <button type="button" onClick={() => props.onScrollRows?.(3)}>
+            Wheel back
+          </button>
+          <button type="button" onClick={() => props.onScrollRows?.(-3)}>
+            Wheel forward
+          </button>
+          <button type="button" onClick={() => props.onJumpToLive?.()}>
+            Jump to live
+          </button>
+          <button type="button" onClick={() => props.onPaste?.("pasted")}>
+            Paste
+          </button>
         </div>
       );
     },
@@ -153,6 +171,7 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
 let hookState: HookResult;
 let outputListener: ((runId: string, data: string) => void) | null;
 let historyListener: ((history: TerminalAttachHistory) => void) | null;
+let scrollListener: ((applied: TerminalScrollApplied) => void) | null;
 
 beforeEach(() => {
   window.sessionStorage.clear();
@@ -162,6 +181,7 @@ beforeEach(() => {
   window.localStorage.setItem("gobby:terminal:session-scope", "all");
   outputListener = null;
   historyListener = null;
+  scrollListener = null;
   terminalViewState.mounts = 0;
   hookState = makeHookState({
     onOutput: vi.fn((listener) => {
@@ -169,6 +189,9 @@ beforeEach(() => {
     }),
     onAttachHistory: vi.fn((listener) => {
       historyListener = listener;
+    }),
+    onScrollOffsetApplied: vi.fn((listener) => {
+      scrollListener = listener;
     }),
   });
   mockUseTmuxSessions.mockReset();
@@ -1084,5 +1107,256 @@ describe("typing mode", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("native scroll offset", () => {
+  async function attachNative(user: ReturnType<typeof userEvent.setup>) {
+    hookState = makeHookState({
+      ...hookState,
+      sessionsLoaded: true,
+      sessions: [makeTmuxSession({ name: "gterm-shell", backend: "native" })],
+      attachedTarget: { terminal_id: "default:gterm-shell" },
+      streamingId: "stream-native",
+    });
+    render(<TerminalTab />);
+    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
+  }
+
+  it("sends the wheel as an offset, mirrors it, and reconciles the applied reply", async () => {
+    const user = userEvent.setup();
+    await attachNative(user);
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "0",
+    );
+
+    // The ceiling is unknown until the daemon answers, so max_rows goes out as
+    // 0 and the daemon applies what was asked.
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenCalledWith(3, 0);
+    // Mirrored before the reply lands, the way gclient does it: the indicator
+    // tracks the gesture, not the round trip.
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "3",
+    );
+
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 3,
+        maxRows: 240,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(6, 240);
+
+    // Wheeling back down walks toward the live edge again.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 6,
+        maxRows: 240,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel forward" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(3, 240);
+  });
+
+  it("clamps to the max_rows the daemon last applied", async () => {
+    const user = userEvent.setup();
+    await attachNative(user);
+
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 5,
+        maxRows: 7,
+      });
+    });
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "5",
+    );
+
+    // 5 + 3 is past the deepest offset the host has; the request stops at the
+    // ceiling instead of asking for scrollback that does not exist.
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(7, 7);
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "7",
+    );
+
+    // Already at the ceiling, another notch sends nothing at all.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 7,
+        maxRows: 7,
+      });
+    });
+    const sent = vi.mocked(hookState.setScrollOffset).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(vi.mocked(hookState.setScrollOffset).mock.calls).toHaveLength(sent);
+  });
+
+  it("keeps the ceiling unknown when the daemon echoes the requested rows", async () => {
+    const user = userEvent.setup();
+    await attachNative(user);
+
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(3, 0);
+
+    // The daemon answers a max_rows 0 request with the requested rows as the
+    // ceiling before gterm's real depth is relayed; that echo must not clamp
+    // the next notch to 3.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 3,
+        maxRows: 3,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(6, 0);
+
+    // gterm's relayed reply carries the real ceiling.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 6,
+        maxRows: 300,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(9, 300);
+
+    // A late echo below the confirmed ceiling does not lower it.
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-native",
+        appliedRows: 9,
+        maxRows: 9,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(12, 300);
+  });
+
+  it("ignores a superseded attachment's applied reply", async () => {
+    const user = userEvent.setup();
+    await attachNative(user);
+
+    act(() => {
+      scrollListener?.({
+        streamingId: "stream-stale",
+        appliedRows: 90,
+        maxRows: 300,
+      });
+    });
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "0",
+    );
+  });
+
+  it("returns to the live edge when the operator types, pastes, or jumps", async () => {
+    const user = userEvent.setup();
+    await attachNative(user);
+
+    const scrollBack = async () => {
+      await user.click(screen.getByRole("button", { name: "Wheel back" }));
+      act(() => {
+        scrollListener?.({
+          streamingId: "stream-native",
+          appliedRows: 3,
+          maxRows: 300,
+        });
+      });
+    };
+
+    await scrollBack();
+    await user.click(screen.getByRole("button", { name: "Typed c" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
+    expect(hookState.sendInput).toHaveBeenCalledWith("c");
+
+    await scrollBack();
+    await user.click(screen.getByRole("button", { name: "Paste" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
+    expect(hookState.sendPaste).toHaveBeenCalledWith("pasted");
+
+    await scrollBack();
+    await user.click(screen.getByRole("button", { name: "Esc" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
+    expect(hookState.sendInput).toHaveBeenCalledWith("");
+
+    await scrollBack();
+    await user.click(screen.getByRole("button", { name: "Jump to live" }));
+    expect(hookState.setScrollOffset).toHaveBeenLastCalledWith(0, 300);
+
+    // At the live edge already, typing sends no further offset.
+    const sent = vi.mocked(hookState.setScrollOffset).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Typed c" }));
+    expect(vi.mocked(hookState.setScrollOffset).mock.calls).toHaveLength(sent);
+  });
+
+  it("leaves a tmux attachment on its own mouse-report path", async () => {
+    const user = userEvent.setup();
+    hookState = makeHookState({
+      ...hookState,
+      sessionsLoaded: true,
+      sessions: [makeTmuxSession({ name: "tmux-shell" })],
+      attachedTarget: { terminal_id: "default:tmux-shell" },
+      streamingId: "stream-tmux",
+    });
+    render(<TerminalTab />);
+    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
+
+    // No offset for the pane means the renderer keeps the wheel and turns it
+    // into the SGR reports the tmux attach client already answers.
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "none",
+    );
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    await user.click(screen.getByRole("button", { name: "Typed c" }));
+    expect(hookState.setScrollOffset).not.toHaveBeenCalled();
+    expect(hookState.sendInput).toHaveBeenCalledWith("c");
+  });
+
+  it("holds the offset back until the attachment catches up with the selection", async () => {
+    const user = userEvent.setup();
+    // The selection has moved to the gterm pane; the attachment is still the
+    // tmux one it is replacing. An offset sent now would address tmux.
+    hookState = makeHookState({
+      ...hookState,
+      sessionsLoaded: true,
+      sessions: [
+        makeTmuxSession({ name: "gterm-shell", backend: "native" }),
+        makeTmuxSession({ name: "tmux-shell" }),
+      ],
+      attachedTarget: { terminal_id: "default:tmux-shell" },
+      streamingId: "stream-tmux",
+    });
+    const rendered = render(<TerminalTab />);
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+      "default:gterm-shell",
+    );
+    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+      "none",
+    );
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).not.toHaveBeenCalled();
+
+    hookState = {
+      ...hookState,
+      attachedTarget: { terminal_id: "default:gterm-shell" },
+      streamingId: "stream-native",
+    };
+    rendered.rerender(<TerminalTab />);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
+        "0",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Wheel back" }));
+    expect(hookState.setScrollOffset).toHaveBeenCalledWith(3, 0);
   });
 });
