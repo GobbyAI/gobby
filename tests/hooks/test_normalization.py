@@ -29,6 +29,36 @@ class TestMcpPrefixParsing:
         assert result["mcp_server"] == "gobby-tasks"
         assert result["mcp_tool"] == "create_task"
 
+    def test_replaces_provider_mcp_server_object_with_prefix_server(self) -> None:
+        # Claude Code 2.1.274+ sends mcp_server as a {name, source} object.
+        data: dict[str, Any] = {
+            "tool_name": "mcp__gobby__get_tool_schema",
+            "tool_input": {"server_name": "gobby-skills", "tool_name": "get_skill_file"},
+            "mcp_server": {"name": "gobby", "source": "user"},
+        }
+        result = normalize_mcp_fields(data)
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "get_tool_schema"
+
+    def test_call_tool_replaces_provider_mcp_server_object_with_inner_server(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": "gobby-skills", "tool_name": "get_skill"},
+            "mcp_server": {"name": "gobby", "source": "user"},
+        }
+        result = normalize_mcp_fields(data)
+        assert result["mcp_server"] == "gobby-skills"
+        assert result["mcp_tool"] == "get_skill"
+
+    def test_drops_provider_mcp_server_object_without_mcp_prefix(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Read",
+            "mcp_server": {"name": "gobby", "source": "user"},
+        }
+        result = normalize_mcp_fields(data)
+        assert "mcp_server" not in result
+        assert "mcp_tool" not in result
+
     def test_does_not_overwrite_existing_mcp_tool(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "mcp__gobby__call_tool",

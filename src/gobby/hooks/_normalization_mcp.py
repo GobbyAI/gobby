@@ -120,6 +120,8 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     Normalizations performed:
 
+    0.  Drop a non-string ``mcp_server`` (Claude Code's ``{name, source}``
+        object) so the canonical server-name string is derived below.
     1a. ``mcp__<server>__<tool>`` prefix -> ``mcp_server`` / ``mcp_tool``
     1b. For ``call_tool`` / ``mcp__gobby__call_tool``, extract inner
         ``server_name`` / ``tool_name`` from ``tool_input`` (with override
@@ -137,6 +139,11 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
     tool_name = data.get("tool_name", "")
     raw_tool_input = data.get("tool_input")
     tool_input = raw_tool_input if isinstance(raw_tool_input, dict) else {}
+
+    # 0. Claude Code 2.1.274+ sends ``mcp_server`` as a ``{name, source}`` object
+    # on tool hooks. The canonical field is the server-name string parsed below.
+    if not isinstance(data.get("mcp_server", ""), str):
+        del data["mcp_server"]
 
     # 1a-pre. Normalize single-underscore MCP prefix from ACP CLIs to canonical
     # double-underscore form. Some CLIs send mcp_<server>_<tool>; canonical is

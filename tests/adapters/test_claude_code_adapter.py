@@ -287,6 +287,26 @@ class TestTranslateToHookEvent:
         # tool_result should be normalized to tool_output
         assert event.data["tool_output"] == "command output"
 
+    def test_post_tool_use_mcp_server_object_normalizes_to_server_name(self) -> None:
+        # Claude Code 2.1.274 added mcp_server: {name, source} to tool hook input.
+        adapter = ClaudeCodeAdapter()
+        native = {
+            "hook_type": "post-tool-use",
+            "input_data": {
+                "session_id": "ext-789",
+                "hook_event_name": "PostToolUse",
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_input": {"server_name": "gobby-skills", "tool_name": "get_skill_file"},
+                "tool_response": '{"success": true, "tool": {"name": "get_skill_file"}}',
+                "tool_use_id": "toolu_1",
+                "mcp_server": {"name": "gobby", "source": "user"},
+            },
+        }
+        event = adapter.translate_to_hook_event(native)
+        assert event.event_type == HookEventType.AFTER_TOOL
+        assert event.data["mcp_server"] == "gobby"
+        assert event.data["mcp_tool"] == "get_tool_schema"
+
     def test_post_tool_use_failure_sets_is_failure(self) -> None:
         adapter = ClaudeCodeAdapter()
         native = {
