@@ -138,10 +138,13 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                 .enumerate()
                 .map(|(index, worktree)| SidebarRow {
                     id: worktree.worktree_id.clone(),
+                    // A detached worktree has no branch; `~` as on its card.
                     label: worktree
                         .branch
-                        .strip_prefix("worktree/")
-                        .unwrap_or(&worktree.branch)
+                        .as_deref()
+                        .map_or("~", |branch| {
+                            branch.strip_prefix("worktree/").unwrap_or(branch)
+                        })
                         .to_string(),
                     kind: RowKind::Worktree,
                     state: worktree.state,

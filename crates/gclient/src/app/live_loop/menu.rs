@@ -733,7 +733,7 @@ mod tests {
             worktrees: vec![WorktreeRow {
                 id: "wt-1".to_string(),
                 project_id: "proj-git".to_string(),
-                branch_name: "feature".to_string(),
+                branch_name: Some("feature".to_string()),
                 worktree_path: "/repos/git/.worktrees/feature".to_string(),
                 status: "active".to_string(),
                 workspace_role: "client".to_string(),

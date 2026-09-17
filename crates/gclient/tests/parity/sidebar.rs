@@ -160,7 +160,7 @@ impl Board {
         let id = branch.strip_prefix("worktree/").unwrap_or(branch);
         self.project_mut(project).worktrees.push(WorktreeEntry {
             worktree_id: id.to_string(),
-            branch: branch.to_string(),
+            branch: Some(branch.to_string()),
             path: std::path::PathBuf::from(format!("/repos/{project}/.worktrees/{id}")),
             task_ref: task_ref.map(str::to_string),
             ..WorktreeEntry::default()
@@ -1837,7 +1837,7 @@ fn project_workspace(count: usize) -> Workspace {
             id: "wt-1".to_string(),
             project_id: "proj-alpha".to_string(),
             task_id: Some("#123".to_string()),
-            branch_name: "worktree/feature".to_string(),
+            branch_name: Some("worktree/feature".to_string()),
             worktree_path: "/repos/alpha/.worktrees/feature".to_string(),
             status: "active".to_string(),
             workspace_role: "task".to_string(),

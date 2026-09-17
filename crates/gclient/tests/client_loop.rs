@@ -7064,6 +7064,102 @@ async fn new_project_dialog_inits_and_focuses() {
     mock.shutdown().await;
 }
 
+/// A detached worktree row (`branch_name: null`, valid on the daemon side)
+/// decodes at startup: the loop stays live and the sidebar lists the row
+/// with `~` for its branch beside a row that has one.
+#[tokio::test]
+async fn a_detached_worktree_row_does_not_latch_exit() {
+    let mock = MockDaemon::start("local-token").await;
+    let worktrees_path = "/api/source-control/worktrees?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [
+            {
+                "id": "wt-branch", "project_id": "project-1", "branch_name": "worktree/feature",
+                "worktree_path": "/repo-wt/feature", "status": "active",
+                "workspace_role": "client",
+            },
+            {
+                "id": "wt-detached", "project_id": "project-1", "branch_name": null,
+                "worktree_path": "/repo-wt/detached", "status": "active",
+                "workspace_role": "task",
+            },
+        ]}),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.expanded_project = Some("project-1".to_string());
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        timeout(Duration::from_secs(1), async {
+            while !mock.requests().iter().any(|request| {
+                request.method == "GET" && request.target.starts_with(worktrees_path)
+            }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("startup fetches the worktrees");
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("a detached worktree row must not fail the loop");
+    assert_eq!(
+        workspace.exit_reason(),
+        Some("terminal input closed"),
+        "only the closed input ends the loop"
+    );
+    let worktrees: Vec<(&str, Option<&str>)> = workspace.sidebar().projects[0]
+        .worktrees
+        .iter()
+        .map(|worktree| (worktree.worktree_id.as_str(), worktree.branch.as_deref()))
+        .collect();
+    assert_eq!(
+        worktrees,
+        [
+            ("wt-branch", Some("worktree/feature")),
+            ("wt-detached", None)
+        ]
+    );
+    let buffer = terminal.backend().buffer();
+    let rows: Vec<String> = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    // The token after each tree prefix is the state glyph, then the label.
+    let label_after = |prefix: &str| -> Vec<String> {
+        rows.iter()
+            .filter_map(|row| row.split_once(prefix))
+            .filter_map(|(_, rest)| rest.split_whitespace().nth(1).map(str::to_string))
+            .collect()
+    };
+    assert_eq!(label_after("├─"), ["feature"], "{rows:#?}");
+    assert_eq!(label_after("└─"), ["~"], "{rows:#?}");
+    mock.shutdown().await;
+}
+
 /// 3.3.2 and 3.3.3: the worktree flows post to the daemon's routes and
 /// update the child rows; the open dialog lists only rows no tab shows;
 /// closing a project with children asks with the group text; remove kills

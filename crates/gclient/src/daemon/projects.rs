@@ -44,7 +44,7 @@ pub struct WorktreeRow {
     pub project_id: String,
     pub machine_id: Option<String>,
     pub task_id: Option<String>,
-    pub branch_name: String,
+    pub branch_name: Option<String>,
     pub worktree_path: String,
     pub base_branch: Option<String>,
     pub agent_session_id: Option<String>,

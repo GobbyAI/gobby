@@ -34,7 +34,7 @@ fn split_live() -> (Workspace, Chrome) {
         worktrees: vec![WorktreeRow {
             id: "wt-1".to_string(),
             project_id: "proj-alpha".to_string(),
-            branch_name: "worktree/feature".to_string(),
+            branch_name: Some("worktree/feature".to_string()),
             worktree_path: "/repos/alpha/.worktrees/feature".to_string(),
             status: "active".to_string(),
             workspace_role: "task".to_string(),
