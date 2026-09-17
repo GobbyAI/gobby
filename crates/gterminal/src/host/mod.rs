@@ -67,7 +67,6 @@ pub async fn run() -> io::Result<()> {
     let host_epoch = uuid::Uuid::new_v4().to_string();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let host_pid = std::process::id();
-    write_pidfile(&args.pid_file, host_pid)?;
 
     let control_path = args.socket_dir.join(CONTROL_SOCKET);
     let frames_path = args.socket_dir.join(FRAMES_SOCKET);
@@ -82,6 +81,9 @@ pub async fn run() -> io::Result<()> {
     restrict_socket_permissions(&control_path, 0o600)?;
     let frames_listener = UnixListener::bind(&frames_path)?;
     restrict_socket_permissions(&frames_path, 0o600)?;
+    // Only a host that owns both sockets may publish its pid: a second host
+    // losing the busy check above must leave the live host's pidfile alone.
+    write_pidfile(&args.pid_file, host_pid)?;
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let state = HostState::new(

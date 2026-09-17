@@ -1,10 +1,13 @@
-//! `gterm host` argv contract: help exits 0, bad argv exits 2, neither starts
-//! a host (#22425).
+//! `gterm host` argv and startup contract: help exits 0, bad argv exits 2,
+//! neither starts a host, and a host losing the busy-socket check leaves the
+//! live host's pidfile alone (#22425).
 //!
-//! Every run points `GTERM_SOCKET_DIR` and `--socket-dir` at a temp dir and
-//! writes no control token there, so a binary that regressed to ignoring
+//! The argv runs point `GTERM_SOCKET_DIR` and `--socket-dir` at a temp dir and
+//! write no control token there, so a binary that regressed to ignoring
 //! unknown arguments fails the exit-code assertion instead of parking as a
 //! live host on the caller's `~/.gobby`.
+
+mod host_support;
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -106,4 +109,45 @@ fn host_rejects_flag_without_its_value() {
     );
     assert!(stderr.contains("usage: gterm host"), "stderr: {stderr}");
     assert_no_host_state(dir.path());
+}
+
+/// A second host on a live socket dir must exit without publishing its pid:
+/// the daemon reads the pidfile to find the host it adopts, and a dead pid
+/// there orphans every running terminal until an operator repairs the file.
+#[test]
+fn host_losing_the_busy_socket_check_keeps_the_live_pidfile() {
+    let dir = host_support::temp_socket_dir();
+    host_support::write_token(dir.path(), "token-busy");
+    let mut first = host_support::spawn_host(dir.path());
+    let control_path = dir.path().join(CONTROL_SOCKET);
+    host_support::wait_socket(&control_path);
+    let pid_path = dir.path().join(PID_FILE);
+    let first_pid = first.id().to_string();
+    host_support::wait_until("the live host publishes its pid", || {
+        std::fs::read_to_string(&pid_path)
+            .map(|pid| pid.trim() == first_pid)
+            .unwrap_or(false)
+    });
+
+    let output = run_host(dir.path(), &[]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a host on a busy socket dir must fail, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("busy"), "stderr: {stderr}");
+    let published = std::fs::read_to_string(&pid_path).expect("live pidfile survives");
+    assert_eq!(
+        published.trim(),
+        first_pid,
+        "the losing host must not overwrite the live host's pidfile"
+    );
+    assert!(
+        std::os::unix::net::UnixStream::connect(&control_path).is_ok(),
+        "the live host keeps serving its control socket"
+    );
+    first.kill().expect("stop the live host");
 }
