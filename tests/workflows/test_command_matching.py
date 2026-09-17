@@ -81,9 +81,9 @@ class TestExecutableCommandSubjects:
             "cat <<'EOF' | tee out.txt"
         ]
         # A data stage — sed only transforms the bytes — keeps the body data.
-        assert executable_command_subjects(
-            "cat <<'EOF' | sed s/x/y/ > docs/ops.md\nbody\nEOF"
-        ) == ["cat <<'EOF' | sed s/x/y/ > docs/ops.md"]
+        assert executable_command_subjects("cat <<'EOF' | sed s/x/y/ > docs/ops.md\nbody\nEOF") == [
+            "cat <<'EOF' | sed s/x/y/ > docs/ops.md"
+        ]
         # A pipeline continuation defers the body past the next stage; the
         # pipeline is still one segment and its downstream shell runs the body.
         assert executable_command_subjects("cat <<'EOF' |\n  bash\nbody\nEOF") == [
@@ -98,7 +98,8 @@ class TestExecutableCommandSubjects:
             "cat <<'EOF' | sed 's/x/y/' > docs/ops.md"
         ]
         assert not command_patterns_match(piped_through_sed, pattern=DAEMON_PATTERN)
-        for interpreter in ("bash", "sh", "zsh", "eval"):
+        wrapped = ("sudo bash", "env -i bash", "xargs -0 sh -c")
+        for interpreter in ("bash", "sh", "zsh", "eval", *wrapped):
             into_shell = f"cat <<'EOF' | {interpreter}\n{body}\nEOF"
             assert command_patterns_match(into_shell, pattern=DAEMON_PATTERN), interpreter
 
@@ -119,9 +120,7 @@ class TestExecutableCommandSubjects:
     def test_unquoted_body_text_beside_a_substitution_stays_out(self) -> None:
         command = 'cat > notes.md <<EOF\n`git push --force`\npytest.importorskip("yaml")\nEOF'
 
-        assert executable_command_subjects(command) == [
-            "cat > notes.md <<EOF\ngit push --force"
-        ]
+        assert executable_command_subjects(command) == ["cat > notes.md <<EOF\ngit push --force"]
         assert not command_patterns_match(command, pattern=PYTEST_PATTERN)
         # A substitution span carrying a real invocation still selects a block.
         assert command_patterns_match("cat <<EOF\n`uv run pytest`\nEOF", pattern=PYTEST_PATTERN)

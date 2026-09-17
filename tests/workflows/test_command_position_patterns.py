@@ -396,10 +396,12 @@ SUBSTITUTION_CASES = (
     ("no-push", "echo `git push`"),
     ("no-push", "(git push)"),
     ("no-full-pytest-suite", "OUT=$(uv run pytest)"),
+    ("no-full-pytest-suite", "echo `uv run pytest`"),
     ("no-recursive-rm", "echo $(rm -rf /tmp/x)"),
     ("no-daemon-management", "echo `gobby restart`"),
     ("block-gobby-tasks-cli", "echo $(gobby tasks close 42)"),
     ("require-pytest-guard-env", "OUT=$(uv run pytest tests/tasks/test_validation.py)"),
+    ("require-pytest-guard-env", "echo `uv run pytest`"),
     ("no-remote-copy", "(scp dump.sql user@host:/tmp/ )"),
 )
 
