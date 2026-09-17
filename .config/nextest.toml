@@ -31,7 +31,7 @@ filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env))'
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env) | binary(link_artifacts))'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]

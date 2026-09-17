@@ -92,10 +92,25 @@ fn main() {
         "zig build for vendored libghostty-vt failed: {status}"
     );
 
-    let lib_dir = vendored_dir.join("zig-out/lib");
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    // Link against a copy in OUT_DIR: checkouts share one Cargo target dir, so the
+    // cached build-script output must not name a checkout that may be deleted.
+    let archive_name = if target.contains("windows-msvc") {
+        "ghostty-vt-static.lib"
+    } else {
+        "libghostty-vt.a"
+    };
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let static_lib = out_dir.join(archive_name);
+    let built_lib = vendored_dir.join("zig-out/lib").join(archive_name);
+    if let Err(err) = fs::copy(&built_lib, &static_lib) {
+        panic!(
+            "failed to copy {} into {}: {err}",
+            built_lib.display(),
+            out_dir.display()
+        );
+    }
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
     if target.contains("apple-darwin") {
-        let static_lib = lib_dir.join("libghostty-vt.a");
         println!("cargo:rustc-link-arg={}", static_lib.display());
     } else if target.contains("windows-msvc") {
         println!("cargo:rustc-link-lib=static=ghostty-vt-static");

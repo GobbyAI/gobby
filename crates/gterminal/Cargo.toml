@@ -92,6 +92,10 @@ name = "embed"
 required-features = ["vt-engine"]
 
 [[test]]
+name = "link_artifacts"
+required-features = ["vt-engine"]
+
+[[test]]
 name = "wire_golden"
 
 [[bin]]
