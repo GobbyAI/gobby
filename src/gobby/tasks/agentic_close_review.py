@@ -106,7 +106,10 @@ def build_agentic_review_prompt(
             "sessions ran. Its criterion_commands entries apply the same normalization contract "
             "to criterion commands and transcript core commands, including approved environment "
             "and directory prefixes; a satisfied entry is authoritative without any committed "
-            "log or receipt. Its latest_runs entries retain the verbatim command and state "
+            "log or receipt. Its criterion_command_gaps entries are compact references to the "
+            "unsatisfied criterion_commands entries, which hold the observed evidence; an "
+            "omitted_ count states what a bound left out and is never evidence of failure. "
+            "Its latest_runs entries retain the verbatim command and state "
             "core_command and wrapped. Its uncredited_runs entries name commands seen but "
             "excluded because their outcome was unknown, they were wrapped, or they were stale "
             "after a later edit; cite that entry when a verdict names a seen-but-uncredited run. "
@@ -148,6 +151,20 @@ def build_agentic_review_prompt(
     )
 
 
+# The wake contract references blockers; it never re-carries the bulk evidence the
+# close payload already reported. The blocking reasons and outstanding_finding_count
+# are that reference, and the persisted review row keeps the evidence itself.
+_BULK_CLOSE_RESULT_SECTIONS = frozenset(
+    {
+        "verdict",
+        "checklist",
+        "transcript_evidence",
+        "validation_commands",
+        "stable_facts",
+    }
+)
+
+
 def build_terminal_review_payload(
     review: TaskCloseReview,
     *,
@@ -158,7 +175,11 @@ def build_terminal_review_payload(
     retry_seconds: int = CLOSE_REVIEW_RETRY_SECONDS,
 ) -> dict[str, Any]:
     """Build the persisted automatic-wake contract for one terminal review."""
-    result = dict(close_result or {})
+    result = {
+        key: value
+        for key, value in (close_result or {}).items()
+        if key not in _BULK_CLOSE_RESULT_SECTIONS
+    }
     closed = status == "closed"
     retry_after = (
         (utc_now() + timedelta(seconds=retry_seconds)).isoformat()

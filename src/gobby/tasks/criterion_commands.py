@@ -30,6 +30,10 @@ CRITERION_COMMAND_CONTRACT = (
     "Run each listed command directly after the final edit; pipelines, wrappers, "
     "redirections, and trailing output are not credited."
 )
+# Diagnostic bounds. A criterion's verdict is always kept; only its observed-form
+# evidence and the gap message are shortened, each with an explicit omission count.
+_OBSERVED_FORM_LIMIT = 16
+_GAP_MESSAGE_BUDGET = 2_000
 _PLACEHOLDER_RE = re.compile(r"<[^>\s]+>|\{[^{}\s]+\}")
 _TRAILING_PUNCTUATION = frozenset(".,;!?")
 _CONDITIONAL_TOKENS = frozenset({"if", "for", "while", "case", "until"})
@@ -169,6 +173,9 @@ def criterion_command_records(
             record["wrapper_reason"] = equivalence.wrapper_reason
         observed = []
         for run in runs:
+            if run is latest:
+                # ``execution`` already reports this run; observed_forms holds the rest.
+                continue
             if run not in matching and not _related_command(run.command, core or command):
                 continue
             observation = execution_details(run)
@@ -180,6 +187,9 @@ def criterion_command_records(
                 observation["reason"] = f"{SCOPE_MISMATCH_REASON}: {difference}"
             observed.append(observation)
         if status != "satisfied":
+            if len(observed) > _OBSERVED_FORM_LIMIT:
+                record["omitted_observed_form_count"] = len(observed) - _OBSERVED_FORM_LIMIT
+                observed = observed[-_OBSERVED_FORM_LIMIT:]
             record["observed_forms"] = observed
         records.append(record)
     return records
@@ -476,34 +486,76 @@ def _bounded_languages(run: TranscriptValidationRun) -> frozenset[str] | None:
 
 
 def criterion_command_gap_message(gaps: list[dict[str, object]]) -> str:
-    actions: list[str] = []
+    """State one required action per unsatisfied criterion within a fixed budget.
+
+    Required commands are emitted before observed-form explanations, so a long
+    observation list never displaces the commands the caller has to run. Whatever
+    does not fit is counted in a closing omission sentence; the complete records
+    stay in the gate's ``criterion_commands`` detail.
+    """
+    required = [_gap_action_sentence(gap) for gap in gaps]
+    observed_sentences: list[str] = []
+    omitted_observed = 0
     for gap in gaps:
-        command = str(gap.get("core_command") or gap["command"])
-        status = str(gap["status"])
-        execution = gap.get("execution")
-        reason = status
-        if status == "stale" and isinstance(execution, Mapping):
-            invalidating_edit = execution.get("invalidating_edit")
-            if isinstance(invalidating_edit, Mapping):
-                reason = (
-                    f"execution order {execution['order']} at {execution['completed_at']} was "
-                    f"invalidated by {invalidating_edit['path']} at order "
-                    f"{invalidating_edit['order']} ({invalidating_edit['timestamp']})"
-                )
-        actions.append(f"Run `{command}` clean after the final task edit ({reason}).")
-        observed = gap.get("observed_forms")
-        if isinstance(observed, list):
-            for form in observed:
-                if not isinstance(form, Mapping):
-                    continue
-                explanation = (
-                    form.get("wrapper_reason")
-                    or form.get("unknown_reason")
-                    or form.get("reason")
-                    or form.get("outcome")
-                )
-                stale = form.get("invalidating_edit")
-                if isinstance(stale, Mapping):
-                    explanation = f"{explanation}; invalidated by {stale['path']} at order {stale['order']} ({stale['timestamp']})"
-                actions.append(f"Observed `{form['command']}`: {explanation}.")
+        already_omitted = gap.get("omitted_observed_form_count")
+        if isinstance(already_omitted, int):
+            omitted_observed += already_omitted
+        forms = gap.get("observed_forms")
+        if not isinstance(forms, list):
+            continue
+        observed_sentences.extend(
+            _observed_form_sentence(form) for form in forms if isinstance(form, Mapping)
+        )
+    kept_required, omitted_required, budget = fit_sentences(required, _GAP_MESSAGE_BUDGET)
+    kept_observed, dropped_observed, _ = fit_sentences(observed_sentences, budget)
+    omitted_observed += dropped_observed
+    actions = [*kept_required, *kept_observed]
+    if omitted_required or omitted_observed:
+        actions.append(
+            f"{omitted_required} more required commands and {omitted_observed} more observed "
+            "forms are omitted here; criterion_commands holds the full records."
+        )
     return "Required criterion commands are unsatisfied: " + " ".join(actions)
+
+
+def fit_sentences(sentences: list[str], budget: int) -> tuple[list[str], int, int]:
+    """Keep leading sentences that fit ``budget``, and report drops and the remainder."""
+    kept: list[str] = []
+    for sentence in sentences:
+        if len(sentence) + 1 > budget:
+            break
+        kept.append(sentence)
+        budget -= len(sentence) + 1
+    return kept, len(sentences) - len(kept), budget
+
+
+def _gap_action_sentence(gap: Mapping[str, object]) -> str:
+    command = str(gap.get("core_command") or gap["command"])
+    status = str(gap["status"])
+    execution = gap.get("execution")
+    reason = status
+    if status == "stale" and isinstance(execution, Mapping):
+        invalidating_edit = execution.get("invalidating_edit")
+        if isinstance(invalidating_edit, Mapping):
+            reason = (
+                f"execution order {execution['order']} at {execution['completed_at']} was "
+                f"invalidated by {invalidating_edit['path']} at order "
+                f"{invalidating_edit['order']} ({invalidating_edit['timestamp']})"
+            )
+    return f"Run `{command}` clean after the final task edit ({reason})."
+
+
+def _observed_form_sentence(form: Mapping[str, object]) -> str:
+    explanation = (
+        form.get("wrapper_reason")
+        or form.get("unknown_reason")
+        or form.get("reason")
+        or form.get("outcome")
+    )
+    stale = form.get("invalidating_edit")
+    if isinstance(stale, Mapping):
+        explanation = (
+            f"{explanation}; invalidated by {stale['path']} at order {stale['order']} "
+            f"({stale['timestamp']})"
+        )
+    return f"Observed `{form['command']}`: {explanation}."

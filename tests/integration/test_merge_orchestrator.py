@@ -139,6 +139,9 @@ def registry(merge_campaign_repo: dict[str, object]) -> InternalToolRegistry:
 
     worktree_manager = MagicMock()
     worktree_manager.list_worktrees.return_value = list(worktrees.values())
+    # Production resolves every worktree ref before the lookup; these fixture
+    # ids are already canonical, so the resolver is the identity here.
+    worktree_manager.resolve_reference.side_effect = lambda ref: ref
     worktree_manager.get.side_effect = lambda wid: worktrees.get(wid)
 
     git_manager = WorktreeGitManager(merge_campaign_repo["repo_path"])

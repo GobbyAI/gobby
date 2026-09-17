@@ -68,6 +68,7 @@ def excluded_validation_records(
                     "Run `uv run gobby test-types audit "
                     + shlex.join(audit_paths)
                     + " --baseline .gobby/test-types-baseline.json --fail-on-new` clean after the final task edit."
+                    " The audit cannot read a deleted test file; target its parent directory instead."
                 )
             elif not run.categories or missing is None and "gobby test-types audit" in run.command:
                 code, reason = (

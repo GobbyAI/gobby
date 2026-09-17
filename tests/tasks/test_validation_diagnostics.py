@@ -158,6 +158,44 @@ def test_partial_audit_remedy_covers_all_changed_tests_in_one_run() -> None:
     assert cured.status == "passed", cured.message
 
 
+def test_partial_audit_remedy_says_how_to_cover_a_deleted_test() -> None:
+    """The audit cannot read a deleted file, so the remedy names the parent-directory cure."""
+    partial_command = AUDIT.replace("tests/", "tests/a.py")
+    partial = _audit_run(
+        2, command=partial_command, normalized_command=partial_command.removeprefix("uv run ")
+    )
+    evidence = TranscriptEvidence(validation_runs=(_run(1), partial))
+    changed = ("tests/a.py", "tests/search/test_gone.py")
+    gate = evaluate_validation_commands(
+        task_category="code",
+        has_attributed_edits=True,
+        changed_paths=changed,
+        evidence=evidence,
+    )
+    remedy = gate.details["nearest_observed_run"]["remedy"]
+    assert "deleted test file" in remedy
+    assert "parent directory" in remedy
+
+    parent_command = AUDIT.replace("tests/", "tests/a.py tests/search")
+    cured = evaluate_validation_commands(
+        task_category="code",
+        has_attributed_edits=True,
+        changed_paths=changed,
+        evidence=replace(
+            evidence,
+            validation_runs=(
+                *evidence.validation_runs,
+                _audit_run(
+                    3,
+                    command=parent_command,
+                    normalized_command=parent_command.removeprefix("uv run "),
+                ),
+            ),
+        ),
+    )
+    assert cured.status == "passed", cured.message
+
+
 def test_narrowed_criterion_has_observed_metadata_and_exact_remedy() -> None:
     run = _run(1, command="uv run pytest tests/a.py -q")
     required = "uv run pytest tests/ -q"

@@ -36,19 +36,23 @@ _NODE = "Optional `node` (n#, hostname, label, or id) resolves refs on that mach
 
 
 async def current_actor() -> str:
-    """Return ``session:<id>`` or ``operator`` for this request, refusing any other caller."""
-    context = get_session_context()
-    if context is not None:
-        return f"{SESSION_ACTOR_PREFIX}{context.session_id}"
+    """Return ``session:<id>`` or ``operator`` for this request, refusing any other caller.
+
+    The principal decides first: an agent API token is refused whatever session header
+    it carries, and an unseeded var (no request in scope) is refused the same way.
+    """
     try:
         principal = await get_request_principal()
     except LookupError:
         principal = False
-    if principal is None:
-        return OPERATOR_ACTOR
-    raise WorkspaceOpError(
-        "forbidden", "Workspace tools act only for a session or the operator's local token"
-    )
+    if principal is not None:
+        raise WorkspaceOpError(
+            "forbidden", "Workspace tools act only for a session or the operator's local token"
+        )
+    context = get_session_context()
+    if context is not None:
+        return f"{SESSION_ACTOR_PREFIX}{context.session_id}"
+    return OPERATOR_ACTOR
 
 
 def _json(value: object) -> Any:
@@ -216,7 +220,9 @@ def create_workspaces_registry(
             f"(omit `name` to clear those). {_NODE}"
         )
     )
-    async def rename(ref: str, name: str | None = None, node: str | None = None) -> dict[str, Any]:
+    async def rename_workspace_item(
+        ref: str, name: str | None = None, node: str | None = None
+    ) -> dict[str, Any]:
         async def work(actor: str) -> object:
             shared = ops()
             with storage_errors():
@@ -256,7 +262,7 @@ def create_workspaces_registry(
             f"with `literal` false a key name (enter, escape, c-c) is pressed. {_NODE}"
         )
     )
-    async def send_keys(
+    async def send_pane_keys(
         pane: str,
         keys: str,
         literal: bool = True,

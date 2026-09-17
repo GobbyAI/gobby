@@ -45,8 +45,10 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `mcp-server` | Run the stdio MCP server. | `src/gobby/cli/mcp.py` |
 | `memory` | Manage persistent memories. | `src/gobby/cli/memory/` |
 | `merge` | Manage merge assistance. | `src/gobby/cli/merge.py` |
+| `nodes` | Inspect the operator's nodes. | `src/gobby/cli/workspaces.py` |
 | `observations` | Inspect unmodeled transcript observations. | `src/gobby/cli/observations.py` |
 | `pack` | Pack project context. | `src/gobby/cli/pack.py` |
+| `panes` | Arrange workspace panes and drive their terminals. | `src/gobby/cli/workspaces.py` |
 | `pipelines` | Manage pipeline definitions and runs. | `src/gobby/cli/pipelines.py` |
 | `plan` | Run plan utility commands. | `src/gobby/cli/plan.py` |
 | `plans` | Manage DB-backed plan records. | `src/gobby/cli/plans.py` |
@@ -75,6 +77,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `unpack` | Unpack project context. | `src/gobby/cli/pack.py` |
 | `variables` | Get or set live session variables. | `src/gobby/cli/variables.py` |
 | `webhooks` | Manage webhook endpoints. | `src/gobby/cli/extensions.py` |
+| `workspaces` | Manage the daemon's workspaces. | `src/gobby/cli/workspaces.py` |
 | `worktrees` | Manage isolated git worktrees. | `src/gobby/cli/worktrees.py` |
 
 ## Daemon And Setup
@@ -781,6 +784,39 @@ gobby worktrees stale [--days N]
 gobby worktrees cleanup [--days N] [--dry-run]
 gobby worktrees stats
 ```
+
+### Workspaces
+
+```bash
+gobby workspaces list [--node NODE] [--json]
+gobby workspaces show WORKSPACE [--node NODE] [--json]
+gobby workspaces create NAME [--node NODE] [--json]
+gobby workspaces delete WORKSPACE [--node NODE] [--json]
+gobby panes split PANE (--right | --left | --above | --below) [--terminal ID] [--node NODE] [--json]
+gobby panes close PANE [--node NODE] [--json]
+gobby panes move PANE --tab TAB [--right PANE | --left PANE | --above PANE | --below PANE] [--node NODE] [--json]
+gobby panes swap PANE OTHER [--node NODE] [--json]
+gobby panes rename REF [NAME] [--node NODE] [--json]
+gobby panes send PANE TEXT [--submit] [--key] [--idempotency-key KEY] [--node NODE] [--json]
+gobby panes read PANE [--lines N] [--node NODE] [--json]
+gobby panes wait PANE PATTERN [--timeout SECONDS] [--poll-interval SECONDS] [--node NODE] [--json]
+gobby nodes list [--node NODE] [--json]
+```
+
+These groups call the daemon's `gobby-workspaces` registry with the local CLI
+token, so they act as the `operator`. A node (`n#`) holds workspaces (`w#`) whose
+tabs (`t#`) hold panes (`p#`): address a row by ref, such as `n2:w1:t1:p2`, or by
+id. `--node` takes a node ref, id, hostname, or label and defaults to the daemon's
+own node; a ref that names its own node overrides it.
+
+`panes split` takes exactly one direction and opens a shell, or adopts the live
+terminal `--terminal` names. A new pane lands after the one it splits, so `--left`
+and `--above` swap it into place afterwards. `panes move` takes the destination
+`--tab` and one direction naming the pane to sit beside; without a direction the
+moved pane splits the destination tab. `panes rename` renames whatever its ref
+names, and clears a tab title or pane label when `NAME` is omitted. `panes send`
+types its text, or presses it as a key name such as `enter` or `c-c` with `--key`;
+reuse `--idempotency-key` to retry a write that reported `indeterminate`.
 
 ### Clones
 

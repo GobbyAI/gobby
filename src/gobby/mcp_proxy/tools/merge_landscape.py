@@ -82,6 +82,8 @@ _BLOCKED_VERIFICATION_ENV_PREFIXES = ("DYLD_",)
 class WorktreeManagerProtocol(Protocol):
     def get(self, worktree_id: str) -> Any | None: ...
 
+    def resolve_reference(self, ref: str) -> str: ...
+
     def list_worktrees(
         self,
         *,
@@ -137,17 +139,26 @@ async def _git_async(
 
 def _resolve_worktree_path(
     worktree_manager: WorktreeManagerProtocol | None,
-    worktree_id: str,
-) -> tuple[str | None, str | None, str | None]:
-    """Return (worktree_path, branch_name, error). On error, the others are None."""
+    worktree_ref: str,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return (worktree_id, worktree_path, branch_name, error).
+
+    ``worktree_ref`` is a full UUID or a unique id prefix. It is resolved to a
+    UUID before any lookup, so a prefix never reaches the uuid column. On error
+    the other three are None.
+    """
     if not worktree_manager:
-        return None, None, "worktree_manager not configured"
+        return None, None, None, "worktree_manager not configured"
+    try:
+        worktree_id = worktree_manager.resolve_reference(worktree_ref)
+    except ValueError as exc:
+        return None, None, None, str(exc)
     wt = worktree_manager.get(worktree_id)
     if not wt:
-        return None, None, f"Worktree '{worktree_id}' not found"
+        return None, None, None, f"Worktree '{worktree_ref}' not found"
     if not wt.worktree_path:
-        return None, None, f"Worktree '{worktree_id}' has no path on disk"
-    return wt.worktree_path, wt.branch_name, None
+        return None, None, None, f"Worktree '{worktree_ref}' has no path on disk"
+    return worktree_id, wt.worktree_path, wt.branch_name, None
 
 
 def _verification_environment() -> dict[str, str]:
@@ -424,7 +435,12 @@ def register_merge_landscape_tools(
         branches: list[tuple[str, str, str]] = []
         errors: list[dict[str, str]] = []
         for wid in worktree_ids:
-            worktree = worktree_manager.get(wid)
+            try:
+                resolved_id = worktree_manager.resolve_reference(wid)
+            except ValueError as exc:
+                errors.append({"worktree_id": wid, "error": str(exc)})
+                continue
+            worktree = worktree_manager.get(resolved_id)
             if not worktree:
                 errors.append({"worktree_id": wid, "error": f"Worktree '{wid}' not found"})
                 continue
@@ -433,7 +449,7 @@ def register_merge_landscape_tools(
                 errors.append({"worktree_id": wid, "error": "no branch"})
                 continue
             effective_target = target_branch or getattr(worktree, "base_branch", None) or "main"
-            branches.append((wid, branch, effective_target))
+            branches.append((resolved_id, branch, effective_target))
 
         async def merge_tree(a: str, b: str) -> tuple[bool, list[str]]:
             rc, stdout, stderr = await _git_async(
@@ -512,7 +528,7 @@ def register_merge_landscape_tools(
         if not commits:
             return {"success": False, "error": "commits must be non-empty"}
 
-        wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
+        _, wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
         if err or not wt_path:
             return {"success": False, "error": err}
 
@@ -562,7 +578,7 @@ def register_merge_landscape_tools(
         if not paths:
             return {"success": False, "error": "paths must be non-empty"}
 
-        wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
+        _, wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
         if err or not wt_path:
             return {"success": False, "error": err}
 
@@ -653,7 +669,7 @@ def register_merge_landscape_tools(
                 "failure_category": FailureCategory.CODE.value,
             }
 
-        wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
+        _, wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
         if err or not wt_path:
             return {
                 "success": False,
@@ -762,8 +778,8 @@ def register_merge_landscape_tools(
         if not git_manager:
             return {"success": False, "error": "git_manager not configured"}
 
-        wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
-        if err or not wt_path:
+        resolved_id, wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
+        if err or not wt_path or not resolved_id:
             return {"success": False, "error": err}
 
         rc, git_dir_out, stderr = await _git_async(
@@ -814,7 +830,7 @@ def register_merge_landscape_tools(
         result.update(
             _active_merge_resolution_payload(
                 merge_storage,
-                worktree_id,
+                resolved_id,
                 conflicted_files=conflicted_files,
             )
         )

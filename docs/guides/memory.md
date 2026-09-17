@@ -432,8 +432,9 @@ cross-references, image ingestion, cleanup, and the optional knowledge graph.
 
 Search uses the best available local infrastructure:
 
-1. With Qdrant and embeddings configured, the query is embedded and matched
-   against memory vectors.
+1. With Qdrant and embeddings configured, the query is embedded exactly as
+   written and matched against memory vectors. Write the query as a sentence
+   that describes the need; nothing rewrites or shortens it.
 2. If FalkorDB graph search is available, graph matches join vector and keyword
    results through reciprocal-rank fusion.
 3. pg_search BM25 keyword search participates when semantic search is available

@@ -476,11 +476,9 @@ def account_criteria_verdict(
         can_close=False,
         error_type="validation_failed",
         message=verdict.feedback,
-        extra={
-            **extra,
-            "blocking_reasons": requirements,
-            "required_actions": requirements,
-        },
+        # The requirements are the blocking reasons; repeating them as
+        # required_actions states the same sentences a second time.
+        extra={**extra, "blocking_reasons": requirements},
         failure_category=FailureCategory.CODE,
         validation_status="invalid",
         validation_feedback=verdict.feedback,

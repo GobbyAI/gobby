@@ -21,6 +21,7 @@ import { useRegisterActivityActions } from "../activityActions";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { keepTerminalFocus } from "./terminalFocus";
 import { applyCtrlModifier } from "./terminalKeys";
+import { useTerminalScrollOffset } from "./scrollOffset";
 import { TerminalSessionList } from "./TerminalSessionList";
 import {
   findByGobbySessionId,
@@ -270,6 +271,8 @@ export function TerminalTab({
     killSession,
     onOutput,
     onAttachHistory,
+    setScrollOffset,
+    onScrollOffsetApplied,
   } = useTmuxSessions(projectId);
   const [selectedKey, setSelectedKey] = useState<string | null>(
     loadStoredTerminalTargetKey,
@@ -319,6 +322,20 @@ export function TerminalTab({
       (session) => sessionKey(session.tmux) === selectedKey,
     ) ?? null;
   const attachedKey = targetKey(attachedTarget);
+  // Only gterm keeps scrollback the client can ask for. A tmux pane scrolls by
+  // the mouse reports the renderer already sends to its attach client, and a
+  // scroll-offset message for one would be answered against the wrong plane.
+  // The keys have to match as well as the backend: mid-switch the selection is
+  // already the new terminal while the attachment is still the old one, and an
+  // offset sent then would address a tmux attachment.
+  const scroll = useTerminalScrollOffset({
+    native:
+      selected?.tmux.backend === "native" && attachedKey === selectedKey,
+    streamingId,
+    setScrollOffset,
+    onScrollOffsetApplied,
+  });
+  const returnToLiveEdge = scroll.returnToLiveEdge;
   const terminalContext = useMemo<TerminalContext>(
     () => ({ connected, streamingId }),
     [connected, streamingId],
@@ -610,17 +627,35 @@ export function TerminalTab({
   // Sticky Ctrl from the keys bar folds into the next key typed into the
   // renderer; bytes the modifier leaves untouched (protocol replies, digits)
   // keep it armed for the key it was meant for.
+  // Every byte the operator sends lands at the live edge, so the pane follows
+  // it there rather than leaving the window parked in history.
+  const sendKeyInput = useCallback(
+    (data: string) => {
+      returnToLiveEdge();
+      sendInput(data);
+    },
+    [returnToLiveEdge, sendInput],
+  );
+
+  const sendPastedText = useCallback(
+    (text: string) => {
+      returnToLiveEdge();
+      sendPaste(text);
+    },
+    [returnToLiveEdge, sendPaste],
+  );
+
   const sendTypedInput = useCallback(
     (data: string) => {
       if (!ctrlArmed) {
-        sendInput(data);
+        sendKeyInput(data);
         return;
       }
       const modified = applyCtrlModifier(data);
       if (modified !== data) setCtrlArmed(false);
-      sendInput(modified);
+      sendKeyInput(modified);
     },
-    [ctrlArmed, sendInput],
+    [ctrlArmed, sendKeyInput],
   );
 
   // One bar at a time: the newest write that settled badly outranks the
@@ -812,8 +847,11 @@ export function TerminalTab({
             keyboard.close();
             releaseControl();
           }}
-          onPaste={sendPaste}
+          onPaste={sendPastedText}
           onTakeControl={takeBackControl}
+          scrollOffsetRows={scroll.rows}
+          onScrollRows={scroll.scrollBy}
+          onJumpToLive={scroll.jumpToLive}
         />
 
         {keyboard.rotatePrompt ? (
@@ -933,7 +971,7 @@ export function TerminalTab({
       {selected && !selected.dead ? (
         <div className="shrink-0 border-t border-border px-2.5 py-1.5">
           <TerminalKeysBar
-            sendInput={sendInput}
+            sendInput={sendKeyInput}
             ctrlArmed={ctrlArmed}
             onCtrlArmedChange={setCtrlArmed}
             keyboard={

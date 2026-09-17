@@ -189,7 +189,8 @@ async def test_rejection_evidence_reaches_response_but_not_the_next_review(
     )
     complete_requirement = f"{_GAP} Required evidence: {_REQUIRED_EVIDENCE}"
     assert result.extra["blocking_reasons"] == [complete_requirement]
-    assert result.extra["required_actions"] == [complete_requirement]
+    # The requirement is the blocking reason; it is not repeated as an action.
+    assert "required_actions" not in result.extra
     assert result.extra["verdict"]["criteria"][0]["required_evidence"] == _REQUIRED_EVIDENCE
 
     refreshed = manager.get_task(task.id)

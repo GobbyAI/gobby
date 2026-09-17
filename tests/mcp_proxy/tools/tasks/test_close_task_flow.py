@@ -869,8 +869,11 @@ async def test_scope_justification_controls_downstream_close_evidence(
     response = evaluation.response(preview=True)
     assert evaluation.error == "task_scope_mismatch"
     assert [gate.item for gate in evaluation.gates] == list(range(1, 9))
-    assert response["out_of_scope_paths"] == ["src/gobby/service.py"]
-    assert response["blocking_reasons"] == [justification_error]
+    # The diagnostic payload carries the scope inventory once, in the gate that owns it.
+    assert "out_of_scope_paths" not in response
+    gate = next(entry for entry in response["checklist"] if entry["name"] == "task_scope")
+    assert gate["details"]["out_of_scope_paths"] == ["src/gobby/service.py"]
+    assert response["blocking_reasons"] == [f"task_scope: {justification_error}"]
     assert "scope_justification" in response["required_actions"][0]
     dirty_paths.assert_not_awaited()
     validation_paths.assert_not_called()

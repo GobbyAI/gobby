@@ -229,6 +229,7 @@ class TestSpawnAgentImplErrorBranches:
         mock_wt.branch_name = "test-branch"
 
         worktree_storage = MagicMock()
+        worktree_storage.resolve_reference.side_effect = lambda ref: ref
         worktree_storage.get.return_value = mock_wt
 
         with patch(
@@ -1363,6 +1364,7 @@ async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
     runner.can_spawn.return_value = (True, "ok", 0)
     worktree_path = tmp_path_factory.mktemp("dirty-worktree")
     worktree_storage = MagicMock()
+    worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
         id="wt-dirty",
         worktree_path=str(worktree_path),

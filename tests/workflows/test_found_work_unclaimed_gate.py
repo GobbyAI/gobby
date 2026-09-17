@@ -310,6 +310,49 @@ async def test_authored_epic_subtree_is_not_found_work(
 
 
 @pytest.mark.asyncio
+async def test_pipeline_expanded_epic_is_not_found_work(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+) -> None:
+    """Plan expansion runs in its own session; its labelled children still make a tree."""
+    tasks, project_id, owner_id, other_id = task_context
+    root = tasks.create_task(
+        project_id=project_id,
+        title="Plan root",
+        created_in_session_id=owner_id,
+        task_type="epic",
+        category="planning",
+    )
+    tasks.create_task(
+        project_id=project_id,
+        title="P1: first phase",
+        parent_task_id=root.id,
+        created_in_session_id=other_id,
+        task_type="epic",
+        category="planning",
+        labels=["expansion-run:run-7"],
+    )
+    unlabeled_parent = tasks.create_task(
+        project_id=project_id,
+        title="Filed epic",
+        created_in_session_id=owner_id,
+        task_type="epic",
+        category="planning",
+    )
+    tasks.create_task(
+        project_id=project_id,
+        title="Someone else's child",
+        parent_task_id=unlabeled_parent.id,
+        created_in_session_id=other_id,
+        category="code",
+        validation_criteria="Child work is completed.",
+    )
+
+    refs = _analyzer(temp_db).unclaimed_found_work(owner_id, armed_at=TEST_ARMED_AT)
+
+    assert refs == (f"#{unlabeled_parent.seq_num}",)
+
+
 async def test_childless_epic_is_still_found_work(
     temp_db: HubDatabase,
     task_context: tuple[LocalTaskManager, str, str, str],

@@ -370,15 +370,18 @@ async def test_close_preview_surfaces_uncredited_validation_runs() -> None:
 
     response = evaluation.response(preview=True)
     assert response["error"] == "validation_command_required"
-    assert response["validation_commands"]["uncredited_runs"] == [
+    # Gate 10's record ships once, inside the checklist entry that owns it.
+    assert "validation_commands" not in response
+    gate = next(entry for entry in response["checklist"] if entry["name"] == "validation_commands")
+    assert gate["details"]["uncredited_runs"] == [
         {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
     ]
-    observed = response["validation_commands"]["nearest_observed_run"]
+    observed = gate["details"]["nearest_observed_run"]
     assert observed["command"] == command
     assert observed["completed_at"] == NOW.isoformat()
     assert observed["reason_code"] == "wrapped"
     assert "Remove pipes" in observed["remedy"]
-    assert observed in response["validation_commands"]["excluded_runs"]
+    assert observed in gate["details"]["excluded_runs"]
     concise = await _evaluate(
         _task(escalated=False),
         override_justification=None,

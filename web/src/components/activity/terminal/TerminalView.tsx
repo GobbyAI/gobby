@@ -18,6 +18,7 @@ import { withAnyMotionMouseTracking } from "../../../lib/terminalMouseTracking";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
+import { useNativeScrollGestures } from "./scrollOffset";
 
 const RESIZE_DEBOUNCE_MS = 200;
 
@@ -96,6 +97,17 @@ export interface TerminalViewProps {
   /** Clipboard text, sent as one bracketed write rather than as keystrokes. */
   onPaste?: (text: string) => void;
   onTakeControl?: () => void;
+  /**
+   * Rows a native (gterm) attachment's window sits back from the live edge, or
+   * `null` when the daemon owns no scrollback for this pane. `null` is the
+   * tmux path and the unattached pane: the wheel stays with the renderer,
+   * which turns it into the mouse reports tmux already answers.
+   */
+  scrollOffsetRows?: number | null;
+  /** Wheel, touch pan or page key, in rows; positive moves into history. */
+  onScrollRows?: (deltaRows: number) => void;
+  /** The explicit way back to the live edge. */
+  onJumpToLive?: () => void;
 }
 
 interface TerminalInstanceProps {
@@ -446,6 +458,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       onBlur,
       onPaste,
       onTakeControl,
+      scrollOffsetRows = null,
+      onScrollRows,
+      onJumpToLive,
     },
     forwardedRef,
   ) {
@@ -460,6 +475,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     // Set while setKeyboardOpen refocuses the input: that blur and focus are
     // not the user leaving and entering the pane, so the lease stays put.
     const refocusingRef = useRef(false);
+    // Read from the write handle and the scroll sync, both of which run
+    // outside render and have to see the current attachment's mode.
+    const nativeScrollRef = useRef(scrollOffsetRows !== null);
     const [container, setContainer] = useState<HTMLDivElement | null>(null);
     const scrollElementRef = useRef<HTMLElement | null>(null);
     const [scrollGeneration, setScrollGeneration] = useState(0);
@@ -469,6 +487,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       status: "loading",
       attempt: 0,
     });
+    // The daemon owns this pane's scrollback: gestures become offset requests
+    // and the renderer's own scroll extent is held at the bottom.
+    const nativeScroll = scrollOffsetRows !== null;
 
     useLayoutEffect(() => {
       onSizeChangeRef.current = onSizeChange;
@@ -476,7 +497,15 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       onProtocolResponseRef.current = onProtocolResponse;
       minColsRef.current = minCols;
       keyboardOnDemandRef.current = keyboardOnDemand;
-    }, [keyboardOnDemand, minCols, onProtocolResponse, onReady, onSizeChange]);
+      nativeScrollRef.current = scrollOffsetRows !== null;
+    }, [
+      keyboardOnDemand,
+      minCols,
+      onProtocolResponse,
+      onReady,
+      onSizeChange,
+      scrollOffsetRows,
+    ]);
 
     const captureContainer = useCallback((node: HTMLDivElement | null) => {
       setContainer(node);
@@ -497,6 +526,16 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         return;
       }
       const sync = () => {
+        if (nativeScrollRef.current) {
+          // Frame rendering paints a screen snapshot, so the renderer's own
+          // scrollback is a few mirrored rows that mean nothing: history lives
+          // in the host and is reached through the daemon offset. Pinning the
+          // element to its bottom keeps those rows from drifting the view a
+          // little way up and fighting the offset the daemon is applying.
+          element.scrollTop = element.scrollHeight;
+          setFollowingLiveEdge(true);
+          return;
+        }
         // One rendered row of slack: a live-edge write can land a fraction of
         // a row short of scrollHeight without meaning the user scrolled away.
         const threshold = Math.max(rowHeightRef.current, 1);
@@ -521,7 +560,16 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         element.removeEventListener("scroll", sync);
         observer.disconnect();
       };
-    }, [scrollGeneration]);
+    }, [nativeScroll, scrollGeneration]);
+
+    useNativeScrollGestures({
+      elementRef: scrollElementRef,
+      generation: scrollGeneration,
+      active: nativeScroll,
+      rowHeightRef,
+      pageRows: () => Math.max(1, (terminalRef.current?.rows ?? 1) - 1),
+      onScrollRows,
+    });
 
     const jumpToBottom = useCallback(() => {
       // preventScroll is load-bearing: wterm's input textarea is parked at the
@@ -582,6 +630,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           const terminal = terminalRef.current;
           if (!terminal) return;
           guardCore(terminal, "write", () => terminal.write(data));
+          // Each native frame is a whole-screen repaint, and the rows wterm
+          // mirrors into its scrollback would otherwise walk the element up
+          // and off the bottom while the daemon holds the real offset.
+          const element = scrollElementRef.current;
+          if (nativeScrollRef.current && element) {
+            element.scrollTop = element.scrollHeight;
+          }
         },
         getSize: () => sizeRef.current,
         setKeyboardOpen: (open: boolean) => {
@@ -688,6 +743,19 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           // and the keys bar already owns Tab and Shift+Tab as quick keys, so
           // nothing is lost by leaving this one to the browser.
           if (event.key === "Tab") event.stopPropagation();
+          // Shift+PageUp and Shift+PageDown are the keyboard route into the
+          // daemon's scrollback. They stop here rather than reaching the PTY,
+          // where a bare page key is application input.
+          if (
+            scrollOffsetRows !== null &&
+            event.shiftKey &&
+            (event.key === "PageUp" || event.key === "PageDown")
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            const page = Math.max(1, (terminalRef.current?.rows ?? 1) - 1);
+            onScrollRows?.(event.key === "PageUp" ? page : -page);
+          }
         }}
         onPasteCapture={(event) => {
           // Ahead of the renderer, not behind it: its textarea handles paste
@@ -808,7 +876,39 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           </div>
         ) : null}
 
-        {!followingLiveEdge ? (
+        {scrollOffsetRows !== null && scrollOffsetRows > 0 ? (
+          // Words, not hue: the pane is showing history and says how far back,
+          // which survives a grayscale screenshot and a deutan eye alike. The
+          // surface is opaque and tokenized, because a translucent control
+          // over arbitrary ANSI cell colors has no provable contrast.
+          <div
+            className="absolute end-3 bottom-3 z-30 inline-flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-md border border-border bg-[var(--bg-secondary)] px-2 py-1 text-xs text-[var(--text-primary)] shadow-sm"
+            data-testid="terminal-scrolled-indicator"
+          >
+            {/* The sentence alone is the live region: an atomic `role="status"`
+                wrapping the button too would re-announce the whole notice on
+                every scrolled row while focus sits inside it. */}
+            <span className="truncate" role="status">
+              {scrollOffsetRows === 1
+                ? "1 row back"
+                : `${scrollOffsetRows} rows back`}
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              dense
+              className={cn("shrink-0 px-1.5 py-0.5", coarseHitAreaCls)}
+              data-testid="terminal-jump-to-live"
+              onClick={onJumpToLive}
+            >
+              <ChevronDownIcon />
+              Jump to live
+            </Button>
+          </div>
+        ) : null}
+
+        {!followingLiveEdge && !nativeScroll ? (
           <Button
             type="button"
             variant="secondary"

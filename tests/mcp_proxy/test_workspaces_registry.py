@@ -68,9 +68,9 @@ TOOLS = {
     "close_pane",
     "move_pane",
     "swap_panes",
-    "rename",
+    "rename_workspace_item",
     "send_text",
-    "send_keys",
+    "send_pane_keys",
     "read_pane",
     "wait_for_pane_output",
 }
@@ -206,13 +206,13 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         second_ref = f"{tab_ref}:p{split_layout['panes'][0]['ref']}"
         swapped = await _ok(registry, "swap_panes", pane=first_ref, other=second_ref)
         assert swapped["tab"]["id"] == tab["id"]
-        labelled = await _ok(registry, "rename", ref=first_ref, name="main")
+        labelled = await _ok(registry, "rename_workspace_item", ref=first_ref, name="main")
         assert labelled["pane"]["label"] == "main"
-        titled = await _ok(registry, "rename", ref=tab_ref, name="work")
+        titled = await _ok(registry, "rename_workspace_item", ref=tab_ref, name="work")
         assert titled["tab"]["title"] == "work"
-        renamed = await _ok(registry, "rename", ref=home, name="crew")
+        renamed = await _ok(registry, "rename_workspace_item", ref=home, name="crew")
         assert renamed["workspace"]["name"] == "crew"
-        assert await _code(registry, "rename", ref=home) == "invalid_op"
+        assert await _code(registry, "rename_workspace_item", ref=home) == "invalid_op"
 
         other = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
         other_tab = other["tabs"][0]
@@ -222,7 +222,9 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
 
         written = await _ok(registry, "send_text", pane=first_ref, text="make", submit=True)
         assert written["indeterminate"] is False
-        keyed = await _ok(registry, "send_keys", pane=first_ref, keys="ls\n", idempotency_key="k1")
+        keyed = await _ok(
+            registry, "send_pane_keys", pane=first_ref, keys="ls\n", idempotency_key="k1"
+        )
         assert keyed["idempotency_key"] == "k1"
 
         snapshot = await _ok(registry, "get_workspace", workspace=home)
@@ -239,7 +241,7 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
 
         assert await _code(registry, "close_tab", tab="w1:bogus") == "invalid_ref"
         assert await _code(registry, "list_workspaces", node="n999999") == "not_found"
-        assert await _code(registry, "rename", ref=home, name="gone") == "not_found"
+        assert await _code(registry, "rename_workspace_item", ref=home, name="gone") == "not_found"
 
     # Every change went out through the WebSocket server's own broadcaster.
     kinds = {
@@ -409,8 +411,50 @@ async def test_actor_is_derived_from_session_context_and_principal(
         with _principal(claims):
             assert await _code(registry, "create_workspace", name="claims") == "forbidden"
             with session_context_for_test(session.id):
-                await _ok(registry, "create_workspace", name="claims")
+                assert await _code(registry, "create_workspace", name="claims") == "forbidden"
+        with _principal(None), session_context_for_test(session.id):
+            await _ok(registry, "create_workspace", name="wrapper")
         assert create.await_args_list[-1].args[0] == f"session:{session.id}"
         assert await _code(registry, "create_workspace", name="unseeded") == "forbidden"
         assert await _code(registry, "list_nodes") == "forbidden"
         assert create.await_count == 3
+
+
+async def test_agent_token_is_refused_even_with_a_session_header(stack: _Stack) -> None:
+    """An agent API token never acts: a session header does not launder it (2.3.5)."""
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id="workspaces-agent-token",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    claims = AgentApiTokenClaims(
+        session_id=session.id,
+        project_id=stack.project_id,
+        machine_id=LOCAL_MACHINE_ID,
+        iat=0,
+        exp=0,
+        agent_run_id="workspaces-agent-run",
+    )
+    calls: dict[str, dict[str, Any]] = {
+        "create_workspace": {"name": "agent-owned"},
+        "rename_workspace_item": {"ref": "w1", "name": "agent-owned"},
+        "close_workspace": {"workspace": "w1"},
+        "list_workspaces": {},
+        "list_nodes": {},
+        "read_pane": {"pane": "w1:t1:p1"},
+    }
+    with (
+        patch.object(stack.ops, "workspace_create", wraps=stack.ops.workspace_create) as create,
+        _principal(claims),
+    ):
+        tokenless = await _code(registry, "create_workspace", name="agent-owned")
+        with session_context_for_test(session.id):
+            refused = {
+                tool: await _code(registry, tool, **arguments) for tool, arguments in calls.items()
+            }
+
+    assert tokenless == "forbidden"
+    assert refused == dict.fromkeys(calls, "forbidden")
+    assert create.await_count == 0
