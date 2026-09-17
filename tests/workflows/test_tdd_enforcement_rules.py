@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -234,6 +235,36 @@ class TestEnforceTddBlockStructure:
 # --- enforce-tdd-block condition evaluation ---
 
 
+_RUST_MODULE_SOURCE = """\
+use std::fmt;
+
+pub struct Frame {
+    pub id: u64,
+}
+
+pub fn encode(frame: &Frame) -> String {
+    format!("frame {}", frame.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_reports_id() {
+        assert_eq!(encode(&Frame { id: 7 }), "frame 7");
+    }
+}
+"""
+
+
+def _write_rust_module_file(tmp_path: Path) -> str:
+    path = tmp_path / "src" / "store.rs"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_RUST_MODULE_SOURCE, encoding="utf-8")
+    return str(path)
+
+
 class TestEnforceTddBlockCondition:
     """Test the when condition evaluates correctly for various file paths."""
 
@@ -253,6 +284,7 @@ class TestEnforceTddBlockCondition:
         canonical_tool_kind: str = "write",
         tests_written: list[str] | None = None,
         acceptance_paths: list[str] | None = None,
+        tool_input: dict[str, Any] | None = None,
     ) -> bool:
         event_data = {
             "canonical_tool_kind": canonical_tool_kind,
@@ -267,7 +299,7 @@ class TestEnforceTddBlockCondition:
                 "tdd_tests_written": tests_written or [],
             },
             "event": type("E", (), {"data": event_data})(),
-            "tool_input": {"file_path": file_path},
+            "tool_input": tool_input if tool_input is not None else {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
@@ -312,6 +344,57 @@ class TestEnforceTddBlockCondition:
 
     def test_skips_non_write_kind(self) -> None:
         assert self._eval("/project/src/main.py", canonical_tool_kind="read") is False
+
+    def test_skips_rust_module_tests_rs_write(self) -> None:
+        assert self._eval("/project/crates/gterminal/src/host/backpressure/tests.rs") is False
+
+    def test_skips_rust_inline_cfg_test_module_addition(self) -> None:
+        path = "/project/crates/gcore/src/store.rs"
+        assert (
+            self._eval(
+                path,
+                tool_input={
+                    "file_path": path,
+                    "old_str": "pub fn encode(frame: &Frame) -> String {",
+                    "new_str": (
+                        "pub fn encode(frame: &Frame) -> String {\n"
+                        '    format!("frame {}", frame.id)\n'
+                        "}\n\n#[cfg(test)]\nmod tests {\n"
+                        "    #[test]\n    fn encode_reports_id() {}\n}\n"
+                    ),
+                },
+            )
+            is False
+        )
+
+    def test_skips_rust_edit_inside_existing_test_module(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path)
+        inside = '        assert_eq!(encode(&Frame { id: 7 }), "frame 7");'
+        assert (
+            self._eval(
+                path,
+                tool_input={
+                    "file_path": path,
+                    "old_str": inside,
+                    "new_str": inside.replace("7", "9"),
+                },
+            )
+            is False
+        )
+
+    def test_blocks_rust_production_edit_outside_test_module(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path)
+        assert (
+            self._eval(
+                path,
+                tool_input={
+                    "file_path": path,
+                    "old_str": "pub fn encode",
+                    "new_str": "pub fn encode_quoted",
+                },
+            )
+            is True
+        )
 
 
 # --- enforce-tdd-track-tests structure ---
@@ -376,6 +459,7 @@ class TestEnforceTddTrackTestsCondition:
         claimed_task_requires_tdd: bool = False,
         canonical_tool_kind: str = "write",
         error: bool = False,
+        tool_input: dict[str, Any] | None = None,
     ) -> bool:
         event_data = {
             "canonical_tool_kind": canonical_tool_kind,
@@ -389,7 +473,7 @@ class TestEnforceTddTrackTestsCondition:
                 "claimed_task_requires_tdd": claimed_task_requires_tdd,
             },
             "event": type("E", (), {"data": event_data})(),
-            "tool_input": {"file_path": file_path},
+            "tool_input": tool_input if tool_input is not None else {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
@@ -422,6 +506,57 @@ class TestEnforceTddTrackTestsCondition:
 
     def test_skips_non_write_kind(self) -> None:
         assert self._eval("/project/tests/test_main.py", canonical_tool_kind="read") is False
+
+    def test_tracks_rust_module_tests_rs_write(self) -> None:
+        assert self._eval("/project/crates/gterminal/src/host/backpressure/tests.rs") is True
+
+    def test_tracks_rust_inline_cfg_test_addition(self) -> None:
+        path = "/project/crates/gcore/src/store.rs"
+        assert (
+            self._eval(
+                path,
+                tool_input={
+                    "file_path": path,
+                    "old_str": "pub fn encode(frame: &Frame) -> String {",
+                    "new_str": (
+                        "pub fn encode(frame: &Frame) -> String {\n"
+                        '    format!("frame {}", frame.id)\n'
+                        "}\n\n#[cfg(test)]\nmod tests {\n"
+                        "    #[test]\n    fn encode_reports_id() {}\n}\n"
+                    ),
+                },
+            )
+            is True
+        )
+
+    def test_tracks_rust_edit_inside_existing_test_module(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path)
+        inside = '        assert_eq!(encode(&Frame { id: 7 }), "frame 7");'
+        assert (
+            self._eval(
+                path,
+                tool_input={
+                    "file_path": path,
+                    "old_str": inside,
+                    "new_str": inside.replace("7", "9"),
+                },
+            )
+            is True
+        )
+
+    def test_skips_rust_production_edit_outside_test_module(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path)
+        assert (
+            self._eval(
+                path,
+                tool_input={
+                    "file_path": path,
+                    "old_str": "pub fn encode",
+                    "new_str": "pub fn encode_quoted",
+                },
+            )
+            is False
+        )
 
 
 # --- Variable definitions ---

@@ -765,6 +765,26 @@ class TestTddPathHelpers:
 
         assert first_tdd_code_path({}, tool_input) == "src/new_module.py"
 
+    def test_rust_inline_cfg_test_edit_counts_as_test_path(self) -> None:
+        tool_input = {
+            "file_path": "crates/gcore/src/store.rs",
+            "old_str": "pub fn encode() {}",
+            "new_str": "pub fn encode() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n",
+        }
+
+        assert first_tdd_test_path({}, tool_input) == "crates/gcore/src/store.rs"
+        assert first_tdd_code_path({}, tool_input) == ""
+
+    def test_rust_production_edit_stays_code_path(self) -> None:
+        tool_input = {
+            "file_path": "crates/gcore/src/store.rs",
+            "old_str": "pub fn encode() {}",
+            "new_str": "pub fn encode(quoted: bool) {}",
+        }
+
+        assert first_tdd_code_path({}, tool_input) == "crates/gcore/src/store.rs"
+        assert first_tdd_test_path({}, tool_input) == ""
+
 
 def test_tdd_paths_cover_every_source_language() -> None:
     source_paths = [
@@ -779,6 +799,7 @@ def test_tdd_paths_cover_every_source_language() -> None:
 
     test_paths = [
         "crates/gclient/tests/parity/sidebar.rs",
+        "crates/gterminal/src/host/backpressure/tests.rs",
         "src/foo_test.go",
         "web/src/app.spec.ts",
     ]
