@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import ParsedShellCommand
+from gobby.config.validation_detection import (
+    is_validation_command,
+    resolve_validation_detection_config,
+)
 from gobby.sessions.transcript_tool_metadata import extract_result_metadata
 from gobby.tasks.command_equivalence import parse_validation_shell
 
@@ -75,6 +79,28 @@ def classify_validation_command_equivalence(command: str) -> ValidationCommandEq
     if reason is not None:
         return ValidationCommandEquivalence(None, True, reason)
     return ValidationCommandEquivalence(core_command, False, None)
+
+
+def wrapped_validation_command(command: object, project_path: str | None = None) -> str | None:
+    """Name the wrapper that would void close-gate credit for a validation run.
+
+    Returns ``None`` when the run is credited as it stands, or when the call runs
+    nothing the close gate recognizes as validation. The gate's own matcher
+    config decides that, resolved with the project's ``.gobby/project.json``
+    overrides, so custom matchers count and non-executing forms such as
+    ``--collect-only`` or ``--version`` stay quiet. The config is read only once
+    a wrapper is present, keeping bare commands free of file reads.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return None
+    core = _strip_exit_preserving_prefixes(command)
+    reason = _wrapper_reason(core)
+    if reason is None:
+        return None
+    config = resolve_validation_detection_config(project_path=project_path)
+    if not is_validation_command(core, config):
+        return None
+    return reason
 
 
 def _strip_exit_preserving_prefixes(command: str) -> str:

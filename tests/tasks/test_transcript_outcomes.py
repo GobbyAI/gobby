@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
     is_unexecuted_tool_result,
+    wrapped_validation_command,
 )
 
 
@@ -130,3 +134,99 @@ def test_unexecuted_tool_result_is_detected(result: object) -> None:
 )
 def test_executed_tool_result_is_not_unexecuted(result: object) -> None:
     assert is_unexecuted_tool_result(result) is False
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_reason"),
+    [
+        ("uv run mypy src/ 2>&1 | tail -3", "pipeline"),
+        ("uv run ruff check src/; echo done", "trailing echo"),
+        ("npx vitest run src/a.test.tsx && printf ok", "trailing printf"),
+        ("cargo clippy -p gobby-core --all-targets || true", "fallback"),
+        ("cargo nextest run -p gobby-core &", "backgrounding"),
+        ("rtk uv run pytest tests/x.py -q | tail -5", "pipeline"),
+        (
+            "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json"
+            " --fail-on-new 2>&1 | tail -3",
+            "pipeline",
+        ),
+        # The close gate's matcher config decides what counts, so executables the
+        # gate credits are covered without a second inventory here.
+        ("cargo check -p gobby-core 2>&1 | tail -3", "pipeline"),
+        ("npm test | tail -20", "pipeline"),
+        # The gate recognizes the run inside the subshell and still voids it.
+        ("(cd web && npx vitest run src/a.test.tsx) | cat", "unsupported shell structure"),
+    ],
+)
+def test_wrapped_validation_command_names_the_credit_voiding_wrapper(
+    command: str, expected_reason: str
+) -> None:
+    assert wrapped_validation_command(command) == expected_reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run mypy src/",
+        "DATABASE_URL=x GOBBY_TEST_PROTECT=1 uv run pytest tests/x.py -q",
+        "cd /repo && uv run mypy src/",
+        "uv run ruff check src/ && uv run mypy src/",
+        "python -m pytest tests/x.py",
+        "cargo +nightly test -p gobby-core",
+        # No recognized validation executable: the runner name is prose, not a
+        # command, and the tail of the pipeline is unrelated tooling.
+        "git commit -m 'run pytest | tail'",
+        "git log --oneline | head -5",
+        "uv run gobby tasks list | head -5",
+        "uv run ruff --version | cat",
+        # Non-executing forms earn no credit, so wrapping them loses nothing.
+        "uv run pytest --collect-only -q tests/ | wc -l",
+        "uv run mypy --version | head -1",
+        # Unparseable for the validation shell subset, so nothing is claimed.
+        "OUT=$(uv run mypy src/) | cat",
+    ],
+)
+def test_wrapped_validation_command_reports_nothing_for_credited_or_unrecognized_calls(
+    command: str,
+) -> None:
+    assert wrapped_validation_command(command) is None
+
+
+@pytest.mark.parametrize("command", [None, 42, "", "   "])
+def test_wrapped_validation_command_ignores_non_command_input(command: object) -> None:
+    assert wrapped_validation_command(command) is None
+
+
+def test_wrapped_validation_command_honors_project_custom_matchers(tmp_path: Path) -> None:
+    """A matcher the project adds in .gobby/project.json is judged like a built-in one."""
+    command = "uv run gobby test-quality audit tests/x.py --fail-on-new | tail -3"
+    (tmp_path / ".gobby").mkdir()
+    (tmp_path / ".gobby" / "project.json").write_text(
+        json.dumps(
+            {
+                "validation_detection": {
+                    "custom_matchers": [
+                        {
+                            "id": "gobby-test-quality-audit",
+                            "label": "Gobby test-quality audit",
+                            "languages": [],
+                            "categories": ["test"],
+                            "prefixes": ["gobby test-quality audit"],
+                            "required_args_all": ["--fail-on-new"],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert wrapped_validation_command(command) is None
+    assert wrapped_validation_command(command, str(tmp_path)) == "pipeline"
+    # The matcher's required argument is missing, so the gate would not credit it.
+    assert (
+        wrapped_validation_command(
+            "uv run gobby test-quality audit tests/x.py | tail -3", str(tmp_path)
+        )
+        is None
+    )

@@ -1,0 +1,23 @@
+tags: [worker-safety, enforcement, gobby, default]
+
+rules:
+  no-wrapped-validation-command:
+    description: "Block wrapped validation runs that earn no close-gate credit."
+    event: before_tool
+    enabled: true
+    priority: 50
+    # The condition reuses the close gate's own credit verdict, so the block
+    # fires exactly when the run would be discarded at close_task time. A
+    # command_pattern cannot decide this: patterns see one shell segment at a
+    # time, with `;`, `||`, `&`, and `&&` already split off.
+    when: >-
+      bool(wrapped_validation_command(tool_input.get('command') or tool_input.get('cmd')))
+    effects:
+      - type: block
+        tools: [Bash]
+        reason: >-
+          Run the validation bare and read its output from the tool result:
+          close-gate credit is earned only by an unwrapped run, so a pipe such as
+          `| tail`, a `;` sequence, a `||` fallback, a backgrounding `&`, or a
+          trailing `echo` anywhere in the call voids every check in it. Rerun the
+          command directly, for example `uv run mypy src/`.

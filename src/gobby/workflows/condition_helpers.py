@@ -20,6 +20,9 @@ from gobby.config.validation_detection import (
 )
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.tasks.tdd_evidence import is_test_convention_path
+from gobby.tasks.transcript_outcomes import (
+    wrapped_validation_command as _tasks_wrapped_validation_command,
+)
 from gobby.workflows.monolith_guard import MONOLITH_SOURCE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -534,6 +537,11 @@ class TaskProvider(Protocol):
 def is_validation_command(command: Any) -> bool:
     """Retain reviewer-rule command classification outside completion readiness."""
     return _config_is_validation_command(command)
+
+
+def wrapped_validation_command(command: Any, project_path: str | None = None) -> str | None:
+    """Expose the close gate's credit verdict to before-tool rule conditions."""
+    return _tasks_wrapped_validation_command(command, project_path)
 
 
 def is_task_complete(task: Any) -> bool:
