@@ -108,6 +108,11 @@ class TerminalSpawnRequest:
     auth_cli: str | None = None
 
 
+# Snapshot representations every backend implements. ``text`` is plain unwrapped
+# history; ``ansi`` keeps the styling escapes. Positional readers need ``text``.
+SnapshotMode = Literal["text", "ansi"]
+
+
 @dataclass(frozen=True)
 class SnapshotResult:
     """Captured text plus UTF-8 byte counters; None means the backend cannot know."""
@@ -224,7 +229,9 @@ class TerminalRuntime(Protocol):
 
     async def session_present(self, terminal: Terminal) -> bool: ...
 
-    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult: ...
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult: ...
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult: ...
 

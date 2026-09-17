@@ -23,7 +23,7 @@ async def composer_holds_draft(
     if services is None:
         return False
     try:
-        snapshot = await services.snapshot(run, COMPOSER_PROBE_LINES)
+        snapshot = await services.snapshot(run, COMPOSER_PROBE_LINES, mode="ansi")
         text = None if snapshot is None else snapshot.text
         read = idle_detector.for_provider(run.provider).composer_read(text)
     except Exception:

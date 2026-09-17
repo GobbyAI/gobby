@@ -26,6 +26,7 @@ from gobby.terminals.runtime import (
     Delivered,
     NamedKey,
     PreparedSpawn,
+    SnapshotMode,
     SnapshotResult,
     TerminalHandle,
     TerminalRuntimeRegistry,
@@ -435,6 +436,7 @@ class FakeRuntime:
     # Per-snapshot texts consumed in order before ``snapshot_text``; an
     # exception entry is raised instead of returning a snapshot.
     snapshot_effects: list[str | BaseException] = field(default_factory=list)
+    snapshot_modes: list[SnapshotMode] = field(default_factory=list)
     snapshot_full_result: SnapshotResult | None = None
     raise_on_write: BaseException | None = None
     # When set, ``raise_on_write`` fires only once this many writes were recorded.
@@ -540,8 +542,11 @@ class FakeRuntime:
             return False
         return await self.is_live(terminal)
 
-    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
         del lines
+        self.snapshot_modes.append(mode)
         if self.snapshot_effects:
             effect = self.snapshot_effects.pop(0)
             if isinstance(effect, BaseException):

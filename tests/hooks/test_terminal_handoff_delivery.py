@@ -44,6 +44,7 @@ from gobby.sessions.handoff import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.terminals.runtime import SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.terminals.fakes import (
@@ -594,7 +595,7 @@ class _RejectingGrokPane:
         self.typed.append(text)
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         return self.screen
 
 

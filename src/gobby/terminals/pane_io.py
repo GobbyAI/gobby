@@ -17,6 +17,7 @@ from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
     NamedKey,
+    SnapshotMode,
     TerminalRuntime,
     TerminalWriteError,
 )
@@ -55,7 +56,9 @@ class PaneIO(Protocol):
     # A trailing newline submits the text, matching tmux's literal send.
     async def type_text(self, text: str) -> SendResult: ...
 
-    async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None: ...
+    async def snapshot(
+        self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
+    ) -> str | None: ...
 
 
 def live_runtime_pane(
@@ -106,9 +109,11 @@ class RuntimePaneIO:
             return False, f"{self.backend} text write failed ({exc.stage})"
         return _outcome_result(outcome, f"{self.backend} text write")
 
-    async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None:
+    async def snapshot(
+        self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
+    ) -> str | None:
         try:
-            result = await self._runtime.snapshot(self._terminal, lines)
+            result = await self._runtime.snapshot(self._terminal, lines, mode=mode)
         except Exception:
             logger.debug(
                 "Failed to snapshot %s terminal %s", self.backend, self.target, exc_info=True
@@ -141,9 +146,11 @@ class TmuxPaneIO:
     async def type_text(self, text: str) -> SendResult:
         return await self._dispatch(text, literal=True, action="typing text")
 
-    async def snapshot(self, lines: int = DEFAULT_SNAPSHOT_LINES) -> str | None:
+    async def snapshot(
+        self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
+    ) -> str | None:
         try:
-            output = await self._tmux.snapshot_lines(self._target, lines=lines)
+            output = await self._tmux.snapshot_lines(self._target, lines=lines, mode=mode)
         except (TimeoutError, OSError, RuntimeError):
             logger.debug("Failed to capture tmux target %s", self._target)
             return None

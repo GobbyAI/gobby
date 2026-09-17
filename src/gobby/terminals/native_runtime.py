@@ -39,6 +39,7 @@ from gobby.terminals.runtime import (
     NamedKey,
     PreparedSpawn,
     ProcessIdentity,
+    SnapshotMode,
     SnapshotResult,
     TerminalHandle,
     TerminalSpawnRequest,
@@ -466,18 +467,22 @@ class NativeTerminalRuntime:
         # Native terminals have no remain-on-exit: presence is liveness.
         return await self.is_live(terminal)
 
-    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
-        return await self._snapshot(terminal, max_lines=lines)
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
+        return await self._snapshot(terminal, max_lines=lines, mode=mode)
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
-        return await self._snapshot(terminal, max_lines=10_000)
+        return await self._snapshot(terminal, max_lines=10_000, mode="text")
 
-    async def _snapshot(self, terminal: Terminal, max_lines: int) -> SnapshotResult:
+    async def _snapshot(
+        self, terminal: Terminal, max_lines: int, mode: SnapshotMode
+    ) -> SnapshotResult:
         await self._ensure()
         try:
             payload = await self._client.snapshot(
                 self._host_id(terminal),
-                mode="text",
+                mode=mode,
                 max_lines=max_lines,
             )
         except HostCommandError as exc:

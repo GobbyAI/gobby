@@ -22,6 +22,7 @@ from gobby.sessions.handoff import consume_pending_handoff
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.terminals.runtime import SnapshotMode
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 _PENDING_ATTEMPT_ID = "f" * 32
@@ -53,7 +54,7 @@ class _Pane:
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         return self.text
 
 

@@ -11,6 +11,7 @@ from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO, clear_composer
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
+    SnapshotMode,
     SnapshotResult,
     TerminalRuntime,
     TerminalWriteError,
@@ -24,6 +25,7 @@ class _FakeRuntime:
         self.key_outcome = key_outcome if key_outcome is not None else Delivered()
         self.text_outcome = text_outcome if text_outcome is not None else Delivered()
         self.snapshot_text: str | None = "> "
+        self.snapshot_modes: list[SnapshotMode] = []
 
     async def write_key(self, terminal: Any, key: str) -> Any:
         self.keys.append(key)
@@ -37,7 +39,10 @@ class _FakeRuntime:
             raise self.text_outcome
         return self.text_outcome
 
-    async def snapshot(self, terminal: Any, lines: int) -> SnapshotResult:
+    async def snapshot(
+        self, terminal: Any, lines: int, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
+        self.snapshot_modes.append(mode)
         if self.snapshot_text is None:
             raise RuntimeError("no snapshot")
         return SnapshotResult(
@@ -56,6 +61,7 @@ class _FakeTmux:
         self.dispatch_ok = dispatch_ok
         self.error = error
         self.capture: str | None = "> "
+        self.snapshot_modes: list[SnapshotMode] = []
 
     async def dispatch_keys(self, target: str, keys: str, *, literal: bool) -> bool:
         self.calls.append((target, keys, literal))
@@ -63,7 +69,8 @@ class _FakeTmux:
             raise self.error
         return self.dispatch_ok
 
-    async def snapshot_lines(self, target: str, *, lines: int) -> str:
+    async def snapshot_lines(self, target: str, *, lines: int, mode: SnapshotMode = "text") -> str:
+        self.snapshot_modes.append(mode)
         if self.capture is None:
             raise RuntimeError("pane gone")
         return self.capture
@@ -81,6 +88,8 @@ async def test_runtime_pane_sends_named_keys_and_unsubmitted_text() -> None:
     assert runtime.keys == ["ctrl_l"]
     assert runtime.texts == [("/clear", False)]
     assert await pane.snapshot(1) == "> "
+    assert await pane.snapshot(1, mode="ansi") == "> "
+    assert runtime.snapshot_modes == ["text", "ansi"]
 
 
 @pytest.mark.asyncio
@@ -130,6 +139,8 @@ async def test_tmux_pane_maps_named_keys_and_types_literal_text() -> None:
     assert await pane.type_text("/clear") == (True, None)
     assert tmux.calls == [("%7", "C-l", False), ("%7", "BSpace", False), ("%7", "/clear", True)]
     assert await pane.snapshot(2) == "> "
+    assert await pane.snapshot(2, mode="ansi") == "> "
+    assert tmux.snapshot_modes == ["text", "ansi"]
 
 
 @pytest.mark.asyncio
@@ -175,7 +186,7 @@ class _RecordingPane:
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         self.snapshots += 1
         return "> "
 

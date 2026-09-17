@@ -35,6 +35,7 @@ from gobby.terminals.runtime import (
     InputPayloadTooLargeError,
     NamedKey,
     PreparedSpawn,
+    SnapshotMode,
     SnapshotResult,
     TerminalHandle,
     TerminalSpawnFailed,
@@ -215,9 +216,11 @@ class TmuxTerminalRuntime:
             return False
         return await self._sessions_for(terminal).has_session(name)
 
-    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
         text = await self._sessions_for(terminal).capture_pane(
-            self._capture_name(terminal), lines=lines
+            self._capture_name(terminal), lines=lines, mode=mode
         )
         return await self._snapshot_result(terminal, text or "")
 

@@ -27,6 +27,71 @@ ComposerState = Literal["empty", "draft", "unknown"]
 # box edge Droid draws after the text is stripped separately.
 _COMPOSER_ROW_RE = re.compile(r"^\s*│?\s*[❯›>$]\s*(?P<text>.*?)\s*│?\s*$")
 
+# A CSI sequence (SGR when it ends in ``m``), an OSC string, or a two-byte escape.
+_ESCAPE_RE = re.compile(
+    r"\x1b(?:\[(?P<params>[0-?]*)[ -/]*(?P<final>[@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])"
+)
+_SGR_PARAMS_RE = re.compile(r"[0-9;:]*")
+
+
+def plain_text(snapshot: str) -> str:
+    """Return ``snapshot`` with every escape sequence removed and all text kept."""
+    return _ESCAPE_RE.sub("", snapshot)
+
+
+def composer_text(snapshot: str) -> str:
+    """Return ``snapshot`` as plain text with faint-rendered text blanked.
+
+    Claude Code's prompt suggestion and the Codex and Droid placeholders sit in
+    an empty composer drawn faint (SGR 2), while typed text is never faint, so an
+    ``ansi`` snapshot tells them apart where plain text cannot. Droid draws its
+    cursor as a reverse-video cell over the placeholder's first character, so a
+    reverse cell followed by faint text is blanked with it. A snapshot without
+    escape sequences is returned unchanged.
+    """
+    if "\x1b" not in snapshot:
+        return snapshot
+    faint = reverse = False
+    rendered: list[str] = []
+    for line in snapshot.split("\n"):
+        cells: list[tuple[str, bool, bool]] = []
+        position = 0
+        for escape in _ESCAPE_RE.finditer(line):
+            cells.extend((char, faint, reverse) for char in line[position : escape.start()])
+            position = escape.end()
+            params = escape.group("params")
+            if escape.group("final") == "m" and _SGR_PARAMS_RE.fullmatch(params):
+                faint, reverse = _apply_sgr(params, faint, reverse)
+        cells.extend((char, faint, reverse) for char in line[position:])
+        rendered.append(
+            "".join(
+                " " if dim or (inverse and index + 1 < len(cells) and cells[index + 1][1]) else char
+                for index, (char, dim, inverse) in enumerate(cells)
+            )
+        )
+    return "\n".join(rendered)
+
+
+def _apply_sgr(params: str, faint: bool, reverse: bool) -> tuple[bool, bool]:
+    codes = params.split(";")
+    index = 0
+    while index < len(codes):
+        head = codes[index].split(":", 1)[0]
+        code = int(head) if head else 0
+        if code in (38, 48, 58) and ":" not in codes[index]:
+            # 5;n and 2;r;g;b colour arguments are separate parameters, not attributes.
+            form = codes[index + 1] if index + 1 < len(codes) else ""
+            index += {"5": 3, "2": 5}.get(form, 1)
+            continue
+        if code == 0:
+            faint = reverse = False
+        elif code in (2, 22):
+            faint = code == 2
+        elif code in (7, 27):
+            reverse = code == 7
+        index += 1
+    return faint, reverse
+
 
 @dataclass(frozen=True)
 class ComposerRead:
@@ -127,10 +192,12 @@ class IdleDetector:
         """Classify the composer frame at the bottom of ``pane_output``.
 
         A ``draft`` carries the text after the prompt marker on the marker row.
-        Anything short of a positive read is ``unknown``.
+        Anything short of a positive read is ``unknown``. Probes pass an ``ansi``
+        snapshot so faint suggestion and placeholder text reads as empty.
         """
         if pane_output is None:
             return ComposerRead("unknown")
+        pane_output = composer_text(pane_output)
         manifest = self._manifest()
         if manifest is None:
             return ComposerRead("unknown")

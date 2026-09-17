@@ -37,6 +37,7 @@ from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.terminals.pane_io import TmuxPaneIO
+from gobby.terminals.runtime import SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -128,6 +129,7 @@ class _FakeTmux:
 
     def __init__(self) -> None:
         self.sent_keys: list[tuple[str, str, bool]] = []
+        self.composer_modes: list[SnapshotMode] = []
 
     async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
         self.sent_keys.append((pane_id, text, literal))
@@ -136,8 +138,11 @@ class _FakeTmux:
     async def dispatch_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
         return await self.send_keys(pane_id, text, literal=literal)
 
-    async def snapshot_lines(self, pane_id: str, lines: int = 5) -> str | None:
+    async def snapshot_lines(
+        self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
         if lines == COMPOSER_PROBE_LINES:
+            self.composer_modes.append(mode)
             return self.composer_text
         capture = getattr(self, "capture_pane", None)
         if capture is None:
@@ -198,7 +203,9 @@ async def test_shutdown_stops_readiness_watcher_and_preserves_pending_marker(
     snapshot_cancelled = asyncio.Event()
 
     class WaitingTmux(_FakeTmux):
-        async def snapshot_lines(self, pane_id: str, lines: int = 5) -> str | None:
+        async def snapshot_lines(
+            self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+        ) -> str | None:
             snapshot_started.set()
             try:
                 await asyncio.Event().wait()
@@ -829,6 +836,7 @@ class TestPullPromptFallback:
             (_claude_frame("❯\xa0"), False),
             (_claude_frame(f"❯ {_PULL_PROMPT}"), True),
             (_claude_frame("❯ the operator typed this"), False),
+            (_claude_frame("\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mthe tests\x1b[0m"), False),
             (None, True),
         ],
     )
@@ -853,6 +861,7 @@ class TestPullPromptFallback:
 
         assert sent is True
         assert (("%12", "Enter", False) in tmux.sent_keys) is second_enter
+        assert tmux.composer_modes == ["ansi"]
 
     @pytest.mark.asyncio
     async def test_scheduled_send_failure_queues_the_pull_prompt(

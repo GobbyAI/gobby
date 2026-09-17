@@ -379,7 +379,7 @@ async def _send_terminal_compaction_command(
     """
     continuation_pending = False
     if composer_read is not None:
-        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES))
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
         if read.state == "draft":
             logger.info(
                 "Refusing %s for session %s: composer holds an operator draft",

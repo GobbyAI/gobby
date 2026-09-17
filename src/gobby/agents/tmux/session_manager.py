@@ -14,6 +14,7 @@ import signal
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from gobby.agents.tmux.errors import TmuxNotFoundError
 from gobby.agents.tmux.session_activation import (
@@ -30,6 +31,9 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.agents.tmux.wsl_compat import needs_wsl
 from gobby.config.tmux import TmuxConfig
+
+if TYPE_CHECKING:
+    from gobby.terminals.runtime import SnapshotMode
 
 logger = logging.getLogger(__name__)
 
@@ -746,12 +750,15 @@ class TmuxSessionManager:
             return TmuxReleaseOutcome.INDETERMINATE
         return TmuxReleaseOutcome.RELEASED
 
-    async def capture_pane(self, session_name: str, lines: int = 5) -> str | None:
+    async def capture_pane(
+        self, session_name: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
         """Capture the last N lines from a tmux session's pane.
 
         Args:
             session_name: Target session name.
             lines: Number of lines to capture from the bottom.
+            mode: ``ansi`` keeps the SGR styling escapes (``-e``).
 
         Returns:
             Captured text, or None on failure.
@@ -761,6 +768,7 @@ class TmuxSessionManager:
             "-t",
             _send_keys_target(session_name),
             "-p",  # print to stdout
+            *(("-e",) if mode == "ansi" else ()),
             "-J",  # join wrapped lines
             f"-S-{max(lines, 0)}",  # tmux returns history plus the visible pane
         )
@@ -841,6 +849,8 @@ class TmuxSessionManager:
         """Backend-neutral alias for killing a tmux session by name."""
         return await self.kill_session(session_name, missing_ok=missing_ok)
 
-    async def snapshot_lines(self, session_name: str, lines: int = 5) -> str | None:
+    async def snapshot_lines(
+        self, session_name: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
         """Backend-neutral alias for capturing the last N pane lines."""
-        return await self.capture_pane(session_name, lines=lines)
+        return await self.capture_pane(session_name, lines=lines, mode=mode)

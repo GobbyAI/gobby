@@ -30,6 +30,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.runtime import SnapshotMode
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -82,7 +83,7 @@ class _GrokTurnPane:
         self.typed.append(text)
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         return "ready\n> "
 
 

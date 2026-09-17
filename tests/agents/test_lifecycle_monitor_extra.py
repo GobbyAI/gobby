@@ -1094,12 +1094,13 @@ class TestPeriodicAgentTerminalEnter:
             (
                 "codex",
                 "────────────\n❯ Reply ACK\n────────────\n",
-                "────────────\n❯\n────────────\n",
+                # The faint placeholder is an empty composer, not a draft.
+                "────────────\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n────────────\n",
             ),
             (
                 "droid",
                 "╭───────────╮\n│ > Reply ACK │\n╰───────────╯\n",
-                "╭──────╮\n│ >    │\n╰──────╯\n",
+                "╭──────╮\n│ > \x1b[7mT\x1b[0;2mry a prompt\x1b[0m │\n╰──────╯\n",
             ),
         ],
         ids=["claude", "codex", "droid"],
@@ -1123,6 +1124,7 @@ class TestPeriodicAgentTerminalEnter:
         # the terminal as soon as the operator clears the composer.
         assert (held, after_draft_cleared) == (0, 1)
         assert runtime.write_log == [("key", "enter")]
+        assert runtime.snapshot_modes == ["ansi", "ansi"]
 
     @pytest.mark.asyncio
     async def test_periodic_enter_can_be_disabled(self) -> None:

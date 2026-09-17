@@ -52,7 +52,13 @@ from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import NamedKey, SnapshotResult, TerminalWriteError, WriteOutcome
+from gobby.terminals.runtime import (
+    NamedKey,
+    SnapshotMode,
+    SnapshotResult,
+    TerminalWriteError,
+    WriteOutcome,
+)
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -136,11 +142,13 @@ class LifecycleRuntime(FakeRuntime):
             return self.alive
         return await super().is_live(terminal)
 
-    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
         self.snapshot_calls.append(lines)
         if self.snapshot_error is not None:
             raise self.snapshot_error
-        return await super().snapshot(terminal, lines)
+        return await super().snapshot(terminal, lines, mode=mode)
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
         if self.snapshot_error is not None:

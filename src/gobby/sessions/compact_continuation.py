@@ -609,7 +609,7 @@ async def _follow_up_enter_wanted(
     Empty means the first Enter landed; a draft that is not the prompt is the
     operator's, typed after the pull went through; unknown keeps the blind Enter.
     """
-    read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES))
+    read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
     if read.state == "empty":
         return False
     if read.state == "draft":

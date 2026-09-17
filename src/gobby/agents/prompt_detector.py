@@ -17,10 +17,9 @@ from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
 
 PromptKind = Literal["approval", "trust", "question", "stall"]
 
-# Pane snapshots carry SGR sequences: the tmux runtime captures with ``-e`` to
-# preserve them, and the native runtime's "text" snapshot is
-# ``recent_unwrapped_ansi``. A reader that positions on a character — the
-# selection marker below — has to work on the visible text.
+# An ``ansi`` pane snapshot carries SGR sequences (tmux ``-e``, the native
+# host's ``recent_unwrapped_ansi``). A reader that positions on a character —
+# the selection marker below — has to work on the visible text.
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 

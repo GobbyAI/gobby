@@ -16,6 +16,7 @@ from gobby.terminals.host_protocol import (
     HostListRow,
     decode_line,
 )
+from gobby.terminals.runtime import SnapshotMode
 
 MAX_CONTROL_LINE = 2 * 1024 * 1024
 MAX_WRITE_BATCH_TARGETS = 64
@@ -25,10 +26,6 @@ MAX_WRITE_BATCH_DELAY_MS = 1_000
 MAX_WRITE_BATCH_TOTAL_DELAY_MS = 5_000
 # Host returns these before recording operation_seq in the per-connection ledger.
 _UNCONSUMED_SEQ_ERRORS = frozenset({"operation_gap", "operation_seq_required", "host_draining"})
-
-# Snapshot representations the host implements. ``text`` is plain unwrapped
-# history; ``ansi`` keeps the styling escapes. Positional readers need ``text``.
-SnapshotMode = Literal["text", "ansi"]
 
 
 class HostEpochChangedError(RuntimeError):

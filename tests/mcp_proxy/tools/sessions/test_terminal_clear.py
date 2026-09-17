@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.sessions import _terminal_clear
 from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_records import build_handoff_payload
+from gobby.terminals.runtime import SnapshotMode
 
 _THREAD_ID = "01a0580a-b0c8-7552-aa18-8927ff248f85"
 _THREAD_END_BANNER = f"To continue this session, run codex resume {_THREAD_ID}\n"
@@ -54,7 +55,7 @@ class _Pane:
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         assert lines > 0
         return self.text
 

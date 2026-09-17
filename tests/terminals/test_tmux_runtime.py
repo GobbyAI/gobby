@@ -240,6 +240,20 @@ async def test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss() -> N
 
 
 @pytest.mark.asyncio
+async def test_snapshot_passes_the_requested_mode_to_capture() -> None:
+    sessions = _sessions()
+    runtime = TmuxTerminalRuntime(sessions)
+    sessions.capture_pane = AsyncMock(return_value="\x1b[2mfaint\x1b[0m")
+    sessions._run = AsyncMock(return_value=(0, "12|10000", ""))
+
+    styled = await runtime.snapshot(make_memory_terminal(), lines=40, mode="ansi")
+
+    assert styled.text == "\x1b[2mfaint\x1b[0m"
+    assert sessions.capture_pane.await_args is not None
+    assert sessions.capture_pane.await_args.kwargs == {"lines": 40, "mode": "ansi"}
+
+
+@pytest.mark.asyncio
 async def test_write_returns_indeterminate_when_effect_precedes_lost_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

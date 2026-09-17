@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector, plain_text
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.terminals.error_classification import is_vanished_terminal_target
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun
+    from gobby.terminals.runtime import SnapshotMode
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,12 @@ class TerminalPromptMonitor:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
 
-    async def _pane_text(self, run: AgentRun, *, lines: int) -> str | None:
+    async def _pane_text(
+        self, run: AgentRun, *, lines: int, mode: SnapshotMode = "text"
+    ) -> str | None:
         if self._terminal_services is None:
             return None
-        snapshot = await self._terminal_services.snapshot(run, lines)
+        snapshot = await self._terminal_services.snapshot(run, lines, mode=mode)
         return None if snapshot is None else snapshot.text
 
     async def _send_enter(self, run: AgentRun, action_key: str) -> bool:
@@ -324,10 +327,10 @@ class TerminalPromptMonitor:
                 continue
 
             try:
-                pane_output = await self._pane_text(run, lines=COMPOSER_PROBE_LINES)
-                if pane_output is None:
-                    pane_output = ""
-                dialog_tail = "".join(pane_output.splitlines(keepends=True)[-15:])
+                pane_output = (
+                    await self._pane_text(run, lines=COMPOSER_PROBE_LINES, mode="ansi") or ""
+                )
+                dialog_tail = "".join(plain_text(pane_output).splitlines(keepends=True)[-15:])
                 if self._should_skip_periodic_enter_for_dialog(dialog_tail, config, detector):
                     logger.debug(
                         "Skipped periodic Enter for agent %s while known dialog is visible",

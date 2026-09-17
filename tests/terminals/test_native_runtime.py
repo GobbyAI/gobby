@@ -466,15 +466,16 @@ async def test_snapshot_metadata_survives_the_adapter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_snapshot_asks_the_host_for_plain_text() -> None:
+async def test_snapshot_asks_the_host_for_the_requested_mode() -> None:
     runtime, host = _runtime()
     terminal = _native_terminal(host)
     host.snapshot_text = "plain"
 
     await runtime.snapshot(terminal, lines=20)
     await runtime.snapshot_full(terminal)
+    await runtime.snapshot(terminal, lines=20, mode="ansi")
 
-    assert host.snapshot_modes == ["text", "text"]
+    assert host.snapshot_modes == ["text", "text", "ansi"]
 
 
 @pytest.mark.asyncio

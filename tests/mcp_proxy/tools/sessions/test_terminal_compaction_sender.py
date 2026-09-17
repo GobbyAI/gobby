@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
 )
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO
+from gobby.terminals.runtime import SnapshotMode
 
 pytestmark = pytest.mark.unit
 
@@ -38,14 +39,14 @@ class _ComposerPane:
         self.typed.append(text)
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         return "output\n> "
 
 
 class _ConfirmModalPane(_ComposerPane):
     """Pane that redraws Droid's confirm modal over the screen once a command is submitted."""
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         if self.typed and self.keys[-1:] == ["enter"]:
             return "Confirm /compress\nEnter to confirm, ESC to cancel"
         return "output\n> "

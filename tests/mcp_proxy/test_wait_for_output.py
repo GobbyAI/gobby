@@ -15,7 +15,7 @@ import pytest
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.terminals import Terminal
 from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.runtime import SnapshotResult
+from gobby.terminals.runtime import SnapshotMode, SnapshotResult
 from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -43,8 +43,10 @@ class _CaptureRuntime(FakeRuntime):
         super().__init__()
         self._tmux = tmux
 
-    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
-        del terminal, lines
+    async def snapshot(
+        self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
+        del terminal, lines, mode
         text = await self._tmux.capture_pane("agent-test")
         if text is None:
             raise RuntimeError("capture returned none")

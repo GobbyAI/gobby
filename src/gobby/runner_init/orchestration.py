@@ -284,7 +284,9 @@ async def _probe_composer(runner: GobbyRunner, session: Any, terminal: Any | Non
             services = runner.terminal_services
             if services is None:
                 return unknown
-            result = await services.runtime_for(terminal).snapshot(terminal, COMPOSER_PROBE_LINES)
+            result = await services.runtime_for(terminal).snapshot(
+                terminal, COMPOSER_PROBE_LINES, mode="ansi"
+            )
             text: str | None = result.text
         else:
             ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
@@ -292,7 +294,7 @@ async def _probe_composer(runner: GobbyRunner, session: Any, terminal: Any | Non
             if not target:
                 return unknown
             text = await TmuxPaneIO(manager_for_terminal_context(ctx), str(target)).snapshot(
-                COMPOSER_PROBE_LINES
+                COMPOSER_PROBE_LINES, mode="ansi"
             )
         return IdleDetector(registry, str(source)).composer_read(text)
     except Exception:

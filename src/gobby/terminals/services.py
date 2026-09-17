@@ -7,7 +7,12 @@ from typing import Any, Literal, cast
 
 from gobby.storage.terminals import Terminal
 from gobby.terminals.lookup import active_terminal_for_run
-from gobby.terminals.runtime import SnapshotResult, TerminalRuntime, WriteOutcome
+from gobby.terminals.runtime import (
+    SnapshotMode,
+    SnapshotResult,
+    TerminalRuntime,
+    WriteOutcome,
+)
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 
 
@@ -25,11 +30,13 @@ class TerminalServices:
     def runtime_for(self, terminal: Terminal) -> TerminalRuntime:
         return cast("TerminalRuntime", self.registry.resolve(terminal.backend))
 
-    async def snapshot(self, run: Any, lines: int = 50) -> SnapshotResult | None:
+    async def snapshot(
+        self, run: Any, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult | None:
         terminal = self.terminal_for(run)
         if terminal is None:
             return None
-        return await self.runtime_for(terminal).snapshot(terminal, lines)
+        return await self.runtime_for(terminal).snapshot(terminal, lines, mode=mode)
 
     async def snapshot_full(self, run: Any) -> SnapshotResult | None:
         terminal = self.terminal_for(run)

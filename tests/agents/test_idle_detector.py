@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead, IdleDetector
+from gobby.agents.idle_detector import ComposerRead, IdleDetector, composer_text, plain_text
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -474,6 +474,79 @@ class TestComposerRead:
         assert droid.composer_read(busy).state == "unknown"
         assert droid.detect(busy) == "active"
 
+    def test_faint_claude_suggestion_reads_empty(self) -> None:
+        suggestion = "\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mlightspeed and report\x1b[0m"
+        assert self.detector.composer_read(_framed(suggestion)) == ComposerRead("empty")
+
+    def test_styled_typed_claude_draft_keeps_its_text(self) -> None:
+        typed = "\x1b[39m❯\xa0hello draft text"
+        assert self.detector.composer_read(_framed(typed)) == ComposerRead(
+            "draft", "hello draft text"
+        )
+
+    def test_typed_prefix_before_a_faint_completion_reads_as_the_typed_draft(self) -> None:
+        mixed = "\x1b[39m❯\xa0run the\x1b[2m tests again\x1b[0m"
+        assert self.detector.composer_read(_framed(mixed)) == ComposerRead("draft", "run the")
+
+    def test_droid_placeholder_under_its_cursor_cell_reads_empty(self) -> None:
+        droid = IdleDetector(BundledDetectionRegistry(), "droid")
+        border = "\x1b[38;2;135;135;135m"
+        placeholder = (
+            f"│\x1b[39m \x1b[38;2;215;95;0m> \x1b[7m\x1b[39mT\x1b[0;2m"
+            f'ry "Search the documentation for this library"\x1b[0m   {border}│'
+        )
+        box = f"{border}╭────────────╮\n{placeholder}\n{border}╰────────────╯\x1b[0m\n"
+        assert droid.composer_read(box) == ComposerRead("empty")
+
+    @pytest.mark.parametrize(
+        ("row", "text"),
+        [
+            (
+                "│\x1b[39m \x1b[38;2;215;95;0m> \x1b[39mtyped droid draft\x1b[7m \x1b[0m │",
+                "typed droid draft",
+            ),
+            ("│ > a\x1b[7mb\x1b[0m │", "ab"),
+        ],
+        ids=["cursor-after-text", "cursor-on-typed-character"],
+    )
+    def test_droid_typed_draft_survives_its_cursor_cell(self, row: str, text: str) -> None:
+        droid = IdleDetector(BundledDetectionRegistry(), "droid")
+        box = f"╭────────────╮\n{row}\n╰────────────╯\n"
+        assert droid.composer_read(box) == ComposerRead("draft", text)
+
+    @pytest.mark.parametrize(
+        "colour",
+        ["\x1b[38;2;2;2;2m", "\x1b[48;5;2m", "\x1b[38:2::2:2:2m"],
+        ids=["truecolour-semicolons", "indexed-background", "truecolour-colons"],
+    )
+    def test_colour_arguments_equal_to_two_are_not_faint(self, colour: str) -> None:
+        drafted = _framed(f"❯ {colour}fix it\x1b[0m")
+        assert self.detector.composer_read(drafted) == ComposerRead("draft", "fix it")
+
     def test_framed_prompt_is_idle_under_an_unrecognised_status_bar(self) -> None:
         assert self.detector.detect(_framed("❯\xa0")) == "idle"
         assert self.detector.detect(_framed("❯ typed but unsent")) == "idle"
+
+
+class TestComposerText:
+    _CODEX_PLACEHOLDER = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m"
+
+    def test_faint_text_is_blanked_in_place(self) -> None:
+        assert composer_text(self._CODEX_PLACEHOLDER) == "› " + " " * len(
+            "Ask Codex to do anything"
+        )
+
+    def test_plain_text_keeps_faint_text(self) -> None:
+        assert plain_text(self._CODEX_PLACEHOLDER) == "› Ask Codex to do anything"
+
+    def test_normal_intensity_ends_faint_text(self) -> None:
+        assert composer_text("\x1b[2mdim\x1b[22mlit") == "   lit"
+
+    def test_faint_state_carries_across_lines(self) -> None:
+        assert composer_text("\x1b[2mone\ntwo\x1b[0m three") == "   \n    three"
+
+    def test_osc_title_is_dropped(self) -> None:
+        assert composer_text("\x1b]0;title\x07❯ draft") == "❯ draft"
+
+    def test_snapshot_without_escapes_is_unchanged(self) -> None:
+        assert composer_text("❯ plain draft\n") == "❯ plain draft\n"

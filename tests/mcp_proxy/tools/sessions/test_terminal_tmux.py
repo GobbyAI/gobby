@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _send_terminal_compaction_command,
 )
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.runtime import SnapshotMode
 
 pytestmark = pytest.mark.unit
 
@@ -42,6 +43,7 @@ class _GrokPane:
         self.keys: list[str] = []
         self.typed: list[str] = []
         self.screen = "output\n> "
+        self.snapshot_modes: list[SnapshotMode] = []
         self._outputs = list(outputs_after_enter or [])
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
@@ -54,7 +56,8 @@ class _GrokPane:
         self.typed.append(text)
         return True, None
 
-    async def snapshot(self, lines: int = 12) -> str | None:
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        self.snapshot_modes.append(mode)
         return self.screen
 
 
@@ -281,6 +284,8 @@ async def test_compaction_refuses_occupied_composer_before_interrupt() -> None:
     assert reason == "composer holds an operator draft"
     assert detail == {"error_code": _COMPOSER_OCCUPIED_ERROR_CODE, "continuation_pending": False}
     assert pane.keys == [] and pane.typed == []
+    # Faint suggestion and placeholder text is only distinguishable with styling.
+    assert pane.snapshot_modes == ["ansi"]
     mark.assert_not_called()
 
 
