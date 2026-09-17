@@ -156,6 +156,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/439_retire_linear_github_issue_bridge.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 440,
+        filename: "440_add_workspaces.sql",
+        checksum: "2a9410cd8cb7dcec08f429fdbc1b1f7043cc3f97efc7a3affdbcfb21c166fd52",
+        sql: include_str!("../../assets/schema/migrations/440_add_workspaces.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
