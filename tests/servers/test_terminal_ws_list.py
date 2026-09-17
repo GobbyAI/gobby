@@ -13,6 +13,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID
@@ -44,6 +45,7 @@ def server(manager: TerminalManager) -> WebSocketServer:
     config.ping_timeout = 10
     config.max_message_size = 1024
     ws_server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
+    ws_server.lease_registry = TerminalLeaseRegistry()
     ws_server.terminal_manager = manager
     return ws_server
 

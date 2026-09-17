@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -74,10 +75,15 @@ async def spawn_web_terminal(
     cols: object,
     cwd: str | None,
     command: list[str],
+    env: Mapping[str, str] | None = None,
     timeout_seconds: float | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> WebSpawnResult:
-    """Create a pending row, prepare, and promote — same CAS matrix as execute_spawn."""
+    """Create a pending row, prepare, and promote — same CAS matrix as execute_spawn.
+
+    ``env`` sits under the runtime's own variables, so it never shadows
+    ``GOBBY_TERMINAL_ID``.
+    """
     validated = validate_dimensions(rows, cols)
     terminal_id = mint_terminal_id()
     spawn_key = derive_spawn_key(runtime.backend, terminal_id)
@@ -99,6 +105,7 @@ async def spawn_web_terminal(
         spawn_key=spawn_key,
         command=command,
         cwd=cwd,
+        env=None if env is None else dict(env),
         rows=validated[0],
         cols=validated[1],
     )
