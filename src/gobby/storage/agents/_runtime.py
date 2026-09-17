@@ -86,6 +86,37 @@ class _AgentRunRuntimeMixin:
             return None
         return self.get(run_id)
 
+    def merge_sandbox_metadata(
+        self: _AgentRunRuntimeHost,
+        run_id: str,
+        updates: Mapping[str, Any],
+    ) -> AgentRun | None:
+        """Atomically merge keys into the sandbox block of resume metadata."""
+        if not updates:
+            return self.get(run_id)
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json = jsonb_set(
+                    COALESCE(resume_metadata_json, '{}'::jsonb),
+                    '{sandbox}',
+                    CASE
+                        WHEN jsonb_typeof(resume_metadata_json -> 'sandbox') = 'object'
+                        THEN resume_metadata_json -> 'sandbox'
+                        ELSE '{}'::jsonb
+                    END || %s::jsonb,
+                    true
+                ),
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (dump_resume_metadata(updates), now, run_id),
+        )
+        if not _positive_rowcount(cursor):
+            return None
+        return self.get(run_id)
+
     def transition_resume_phase(
         self: _AgentRunRuntimeHost,
         run_id: str,

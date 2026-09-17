@@ -2468,3 +2468,89 @@ class TestAgentRunEdgeCases:
                 machine_id=require_machine_id(), timeout_minutes=60
             )
             assert run_ids == []
+
+
+class TestSandboxRetentionMetadata:
+    """Nested sandbox metadata merges performed after a run root is reaped."""
+
+    @staticmethod
+    def _run(agent_manager: LocalAgentRunManager, sample_session: dict[str, Any]) -> AgentRun:
+        return agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Sandboxed run",
+        )
+
+    def test_merge_keeps_sibling_launch_metadata_and_other_top_level_keys(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        run = self._run(agent_manager, sample_session)
+        assert (
+            agent_manager.update_resume_metadata(
+                run.id,
+                {
+                    "sandbox": {"backend": "srt", "violation_path": "/run/sandbox/a/violations"},
+                    "external_write_grant": {"reason": "keep me"},
+                },
+            )
+            is not None
+        )
+
+        merged = agent_manager.merge_sandbox_metadata(
+            run.id,
+            {
+                "retained_violation_path": "/home/logs/sandbox-violations/a.jsonl",
+                "retained_settings_path": "/home/logs/sandbox-violations/a.settings.json",
+            },
+        )
+
+        assert merged is not None
+        assert merged.resume_metadata_json == {
+            "sandbox": {
+                "backend": "srt",
+                "violation_path": "/run/sandbox/a/violations",
+                "retained_violation_path": "/home/logs/sandbox-violations/a.jsonl",
+                "retained_settings_path": "/home/logs/sandbox-violations/a.settings.json",
+            },
+            "external_write_grant": {"reason": "keep me"},
+        }
+
+    def test_merge_replaces_a_non_object_sandbox_value(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        run = self._run(agent_manager, sample_session)
+        assert agent_manager.update_resume_metadata(run.id, {"sandbox": "corrupt"}) is not None
+
+        merged = agent_manager.merge_sandbox_metadata(
+            run.id,
+            {"retained_violation_path": "/home/logs/sandbox-violations/b.jsonl"},
+        )
+
+        assert merged is not None
+        assert merged.resume_metadata_json == {
+            "sandbox": {"retained_violation_path": "/home/logs/sandbox-violations/b.jsonl"}
+        }
+
+    def test_merge_without_updates_or_run_changes_nothing(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        run = self._run(agent_manager, sample_session)
+        assert agent_manager.update_resume_metadata(run.id, {"sandbox": {"backend": "srt"}})
+
+        unchanged = agent_manager.merge_sandbox_metadata(run.id, {})
+
+        assert unchanged is not None
+        assert unchanged.resume_metadata_json == {"sandbox": {"backend": "srt"}}
+        assert (
+            agent_manager.merge_sandbox_metadata(
+                "11111111-1111-4111-8111-111111111111",
+                {"retained_violation_path": "/home/logs/sandbox-violations/c.jsonl"},
+            )
+            is None
+        )

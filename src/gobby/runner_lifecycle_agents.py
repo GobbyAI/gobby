@@ -12,7 +12,7 @@ from gobby.agents.recovery_state import (
     is_daemon_stop_parked,
     is_reconciliation_pending,
 )
-from gobby.agents.sandbox_reaper import sweep_sandbox_run_roots
+from gobby.agents.sandbox_reaper import record_sandbox_retention, sweep_sandbox_run_roots
 from gobby.agents.srt_process_cleanup import reap_orphaned_srt_runner_process_trees
 from gobby.events.completion_registry import wake_result_is_delivered
 from gobby.storage.agents import (
@@ -493,6 +493,7 @@ async def _sweep_sandbox_run_roots_on_startup(runner: GobbyRunner) -> None:
     """Sweep old run roots against active state read when the task starts."""
     if runner.agent_runner is None:
         return
+    run_storage = runner.agent_runner.run_storage
     try:
         active_runs = await _run_db(
             runner,
@@ -500,7 +501,19 @@ async def _sweep_sandbox_run_roots_on_startup(runner: GobbyRunner) -> None:
             runner,
             include_fenced=True,
         )
-        await sweep_sandbox_run_roots({str(run.id) for run in active_runs})
+        # Collect inside the sweep thread, persist on the loop through the
+        # runner's database executor.
+        retained: dict[str, dict[str, str]] = {}
+
+        def collect(run_id: str, retention: dict[str, str]) -> None:
+            retained[run_id] = retention
+
+        await sweep_sandbox_run_roots(
+            {str(run.id) for run in active_runs},
+            record_retention=collect,
+        )
+        for run_id, retention in retained.items():
+            await _run_db(runner, record_sandbox_retention, run_storage.db, run_id, retention)
     except asyncio.CancelledError:
         raise
     except Exception:

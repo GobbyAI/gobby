@@ -30,7 +30,7 @@ from gobby.agents.run_completion import (
     ended_caller_close_review_outcome,
 )
 from gobby.agents.runtime_cleanup import release_session_end_run
-from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run, record_sandbox_retention
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
@@ -391,7 +391,15 @@ class SessionCoordinator:
         """Synchronously finish process and filesystem cleanup from a hook worker."""
 
         async def cleanup() -> None:
-            await reap_terminal_sandbox_run(run_id)
+            reaped = await reap_terminal_sandbox_run(run_id)
+            manager = self._agent_run_manager
+            if manager is not None:
+                await asyncio.to_thread(
+                    record_sandbox_retention,
+                    manager.db,
+                    run_id,
+                    reaped.retention_metadata(),
+                )
 
         try:
             if self._event_loop and self._event_loop.is_running():

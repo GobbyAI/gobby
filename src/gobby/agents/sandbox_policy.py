@@ -82,6 +82,11 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
 
 SRT_SETTINGS_RELATIVE_PATH = Path("assets") / "settings.json"
 SRT_VIOLATIONS_RELATIVE_PATH = Path("logs") / "violations.jsonl"
+# Forensic copies the reaper keeps after a run root is deleted, relative to
+# the gobby home, plus the sandbox-record keys that point callers at them.
+SANDBOX_RETENTION_RELATIVE_PATH = Path("logs") / "sandbox-violations"
+RETAINED_VIOLATION_PATH_KEY = "retained_violation_path"
+RETAINED_SETTINGS_PATH_KEY = "retained_settings_path"
 PRE_COMMIT_STORE_SPARE_NAME = ".pre-commit-store-spare"
 PRE_COMMIT_STORE_SPARE_TEMP_NAME = ".pre-commit-store-spare.tmp"
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -105,7 +106,7 @@ async def test_terminal_run_roots_removed_and_violation_log_retained(tmp_path: P
     assert result.retained_violation_log == retained
     assert result.retained_settings == retained_settings
     assert result.retention_metadata() == {
-        "violation_path": str(retained),
+        "retained_violation_path": str(retained),
         "retained_settings_path": str(retained_settings),
     }
 
@@ -141,7 +142,7 @@ async def test_reap_with_violations_but_no_settings_retains_log_only(tmp_path: P
     assert not sandbox_root.exists()
     assert result.retained_violation_log == retained
     assert result.retained_settings is None
-    assert result.retention_metadata() == {"violation_path": str(retained)}
+    assert result.retention_metadata() == {"retained_violation_path": str(retained)}
     assert not (gobby_home / "logs" / "sandbox-violations" / f"{run_id}.settings.json").exists()
 
 
@@ -186,10 +187,8 @@ def test_retention_metadata_patches_sandbox_record_keys() -> None:
     )
 
     assert result.retention_metadata() == {
-        "violation_path": str(home / "logs" / "sandbox-violations" / "run.jsonl"),
-        "retained_settings_path": str(
-            home / "logs" / "sandbox-violations" / "run.settings.json"
-        ),
+        "retained_violation_path": str(home / "logs" / "sandbox-violations" / "run.jsonl"),
+        "retained_settings_path": str(home / "logs" / "sandbox-violations" / "run.settings.json"),
     }
     assert SandboxReapResult().retention_metadata() == {}
 
@@ -248,7 +247,7 @@ async def test_startup_sweep_records_retained_artifacts_per_run(tmp_path: Path) 
         (
             run_id,
             {
-                "violation_path": str(retained_log),
+                "retained_violation_path": str(retained_log),
                 "retained_settings_path": str(retained_settings),
             },
         )
@@ -504,3 +503,50 @@ async def test_short_tmp_registration_rejects_escapes(
     assert result.skipped_roots == 1
     assert root.exists()
     assert (outside / "keep").read_text() == "keep"
+
+
+def test_record_sandbox_retention_patches_the_run_sandbox_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class _Manager:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        def merge_sandbox_metadata(self, run_id: str, updates: dict[str, str]) -> None:
+            calls.append((run_id, updates))
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", _Manager)
+    retained = Path("/gobby-home/logs/sandbox-violations/run.jsonl")
+    result = SandboxReapResult(retained_violation_log=retained)
+
+    sandbox_reaper.record_sandbox_retention(cast(Any, object()), "run", result.retention_metadata())
+    sandbox_reaper.record_sandbox_retention(
+        cast(Any, object()), "clean-run", SandboxReapResult().retention_metadata()
+    )
+
+    assert calls == [("run", {"retained_violation_path": str(retained)})]
+
+
+def test_record_sandbox_retention_survives_a_storage_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _Manager:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        def merge_sandbox_metadata(self, run_id: str, updates: dict[str, str]) -> None:
+            raise RuntimeError("hub unavailable")
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", _Manager)
+    caplog.set_level(logging.WARNING, logger="gobby.agents.sandbox_reaper")
+
+    sandbox_reaper.record_sandbox_retention(
+        cast(Any, object()),
+        "run",
+        {"retained_violation_path": "/gobby-home/logs/sandbox-violations/run.jsonl"},
+    )
+
+    assert "Failed to record retained sandbox diagnostics for run run" in caplog.text

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.agents import terminal_delivery
 from gobby.agents.completion_stats import resolve_completion_stats
 from gobby.agents.run_completion import closed_task_run_completion_result
-from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
+from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run, record_sandbox_retention
 from gobby.agents.terminal_cleanup import TerminalResourceCleaner
 from gobby.sessions.transcript_reader import TranscriptReader
 
@@ -518,7 +518,13 @@ class AgentCleanupHandler:
                     )
                     continue
                 try:
-                    await reap_terminal_sandbox_run(run_id)
+                    reaped = await reap_terminal_sandbox_run(run_id)
+                    await self._run_db(
+                        record_sandbox_retention,
+                        self._agent_run_manager.db,
+                        run_id,
+                        reaped.retention_metadata(),
+                    )
                 except Exception:
                     logger.warning(
                         "Failed to reap SRT sandbox resources for stale agent %s",

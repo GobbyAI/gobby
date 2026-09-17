@@ -7,6 +7,11 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.sandbox_policy import (
+    RETAINED_SETTINGS_PATH_KEY,
+    RETAINED_VIOLATION_PATH_KEY,
+    SANDBOX_RETENTION_RELATIVE_PATH,
+)
 from gobby.paths import get_gobby_home
 
 _MAX_EXPOSED_VIOLATIONS = 100
@@ -29,7 +34,18 @@ def sandbox_record(
         "runtime_version": raw.get("runtime_version"),
         "policy_hash": raw.get("policy_hash"),
     }
-    violation_path = _trusted_violation_path(raw.get("violation_path"))
+    gobby_home = get_gobby_home()
+    live_root = gobby_home / "run" / "sandbox"
+    retention_root = gobby_home / SANDBOX_RETENTION_RELATIVE_PATH
+    retained_log = _trusted_path(raw.get(RETAINED_VIOLATION_PATH_KEY), retention_root)
+    retained_settings = _trusted_path(raw.get(RETAINED_SETTINGS_PATH_KEY), retention_root)
+    if retained_log is not None:
+        record[RETAINED_VIOLATION_PATH_KEY] = str(retained_log)
+    if retained_settings is not None:
+        record[RETAINED_SETTINGS_PATH_KEY] = str(retained_settings)
+    # The live log wins while the run root survives; the retained copy keeps the
+    # count honest once the reaper deletes it.
+    violation_path = _trusted_path(raw.get("violation_path"), live_root) or retained_log
     count, violations, count_truncated = _read_violations(
         violation_path,
         include_events=include_events,
@@ -42,10 +58,10 @@ def sandbox_record(
     return record
 
 
-def _trusted_violation_path(raw_path: object) -> Path | None:
+def _trusted_path(raw_path: object, trusted_root: Path) -> Path | None:
     if not isinstance(raw_path, str) or not raw_path:
         return None
-    root = (get_gobby_home() / "run" / "sandbox").resolve(strict=False)
+    root = trusted_root.resolve(strict=False)
     path = Path(raw_path).expanduser()
     try:
         resolved = path.resolve(strict=True)

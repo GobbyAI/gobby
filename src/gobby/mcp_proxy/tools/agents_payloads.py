@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from gobby.agents.run_completion import agent_exit_public_status
-from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
+from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason, sandbox_record
 from gobby.utils.datetime import datetime_to_iso
 
 _AGENT_RESULT_CAPTURE_CHARS = 10_000
@@ -171,6 +171,12 @@ def _agent_result_payload(
     metadata = run.resume_metadata_json
     if isinstance(metadata, dict) and isinstance(metadata.get("external_write_grant"), dict):
         payload["external_write_grant"] = metadata["external_write_grant"]
+
+    # Bounded reference only: retained diagnostic paths and the violation count,
+    # never the log contents.
+    sandbox = sandbox_record(metadata, include_events=False)
+    if sandbox is not None:
+        payload["sandbox"] = sandbox
 
     capture = _agent_capture_parts(run)
     if capture is None:
