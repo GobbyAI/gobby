@@ -1956,11 +1956,10 @@ class TestSessionStartNewSession:
             session_obj=session,
             project_id=session.project_id,
         )
-        context = "\n".join(additional_context)
-
-        assert "Active Task Context" in context
-        assert "task-789" in context
-        assert "Implement feature X" in context
+        assert (
+            "active_task",
+            "## Active Task Context\n\nYou are working on task: Implement feature X (task-789)",
+        ) in additional_context
 
 
 def test_resolve_agent_name_reads_config_without_resolving_secrets(

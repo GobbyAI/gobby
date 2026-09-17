@@ -62,7 +62,9 @@ def test_first_and_repeated_help_defer_work(source: SessionSource, suffix: str) 
         for _ in range(2):
             assert evaluator.evaluate(event) == (None, None)
             response = handler.handle_before_agent(event)
-            enricher.enrich(event, response, workflow_context="HOUSEKEEPING")
+            enricher.enrich(
+                event, response, workflow_context=[("rule:housekeeping", "HOUSEKEEPING")]
+            )
             if source == SessionSource.GROK:
                 assert response.decision == "block"
                 content = response.reason

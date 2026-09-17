@@ -206,7 +206,7 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
         )
 
     assert compose.call_args.kwargs["task_id"] == task_id
-    context = activity.metadata["_startup_context"]
-    assert context is not None
-    assert f"You are working on task: {task_title}" in context
-    assert f"({task_id})" in context
+    assert (
+        "active_task",
+        f"## Active Task Context\n\nYou are working on task: {task_title} ({task_id})",
+    ) in activity.metadata["_startup_context"]

@@ -288,6 +288,7 @@ async def test_codex_clear_context_archives_and_starts_fresh_thread() -> None:
     fake_client = SimpleNamespace(
         archive_thread=AsyncMock(),
         start_thread=AsyncMock(return_value=SimpleNamespace(id="codex-new", path=None)),
+        register_approval_handler=MagicMock(),
         resume_thread=AsyncMock(return_value=SimpleNamespace(id="codex-resumed", path=None)),
         is_connected=True,
     )
@@ -310,6 +311,7 @@ async def test_codex_clear_context_archives_and_starts_fresh_thread() -> None:
 
     assert result is True
     fake_client.archive_thread.assert_awaited_once_with("codex-old")
+    fake_client.register_approval_handler.assert_called_once_with(backend.handle_approval_request)
     fake_client.resume_thread.assert_not_awaited()
     fake_client.start_thread.assert_awaited_once()
     assert "codex-old" not in backend._sessions_by_thread

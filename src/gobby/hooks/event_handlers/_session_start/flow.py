@@ -9,7 +9,7 @@ from typing import Any, cast
 import psycopg
 
 from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
-from gobby.hooks.events import HookEvent, HookResponse, require_hook_machine_id
+from gobby.hooks.events import ContextPart, HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import (
@@ -469,11 +469,11 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         additional_context = []
         if event.task_id:
             task_title = event.metadata.get("_task_title", "Unknown Task")
-            additional_context.extend(
-                [
-                    "\n## Active Task Context\n",
-                    f"You are working on task: {task_title} ({event.task_id})",
-                ]
+            additional_context.append(
+                (
+                    "active_task",
+                    f"## Active Task Context\n\nYou are working on task: {task_title} ({event.task_id})",
+                )
             )
 
     effective_parent_session_id = parent_session_id or getattr(
@@ -673,7 +673,7 @@ def handle_pre_created_session(
         except Exception as e:
             handler.logger.warning("Failed to register with message processor: %s", e)
 
-    additional_context: list[str] = []
+    additional_context: list[ContextPart] = []
     if context_decision.mode == "full":
         _reset_agent_context_injection(handler, session_id)
 
@@ -684,7 +684,7 @@ def handle_pre_created_session(
             compact=context_decision.mode == "live",
         )
         if claimed_ctx:
-            additional_context.append(claimed_ctx)
+            additional_context.append(("claimed_tasks", claimed_ctx))
 
     _consume_pending_handoff_compact_continuation(
         handler,

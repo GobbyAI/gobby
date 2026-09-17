@@ -226,7 +226,7 @@ def test_real_context_observer_deadline_retries_without_clearing_stored_guidance
     sessions = MagicMock()
     sessions.get.side_effect = [
         error,
-        SimpleNamespace(context_used_tokens=150_000, context_window=1_000_000),
+        SimpleNamespace(context_used_tokens=260_000, context_window=1_000_000),
     ]
     handler._session_manager = sessions
     # Keep the failure at the real context-usage observer's session lookup.
@@ -244,7 +244,7 @@ def test_real_context_observer_deadline_retries_without_clearing_stored_guidance
         assert handler.evaluate(event).decision == "allow"
 
     updates = variables.merge_variables.call_args.args[1]
-    assert "150k tokens" in updates["context_compact_guidance_message"]
+    assert "260k tokens" in updates["context_compact_guidance_message"]
     assert sessions.get.call_count == 2
     assert not caplog.records
 

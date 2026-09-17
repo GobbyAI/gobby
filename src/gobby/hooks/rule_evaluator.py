@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import ContextPart, HookEvent, HookEventType, HookResponse
 from gobby.skills.capability_routing import gobby_help_prefix
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.block_audit import audit_source_block_sync
@@ -23,7 +23,7 @@ MIN_SKILL_RELEVANCE = 0.65
 def process_dispatch_results(
     event: HookEvent,
     dispatch_results: list[dict[str, Any]],
-    extra_context: list[str],
+    extra_context: list[ContextPart],
     *,
     format_discovery_result: FormatDiscoveryResult,
     dedup_memory_results: DedupDiscoveryResult | None = None,
@@ -40,7 +40,12 @@ def process_dispatch_results(
                 result["result"] = dedup_memory_results(result["result"], session_id)
             if result.get("tool") == "search_skills" and session_id and dedup_skill_results:
                 result["result"] = dedup_skill_results(result["result"], session_id)
-            extra_context.append(format_discovery_result(result))
+            extra_context.append(
+                (
+                    f"mcp:{result.get('server')}/{result.get('tool')}",
+                    format_discovery_result(result),
+                )
+            )
 
         if result.get("block_on_failure") and not result.get("success"):
             call_result = result.get("result") or {}
@@ -49,23 +54,25 @@ def process_dispatch_results(
                 if isinstance(call_result, dict)
                 else str(call_result)
             )
-            return HookResponse(
+            failed = HookResponse(
                 decision="block",
                 reason=(
                     f"Auto-heal prerequisite failed: "
                     f"{result['server']}/{result['tool']}: {error_msg}"
                 ),
-                context="\n\n".join(extra_context) if extra_context else None,
             )
+            failed.add_context(*extra_context)
+            return failed
 
         if result.get("block_on_success") and result.get("success"):
-            return HookResponse(
+            intercepted = HookResponse(
                 decision="block",
                 reason=(
                     f"Intercepted by {result['server']}/{result['tool']} \u2014 see context below."
                 ),
-                context="\n\n".join(extra_context) if extra_context else None,
             )
+            intercepted.add_context(*extra_context)
+            return intercepted
 
     return None
 
@@ -90,7 +97,7 @@ class WorkflowRuleEvaluator:
         self.logger = logger
         self.blocking_deadline = blocking_deadline
 
-    def evaluate(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
+    def evaluate(self, event: HookEvent) -> tuple[list[ContextPart] | None, HookResponse | None]:
         """Evaluate workflow rules and return context or a blocking response."""
         try:
             if self._defer_help_housekeeping(event):
@@ -112,7 +119,7 @@ class WorkflowRuleEvaluator:
             ):
                 dispatch_results = self.dispatch_mcp_calls(mcp_calls, event) if mcp_calls else []
 
-            extra_context: list[str] = []
+            extra_context: list[ContextPart] = []
             block_override = self._process_dispatch_results(
                 event,
                 dispatch_results,
@@ -129,12 +136,7 @@ class WorkflowRuleEvaluator:
 
             if workflow_response.decision != "allow":
                 self._log_workflow_evaluation(event, workflow_response, mcp_calls)
-                if extra_context and workflow_response.context:
-                    workflow_response.context = (
-                        workflow_response.context + "\n\n" + "\n\n".join(extra_context)
-                    )
-                elif extra_context:
-                    workflow_response.context = "\n\n".join(extra_context)
+                workflow_response.add_context(*extra_context)
                 return None, workflow_response
 
             if workflow_response.modified_input:
@@ -143,14 +145,8 @@ class WorkflowRuleEvaluator:
 
             self._log_workflow_evaluation(event, workflow_response, mcp_calls)
 
-            workflow_context = workflow_response.context if workflow_response.context else None
-            if extra_context:
-                heal_context = "\n\n".join(extra_context)
-                workflow_context = (
-                    f"{workflow_context}\n\n{heal_context}" if workflow_context else heal_context
-                )
-
-            return workflow_context, None
+            workflow_context = [*workflow_response.context_contributors(), *extra_context]
+            return workflow_context or None, None
         except WorkflowEvaluationTimeout:
             raise
         except Exception as exc:
@@ -216,7 +212,7 @@ class WorkflowRuleEvaluator:
         self,
         event: HookEvent,
         dispatch_results: list[dict[str, Any]],
-        extra_context: list[str],
+        extra_context: list[ContextPart],
     ) -> HookResponse | None:
         return process_dispatch_results(
             event,
@@ -230,18 +226,19 @@ class WorkflowRuleEvaluator:
     @staticmethod
     def _block_for_failed_call(
         dispatch_result: dict[str, Any],
-        extra_context: list[str],
+        extra_context: list[ContextPart],
     ) -> HookResponse:
         result = dispatch_result.get("result") or {}
         error_msg = result.get("error", "unknown") if isinstance(result, dict) else str(result)
-        return HookResponse(
+        failed = HookResponse(
             decision="block",
             reason=(
                 f"Auto-heal prerequisite failed: "
                 f"{dispatch_result['server']}/{dispatch_result['tool']}: {error_msg}"
             ),
-            context="\n\n".join(extra_context) if extra_context else None,
         )
+        failed.add_context(*extra_context)
+        return failed
 
     @staticmethod
     def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:

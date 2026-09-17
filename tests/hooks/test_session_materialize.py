@@ -82,9 +82,9 @@ def test_help_defers_startup_until_work(source: SessionSource, suffix: str) -> N
         id="platform-session", project_id=None, parent_session_id=None, transcript_path=_DERIVED
     )
     manager = _manager(session, None)
-    manager._event_handlers._compose_session_response.return_value = HookResponse(
-        context="Pending startup instructions", system_message="Session identity"
-    )
+    startup = HookResponse(system_message="Session identity")
+    startup.add_context(("claimed_tasks", "Pending startup instructions"))
+    manager._event_handlers._compose_session_response.return_value = startup
     prompt = ("$gobby" if source == SessionSource.CODEX else "/gobby") + suffix
     event = _event({"prompt": prompt}, source=source)
     state: dict[str, object] = {}
@@ -104,7 +104,9 @@ def test_help_defers_startup_until_work(source: SessionSource, suffix: str) -> N
         event.data["prompt"] = "Implement the change"
         assert has_deferred_help_activation(manager, event)
         assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
-        assert event.metadata["_startup_context"] == "Pending startup instructions"
+        assert event.metadata["_startup_context"] == [
+            ("claimed_tasks", "Pending startup instructions")
+        ]
         assert event.metadata["_startup_system_message"] == "Session identity"
         assert not has_deferred_help_activation(manager, event)
         manager._event_handlers._activate_materialized_session.assert_called_once()

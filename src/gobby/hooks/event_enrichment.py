@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.hooks import grok_pending_context
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import ContextPart, HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.pending_messages import PendingMessageRenderResult, render_pending_messages
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.skills.capability_routing import gobby_help_prefix
@@ -74,7 +74,7 @@ class EventEnricher:
         self,
         event: HookEvent,
         response: HookResponse,
-        workflow_context: str | None = None,
+        workflow_context: list[ContextPart] | None = None,
     ) -> None:
         """Enrich response with session metadata and context.
 
@@ -84,7 +84,7 @@ class EventEnricher:
         Args:
             event: Source hook event with metadata
             response: Response to enrich (modified in place)
-            workflow_context: Optional workflow context to merge into response
+            workflow_context: Optional labeled workflow context parts to append
         """
         # Copy session metadata
         if event.metadata.get("_platform_session_id"):
@@ -132,10 +132,7 @@ class EventEnricher:
 
         # Merge workflow context if present
         if workflow_context:
-            if response.context:
-                response.context = f"{response.context}\n\n{workflow_context}"
-            else:
-                response.context = workflow_context
+            response.add_context(*workflow_context)
 
         raw_delivery_session_id = event.metadata.get("_platform_session_id")
         delivery_session_id = (
@@ -198,10 +195,7 @@ class EventEnricher:
         pending_context = rendered.context
         if not pending_context:
             return
-        if response.context:
-            response.context = f"{pending_context}\n\n{response.context}"
-        else:
-            response.context = pending_context
+        response.add_context(("pending_messages", pending_context), prepend=True)
         self._stage_pending_messages(response, rendered, platform_session_id)
 
     @staticmethod

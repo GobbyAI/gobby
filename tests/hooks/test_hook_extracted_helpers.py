@@ -209,11 +209,12 @@ class TestSessionRefResolution:
 class TestWorkflowRuleEvaluator:
     def test_allow_merges_workflow_and_discovery_context(self) -> None:
         workflow_handler = MagicMock()
-        workflow_handler.handle.return_value = HookResponse(
+        workflow_response = HookResponse(
             decision="allow",
-            context="base context",
             metadata={"mcp_calls": [{"server": "_proxy", "tool": "list_tools"}]},
         )
+        workflow_response.add_context(("rule:base", "base context"))
+        workflow_handler.handle.return_value = workflow_response
         dispatch_mcp_calls = MagicMock(
             return_value=[
                 {
@@ -235,7 +236,10 @@ class TestWorkflowRuleEvaluator:
 
         context, blocking = evaluator.evaluate(_event())
 
-        assert context == "base context\n\ndiscovery context"
+        assert context == [
+            ("rule:base", "base context"),
+            ("mcp:_proxy/list_tools", "discovery context"),
+        ]
         assert blocking is None
         dispatch_mcp_calls.assert_called_once()
 

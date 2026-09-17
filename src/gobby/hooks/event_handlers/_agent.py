@@ -8,7 +8,7 @@ from typing import Any, Literal
 import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse, SessionSource
+from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.title_lifecycle import promote_heuristic_title
@@ -138,7 +138,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
         project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
-        context_parts = []
+        context_parts: list[ContextPart] = []
 
         if session_id:
             self.logger.debug("BEFORE_AGENT: session %s, prompt_len=%s", session_id, len(prompt))
@@ -226,12 +226,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     project_id,
                 )
                 if skill_context:
-                    context_parts.append(skill_context)
+                    context_parts.append(("skill_command", skill_context))
                 else:
                     # Try trigger-based suggestion for non-command prompts
                     suggestion = self._suggest_skills(stripped_prompt, project_id)
                     if suggestion:
-                        context_parts.append(suggestion)
+                        context_parts.append(("skill_suggestions", suggestion))
             except Exception as e:
                 self.logger.exception(
                     "Failed skill interception for %s: %s",
@@ -239,10 +239,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     e,
                 )
 
-        response = HookResponse(
-            decision="allow",
-            context="\n\n".join(context_parts) if context_parts else None,
-        )
+        response = HookResponse(decision="allow")
+        response.add_context(*context_parts)
 
         # Inject prompt-facing agent context on first before_agent. SessionStart
         # only activates session variables and non-prompt metadata.
@@ -326,11 +324,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not agent_body.supports_surface(definition_surface):
             return
         preamble = agent_body.prompt_for(prompt_surface)
-        if preamble:
-            if response.context:
-                response.context = f"{preamble}\n\n{response.context}"
-            else:
-                response.context = preamble
+        response.add_context(("agent_prompt", preamble), prepend=True)
 
         from gobby.hooks.receipt_effects import (
             STAGED_EFFECTS_FIELD,
@@ -538,8 +532,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
         cli_source = event.source.value
 
-        context_parts: list[str] = []
-
         if session_id:
             self.logger.debug("AFTER_AGENT: session %s, cli=%s", session_id, cli_source)
             if (
@@ -552,18 +544,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("AFTER_AGENT: cli=%s", cli_source)
 
-        response = HookResponse(
-            decision="allow",
-            context="\n\n".join(context_parts) if context_parts else None,
-        )
+        response = HookResponse(decision="allow")
         self._apply_debug_echo(response)
         return response
 
     def handle_stop(self, event: HookEvent) -> HookResponse:
         """Handle an agent STOP event."""
         session_id = event.metadata.get("_platform_session_id")
-
-        context_parts: list[str] = []
 
         if session_id:
             self.logger.debug("STOP: session %s", session_id)
@@ -588,10 +575,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("STOP")
 
-        response = HookResponse(
-            decision="allow",
-            context="\n\n".join(context_parts) if context_parts else None,
-        )
+        response = HookResponse(decision="allow")
         self._apply_debug_echo(response)
         return response
 

@@ -554,7 +554,7 @@ class RuleEngine(
                         event, session_id, variables
                     )
                     if _step_transition_msg:
-                        evaluation.context_parts.append(_step_transition_msg)
+                        evaluation.context_parts.append(("step_transition", _step_transition_msg))
 
                 # Deferred overrides — these used to early-return, but that skipped rule
                 # evaluation entirely, preventing background mcp_call effects

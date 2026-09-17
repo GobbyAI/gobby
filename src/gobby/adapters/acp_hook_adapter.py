@@ -319,11 +319,7 @@ class ACPHookAdapter(BaseAdapter):
 
         # Build hookSpecificOutput based on hook type
         hook_specific: dict[str, Any] = {}
-        context_parts: list[tuple[str, str]] = []
-
-        # Add context injection if present
-        if response.context:
-            context_parts.append(("response.context", response.context))
+        context_parts = response.context_contributors()
 
         # SessionStart startup context should be injected once via
         # additionalContext, not duplicated into systemMessage.
@@ -372,11 +368,10 @@ class ACPHookAdapter(BaseAdapter):
 
         if context_parts and context_channel is ContextChannel.ADDITIONAL_CONTEXT:
             hook_specific["additionalContext"] = truncate_context_for_adapter(
-                "\n\n".join(part for _, part in context_parts),
+                context_parts,
                 provider=self.source,
                 hook_type=hook_type,
                 destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-                contributor_sizes={label: len(part) for label, part in context_parts},
                 event_logger=event_logger,
                 **persist_kwargs_from_hook_response(response, self._hook_manager),
             )

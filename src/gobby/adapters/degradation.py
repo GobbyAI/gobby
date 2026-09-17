@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import TypedDict
 
@@ -14,7 +14,7 @@ from gobby.adapters.capabilities import (
 )
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
-from gobby.hooks.events import HookResponse, SessionSource
+from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 from gobby.llm.sdk_utils import truncate_additional_context
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
@@ -158,32 +158,31 @@ def persist_kwargs_from_mapping(
 
 
 def truncate_context_for_adapter(
-    text: str,
+    parts: Sequence[ContextPart],
     *,
     provider: SessionSource | str,
     hook_type: str | None,
     destination_channel: ContextChannel | str,
-    contributor_sizes: Mapping[str, int] | None = None,
     event_logger: logging.Logger | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
     store: object | None = None,
 ) -> str:
-    """Bound context and record telemetry if the adapter must shorten it."""
+    """Join labeled context parts, bound them, and record telemetry on truncation."""
     ship_limit = additional_context_limit_for(provider)
-    if len(text) > ship_limit:
+    aggregate_len = len("\n\n".join(part for _, part in parts if part))
+    if aggregate_len > ship_limit:
         record_adapter_degradation(
             provider=provider,
             hook_type=hook_type,
             kind=AdapterDegradationKind.CONTEXT_TRUNCATED,
             response_field="context",
             destination_channel=destination_channel,
-            detail=f"aggregate_len={len(text)} limit={ship_limit}",
+            detail=f"aggregate_len={aggregate_len} limit={ship_limit}",
             event_logger=event_logger,
         )
     return truncate_additional_context(
-        text,
-        contributor_sizes=contributor_sizes,
+        parts,
         logger=event_logger,
         limit=ship_limit,
         session_id=session_id,

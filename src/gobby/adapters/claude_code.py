@@ -293,8 +293,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         if response.system_message and session_start_hook:
             additional_context_parts.append(("system_message", response.system_message))
 
-        if response.context:
-            additional_context_parts.append(("response.context", response.context))
+        additional_context_parts.extend(response.context_contributors())
 
         if response.metadata:
             context_lines = build_first_hook_session_metadata_lines(
@@ -311,11 +310,10 @@ class ClaudeCodeAdapter(BaseAdapter):
             return None
 
         return truncate_context_for_adapter(
-            "\n\n".join(part for _, part in additional_context_parts),
+            additional_context_parts,
             provider=self.source,
             hook_type=hook_type,
             destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-            contributor_sizes={label: len(part) for label, part in additional_context_parts},
             event_logger=logger,
             **persist_kwargs_from_hook_response(response, self._hook_manager),
         )

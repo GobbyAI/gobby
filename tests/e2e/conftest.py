@@ -1209,10 +1209,15 @@ class CLIEventSimulator:
         *,
         project_id: str | None = None,
         cwd: str | None = None,
+        machine_id: str = "21000000-0000-4000-8000-000000000002",
         **input_fields: Any,
     ) -> dict[str, Any]:
         """Send an envelope-backed Grok hook through the isolated daemon."""
-        input_data: dict[str, Any] = {"session_id": session_id, **input_fields}
+        input_data: dict[str, Any] = {
+            "session_id": session_id,
+            "machine_id": machine_id,
+            **input_fields,
+        }
         if cwd:
             input_data["cwd"] = cwd
         if project_id:

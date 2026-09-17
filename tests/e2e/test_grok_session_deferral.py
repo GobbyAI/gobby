@@ -140,7 +140,7 @@ def test_spawned_grok_shell_briefing_and_p2p_acknowledgment(
     )
 
     assert started["continue"] is True
-    assert started["decision"] == "allow"
+    assert "decision" not in started
     bound = sessions.find_by_external_id(external_id, PROJECT_ID, "grok")
     assert bound is not None
     assert bound.id == spawned_grok.id
@@ -177,9 +177,10 @@ def test_spawned_grok_shell_briefing_and_p2p_acknowledgment(
         cwd=project_dir,
     )
 
-    assert first["decision"] == "deny"
-    assert "Gobby Session ID:" in first["reason"]
-    assert pending_message.content in first["reason"]
+    assert "decision" not in first
+    first_context = first["hookSpecificOutput"]["additionalContext"]
+    assert "Gobby Session ID:" in first_context
+    assert pending_message.content in first_context
     before_ack = variable_manager.get_variables(spawned_grok.id)
     assert before_ack["grok_pending_delivery"]["envelope_id"] == first_envelope
     stored_message = message_manager.get_message(pending_message.id)
@@ -225,7 +226,7 @@ def test_grok_session_deferral_contract(
         )
         assert response["continue"] is True
         if source == "grok":
-            assert response["decision"] == "allow"
+            assert "decision" not in response
         assert sessions.find_by_external_id(external_id, PROJECT_ID, source) is None
 
     claude_prompt = cli_events.user_prompt_submit(
@@ -268,10 +269,11 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert first_tool["decision"] == "deny"
+    assert "decision" not in first_tool
     assert first_tool["continue"] is True
-    assert startup_briefing in first_tool["reason"]
-    assert pending_message.content in first_tool["reason"]
+    first_tool_context = first_tool["hookSpecificOutput"]["additionalContext"]
+    assert startup_briefing in first_tool_context
+    assert pending_message.content in first_tool_context
     before_ack = variable_manager.get_variables(grok_session.id)
     assert before_ack["grok_pending_delivery"]["envelope_id"] == first_envelope
     stored_message = message_manager.get_message(pending_message.id)
@@ -305,8 +307,9 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert failed_delivery["decision"] == "deny"
-    assert retry_text in failed_delivery["reason"]
+    assert "decision" not in failed_delivery
+    failed_context = failed_delivery["hookSpecificOutput"]["additionalContext"]
+    assert retry_text in failed_context
     retained_path = daemon_instance.gobby_home / "hooks" / "inbox" / f"{failed_envelope}.json"
     _write_retained_envelope(
         retained_path,
@@ -320,7 +323,7 @@ def test_grok_session_deferral_contract(
         input_data={"tool_name": "read_file", "tool_result": "ok", "success": True},
         project_id=PROJECT_ID,
     )
-    assert requeue_hook["decision"] == "allow"
+    assert "decision" not in requeue_hook
     assert not retained_path.exists()
     retry_delivery = cli_events.grok_pre_tool_use(
         grok_external_id,
@@ -329,8 +332,8 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert retry_delivery["decision"] == "deny"
-    assert retry_delivery["reason"] == failed_delivery["reason"]
+    assert "decision" not in retry_delivery
+    assert retry_delivery["hookSpecificOutput"]["additionalContext"] == failed_context
     cli_events.post_tool_use(
         grok_external_id,
         cli_source="grok",
@@ -338,7 +341,11 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
     )
 
-    variable_manager.merge_variables(grok_session.id, {"tool_block_pending": True})
+    # The first-turn memory gate is covered by its rule tests; keep these stops on delivery.
+    variable_manager.merge_variables(
+        grok_session.id,
+        {"tool_block_pending": True, "_memory_initial_stop_checked": True},
+    )
     gated_stop = cli_events.grok_stop(
         grok_external_id,
         _envelope_id("real-gate"),
@@ -359,7 +366,7 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert briefing_stop["decision"] == "block"
+    assert "decision" not in briefing_stop
     assert briefing_stop["continue"] is True
     assert text_only_briefing in briefing_stop["hookSpecificOutput"]["additionalContext"]
     following_stop = cli_events.grok_stop(
@@ -368,7 +375,7 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert following_stop["decision"] == "allow"
+    assert "decision" not in following_stop
 
     variable_manager.merge_variables(
         grok_session.id,
@@ -384,7 +391,7 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert turn_only_stop["decision"] == "allow"
+    assert "decision" not in turn_only_stop
 
     original_internal_id = grok_session.id
     assert _session_count(postgres_db, external_id=grok_external_id, source="grok") == 1
@@ -395,7 +402,7 @@ def test_grok_session_deferral_contract(
         project_id=PROJECT_ID,
         cwd=project_dir,
     )
-    assert compact_start["decision"] == "allow"
+    assert "decision" not in compact_start
     rebound_session = sessions.find_by_external_id(grok_external_id, PROJECT_ID, "grok")
     assert rebound_session is not None
     assert rebound_session.id == original_internal_id

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg.errors import QueryCanceled
 
-from gobby.hooks.events import HookEvent
+from gobby.hooks.events import ContextPart, HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
@@ -73,7 +73,7 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
         variables: dict[str, Any],
         ctx: dict[str, Any],
         allowed_funcs: dict[str, Callable[..., Any]],
-        context_parts: list[str],
+        context_parts: list[ContextPart],
         mcp_calls: list[dict[str, Any]],
         staged_variable_updates: dict[str, Any],
     ) -> str | None:
@@ -110,7 +110,7 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
                 # Per-turn injections (brevity, memory, task context) stay un-tagged.
                 # Handoff markdown is pull-only via get_handoff; see
                 # docs/contracts/session-boundary.md.
-                context_parts.append(template_text)
+                context_parts.append((f"rule:{row.name}", template_text))
 
         elif effect.type == "set_display_content":
             variables["_display_content"] = await offload(
@@ -203,7 +203,7 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
                                 {"tool": effect.tool, "result": raw_result}
                             )
                         if formatted:
-                            context_parts.append(formatted)
+                            context_parts.append((f"mcp:{effect.server}/{effect.tool}", formatted))
                     if effect.block_on_success and success:
                         return f"Intercepted by {effect.server}/{effect.tool} — see context below."
                     if not success:
@@ -357,7 +357,7 @@ class EffectsMixin(RunCommandEffectsMixin, DeliveryFormattingMixin):
             if effect.skill:
                 from gobby.skills.formatting import skill_fetch_directive
 
-                context_parts.append(skill_fetch_directive(effect.skill))
+                context_parts.append((f"skill:{effect.skill}", skill_fetch_directive(effect.skill)))
 
         return None
 

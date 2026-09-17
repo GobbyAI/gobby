@@ -241,10 +241,11 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
             cwd=tmp_path,
             platform_session_id=platform_session_id,
             data={
-                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-tasks",
                     "tool_name": "close_task",
+                    "arguments": {"task_id": "#1"},
                 },
             },
         )

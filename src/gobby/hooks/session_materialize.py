@@ -176,7 +176,7 @@ def activate_deferred_session(
         )
 
     if workflow_context:
-        additional_context.append(workflow_context)
+        additional_context.extend(workflow_context)
 
     clear_queued_context(handlers._session_manager, session_id)
     startup_response = handlers._compose_session_response(
@@ -194,7 +194,7 @@ def activate_deferred_session(
         handlers._inject_agent_instructions_if_needed(event, session_id, startup_response)
 
     manager._dispatch_webhooks_async(synthetic, startup_response)
-    event.metadata["_startup_context"] = startup_response.context
+    event.metadata["_startup_context"] = startup_response.context_contributors()
     event.metadata["_startup_system_message"] = startup_response.system_message
     if context_mode == "full":
         commit_stashed_startup_claim(handlers, session_id, event.metadata)

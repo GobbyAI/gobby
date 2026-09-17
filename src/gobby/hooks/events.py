@@ -212,6 +212,12 @@ def require_hook_machine_id(event: HookEvent) -> str:
     return event.machine_id
 
 
+ContextPart = tuple[str, str]
+"""One labeled contributor to model-visible context: ``(label, text)``."""
+
+CONTEXT_SEPARATOR = "\n\n"
+
+
 @dataclass
 class HookResponse:
     """Unified response returned to CLI.
@@ -254,6 +260,29 @@ class HookResponse:
     modify_args: dict[str, Any] | None = None
     trigger_action: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Labeled contributors whose separator join equals ``context``; see add_context.
+    context_parts: list[ContextPart] = field(default_factory=list, compare=False, repr=False)
+
+    def context_contributors(self) -> list[ContextPart]:
+        """Return ``context`` as labeled contributors for adapter truncation.
+
+        A direct string assignment to ``context`` that no longer matches the
+        tracked parts ships as one ``response.context`` contributor.
+        """
+        if not self.context:
+            return []
+        if CONTEXT_SEPARATOR.join(text for _, text in self.context_parts) == self.context:
+            return list(self.context_parts)
+        return [("response.context", self.context)]
+
+    def add_context(self, *parts: ContextPart, prepend: bool = False) -> None:
+        """Append (or prepend) labeled contributors and rebuild ``context``."""
+        added = [(label, text) for label, text in parts if text]
+        if not added:
+            return
+        existing = self.context_contributors()
+        self.context_parts = [*added, *existing] if prepend else [*existing, *added]
+        self.context = CONTEXT_SEPARATOR.join(text for _, text in self.context_parts)
 
 
 # Event type mapping table for documentation (see plan-multi-cli.md section 1.2)

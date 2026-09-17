@@ -12,7 +12,7 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -28,19 +28,30 @@ from gobby.adapters.degradation import (
     AdditionalContextPersistKwargs,
     persist_kwargs_from_mapping,
 )
+from gobby.hooks.events import ContextPart, HookResponse
 from gobby.llm.sdk_utils import truncate_additional_context as _truncate
 
 logger = logging.getLogger(__name__)
 
 
+def _resp_context_parts(resp: Mapping[str, Any] | None) -> list[ContextPart]:
+    """Return a lifecycle result dict's ``context`` as labeled contributors."""
+    if not resp or not isinstance(resp.get("context"), str):
+        return []
+    parts = resp.get("context_parts")
+    return HookResponse(
+        context=resp["context"],
+        context_parts=parts if isinstance(parts, list) else [],
+    ).context_contributors()
+
+
 def _bound_resp_context(
     resp: dict[str, Any] | None,
-    text: str,
+    parts: Sequence[ContextPart],
     *,
-    contributor_sizes: Mapping[str, int] | None = None,
     persist: AdditionalContextPersistKwargs | None = None,
 ) -> str:
-    """Fit hook additionalContext and persist overflow when session/project exist."""
+    """Fit labeled hook additionalContext and persist overflow when session/project exist."""
     mapped = persist_kwargs_from_mapping(
         resp,
         store=persist["store"] if persist is not None else None,
@@ -48,8 +59,7 @@ def _bound_resp_context(
         project_id=persist["project_id"] if persist is not None else None,
     )
     return _truncate(
-        text,
-        contributor_sizes=contributor_sizes,
+        parts,
         logger=logger,
         session_id=mapped["session_id"],
         project_id=mapped["project_id"],
@@ -168,12 +178,7 @@ def _response_to_prompt_output(
     if isinstance(context, str) and context:
         output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
             hookEventName="UserPromptSubmit",
-            additionalContext=_bound_resp_context(
-                resp,
-                context,
-                contributor_sizes={"response.context": len(context)},
-                persist=persist,
-            ),
+            additionalContext=_bound_resp_context(resp, _resp_context_parts(resp), persist=persist),
         )
     return output
 
@@ -214,10 +219,7 @@ def _response_to_pre_tool_output(
         context = resp.get("context")
         if isinstance(context, str) and context:
             specific["additionalContext"] = _bound_resp_context(
-                resp,
-                context,
-                contributor_sizes={"response.context": len(context)},
-                persist=persist,
+                resp, _resp_context_parts(resp), persist=persist
             )
         output["hookSpecificOutput"] = specific
     return output
@@ -236,12 +238,7 @@ def _response_to_post_tool_output(
     if isinstance(context, str) and context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(
             hookEventName="PostToolUse",
-            additionalContext=_bound_resp_context(
-                resp,
-                context,
-                contributor_sizes={"response.context": len(context)},
-                persist=persist,
-            ),
+            additionalContext=_bound_resp_context(resp, _resp_context_parts(resp), persist=persist),
         )
     return output
 
@@ -265,10 +262,7 @@ def _response_to_stop_output(
             {  # No SDK TypedDict for Stop
                 "hookEventName": "Stop",
                 "additionalContext": _bound_resp_context(
-                    resp,
-                    context,
-                    contributor_sizes={"response.context": len(context)},
-                    persist=persist,
+                    resp, _resp_context_parts(resp), persist=persist
                 ),
             },
         )
@@ -313,7 +307,9 @@ def _response_to_compact_output(
             Any,
             {  # No SDK TypedDict for PreCompact
                 "hookEventName": "PreCompact",
-                "additionalContext": _bound_resp_context(resp, context, persist=persist),
+                "additionalContext": _bound_resp_context(
+                    resp, _resp_context_parts(resp), persist=persist
+                ),
             },
         )
     return output
@@ -334,7 +330,9 @@ def _response_to_subagent_output(
             Any,
             {  # No SDK TypedDict for Subagent hooks
                 "hookEventName": event_name,
-                "additionalContext": _bound_resp_context(resp, context, persist=persist),
+                "additionalContext": _bound_resp_context(
+                    resp, _resp_context_parts(resp), persist=persist
+                ),
             },
         )
     return output

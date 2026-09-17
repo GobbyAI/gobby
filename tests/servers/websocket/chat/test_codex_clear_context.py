@@ -9,7 +9,7 @@ continues on a clean thread.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -64,6 +64,7 @@ async def test_clear_context_does_not_resume_prior_thread() -> None:
         archive_thread=AsyncMock(),
         start_thread=AsyncMock(return_value=SimpleNamespace(id="new-thread", path=None)),
         resume_thread=AsyncMock(return_value=SimpleNamespace(id="resumed-thread", path=None)),
+        register_approval_handler=MagicMock(),
         is_connected=True,
     )
     backend = CodexWebChatBackend(client=fake_client)  # type: ignore[arg-type]
@@ -84,6 +85,7 @@ async def test_clear_context_does_not_resume_prior_thread() -> None:
 
     assert result is True
     fake_client.archive_thread.assert_awaited_once_with("old-thread")
+    fake_client.register_approval_handler.assert_called_once_with(backend.handle_approval_request)
     fake_client.resume_thread.assert_not_awaited()
     fake_client.start_thread.assert_awaited_once()
     assert session._thread_id == "new-thread"

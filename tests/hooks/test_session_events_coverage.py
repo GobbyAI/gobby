@@ -1087,11 +1087,11 @@ class TestComposeSessionResponse:
             external_id="ext-1",
             parent_session_id=None,
             machine_id="21000000-0000-4000-8000-000000000006",
-            additional_context=[claimed_context],
+            additional_context=[("claimed_tasks", claimed_context)],
         )
         # Claimed tasks removed from system_message (handled by build_claimed_task_context)
         assert "Claimed Tasks" not in result.system_message
-        assert result.context == claimed_context
+        assert result.context_contributors() == [("claimed_tasks", claimed_context)]
 
 
 # ---------------------------------------------------------------------------

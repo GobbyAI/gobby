@@ -17,7 +17,7 @@ from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
     remaining_blocking_effect_seconds,
 )
-from gobby.hooks.events import HookEvent
+from gobby.hooks.events import ContextPart, HookEvent
 from gobby.skills.materialization import SkillScriptMaterializer
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.engine._offload import offload
@@ -59,7 +59,7 @@ class RunCommandEffectsMixin:
         effect: Any,
         row: RuleDefinitionRow,
         ctx: dict[str, Any],
-        context_parts: list[str],
+        context_parts: list[ContextPart],
     ) -> None:
         """Execute a bounded detector command and fail open on every failure."""
         event = ctx.get("event")
@@ -160,7 +160,7 @@ class RunCommandEffectsMixin:
             background=False,
         )
         if result.context and effect.inject_result:
-            context_parts.append(result.context)
+            context_parts.append((f"rule:{row.name}", result.context))
 
     async def _prepare_run_command(
         self,

@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import ContextPart, HookEvent, HookEventType, SessionSource
 from gobby.skills.materialization import (
     NodeRuntimeResult,
     PreparationResult,
@@ -72,8 +72,8 @@ def _effect(**overrides: Any) -> RuleEffect:
     return RuleEffect(**defaults)
 
 
-async def _apply(effect: RuleEffect, event: HookEvent) -> list[str]:
-    context_parts: list[str] = []
+async def _apply(effect: RuleEffect, event: HookEvent) -> list[ContextPart]:
+    context_parts: list[ContextPart] = []
     await EffectsMixin()._apply_effect(
         effect, _ROW, {}, {"event": event}, {}, context_parts, [], {}
     )
@@ -121,7 +121,7 @@ async def test_skill_command_uses_materialized_script_from_event_cwd(tmp_path: P
     event = _event()
     event.cwd = str(event_cwd)
     event.project_id = "project-id"
-    context_parts: list[str] = []
+    context_parts: list[ContextPart] = []
 
     await mixin._apply_effect(
         _effect(
@@ -138,7 +138,7 @@ async def test_skill_command_uses_materialized_script_from_event_cwd(tmp_path: P
         {},
     )
 
-    assert context_parts == [f"{event_cwd}|Edit|{tmp_path / 'browser-cache'}"]
+    assert context_parts == [("rule:test-rule", f"{event_cwd}|Edit|{tmp_path / 'browser-cache'}")]
     resolve.assert_awaited_once_with("impeccable", project_id="project-id")
     assert not (event_cwd / ".agents").exists()
 
@@ -245,7 +245,7 @@ async def test_background_skill_command_uses_event_cwd_without_agents_tree(tmp_p
 class TestRunCommandInline:
     async def test_success_injects_context_from_stdin_payload(self) -> None:
         context_parts = await _apply(_effect(), _event())
-        assert context_parts == ["saw Edit"]
+        assert context_parts == [("rule:test-rule", "saw Edit")]
 
     async def test_success_without_inject_result_appends_nothing(self) -> None:
         context_parts = await _apply(_effect(inject_result=False), _event())
@@ -282,7 +282,7 @@ class TestRunCommandInline:
         assert await _apply(effect, _event()) == []
 
     async def test_missing_event_is_noop(self) -> None:
-        context_parts: list[str] = []
+        context_parts: list[ContextPart] = []
         await EffectsMixin()._apply_effect(_effect(), _ROW, {}, {}, {}, context_parts, [], {})
         assert context_parts == []
 
@@ -291,7 +291,7 @@ class TestRunCommandInline:
 class TestRunCommandBackground:
     async def test_background_schedules_task_and_injects_nothing_inline(self) -> None:
         effect = _effect(background=True)
-        context_parts: list[str] = []
+        context_parts: list[ContextPart] = []
         with patch(
             "gobby.workflows.engine.run_command_effects.create_background_task"
         ) as mock_create:
@@ -440,7 +440,7 @@ class TestRunCommandDeadlines:
             script=None,
         )
         execute = AsyncMock(return_value=result)
-        context_parts: list[str] = []
+        context_parts: list[ContextPart] = []
         with patch("gobby.workflows.engine.run_command_effects.execute_run_command", execute):
             await mixin._apply_effect(
                 _effect(
@@ -464,7 +464,7 @@ class TestRunCommandDeadlines:
         await_args = execute.await_args
         assert await_args is not None
         assert await_args.kwargs["timeout_seconds"] == pytest.approx(1.0)
-        assert context_parts == ["Impeccable finding"]
+        assert context_parts == [("rule:test-rule", "Impeccable finding")]
 
     async def test_exhausted_deadline_still_reserves_preparation_and_execution(self) -> None:
         mixin = EffectsMixin()

@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -102,8 +103,10 @@ async def test_collapsed_reason_keeps_directive(
     )
 
     assert collapsed.startswith(TERSE_REASON)
-    assert command in collapsed
-    assert collapsed.count("\n") == 1
+    assert collapsed.splitlines()[1:] == [
+        SKILL_BLOCK_ATOMICITY_NOTICE,
+        f"Recovery directive: Load the memory skill: {command}, then continue.",
+    ]
 
 
 @pytest.mark.asyncio

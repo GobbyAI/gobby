@@ -177,8 +177,8 @@ def test_planner_enables_surviving_plan_mode_write_guard() -> None:
 def test_retired_memory_review_gate_has_no_live_state_or_guidance() -> None:
     current_surfaces = [
         *WORKFLOWS_DIR.rglob("*.yaml"),
-        SKILLS_DIR / "live-session/SKILL.md",
-        SKILLS_DIR / "tasks/SKILL.md",
+        *(SKILLS_DIR / "gobby/references/sessions").rglob("*.md"),
+        *(SKILLS_DIR / "gobby/references/tasks").rglob("*.md"),
         DOCS_DIR / "memory.md",
     ]
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import psycopg
@@ -368,21 +368,6 @@ def allocate_section_budget(
     return _budget_result(sections, kept)
 
 
-def _split_contributors(text: str, contributor_sizes: Mapping[str, int]) -> list[str] | None:
-    parts: list[str] = []
-    cursor = 0
-    for size in contributor_sizes.values():
-        if size < 0:
-            return None
-        parts.append(text[cursor : cursor + size])
-        cursor += size
-        if cursor < len(text):
-            if text[cursor : cursor + 2] != "\n\n":
-                return None
-            cursor += 2
-    return parts if cursor == len(text) else None
-
-
 def _overflow_breadcrumb(omitted: list[str], result_id: str | None) -> str:
     names = ",".join(omitted)
     if result_id:
@@ -405,26 +390,22 @@ def _render_contributors(
 
 
 def _truncate_contributors(
-    text: str,
-    contributor_sizes: Mapping[str, int],
+    parts: list[tuple[str, str]],
     *,
     limit: int,
     result_id: str | None = None,
-) -> str | None:
-    parts = _split_contributors(text, contributor_sizes)
-    if not parts:
-        return None
-    kept = list(zip(contributor_sizes.keys(), parts, strict=True))
+) -> str:
+    kept = list(parts)
     omitted: list[str] = []
     while True:
         candidate = _render_contributors(kept, omitted, result_id)
         if len(candidate) <= limit:
             return candidate
         if not kept:
-            return candidate[:limit] if candidate else ""
+            return candidate[:limit]
         index = max(range(len(kept)), key=lambda i: len(kept[i][1]))
-        name, _part = kept.pop(index)
-        omitted.append(name)
+        label, _part = kept.pop(index)
+        omitted.append(label)
 
 
 def _persist_additional_context(
@@ -453,20 +434,23 @@ def _persist_additional_context(
 
 
 def truncate_additional_context(
-    text: str,
+    parts: Sequence[tuple[str, str]],
     *,
-    contributor_sizes: Mapping[str, int] | None = None,
     logger: logging.Logger | None = None,
     limit: int | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
     store: object | None = None,
 ) -> str:
-    """Fit additionalContext to the ship limit without prefix-slicing bodies.
+    """Join labeled contributors and fit them to the ship limit.
 
-    Drops whole contributors, largest first. Persists the original aggregate
-    when session and project exist and a store is provided.
+    ``parts`` is an ordered sequence of ``(label, text)`` pairs; empty texts are
+    skipped and labels may repeat. Over the limit, whole contributors are dropped
+    largest first (never prefix-sliced) and the breadcrumb names each omitted
+    label. Persists the full aggregate when session, project, and store exist.
     """
+    kept = [(label, part) for label, part in parts if part]
+    text = "\n\n".join(part for _, part in kept)
     ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
     if len(text) <= ship_limit:
         return text
@@ -475,7 +459,7 @@ def truncate_additional_context(
             "additionalContext truncated aggregate_len=%d limit=%d contributors=%s",
             len(text),
             ship_limit,
-            dict(contributor_sizes or {}),
+            [(label, len(part)) for label, part in kept],
         )
     result_id = _persist_additional_context(
         text,
@@ -483,14 +467,4 @@ def truncate_additional_context(
         project_id=project_id,
         session_id=session_id,
     )
-    if contributor_sizes:
-        truncated = _truncate_contributors(
-            text,
-            contributor_sizes,
-            limit=ship_limit,
-            result_id=result_id,
-        )
-        if truncated is not None:
-            return truncated
-    breadcrumb = _overflow_breadcrumb(["aggregate"], result_id)
-    return breadcrumb if len(breadcrumb) <= ship_limit else breadcrumb[:ship_limit]
+    return _truncate_contributors(kept, limit=ship_limit, result_id=result_id)

@@ -21,7 +21,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
     apply_in_place_compact_context_loss,
 )
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import ContextPart, HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.receipt_effects import (
@@ -96,12 +96,16 @@ def _component(
     text: str,
     *,
     message_ids: list[str] | None = None,
+    parts: list[ContextPart] | None = None,
 ) -> dict[str, Any]:
-    return {
+    component: dict[str, Any] = {
         "id": component_id,
         "text": text,
         "message_ids": message_ids or [],
     }
+    if parts is not None:
+        component["parts"] = [list(part) for part in parts]
+    return component
 
 
 def test_first_prompt_context_is_stashed_as_briefing(
@@ -125,7 +129,11 @@ def test_first_prompt_context_is_stashed_as_briefing(
 
     assert result.context is None
     assert variables.get_variables(session_id)["grok_pending_briefing"] == [
-        _component("turn:envelope-1", "startup briefing")
+        _component(
+            "turn:envelope-1",
+            "startup briefing",
+            parts=[("response.context", "startup briefing")],
+        )
     ]
 
 
@@ -367,7 +375,9 @@ def test_turn_context_bounds_and_briefing_deduplication(
     )
 
     stored = variables.get_variables(grok_session_id)
-    assert stored["grok_pending_briefing"] == [_component("turn:same-turn", "deduplicated")]
+    assert stored["grok_pending_briefing"] == [
+        _component("turn:same-turn", "deduplicated", parts=[("response.context", "deduplicated")])
+    ]
     turn_context = stored["grok_pending_turn_context"]
     assert len(turn_context) == 32
     assert all(component["id"] != "ctx:oversized:1" for component in turn_context)
@@ -421,7 +431,7 @@ def test_no_ups_first_pre_tool_stashes_and_flushes_startup_packet(
         envelope_id="first-tool",
         metadata={
             "_session_just_materialized": True,
-            "_startup_context": "startup packet",
+            "_startup_context": [("claimed_tasks", "startup packet")],
         },
     )
 
@@ -432,9 +442,15 @@ def test_no_ups_first_pre_tool_stashes_and_flushes_startup_packet(
     )
 
     assert result.decision == "allow"
-    assert result.context == "startup packet"
+    assert result.context_parts == [("claimed_tasks", "startup packet")]
     delivery = variables.get_variables(grok_session_id)["grok_pending_delivery"]
-    assert delivery["components"] == [_component(f"startup:{grok_session_id}", "startup packet")]
+    assert delivery["components"] == [
+        _component(
+            f"startup:{grok_session_id}",
+            "startup packet",
+            parts=[("claimed_tasks", "startup packet")],
+        )
+    ]
 
 
 def test_binding_session_start_stashes_briefing_without_passive_output(
@@ -456,7 +472,11 @@ def test_binding_session_start_stashes_briefing_without_passive_output(
     assert result.context is None
     assert result.system_message is None
     assert variables.get_variables(grok_session_id)["grok_pending_briefing"] == [
-        _component("session_start:binding", "binding context\n\nbinding role")
+        _component(
+            "session_start:binding",
+            "binding context\n\nbinding role",
+            parts=[("response.context", "binding context"), ("system_message", "binding role")],
+        )
     ]
 
 
@@ -638,16 +658,17 @@ def test_grok_post_compact_runs_session_start_compact_rules(
     def evaluate_rules(
         event: HookEvent,
         _blocking_deadline: object | None = None,
-    ) -> tuple[str | None, HookResponse | None]:
+    ) -> tuple[list[ContextPart] | None, HookResponse | None]:
         order.append("rules")
         stored = variables.get_variables(grok_session_id)
         response = asyncio.run(
             RuleEngine(session_manager.db).evaluate(event, grok_session_id, stored)
         )
         variables.merge_variables(grok_session_id, stored)
+        context = response.context_contributors() or None
         if response.decision != "allow":
-            return response.context, response
-        return response.context, None
+            return context, response
+        return context, None
 
     monkeypatch.setattr(manager_with_mocks, "_evaluate_workflow_rules", evaluate_rules)
     monkeypatch.setattr(

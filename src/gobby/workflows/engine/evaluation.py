@@ -6,7 +6,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import (
+    CONTEXT_SEPARATOR,
+    ContextPart,
+    HookEvent,
+    HookEventType,
+    HookResponse,
+)
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
     merge_staged_payloads,
@@ -56,7 +62,7 @@ class EvaluationContext:
     eval_context: dict[str, Any] | None
     is_before_tool: bool
     block_tool_name: str
-    context_parts: list[str] = field(default_factory=list)
+    context_parts: list[ContextPart] = field(default_factory=list)
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
     proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
     staged_variable_updates: dict[str, Any] = field(default_factory=dict)
@@ -183,7 +189,7 @@ class EvaluationMixin:
             variables: dict[str, Any],
             ctx: dict[str, Any],
             allowed_funcs: dict[str, Callable[..., Any]],
-            context_parts: list[str],
+            context_parts: list[ContextPart],
             mcp_calls: list[dict[str, Any]],
             staged_variable_updates: dict[str, Any],
         ) -> str | None: ...
@@ -635,7 +641,8 @@ class EvaluationMixin:
             gate = feedback_gates[0]
             block_reason = f"Rule enforced by Gobby: [{gate.rule_name}]\n{gate.reason}"
 
-        ctx_str = "\n\n".join(evaluation.context_parts) if evaluation.context_parts else None
+        context_parts = [(label, text) for label, text in evaluation.context_parts if text]
+        ctx_str = CONTEXT_SEPARATOR.join(text for _, text in context_parts) or None
         meta: dict[str, Any] = {"mcp_calls": evaluation.mcp_calls} if evaluation.mcp_calls else {}
         _apply_staged_effects_metadata(meta, evaluation)
 
@@ -645,9 +652,12 @@ class EvaluationMixin:
                     decision="block",
                     reason=override_reason or "",
                     context=ctx_str,
+                    context_parts=context_parts,
                     metadata=meta,
                 )
-            return HookResponse(decision="allow", context=ctx_str, metadata=meta)
+            return HookResponse(
+                decision="allow", context=ctx_str, context_parts=context_parts, metadata=meta
+            )
 
         # Propagate rewrite_input from variables to response
         rewrite_meta = evaluation.variables.pop("_rewrite_input", None)
@@ -701,12 +711,14 @@ class EvaluationMixin:
                 decision="block",
                 reason=override_reason or "",
                 context=ctx_str,
+                context_parts=context_parts,
                 **response_kwargs,
             )
         if override_decision == "allow":
             return HookResponse(
                 decision="allow",
                 context=ctx_str,
+                context_parts=context_parts,
                 **response_kwargs,
             )
         if block_reason:
@@ -720,10 +732,12 @@ class EvaluationMixin:
                 decision="block",
                 reason=block_reason,
                 context=ctx_str,
+                context_parts=context_parts,
                 **response_kwargs,
             )
         return HookResponse(
             decision="allow",
             context=ctx_str,
+            context_parts=context_parts,
             **response_kwargs,
         )
