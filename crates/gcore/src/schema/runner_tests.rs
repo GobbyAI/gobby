@@ -2398,3 +2398,103 @@ fn plan_reports_pending_without_verifying_identity() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn reply_waits_resolve_only_on_messages_committed_after_registration() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    assert_runtime_crud_privileges(&mut client, "coordination_waits")?;
+
+    let owner_user_id = Uuid::new_v4();
+    let machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let owner_session_id = Uuid::new_v4();
+    let waiter_session_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'reply-wait@example.invalid', 'Reply Wait', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'reply-wait', $2)",
+        &[&machine_id, &owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'reply-wait')",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) VALUES \
+             ($1, 'reply-owner', $3, 'test', $4), \
+             ($2, 'reply-waiter', $3, 'test', $4)",
+        &[
+            &owner_session_id,
+            &waiter_session_id,
+            &machine_id,
+            &project_id,
+        ],
+    )?;
+
+    // A message the owner already sent belongs to an earlier exchange.
+    client.execute(
+        "INSERT INTO inter_session_messages(id, from_session, to_session, content, sent_at) \
+         VALUES ($1, $2, $3, 'asked and answered', clock_timestamp())",
+        &[&Uuid::new_v4(), &owner_session_id, &waiter_session_id],
+    )?;
+
+    let wait_id = "reply-wait-1";
+    client.execute(
+        "INSERT INTO coordination_waits( \
+             id, waiter_session_id, owner_session_id, condition_key, reply, expires_at) \
+         VALUES ($1, $2, $3, '[null,null]', TRUE, clock_timestamp() + interval '900 seconds')",
+        &[&wait_id, &waiter_session_id, &owner_session_id],
+    )?;
+    client.execute("SELECT resolve_coordination_wait($1)", &[&wait_id])?;
+    let outcome: String = client
+        .query_one(
+            "SELECT outcome FROM coordination_waits WHERE id = $1",
+            &[&wait_id],
+        )?
+        .get(0);
+    assert_eq!(
+        outcome, "waiting",
+        "migration 441 resolves a reply wait on commit order, never on sent_at"
+    );
+
+    let reply_message_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO inter_session_messages(id, from_session, to_session, content, sent_at) \
+         VALUES ($1, $2, $3, 'use the staging DSN', clock_timestamp())",
+        &[&reply_message_id, &owner_session_id, &waiter_session_id],
+    )?;
+    let resolved = client.query_one(
+        "SELECT outcome, message_id FROM coordination_waits WHERE id = $1",
+        &[&wait_id],
+    )?;
+    let outcome: String = resolved.get(0);
+    let message_id: String = resolved.get(1);
+    assert_eq!(
+        outcome, "replied",
+        "the next owner message answers the wait"
+    );
+    assert_eq!(message_id, reply_message_id.to_string());
+
+    let both_conditions = client.execute(
+        "INSERT INTO coordination_waits( \
+             id, waiter_session_id, owner_session_id, condition_key, coordination_key, reply, \
+             expires_at) \
+         VALUES ('reply-wait-2', $1, $2, '[\"restart-1\",null]', 'restart-1', TRUE, \
+                 clock_timestamp() + interval '900 seconds')",
+        &[&waiter_session_id, &owner_session_id],
+    );
+    assert!(
+        both_conditions.is_err(),
+        "migration 441 keeps exactly one condition per wait"
+    );
+    Ok(())
+}

@@ -19,7 +19,7 @@ from tests.agents.test_lifecycle_monitor_watchdog_idle_recovery import (
 
 
 @pytest.mark.parametrize(
-    "ending", ["release", "cancel", "expiry", "orphan", "owner_ended", "lookup_failure"]
+    "ending", ["release", "reply", "cancel", "expiry", "orphan", "owner_ended", "lookup_failure"]
 )
 @pytest.mark.parametrize("pane", ["❯\n", "❯ uv run pytest tests/foo.py\n"])
 async def test_coordination_hold_resets_exhausted_idle_recovery_then_resumes(
@@ -50,7 +50,10 @@ async def test_coordination_hold_resets_exhausted_idle_recovery_then_resumes(
         assert await monitor.check_idle_agents() == 1
         assert handler._recovery._completed_turn_recovery[run.id].successful_reprompts == 1
         writes_before_hold = list(_runtime_of(monitor).write_log)
-        row = manager.register(run.child_session_id, run.parent_session_id, coordination_key="hold")
+        condition: dict[str, Any] = (
+            {"reply": True} if ending == "reply" else {"coordination_key": "hold"}
+        )
+        row = manager.register(run.child_session_id, run.parent_session_id, **condition)
         _write_codex_lifecycle_transcript(transcript, age_seconds=121)
         for _ in range(2):
             assert await monitor.check_idle_agents() == 0
@@ -67,6 +70,12 @@ async def test_coordination_hold_resets_exhausted_idle_recovery_then_resumes(
                 content="Released",
                 message_type="coordination_release",
                 metadata_json='{"coordination_key": "hold"}',
+            )
+        elif ending == "reply":
+            InterSessionMessageManager(temp_db).create_message(
+                from_session=run.parent_session_id,
+                to_session=run.child_session_id,
+                content="Use the staging DSN",
             )
         elif ending == "cancel":
             manager.cancel(row["id"], run.child_session_id)

@@ -1,4 +1,4 @@
-"""Durable, idempotent subscriptions to coordination release or owner status."""
+"""Durable, idempotent subscriptions to a release, an owner status, or a reply."""
 
 from __future__ import annotations
 
@@ -39,10 +39,11 @@ class CoordinationWaitManager:
         *,
         coordination_key: str | None = None,
         statuses: list[str] | None = None,
+        reply: bool = False,
         timeout: float = 900,
     ) -> dict[str, Any]:
-        if (coordination_key is None) == (statuses is None):
-            raise ValueError("Provide exactly one of coordination_key or statuses")
+        if (coordination_key is not None) + (statuses is not None) + bool(reply) != 1:
+            raise ValueError("Provide exactly one of coordination_key, statuses, or reply")
         if coordination_key is not None and (
             not coordination_key.strip() or len(coordination_key) > 256
         ):
@@ -55,6 +56,7 @@ class CoordinationWaitManager:
             raise ValueError("timeout must be greater than zero and at most 3600 seconds")
         if waiter_session_id == owner_session_id:
             raise ValueError("The coordination owner must be another session")
+        # A reply wait names neither a key nor statuses, so [null,null] is its identity.
         condition_key = json.dumps([coordination_key, statuses], separators=(",", ":"))
         with self.db.transaction() as conn:
             # Fence committed message/status producers before checking/registering.
@@ -82,7 +84,7 @@ class CoordinationWaitManager:
                 conn.execute(
                     "INSERT INTO coordination_waits "
                     "(id, waiter_session_id, owner_session_id, condition_key, coordination_key, "
-                    "statuses, expires_at) VALUES (%s, %s, %s, %s, %s, %s, "
+                    "statuses, reply, expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s, "
                     "clock_timestamp() + %s * interval '1 second')",
                     (
                         wait_id,
@@ -91,6 +93,7 @@ class CoordinationWaitManager:
                         condition_key,
                         coordination_key,
                         statuses,
+                        bool(reply),
                         timeout,
                     ),
                 )

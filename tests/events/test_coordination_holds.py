@@ -27,14 +27,24 @@ pytestmark = pytest.mark.integration
 harness = coordination_fixture
 
 
+def start_hold(h: CoordinationHarness, ending: str) -> dict[str, Any]:
+    """Reply endings hold for an ordinary parent message; the rest hold on a key."""
+    if ending == "status":
+        return h.wait(statuses=["paused"])
+    return h.wait(reply=True) if ending.startswith("reply") else h.wait()
+
+
 def end_hold(h: CoordinationHarness, wait_id: str, ending: str) -> str:
     if ending == "release":
         h.release()
         return "released"
+    if ending == "reply":
+        h.reply()
+        return "replied"
     if ending == "cancel":
         h.manager.cancel(wait_id, h.waiter)
         return "cancelled"
-    if ending == "expiry":
+    if ending in ("expiry", "reply_expiry"):
         h.db.execute(
             "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '1 second' "
             "WHERE id = %s",
@@ -52,13 +62,14 @@ def end_hold(h: CoordinationHarness, wait_id: str, ending: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "ending", ["release", "cancel", "expiry", "orphan", "owner_ended", "status"]
+    "ending",
+    ["release", "reply", "reply_expiry", "cancel", "expiry", "orphan", "owner_ended", "status"],
 )
 async def test_hold_ends_protection_before_delivery_and_delivers_once(
     harness: CoordinationHarness,
     ending: str,
 ) -> None:
-    row = harness.wait(statuses=["paused"]) if ending == "status" else harness.wait()
+    row = start_hold(harness, ending)
     # A new manager has no process-local registration state, as after restart.
     recovered = CoordinationWaitManager(harness.db)
     assert recovered.has_active_wait(harness.waiter)
@@ -84,12 +95,14 @@ async def test_hold_ends_protection_before_delivery_and_delivers_once(
         await service.stop()
 
 
-@pytest.mark.parametrize("ending", ["release", "cancel", "expiry", "orphan", "owner_ended"])
+@pytest.mark.parametrize(
+    "ending", ["release", "reply", "reply_expiry", "cancel", "expiry", "orphan", "owner_ended"]
+)
 async def test_declared_hold_survives_stuck_scans_then_cleanup_resumes(
     harness: CoordinationHarness,
     ending: str,
 ) -> None:
-    row = harness.wait()
+    row = start_hold(harness, ending)
     monitor, run, detector = _make_progress_stagnation_monitor(
         agent_run_manager=LocalAgentRunManager(harness.db),
         temp_db=harness.db,
