@@ -412,16 +412,12 @@ _LONG_SUMMARY = (
 
 
 @pytest.mark.asyncio
-async def test_long_summary_is_embedded_verbatim_not_yake_compressed() -> None:
+async def test_long_summary_reaches_search_whole() -> None:
     """#21402: the summary reaches the vector leg whole, so identifiers survive.
 
-    ``search_memories`` runs YAKE over ``query`` whenever ``embed_text`` is absent.
-    YAKE ranks by term repetition, so on a changes_summary it keeps the boilerplate
-    and discards the identifiers a memory records. Passing ``embed_text`` is what
-    skips that compression.
+    The search service embeds ``query`` verbatim, so the tool must hand it the
+    summary untruncated and must not substitute a second embedding text.
     """
-    from gobby.search.keywords import extract_keywords
-
     assert len(_LONG_SUMMARY) > 2000
 
     registry, memory_manager, _task_manager, _session_manager = _registry(
@@ -446,22 +442,12 @@ async def test_long_summary_is_embedded_verbatim_not_yake_compressed() -> None:
 
     assert result["success"] is True
     search_kwargs = memory_manager.search_memories.await_args.kwargs
-    embedded = search_kwargs["embed_text"]
-
     # The vector leg receives the whole query, not a compressed stand-in.
-    assert embedded == search_kwargs["query"]
-    identifiers = ("adapter_timeout", "workflow.timeout", "validate_hook_timeout_order")
-    for identifier in identifiers:
-        assert identifier in embedded
-
-    # Guard the reason: without embed_text the service would embed YAKE's output,
-    # which drops every one of those identifiers even though each appears verbatim
-    # in the summary and in the memory the change invalidates.
-    compressed = extract_keywords(search_kwargs["query"])
-    assert compressed is not None
-    for identifier in identifiers:
+    assert not search_kwargs.get("embed_text")
+    embedded = search_kwargs["query"]
+    for identifier in ("adapter_timeout", "workflow.timeout", "validate_hook_timeout_order"):
         assert identifier in _LADDER_MEMORY.content
-        assert identifier not in compressed
+        assert identifier in embedded
 
 
 @pytest.mark.asyncio
@@ -469,9 +455,9 @@ async def test_review_surfaces_the_invalidated_memory_and_not_an_unrelated_one()
     """#21402: recall must improve without degrading into returning noise."""
 
     def _search(**kwargs: Any) -> list[SimpleNamespace]:
-        # Stand in for the vector leg: a memory is a candidate when the text the
-        # caller hands the embedder shares its distinguishing identifiers.
-        embedded = kwargs["embed_text"] or ""
+        # Stand in for the vector leg: a memory is a candidate when the query, which
+        # the search service embeds verbatim, shares its distinguishing identifiers.
+        embedded = kwargs["query"] or ""
         hits = []
         if all(
             identifier in embedded

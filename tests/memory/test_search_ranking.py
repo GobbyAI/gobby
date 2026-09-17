@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -807,9 +805,8 @@ async def test_search_with_graph_qdrant_timeout_is_info_soft_miss(
 # 2.1 — split query representations across the search legs
 # ---------------------------------------------------------------------------
 
-# A deliberately conversational prompt: long enough for YAKE to fire and noisy
-# enough to clear the extractor's noise threshold, so the YAKE-derived embedding
-# text is provably different from the raw string.
+# A deliberately conversational prompt: the kind of text a keyword extractor would
+# rewrite, so a test that sees it embedded unchanged proves nothing rewrote it.
 _NOISY_PROMPT = "hey could you maybe take a look at the webhook handler thing please"
 
 
@@ -843,19 +840,16 @@ def _recorded_search_service(
 
 
 @pytest.mark.asyncio
-async def test_embed_text_absent_preserves_yake_path() -> None:
-    """2.1.2: no supplied `embed_text` leaves the YAKE-derived embedding untouched.
+async def test_query_is_embedded_verbatim() -> None:
+    """No supplied `embed_text` embeds the query exactly as written (#22489).
 
-    Three spellings mean "nothing supplied" and must all keep the pre-2.1 behavior:
+    Three spellings mean "nothing supplied" and must all embed the query:
     omitting the keyword, passing it as ``None``, and passing an empty string. The
-    empty string matters because 2.2's query builder can legitimately produce one,
-    and embedding it verbatim would hand the vector leg a meaningless vector while
-    silently discarding the query the caller actually had.
+    empty string matters because a caller's query builder can legitimately produce
+    one, and embedding it verbatim would hand the vector leg a meaningless vector
+    while silently discarding the query the caller actually had.
     """
-    from gobby.search.keywords import extract_keywords
-
-    expected = extract_keywords(_NOISY_PROMPT) or _NOISY_PROMPT
-    assert expected != _NOISY_PROMPT, "fixture must be noisy enough for YAKE to rewrite"
+    expected = _NOISY_PROMPT
 
     embedded: list[tuple[str, bool]] = []
     keyword_queries: list[str] = []
@@ -871,41 +865,8 @@ async def test_embed_text_absent_preserves_yake_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_yake_extraction_runs_off_the_event_loop_thread() -> None:
-    """#20868: YAKE is CPU-bound, so `search()` must run it in a worker thread.
-
-    Records the thread identity inside the extraction and asserts it differs
-    from the event loop thread, while the extraction result still drives the
-    embedding exactly as before the offload.
-    """
-    import gobby.memory.services.search as search_module
-    from gobby.search.keywords import extract_keywords as real_extract
-
-    extraction_threads: list[int] = []
-
-    def recording_extract(text: str) -> str | None:
-        extraction_threads.append(threading.get_ident())
-        return real_extract(text)
-
-    embedded: list[tuple[str, bool]] = []
-    keyword_queries: list[str] = []
-    service = _recorded_search_service(embedded=embedded, keyword_queries=keyword_queries)
-
-    with patch.object(search_module, "extract_keywords", recording_extract):
-        await service.search(_NOISY_PROMPT, limit=1)
-
-    assert extraction_threads, "keyword extraction never ran"
-    assert extraction_threads[0] != threading.get_ident(), (
-        "YAKE extraction ran on the event loop thread"
-    )
-    # Offloading must not change what the vector leg embeds.
-    assert embedded == [(real_extract(_NOISY_PROMPT), True)]
-    assert keyword_queries == [_NOISY_PROMPT]
-
-
-@pytest.mark.asyncio
-async def test_embed_text_present_is_embedded_verbatim() -> None:
-    """2.1.1: a supplied `embed_text` is embedded as-is, with YAKE skipped."""
+async def test_embed_text_overrides_query_for_embedding() -> None:
+    """A supplied `embed_text` is embedded as-is, in place of the query."""
     embedded: list[tuple[str, bool]] = []
     keyword_queries: list[str] = []
     service = _recorded_search_service(embedded=embedded, keyword_queries=keyword_queries)
@@ -1022,11 +983,7 @@ async def test_qdrant_keyword_and_fallback_paths_log_embed_text() -> None:
 
 @pytest.mark.asyncio
 async def test_search_without_embed_text_logs_the_query_alone() -> None:
-    """2.4.5: an unenriched caller logs exactly what it logged before 2.4.
-
-    The YAKE-derived embedding text stays out of the log: it is a derived detail of
-    the vector leg, not a second representation the caller chose.
-    """
+    """2.4.5: an unenriched caller logs one representation, the query it sent."""
     snapshots: list[SearchDebugSnapshot] = []
     service = _service(
         ["m1"],

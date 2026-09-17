@@ -97,8 +97,8 @@ def _cluster_axis(cluster: int) -> int:
 
 
 def _query_text(cluster: int) -> str:
-    # Single token so extract_keywords() returns None and the text passes through to
-    # embed_fn unchanged; the "hubaxis<c>" marker is what embed_fn keys on.
+    # The query reaches embed_fn unchanged; the "hubaxis<c>" marker is what embed_fn
+    # keys on.
     return f"hubaxis{cluster}"
 
 

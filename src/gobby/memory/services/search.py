@@ -18,10 +18,6 @@ from gobby.memory.services._search_paths import search_qdrant_keyword, search_wi
 from gobby.memory.services._search_results import build_results
 from gobby.memory.services._search_rrf import rrf_merge, rrf_scores
 from gobby.memory.vectorstore import memory_scope_filter
-
-# Module-level import so the daemon warms YAKE at startup instead of paying the
-# module load inside the first post-restart search request (#20868).
-from gobby.search.keywords import extract_keywords
 from gobby.storage.memories import (
     ALL_MEMORIES,
     LocalMemoryManager,
@@ -135,10 +131,10 @@ class SearchService:
         """Retrieve memories via VectorStore + optional FalkorDB graph search.
 
         The vector and graph legs run on the embedding; the BM25 leg runs on
-        ``query``. ``embed_text`` splits those representations: when supplied it
-        is embedded verbatim (YAKE is skipped) while ``query`` stays the term
-        bag the keyword leg needs. Omitting it — or passing ``None`` or an empty
-        string — keeps the YAKE-derived embedding.
+        ``query``. Both are taken verbatim. ``embed_text`` splits those
+        representations: when supplied it is embedded in place of ``query``,
+        which stays the term bag the keyword leg needs. Omitting it — or passing
+        ``None`` or an empty string — embeds ``query`` itself.
         """
         if memory_type is not None:
             memory_type = validate_memory_type(memory_type)
@@ -150,16 +146,10 @@ class SearchService:
                 else MemoryScope.project_only(project_id)
             )
         if query and self._vector_store and self._embed_fn:
-            if embed_text:
-                embed_query = embed_text
-            else:
-                # An empty `embed_text` means the caller had nothing to supply, so
-                # fall back rather than embed "" and hand the vector leg a
-                # meaningless vector while discarding the query we do have.
-                # YAKE is CPU-bound NLP, so it runs off the event loop thread (#20868).
-                extracted = await asyncio.to_thread(extract_keywords, query)
-                embed_query = extracted or query
-            query_embedding = await self._embed_fn(embed_query, is_query=True)
+            # An empty `embed_text` means the caller had nothing to supply, so
+            # fall back rather than embed "" and hand the vector leg a
+            # meaningless vector while discarding the query we do have.
+            query_embedding = await self._embed_fn(embed_text or query, is_query=True)
             half_life = self._recall_constants.half_life_days
             effective_min_score = min_score if min_score is not None else 0.0
             filters = memory_scope_filter(scope, memory_type)
