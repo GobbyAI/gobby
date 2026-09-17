@@ -222,20 +222,203 @@ def test_oversized_script_is_omitted_without_exact_command_credit() -> None:
 
 
 @pytest.mark.parametrize("closed", [False, True])
-def test_concise_close_response_omits_bulk_review_evidence(closed: bool) -> None:
-    evaluation = CloseEvaluation("#42")
+@pytest.mark.parametrize("detail", ["concise", "diagnostic"])
+def test_close_response_omits_bulk_review_evidence(closed: bool, detail: str) -> None:
+    evaluation = CloseEvaluation("#42", response_detail=detail)
     evaluation.extra = {
         "validation_commands": {"latest_runs": ["x" * 100_000]},
         "stable_facts": {"attributed_paths": ["a.py"]},
         "criteria_review_duration_ms": 3,
     }
     response = evaluation.response(preview=not closed, closed=closed)
+    # validation_commands and stable_facts are internal carriers for the validator
+    # launch and the persisted review; the checklist owns them in responses.
     assert "validation_commands" not in response
     assert "stable_facts" not in response
     assert response["criteria_review_duration_ms"] == 3
     assert len(json.dumps(response)) < 1_000
-    evaluation.response_detail = "diagnostic"
-    assert (
-        evaluation.response(preview=True)["validation_commands"]
-        == evaluation.extra["validation_commands"]
+
+
+def _stale_criterion_evidence(
+    command_count: int,
+    forms_per_command: int,
+) -> tuple[TranscriptEvidence, str]:
+    """Many criterion commands, each with many stale observed forms."""
+    criteria = " ".join(
+        f"`uv run pytest tests/close/bounds_{index}.py -q` passes."
+        for index in range(command_count)
     )
+    runs: list[TranscriptValidationRun] = []
+    order = 0
+    for index in range(command_count):
+        for repeat in range(forms_per_command):
+            order += 1
+            runs.append(
+                _run(
+                    f"GOBBY_TEST_PROTECT={repeat} uv run pytest tests/close/bounds_{index}.py -q",
+                    order,
+                )
+            )
+    edit = TranscriptEdit(
+        session_id="linked-session",
+        source="codex",
+        path="src/gobby/tasks/close_checklist.py",
+        timestamp=datetime(2026, 9, 5, tzinfo=UTC) + timedelta(seconds=order + 1),
+        order=order + 1,
+        tool_name="apply_patch",
+    )
+    return (
+        TranscriptEvidence(
+            validation_runs=tuple(runs), edits=(edit,), sessions=("linked-session",)
+        ),
+        criteria,
+    )
+
+
+def test_criterion_command_sections_share_the_review_budget() -> None:
+    evidence, criteria = _stale_criterion_evidence(command_count=16, forms_per_command=40)
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=criteria,
+    )
+    assert gate.status == "failed"
+    details = gate.details
+    gaps = details["criterion_command_gaps"]
+    # Gap entries are compact references; full records live in criterion_commands.
+    assert len(gaps) == 16
+    assert all(set(gap) == {"command", "core_command", "status"} for gap in gaps)
+    records = details["criterion_commands"]
+    assert records
+    assert all(len(record.get("observed_forms", ())) <= 16 for record in records)
+    assert any(record.get("omitted_observed_form_count") for record in records)
+    assert details["omitted_criterion_command_count"] >= 1
+    assert len(gate.message) < 2_500
+    assert "omitted" in gate.message
+    assert len(json.dumps(details)) < 60_000
+
+
+def test_each_failed_gate_contributes_one_prefixed_blocker_sentence() -> None:
+    evaluation = CloseEvaluation("#7", response_detail="concise")
+    evaluation.collect_failure(
+        9,
+        "uncommitted_task_edits",
+        "uncommitted_task_edits",
+        "Task-attributed files are dirty. Commit them and retry.",
+    )
+    evaluation.fail(
+        10,
+        "validation_commands",
+        "validation_command_required",
+        "Run `uv run pytest tests/close_evidence_bounds.py -q` clean after the final edit.",
+        action="Run the focused bounds test clean after the final edit.",
+    )
+    response = evaluation.response(preview=True)
+    assert response["message"] == "Task-attributed files are dirty. Commit them and retry."
+    # Only the explicit action is carried; no field repeats another field's text.
+    assert response["action"] == "Run the focused bounds test clean after the final edit."
+    assert response["blocking_reasons"] == [
+        "uncommitted_task_edits: Task-attributed files are dirty. Commit them and retry.",
+        "validation_commands: Run `uv run pytest tests/close_evidence_bounds.py -q` clean "
+        "after the final edit.",
+    ]
+    assert response["required_actions"] == [
+        "Run the focused bounds test clean after the final edit."
+    ]
+    assert response["message"] not in response["blocking_reasons"]
+    assert not set(response["required_actions"]) & set(response["blocking_reasons"])
+
+
+def test_diagnostic_close_payload_carries_each_section_once_within_bound() -> None:
+    """The 65,536-character close-payload contract survives many evidence sections."""
+    from dataclasses import replace as dataclass_replace
+
+    from gobby.tasks.agentic_close_review import build_agentic_review_prompt
+    from gobby.tasks.close_checklist import CloseGateResult
+
+    evidence, criteria = _stale_criterion_evidence(command_count=16, forms_per_command=40)
+    command_gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=criteria,
+    )
+    scope_details = {
+        "declared_scope": ["src/gobby/tasks/"],
+        "actual_paths": [f"src/gobby/tasks/module_{index}.py" for index in range(40)],
+        "out_of_scope_paths": [f"src/gobby/tasks/module_{index}.py" for index in range(5)],
+        "advisory_scope": ["docs/"],
+        "advisory_scope_drift": ["docs/notes.md"],
+    }
+    evaluation = CloseEvaluation("#22372", response_detail="diagnostic")
+    evaluation.commit_shas = ["a" * 40, "b" * 40]
+    evaluation.edited_paths = set(scope_details["actual_paths"])
+    evaluation.collect_failure(
+        8,
+        "task_scope",
+        "task_scope_mismatch",
+        "A scope_justification is required for out-of-scope paths.",
+        action=(
+            "Pass a specific scope_justification between 20 and 1000 characters "
+            "that explains why the listed paths belong in this task."
+        ),
+        details=scope_details,
+        extra=scope_details,
+    )
+    evaluation.extra["validation_commands"] = command_gate.details
+    evaluation.record_gate_failure(
+        dataclass_replace(command_gate, item=10),
+        error="validation_command_required",
+    )
+    evaluation.extra["stable_facts"] = {
+        "commit_count": 2,
+        "commit_shas": list(evaluation.commit_shas),
+        "had_attributed_edits": True,
+        "attributed_paths": sorted(evaluation.edited_paths),
+    }
+    response = evaluation.response(preview=True)
+    serialized = json.dumps(response)
+    assert len(serialized) < 65_536
+    # The scope inventory, run record, and stable facts live in exactly one
+    # section each: the checklist gate details, never also as top-level fields.
+    assert not (
+        {
+            "declared_scope",
+            "actual_paths",
+            "out_of_scope_paths",
+            "advisory_scope",
+            "advisory_scope_drift",
+            "validation_commands",
+            "stable_facts",
+        }
+        & set(response)
+    )
+    checklist = {entry["name"]: entry for entry in response["checklist"]}
+    assert checklist["task_scope"]["details"] == scope_details
+    assert checklist["validation_commands"]["details"] == command_gate.details
+    assert checklist["validation_commands"]["item"] == 10
+    # One concise sentence per blocker, gate-prefixed in the blocker list.
+    assert response["message"] == "A scope_justification is required for out-of-scope paths."
+    assert [reason.split(": ", 1)[0] for reason in response["blocking_reasons"]] == [
+        "task_scope",
+        "validation_commands",
+    ]
+    assert response["message"] not in response["blocking_reasons"]
+    assert response["required_actions"] == [
+        "Pass a specific scope_justification between 20 and 1000 characters "
+        "that explains why the listed paths belong in this task."
+    ]
+    # The agentic review launch payload serializes the same bounded record once.
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=evaluation.commit_shas,
+        changes_summary="Deduplicated the close payload sections.",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        validation_commands=command_gate.details,
+    )
+    assert prompt.count("validation_commands=") == 1
+    assert len(prompt) < 65_536
+    assert "criterion_command_gaps entries are compact references" in prompt

@@ -337,6 +337,40 @@ def test_external_pending_payload_names_coordinator_owned_criteria() -> None:
     ]
 
 
+def test_terminal_payload_references_blockers_without_recopying_diagnostics() -> None:
+    """The wake contract carries blockers once, never the verdict or bulk sections."""
+    blocker = "Criterion 1 is unmet."
+    payload = build_terminal_review_payload(
+        _review(status="running"),
+        status="invalid",
+        close_result={
+            "verdict": {"criteria": [{"index": 1, "satisfied": False}]},
+            "checklist": [{"item": 10, "details": {"criterion_commands": ["x" * 50_000]}}],
+            "transcript_evidence": {"validation_run_count": 640},
+            "validation_commands": {"latest_runs": ["y" * 50_000]},
+            "stable_facts": {"commit_shas": ["abc"]},
+            "commit_shas": ["abc"],
+            "message": blocker,
+            "blocking_reasons": [blocker],
+            "required_actions": [blocker],
+        },
+        message=blocker,
+    )
+
+    assert payload["blocking_reasons"] == [blocker]
+    # A required_actions copy of the blocker list is dropped; the generic
+    # remediation default replaces it.
+    assert payload["required_actions"] == [
+        "Address every blocking reason, rerun focused validation, commit fixes, and call "
+        "close_task again."
+    ]
+    for key in ("verdict", "checklist", "transcript_evidence", "validation_commands",
+                "stable_facts"):
+        assert key not in payload
+    assert payload["outstanding_finding_count"] == 1
+    assert len(json.dumps(payload)) < 4_000
+
+
 def _review(*, status: str) -> TaskCloseReview:
     now = datetime(2026, 8, 22, tzinfo=UTC)
     return TaskCloseReview(
