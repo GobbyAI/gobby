@@ -8,11 +8,11 @@ mod live_attach;
 mod live_loop;
 mod live_workspace;
 mod pane;
-mod persistence;
 pub mod project_tabs;
 pub mod run_loop;
 pub mod sidebar_model;
 pub mod viewer_state;
+mod window_state;
 pub mod workspace_ops;
 
 pub use attach::AttachState;
@@ -35,7 +35,6 @@ pub use live_loop::projects::{
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
-pub use persistence::{apply_sidebar_snapshot, sidebar_snapshot};
 pub use viewer_state::{PaneInterner, ViewerState};
 pub use workspace_ops::WorkspaceModel;
 
@@ -48,7 +47,7 @@ use crate::frame_source::{
     AttachLocator, FrameDelivery, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource,
     Transport,
 };
-use crate::persist::WorkspaceSnapshot;
+use crate::startup::AttachTarget;
 use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use serde_json::{json, Value};
 use sidebar_model::{PendingSidebar, SidebarModel, SidebarStamps};
@@ -86,10 +85,14 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     focus: Option<PaneId>,
     next_pane: u32,
     roster_ids: Vec<String>,
-    /// Tab order from the saved snapshot; the first roster page follows it.
-    saved_tab_order: Vec<String>,
-    /// The snapshot `restore_project` read; the loop rebuilds the tabs from it.
-    saved_snapshot: Option<WorkspaceSnapshot>,
+    /// Pane order the window set (`set_tab_order`); the next roster page
+    /// follows it. Per-window memory, never persisted.
+    pane_order: Vec<String>,
+    /// The workspace this window attaches to (`--node`/`--workspace`).
+    attach: AttachTarget,
+    /// The window runs inside a gclient pane and opens no terminal of its
+    /// own.
+    in_pane: bool,
     attention: AttentionState,
     /// This machine's id, the default home for an agent without one.
     local_machine: String,
@@ -178,8 +181,9 @@ impl Workspace {
             focus: None,
             next_pane: 1,
             roster_ids: Vec::new(),
-            saved_tab_order: Vec::new(),
-            saved_snapshot: None,
+            pane_order: Vec::new(),
+            attach: AttachTarget::default(),
+            in_pane: false,
             attention: AttentionState::empty(),
             local_machine: String::new(),
             sidebar_rows: SidebarRows::default(),

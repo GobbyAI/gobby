@@ -6,13 +6,29 @@ use super::*;
 use crate::daemon::WorkspaceEvent;
 
 impl Workspace<LiveDaemon> {
-    /// Attach the local node's default workspace and take its snapshot as
-    /// the model. Every reconnect re-attaches: the reader forgets the
+    /// Attach the window's workspace (`attach_target`; absent fields leave
+    /// the daemon to pick the local node's `default`) and take its snapshot
+    /// as the model. Every reconnect re-attaches: the reader forgets the
     /// attachment with the socket, and the daemon may have restarted.
-    pub(super) async fn attach_live_workspace(&mut self) -> Result<(), DaemonError> {
-        let snapshot = self.daemon.attach_workspace(None, None).await?;
+    pub async fn attach_live_workspace(&mut self) -> Result<(), DaemonError> {
+        let snapshot = self
+            .daemon
+            .attach_workspace(
+                self.attach.node.as_deref(),
+                self.attach.workspace.as_deref(),
+            )
+            .await?;
         self.apply_workspace_snapshot(snapshot);
         Ok(())
+    }
+
+    /// Point the next attach at `target`; startup sets it from the flags.
+    pub fn set_attach_target(&mut self, target: AttachTarget) {
+        self.attach = target;
+    }
+
+    pub fn attach_target(&self) -> &AttachTarget {
+        &self.attach
     }
 
     /// Apply a `workspace_event` and note where a pending placement landed;

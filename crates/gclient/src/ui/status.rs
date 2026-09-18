@@ -446,7 +446,7 @@ mod tests {
         );
 
         // Under an outer tmux the shifted prefix is named instead.
-        chrome.nested_tmux = true;
+        chrome.nested = true;
         chrome.keymap = Keymap::defaults(default_prefix(true));
         terminal
             .draw(|frame| {

@@ -17,16 +17,15 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::sidebar_model::{AgentEntry, ProjectEntry, SidebarModel, WorktreeEntry};
 use gobby_client::app::{
-    apply_rename, apply_sidebar_snapshot, rename_project, route_modal_key, route_mouse,
-    sidebar_snapshot, ContextMenuKind, ModalOutcome, MouseGesture, MouseOutcome, Pane, PaneId,
-    Workspace, MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
+    apply_rename, rename_project, route_modal_key, route_mouse, ContextMenuKind, ModalOutcome,
+    MouseGesture, MouseOutcome, Pane, PaneId, Workspace, MOUSE_SCROLL_LINES,
+    PROJECT_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{
     Attention, Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow,
 };
 use gobby_client::key_input::KeyInput;
-use gobby_client::persist::ClientSession;
-use gobby_client::ui::chrome::{Chrome, Mode, RowState, SidebarState, WorkspaceView};
+use gobby_client::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::dialogs::{Dialog, RenameKind};
 use gobby_client::ui::hit::SidebarSection;
@@ -1940,8 +1939,8 @@ mod project_rows_focus_toggle_and_reorder {
     #[test]
     fn group_toggle_and_card_drag_persist_in_chrome_state() {
         // The group toggle folds and unfolds a card's worktree rows; a card
-        // dragged onto another takes its place; the order and the projects
-        // filter are sidebar state that `session.json` keeps.
+        // dragged onto another takes its place; the order is sidebar state
+        // that `prefs.toml` keeps, the projects filter is per-window.
         let (ws, mut chrome, area) = project_board();
         let (toggle_id, toggle) = chrome.view.group_toggle_hit_areas[0].clone();
         assert_eq!(toggle_id, "proj-alpha");
@@ -1996,23 +1995,23 @@ mod project_rows_focus_toggle_and_reorder {
             drawn_ids(&chrome.view.project_hit_areas),
             ["proj-beta", "proj-alpha"]
         );
-        let session = ClientSession {
-            focused_project: Some("proj-alpha".to_string()),
-            sidebar: sidebar_snapshot(&chrome.sidebar),
-        };
-        let saved = serde_json::to_string(&session).expect("serialise session");
-        let loaded: ClientSession = serde_json::from_str(&saved).expect("parse session");
-        assert_eq!(loaded, session);
-        let mut restored = SidebarState::default();
-        apply_sidebar_snapshot(&mut restored, &loaded.sidebar);
-        assert_eq!(restored.project_order, ["proj-beta", "proj-alpha"]);
-        assert!(restored.all_projects, "the projects filter rides along");
-        assert!(!restored.all_sessions);
+        // The drop mirrors the order into the prefs, which seed the next
+        // window; the projects filter is per-window and stays behind.
+        assert_eq!(chrome.prefs.project_order, ["proj-beta", "proj-alpha"]);
+        let mut restored = Chrome::dark();
+        restored.apply_prefs(chrome.prefs.clone());
+        assert_eq!(restored.sidebar.project_order, ["proj-beta", "proj-alpha"]);
+        assert!(chrome.sidebar.all_projects);
+        assert!(
+            !restored.sidebar.all_projects,
+            "the projects filter is per-window"
+        );
+        assert!(!restored.sidebar.all_sessions);
     }
 
     /// 3.3: renaming a project labels its card for this client only; the
-    /// label rides `session.json` with the rest of the sidebar state, and an
-    /// empty commit clears it back to the daemon's name.
+    /// label rides `prefs.toml` with the rest of the sidebar preferences,
+    /// and an empty commit clears it back to the daemon's name.
     #[test]
     fn project_rename_labels_the_card_and_survives_the_session() {
         let (ws, mut chrome, _) = project_board();
@@ -2057,15 +2056,15 @@ mod project_rows_focus_toggle_and_reorder {
         assert_eq!(rows[0].label, "alpha prime");
         assert_eq!(rows[2].label, "beta", "other cards keep the daemon name");
 
-        let session = ClientSession {
-            focused_project: Some("proj-alpha".to_string()),
-            sidebar: sidebar_snapshot(&chrome.sidebar),
-        };
-        let saved = serde_json::to_string(&session).expect("serialise session");
-        let loaded: ClientSession = serde_json::from_str(&saved).expect("parse session");
-        let mut restored = SidebarState::default();
-        apply_sidebar_snapshot(&mut restored, &loaded.sidebar);
-        assert_eq!(restored.project_labels, chrome.sidebar.project_labels);
+        // The rename mirrors the labels into the prefs, which seed the next
+        // window.
+        assert_eq!(chrome.prefs.project_labels, chrome.sidebar.project_labels);
+        let mut restored = Chrome::dark();
+        restored.apply_prefs(chrome.prefs.clone());
+        assert_eq!(
+            restored.sidebar.project_labels,
+            chrome.sidebar.project_labels
+        );
 
         apply_rename(
             &mut ws,

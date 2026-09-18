@@ -42,7 +42,7 @@ use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_ac
 use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
-use projects::{persist_if_changed, restore_focused, save_client_session};
+use projects::restore_focused;
 use workspace_actions::send_focus_hints_if_changed;
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
@@ -197,7 +197,6 @@ pub async fn run_live_loop<B: Backend>(
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut sidebar_error_shown = false;
-    let mut last_snapshot = None;
     let mut last_focus_hints = None;
 
     // Draw once before the first select: input outranks the render tick, so
@@ -389,9 +388,6 @@ pub async fn run_live_loop<B: Backend>(
                 chrome.status_message = Some(error.to_string());
             }
         }
-        if let Err(error) = persist_if_changed(workspace, chrome, &mut last_snapshot) {
-            chrome.status_message = Some(error.to_string());
-        }
         if let Err(error) =
             send_focus_hints_if_changed(workspace, chrome, &mut last_focus_hints).await
         {
@@ -410,11 +406,6 @@ pub async fn run_live_loop<B: Backend>(
         }
     }
 
-    if let Err(error) = persist_if_changed(workspace, chrome, &mut last_snapshot)
-        .and_then(|()| save_client_session(workspace, chrome))
-    {
-        tracing::warn!(%error, "could not save the gclient workspace state");
-    }
     drop(reconnect_job.take());
     drop(sidebar_job.take());
     supervisor.cancel(DaemonError::Protocol {

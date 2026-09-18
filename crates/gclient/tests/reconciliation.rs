@@ -4,7 +4,6 @@ mod mock_daemon;
 
 use gobby_client::app::run_loop::{ReconnectAttempt, ReconnectSupervisor};
 use gobby_client::daemon::{Daemon, DaemonError, DaemonEvent, LiveDaemon};
-use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
 use serde_json::{json, Value};
@@ -1184,68 +1183,4 @@ fn terminal_page(ids: &[&str]) -> Value {
         "next_cursor": null,
         "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
     })
-}
-
-/// 2.3 roster reorder: the order a drag saved comes back on the next start,
-/// and a terminal outside it keeps daemon order after it.
-#[tokio::test]
-async fn saved_roster_order_restores_on_the_next_start() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        terminal_page(&["terminal-a", "terminal-b", "terminal-c"]),
-    );
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        terminal_page(&["terminal-d", "terminal-a", "terminal-b", "terminal-c"]),
-    );
-    let home = tempfile::tempdir().expect("tempdir");
-
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect");
-    let mut first = Workspace::live(daemon);
-    first.set_gobby_home(home.path().to_path_buf());
-    first
-        .restore_project("project-1")
-        .expect("no snapshot yet leaves daemon order in charge");
-    first.fetch_roster().await.expect("first listing");
-    assert_eq!(
-        first.roster_terminal_ids(),
-        ["terminal-a", "terminal-b", "terminal-c"]
-    );
-    first
-        .set_tab_order(&["terminal-c", "terminal-a", "terminal-b"])
-        .expect("reorder");
-    // The order that persists is the tab set's: one tab per pane, in order.
-    let mut chrome = Chrome::dark();
-    for terminal_id in first.tab_order() {
-        let pane = first.pane_for_terminal(&terminal_id).expect("listed pane");
-        chrome.open_tab(pane, &terminal_id);
-    }
-    first
-        .persist_workspace(chrome.tabs(), &chrome.viewer)
-        .expect("save the tab set");
-    drop(first);
-
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("reconnect");
-    let mut second = Workspace::live(daemon);
-    second.set_gobby_home(home.path().to_path_buf());
-    second
-        .restore_project("project-1")
-        .expect("restore the saved order");
-    second.fetch_roster().await.expect("listing after restart");
-    assert_eq!(
-        second.roster_terminal_ids(),
-        ["terminal-c", "terminal-a", "terminal-b", "terminal-d"],
-        "the saved order leads and the new terminal follows in daemon order"
-    );
-    assert_eq!(second.tab_order(), second.roster_terminal_ids());
-    mock.shutdown().await;
 }

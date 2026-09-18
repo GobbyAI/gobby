@@ -34,8 +34,7 @@ use super::projects::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     focus_terminal, mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
-    open_worktree, remove_worktree, rename_project, reveal_agent, save_client_session,
-    submit_new_project,
+    open_worktree, remove_worktree, rename_project, reveal_agent, submit_new_project,
 };
 use super::workspace_actions::{
     apply_daemon_menu_action, close_daemon_pane, close_daemon_tab, move_daemon_tab,
@@ -491,7 +490,11 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::Zoom => chrome.toggle_zoom(),
-        Action::ToggleSidebar => chrome.sidebar.collapsed = !chrome.sidebar.collapsed,
+        Action::ToggleSidebar => {
+            chrome.sidebar.collapsed = !chrome.sidebar.collapsed;
+            chrome.prefs.sidebar_collapsed = chrome.sidebar.collapsed;
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
         Action::RenameTab => {
             if let Some(title) = chrome.active_tab().map(|tab| tab.title.clone()) {
                 open_live_rename(chrome, RenameKind::Tab, title);
@@ -576,7 +579,6 @@ pub(super) async fn handle_live_action(
                 workspace.sidebar(),
                 chrome.sidebar.machine_filter.as_deref(),
             );
-            save_client_session(workspace, chrome)?;
         }
         Action::ToggleAgentSort => {
             chrome.prefs.agent_sort = chrome.prefs.agent_sort.toggled();
@@ -584,11 +586,9 @@ pub(super) async fn handle_live_action(
         }
         Action::ToggleProjectsFilter => {
             chrome.sidebar.all_projects = !chrome.sidebar.all_projects;
-            save_client_session(workspace, chrome)?;
         }
         Action::ToggleSessionsScope => {
             chrome.sidebar.all_sessions = !chrome.sidebar.all_sessions;
-            save_client_session(workspace, chrome)?;
         }
         // The router answers `Quit` before dispatch; `CustomCommand` is held
         // in the keymap table for the plugin-menu decision (#20201) and never
@@ -837,7 +837,7 @@ fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     let path = prefs_path(&home);
     match load_prefs(&home) {
         Ok(prefs) => {
-            match load_keymap(&prefs, &home, chrome.nested_tmux) {
+            match load_keymap(&prefs, &home, chrome.nested) {
                 Ok(keymap) => chrome.keymap = keymap,
                 Err(error) => {
                     chrome.toast = Some(Toast {

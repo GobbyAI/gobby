@@ -29,7 +29,6 @@ use gobby_client::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
 };
 use gobby_client::key_input::KeyInput;
-use gobby_client::persist::load_snapshot;
 use gobby_client::prefs::{prefs_path, save_prefs};
 use gobby_client::startup::{initial_project, Ready};
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
@@ -311,9 +310,11 @@ fn live_entry_connects_before_running() {
             host_notice: None,
             prefs: gobby_client::ui::settings::ClientPrefs::default(),
             keymap: Keymap::defaults(HERDR_PREFIX),
-            nested_tmux: false,
+            nested: false,
+            in_pane: false,
             gobby_home: std::path::PathBuf::new(),
             launch_dir: std::path::PathBuf::new(),
+            attach: gobby_client::startup::AttachTarget::default(),
         },
         &mut TerminalGuard::recording().0,
     );
@@ -1252,9 +1253,7 @@ async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
     workspace.set_gobby_home(home.path().to_path_buf());
     workspace.set_launch_dir(std::path::PathBuf::from("/home/me/notes"));
     let project = initial_project(None, None);
-    workspace
-        .restore_project(&project)
-        .expect("restore the empty personal snapshot");
+    workspace.select_project(&project);
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(32);
@@ -6611,9 +6610,7 @@ async fn first_run_opens_one_shell_and_never_auto_opens() {
     let home = tempfile::tempdir().expect("gobby home");
     let mut workspace = Workspace::live(daemon);
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project("project-1")
-        .expect("no snapshot yet");
+    workspace.select_project("project-1");
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(8);
@@ -6664,8 +6661,6 @@ async fn first_run_opens_one_shell_and_never_auto_opens() {
             "{id} was auto-opened"
         );
     }
-    let saved = load_snapshot(home.path(), "project-1").expect("snapshot written");
-    assert_eq!(saved.terminal_ids(), [SPAWNED]);
     mock.shutdown().await;
 }
 
@@ -7065,9 +7060,7 @@ async fn tab_sets_follow_the_focused_project() {
     let home = tempfile::tempdir().expect("gobby home");
     let mut workspace = Workspace::live(daemon.clone());
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project("project-1")
-        .expect("select project-1");
+    workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
         .await
@@ -7591,9 +7584,7 @@ async fn new_project_dialog_inits_and_focuses() {
     let home = tempfile::tempdir().expect("gobby home");
     let mut workspace = Workspace::live(daemon);
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project("project-1")
-        .expect("no snapshot yet");
+    workspace.select_project("project-1");
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(64);
@@ -7821,9 +7812,7 @@ async fn worktree_flows_round_trip_the_daemon() {
     let home = tempfile::tempdir().expect("gobby home");
     let mut workspace = Workspace::live(daemon);
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project("project-1")
-        .expect("no snapshot yet");
+    workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
         .await
@@ -8468,7 +8457,7 @@ async fn held_pane_has_literal_prefix_and_keyboard_escape() {
     let mut workspace = Workspace::live(daemon);
     let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-held"]);
     let mut chrome = Chrome::dark();
-    chrome.nested_tmux = true;
+    chrome.nested = true;
     chrome.keymap = Keymap::defaults(default_prefix(true));
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(256);
@@ -8556,9 +8545,7 @@ async fn two_project_workspace(
     let home = tempfile::tempdir().expect("gobby home");
     let mut workspace = Workspace::live(daemon.clone());
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project("project-1")
-        .expect("select project-1");
+    workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
         .await
@@ -8728,9 +8715,7 @@ async fn local_tabs_stay_behind_the_projected_daemon_tabs() {
     let home = tempfile::tempdir().expect("gobby home");
     let mut workspace = Workspace::live(daemon);
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project("project-1")
-        .expect("select project-1");
+    workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
         .await

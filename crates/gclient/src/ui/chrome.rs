@@ -241,24 +241,26 @@ pub struct SidebarState {
     /// Selected project-section row, worktree rows included (navigate mode).
     pub selected: usize,
     /// Project ids in the order the user dragged them into; projects the
-    /// order does not name follow in model order. `session.json` keeps it.
+    /// order does not name follow in model order. `prefs.toml` keeps it
+    /// (`ClientPrefs::project_order`), mirrored on every drop.
     pub project_order: Vec<String>,
     /// The one project card whose worktree rows are unfolded; every other
     /// card is folded. Focusing a project expands its card.
     pub expanded_project: Option<String>,
     /// Labels the user gave project cards, by project id; a card without
-    /// one shows the daemon's name. `session.json` keeps them.
+    /// one shows the daemon's name. `prefs.toml` keeps them
+    /// (`ClientPrefs::project_labels`), mirrored on every rename.
     pub project_labels: BTreeMap<String, String>,
-    /// Machine filter of the sessions section, kept by `session.json`:
-    /// `None` lists the rows on the local machine, `Some(ALL_MACHINES)` the
-    /// rows on every machine, and `Some(machine_id)` those on that machine;
+    /// Machine filter of the sessions section, per window: `None` lists the
+    /// rows on the local machine, `Some(ALL_MACHINES)` the rows on every
+    /// machine, and `Some(machine_id)` those on that machine;
     /// `all_sessions` bounds the projects the rows come from.
     pub machine_filter: Option<String>,
     /// The projects section lists every project instead of the working
-    /// ones (`sidebar_rows::working_projects`). `session.json` keeps it.
+    /// ones (`sidebar_rows::working_projects`). Per window, never saved.
     pub all_projects: bool,
     /// The sessions section lists every project's rows, grouped by project,
-    /// instead of the focused project's. `session.json` keeps it.
+    /// instead of the focused project's. Per window, never saved.
     pub all_sessions: bool,
 }
 
@@ -480,9 +482,9 @@ pub struct Chrome {
     pub status_message: Option<String>,
     pub view: ViewState,
     pub keymap: Keymap,
-    /// An outer tmux owns the terminal: `keymap` was built for its shifted
-    /// prefix and the status line says so. TODO(#21357): retire with tmux.
-    pub nested_tmux: bool,
+    /// An outer tmux or a gclient pane owns the terminal: `keymap` was built
+    /// for its shifted prefix and the status line says so.
+    pub nested: bool,
     /// Mouse selection in progress or retained, keyed by layout slot.
     pub selection: Option<Selection>,
     /// The press-and-drag in progress, if any; `route_mouse` owns it.
@@ -531,7 +533,7 @@ impl Chrome {
             status_message: None,
             view: ViewState::default(),
             keymap: Keymap::defaults(HERDR_PREFIX),
-            nested_tmux: false,
+            nested: false,
             selection: None,
             gesture: None,
             hover: None,
@@ -559,6 +561,9 @@ impl Chrome {
     pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
         self.set_theme(prefs.theme_kind());
         self.sidebar.width = prefs.sidebar_width;
+        self.sidebar.collapsed = prefs.sidebar_collapsed;
+        self.sidebar.project_order = prefs.project_order.clone();
+        self.sidebar.project_labels = prefs.project_labels.clone();
         self.prefs = prefs;
     }
 

@@ -16,6 +16,7 @@ use crate::ui::sidebar_rows::displayed_project_ids;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::super::menu::{open_menu, ContextMenuKind};
+use super::super::modal_input::persist_prefs;
 use super::{
     focus_active_tab, forward, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
     PROJECT_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
@@ -236,6 +237,8 @@ pub(super) fn down<W: WorkspaceView>(
         }
         Hit::SidebarToggle => {
             chrome.sidebar.collapsed = !chrome.sidebar.collapsed;
+            chrome.prefs.sidebar_collapsed = chrome.sidebar.collapsed;
+            persist_prefs(ws.gobby_home(), chrome);
             MouseOutcome::Handled
         }
         Hit::SidebarDivider if !chrome.sidebar.collapsed => {
@@ -428,7 +431,7 @@ pub(super) fn drag<W: WorkspaceView>(
 /// taken off the chrome. A moved tab dropped on another tab takes that tab's
 /// place (herdr `MoveTab`) and stays active; a moved project card dropped
 /// on another card takes its place in the sidebar's project order, which
-/// `session.json` keeps; released anywhere else either stays put, and a release
+/// `prefs.toml` keeps; released anywhere else either stays put, and a release
 /// without movement was the click the press handled. A sidebar edge release
 /// keeps the width it reached as the preferred width; a split border or
 /// scrollbar release keeps what the drag reached.
@@ -472,7 +475,9 @@ pub(super) fn up<W: WorkspaceView>(
         }) => {
             if let Hit::Project(target) = hit {
                 if let Some(order) = reordered_projects(ws, chrome, &project_id, &target) {
+                    chrome.prefs.project_order = order.clone();
                     chrome.sidebar.project_order = order;
+                    persist_prefs(ws.gobby_home(), chrome);
                 }
             }
             MouseOutcome::Handled

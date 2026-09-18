@@ -1,29 +1,39 @@
 //! 3.5 gclient starts independently of the Python CLI.
 
+mod mock_daemon;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use gobby_client::persist::ClientSession;
-use gobby_client::prefs::{load_prefs, save_prefs};
+use gobby_client::app::run_live_loop;
+use gobby_client::daemon::LiveDaemon;
+use gobby_client::prefs::{load_prefs, prefs_path, save_prefs, PrefsError};
 use gobby_client::startup::{
     initial_project, parse_args, prepare_at, resolve_probe_env_at, resolve_project_at,
-    start_session, start_session_at, GtermHostState, HealthClient, HttpHealthClient, ProbeEnv,
-    Ready, StartupError,
+    start_session, start_session_at, AttachTarget, GtermHostState, HealthClient, HttpHealthClient,
+    ProbeEnv, Ready, StartupError,
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
-use gobby_client::ui::keymap::{Action, Keymap, HERDR_PREFIX};
-use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs};
+use gobby_client::ui::keymap::{default_prefix, Action, Keymap, HERDR_PREFIX};
+use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs, PassthroughModifier};
 use gobby_client::ui::Chrome;
-use gobby_client::FrameDelivery;
+use gobby_client::{FrameDelivery, Workspace};
 use gobby_core::project::PERSONAL_PROJECT_ID;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
+use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::timeout;
 
 #[test]
 fn version_flag_prints_and_exits_zero() {
@@ -152,21 +162,33 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     ])
     .expect("parse explicit discovery overrides");
     let missing_default = root.path().join("missing-default-token");
-    let env = resolve_probe_env_at(&args, "http://bootstrap.invalid", &missing_default, false)
-        .expect("explicit token file");
+    let env = resolve_probe_env_at(
+        &args,
+        "http://bootstrap.invalid",
+        &missing_default,
+        false,
+        false,
+    )
+    .expect("explicit token file");
     assert_eq!(env.daemon_url, url);
     assert_eq!(env.token.as_deref(), Some("task-token"));
 
     let default_token = root.path().join("local_cli_token");
     std::fs::write(&default_token, "default-token\n").expect("write default token");
     let args = parse_args(["gclient"]).expect("parse defaults");
-    let env = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &default_token, false)
-        .expect("default token file");
+    let env = resolve_probe_env_at(
+        &args,
+        "http://bootstrap.test:60887",
+        &default_token,
+        false,
+        false,
+    )
+    .expect("default token file");
     assert_eq!(env.daemon_url, "http://bootstrap.test:60887");
     assert_eq!(env.token.as_deref(), Some("default-token"));
 
     let missing = root.path().join("missing-token");
-    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &missing, false)
+    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &missing, false, false)
         .expect_err("missing default token succeeded");
     let message = error.to_string();
     assert!(message.contains(&missing.display().to_string()));
@@ -174,8 +196,14 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
 
     let unreadable = root.path().join("token-directory");
     std::fs::create_dir(&unreadable).expect("create unreadable token path");
-    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &unreadable, false)
-        .expect_err("directory token path succeeded");
+    let error = resolve_probe_env_at(
+        &args,
+        "http://bootstrap.test:60887",
+        &unreadable,
+        false,
+        false,
+    )
+    .expect_err("directory token path succeeded");
     assert!(error.to_string().contains("--token-file"));
 }
 
@@ -243,6 +271,393 @@ fn help_text_lists_frame_delivery() {
         stdout.contains("--frame-delivery auto|direct|proxy"),
         "usage text omits the flag: {stdout}"
     );
+}
+
+/// 4.3.1: `--node` and `--workspace` parse, both absent leaves the attach
+/// target empty so the daemon picks the local `default`, and a full
+/// `n#:w#` ref carries its own node over `--node`.
+#[test]
+fn workspace_flags_default_to_the_local_default() {
+    let target = |node: Option<&str>, workspace: Option<&str>| AttachTarget {
+        node: node.map(str::to_string),
+        workspace: workspace.map(str::to_string),
+    };
+    let attach = |argv: &[&str]| {
+        let args = parse_args(argv.iter().copied()).expect("flags parse");
+        AttachTarget::from_flags(args.node.as_deref(), args.workspace.as_deref())
+    };
+
+    let args = parse_args(["gclient"]).expect("bare invocation parses");
+    assert_eq!(args.node, None);
+    assert_eq!(args.workspace, None);
+    assert_eq!(attach(&["gclient"]), AttachTarget::default());
+    assert_eq!(AttachTarget::default(), target(None, None));
+
+    let args =
+        parse_args(["gclient", "--node", "n5", "--workspace=n2:w1"]).expect("full ref parses");
+    assert_eq!(args.node.as_deref(), Some("n5"));
+    assert_eq!(args.workspace.as_deref(), Some("n2:w1"));
+    assert_eq!(
+        attach(&["gclient", "--node", "n5", "--workspace=n2:w1"]),
+        target(Some("n2"), Some("w1")),
+        "the ref's node wins over --node"
+    );
+    assert_eq!(
+        attach(&["gclient", "--node=n5", "--workspace", "w1"]),
+        target(Some("n5"), Some("w1"))
+    );
+    assert_eq!(
+        attach(&["gclient", "--workspace", "default"]),
+        target(None, Some("default"))
+    );
+    assert_eq!(
+        attach(&["gclient", "--node", "n5"]),
+        target(Some("n5"), None)
+    );
+
+    for argv in [
+        vec!["gclient", "--node"],
+        vec!["gclient", "--node="],
+        vec!["gclient", "--workspace"],
+        vec!["gclient", "--workspace", "--no-mouse"],
+    ] {
+        let error = parse_args(argv.iter().copied()).expect_err("a value-less flag parsed");
+        assert!(
+            matches!(error, StartupError::Usage { .. }),
+            "{argv:?}: {error:?}"
+        );
+    }
+
+    // The target rides on `Ready` so the window attaches to it.
+    let project_id = "77777777-7777-4777-8777-777777777777";
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let args = parse_args(["gclient", "--project", project_id, "--workspace", "n2:w1"])
+        .expect("ready args parse");
+    let ready = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &HealthyHost,
+        cwd.path(),
+        home.path(),
+    )
+    .expect("prepare with a workspace ref");
+    assert_eq!(ready.attach, target(Some("n2"), Some("w1")));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .arg("--help")
+        .output()
+        .expect("run gclient --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--node NODE") && stdout.contains("--workspace WORKSPACE"),
+        "usage text omits the workspace flags: {stdout}"
+    );
+}
+
+/// 4.3.2: the sidebar collapse, project order, and project labels round-trip
+/// through `prefs.toml`, and no client source reads or writes a snapshot or
+/// session file any more.
+#[test]
+fn prefs_carry_sidebar_and_project_preferences() {
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let client_dir = home.path().join("client");
+    fs::create_dir_all(&client_dir).expect("create client dir");
+    fs::write(
+        client_dir.join("prefs.toml"),
+        "[ui]\nsidebar_collapsed = true\nsidebar_width = 30\nproject_order = [\"b\", \"a\"]\n\n\
+         [ui.project_labels]\na = \"Alpha\"\n",
+    )
+    .expect("write prefs");
+    let args = parse_args(["gclient"]).expect("parse args");
+    let ready = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &HealthyHost,
+        cwd.path(),
+        home.path(),
+    )
+    .expect("prefs with sidebar keys load");
+    let labels = BTreeMap::from([("a".to_string(), "Alpha".to_string())]);
+    assert!(ready.prefs.sidebar_collapsed);
+    assert_eq!(ready.prefs.project_order, ["b", "a"]);
+    assert_eq!(ready.prefs.project_labels, labels);
+
+    let mut chrome = Chrome::dark();
+    chrome.apply_prefs(ready.prefs.clone());
+    assert!(chrome.sidebar.collapsed, "prefs seed the sidebar collapse");
+    assert_eq!(chrome.sidebar.width, 30);
+    assert_eq!(chrome.sidebar.project_order, ["b", "a"]);
+    assert_eq!(chrome.sidebar.project_labels, labels);
+
+    // The mirror in `chrome.prefs` is what gets written back.
+    chrome.prefs.sidebar_collapsed = false;
+    chrome
+        .prefs
+        .project_labels
+        .insert("b".to_string(), "Beta".to_string());
+    save_prefs(home.path(), &chrome.prefs).expect("save prefs");
+    assert_eq!(load_prefs(home.path()).expect("reload prefs"), chrome.prefs);
+    let mut files: Vec<String> = fs::read_dir(&client_dir)
+        .expect("list client dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        ["prefs.toml"],
+        "the client dir holds only prefs.toml"
+    );
+
+    let mut offenders = Vec::new();
+    let mut stack = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("walk client source") {
+            let path = entry.expect("source entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = fs::read_to_string(&path).expect("read client source");
+            for needle in [
+                "session.json",
+                "load_session",
+                "save_session",
+                "load_snapshot",
+                "save_snapshot",
+                "persist::",
+            ] {
+                if text.contains(needle) {
+                    offenders.push(format!("{}: {needle}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "client source still keeps snapshot or session files:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// 4.3.4: a gclient started inside a gclient pane shifts its prefix the way
+/// a nested tmux client does and opens no terminal of its own; outside a
+/// pane the first run still seeds one shell.
+#[tokio::test]
+async fn nested_pane_launch_shifts_prefix_and_opens_nothing() {
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let token_file = home.path().join("local_cli_token");
+    fs::write(&token_file, "token\n").expect("write token");
+    let args = parse_args(["gclient"]).expect("parse args");
+    let probe = |in_pane: bool| {
+        resolve_probe_env_at(&args, "http://unused", &token_file, false, in_pane)
+            .expect("probe env resolves")
+    };
+    let outside = probe(false);
+    assert!(!outside.in_pane);
+    assert!(
+        !outside.nested(),
+        "outside tmux and any pane the prefix stays"
+    );
+    let inside = probe(true);
+    assert!(inside.in_pane);
+    assert!(!inside.nested_tmux);
+    assert!(inside.nested(), "a pane launch shifts the prefix");
+    let ready = prepare_at(&args, inside, &HealthyHost, cwd.path(), home.path())
+        .expect("prepare inside a pane");
+    assert!(ready.nested);
+    assert!(ready.in_pane);
+    assert_eq!(
+        ready.keymap.active_chords(),
+        Keymap::defaults(default_prefix(true)).active_chords()
+    );
+
+    // Inside a pane the loop attaches and opens nothing; outside it seeds
+    // the first-run shell (the control).
+    for (in_pane, creates) in [(true, 0), (false, 1)] {
+        let mock = MockDaemon::start("local-token").await;
+        mock.enqueue("GET", "/api/projects", 200, project_rows());
+        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
+        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[SPAWNED]));
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.set_gobby_home(home.path().to_path_buf());
+        workspace.set_in_pane(in_pane);
+        workspace.select_project("project-1");
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "workspace_attach", 1).await;
+            if creates > 0 {
+                wait_for_websocket_requests(&mock, "terminal_create", creates).await;
+                wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+            } else {
+                wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
+            }
+            settle_live_event().await;
+            drop(input_tx);
+        };
+        let mut switch = TerminalGuard::recording().0;
+        let (result, ()) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        );
+        result.expect("live loop");
+        assert_eq!(
+            websocket_requests(&mock, "terminal_create").len(),
+            creates,
+            "in_pane={in_pane}"
+        );
+        assert_eq!(chrome.tabs().tabs.len(), creates, "in_pane={in_pane}");
+        mock.shutdown().await;
+    }
+}
+
+const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+fn project_rows() -> Value {
+    json!([{
+        "id": "project-1",
+        "name": "gobby",
+        "display_name": "gobby",
+        "checkout": {"machine_id": "m-local", "root_path": "/repo"},
+        "session_count": 1,
+        "last_activity_at": null,
+    }])
+}
+
+fn terminal_page(ids: &[&str]) -> Value {
+    json!({
+        "items": ids
+            .iter()
+            .map(|id| json!({"terminal_id": id, "backend": "native", "state": "live"}))
+            .collect::<Vec<_>>(),
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+    })
+}
+
+fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
+    mock.requests()
+        .into_iter()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("type") == Some(&json!(kind)))
+        .collect()
+}
+
+async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: usize) {
+    timeout(Duration::from_secs(1), async {
+        while websocket_requests(mock, kind).len() < expected {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
+}
+
+async fn wait_for_http_requests(mock: &MockDaemon, method: &str, path: &str, expected: usize) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let count = mock
+                .requests()
+                .into_iter()
+                .filter(|request| request.method == method && request.target.starts_with(path))
+                .count();
+            if count >= expected {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {method} {path} requests"));
+}
+
+async fn settle_live_event() {
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[test]
+fn prefs_round_trip_and_reject_unknown_keys() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let home = dir.path().join("home");
+
+    let defaults = load_prefs(&home).expect("missing file yields defaults");
+    assert_eq!(defaults, ClientPrefs::default());
+    assert!(defaults.mouse_capture);
+
+    let prefs = ClientPrefs {
+        theme: "light".to_string(),
+        keybinds: "/tmp/keys.toml".to_string(),
+        mouse_capture: false,
+        pane_gaps: false,
+        sidebar_width: 32,
+        right_click_passthrough_modifier: PassthroughModifier::Alt,
+        ..ClientPrefs::default()
+    };
+    let path = save_prefs(&home, &prefs).expect("save");
+    assert_eq!(path, prefs_path(&home));
+    assert_eq!(path, home.join("client").join("prefs.toml"));
+    let text = fs::read_to_string(&path).expect("read prefs");
+    assert!(text.starts_with("[ui]\n"), "{text}");
+    assert!(text.contains("mouse_capture = false\n"), "{text}");
+    assert!(
+        text.contains("right_click_passthrough_modifier = \"alt\"\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[keymap]\npath = \"/tmp/keys.toml\"\n"),
+        "{text}"
+    );
+    assert!(!text.contains("layout"), "{text}");
+    assert_eq!(load_prefs(&home).expect("reload"), prefs);
+    let leftovers = fs::read_dir(path.parent().expect("client dir"))
+        .expect("list client dir")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(leftovers, 0);
+
+    fs::write(&path, "[ui]\nsidebar_width = 40\n").expect("write partial prefs");
+    let partial = load_prefs(&home).expect("every key is optional");
+    assert_eq!(
+        partial,
+        ClientPrefs {
+            sidebar_width: 40,
+            ..ClientPrefs::default()
+        }
+    );
+
+    fs::write(&path, "[ui]\nmouse_captre = false\n").expect("write typo prefs");
+    let error = load_prefs(&home).expect_err("unknown key must fail");
+    assert!(matches!(error, PrefsError::Parse(_)), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("mouse_captre"), "{message}");
+    assert!(message.contains("line 2"), "{message}");
+
+    fs::write(&path, "[keymapp]\npath = \"\"\n").expect("write typo table");
+    let message = load_prefs(&home)
+        .expect_err("unknown table must fail")
+        .to_string();
+    assert!(message.contains("keymapp"), "{message}");
 }
 
 struct CountingBackend {
@@ -343,6 +758,7 @@ fn env_at(url: &str) -> ProbeEnv {
         daemon_url: url.to_string(),
         token: None,
         nested_tmux: false,
+        in_pane: false,
     }
 }
 
@@ -415,8 +831,8 @@ fn test_reports_degraded_host_state() {
         } else {
             &url
         };
-        let env =
-            resolve_probe_env_at(&args, fallback, &token_file, false).expect("resolve host env");
+        let env = resolve_probe_env_at(&args, fallback, &token_file, false, false)
+            .expect("resolve host env");
         assert_eq!(env.daemon_url, url);
         let (backend, enters) = CountingBackend::new();
         let (ready, guard) = start_session(args, env, &HttpHealthClient::new(), backend)
@@ -458,7 +874,7 @@ fn test_reports_degraded_host_state() {
             } else {
                 &url
             };
-            let env = resolve_probe_env_at(&args, fallback, &token_file, false)
+            let env = resolve_probe_env_at(&args, fallback, &token_file, false, false)
                 .expect("resolve host env");
             let (backend, enters) = CountingBackend::new();
             let error = match start_session(args, env, &HttpHealthClient::new(), backend) {
@@ -620,21 +1036,16 @@ fn ready_carries_an_optional_project() {
     let _: fn(&Ready) -> Option<&str> = project_field_is_optional;
     let views_source = include_str!("../src/views/mod.rs");
     assert!(
-        views_source.contains("initial_project(ready.project, session.as_ref())"),
+        views_source.contains("initial_project(ready.project, focused.as_deref())"),
         "run_ready must open on the initial project"
     );
-    let saved = ClientSession {
-        focused_project: Some("saved-project".to_string()),
-        ..ClientSession::default()
-    };
     assert_eq!(
-        initial_project(Some("cwd-project".to_string()), Some(&saved)),
+        initial_project(Some("cwd-project".to_string()), Some("saved-project")),
         "cwd-project"
     );
-    assert_eq!(initial_project(None, Some(&saved)), "saved-project");
     assert_eq!(
-        initial_project(None, Some(&ClientSession::default())),
-        PERSONAL_PROJECT_ID
+        initial_project(None, Some("saved-project")),
+        "saved-project"
     );
     assert_eq!(initial_project(None, None), PERSONAL_PROJECT_ID);
 }

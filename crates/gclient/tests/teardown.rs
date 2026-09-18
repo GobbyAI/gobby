@@ -33,9 +33,6 @@ use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Layer;
 
-/// Save a one-pane snapshot for `project` and point the workspace at it, so
-/// the loop shows `terminal_id` once the roster arrives. Keep the returned
-/// home alive for the loop's lifetime.
 /// Seed the mock's daemon workspace with one tab showing `terminal_id` for
 /// `project` and give the workspace a Gobby home, so the loop projects that
 /// tab instead of spawning a shell. Keep the returned home alive for the

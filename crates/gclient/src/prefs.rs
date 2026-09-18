@@ -6,6 +6,7 @@
 
 use crate::ui::settings::{AgentSort, ClientPrefs, PassthroughModifier};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -45,6 +46,10 @@ struct UiPrefs {
     sidebar_width: u16,
     right_click_passthrough_modifier: PassthroughModifier,
     agent_sort: AgentSort,
+    sidebar_collapsed: bool,
+    project_order: Vec<String>,
+    /// Last: TOML emits a sub-table after the plain values.
+    project_labels: BTreeMap<String, String>,
 }
 
 impl Default for UiPrefs {
@@ -66,6 +71,9 @@ impl From<&ClientPrefs> for UiPrefs {
             sidebar_width: prefs.sidebar_width,
             right_click_passthrough_modifier: prefs.right_click_passthrough_modifier,
             agent_sort: prefs.agent_sort,
+            sidebar_collapsed: prefs.sidebar_collapsed,
+            project_order: prefs.project_order.clone(),
+            project_labels: prefs.project_labels.clone(),
         }
     }
 }
@@ -103,6 +111,9 @@ impl From<PrefsFile> for ClientPrefs {
             sidebar_width: ui.sidebar_width,
             right_click_passthrough_modifier: ui.right_click_passthrough_modifier,
             agent_sort: ui.agent_sort,
+            sidebar_collapsed: ui.sidebar_collapsed,
+            project_order: ui.project_order,
+            project_labels: ui.project_labels,
             ..Self::default()
         }
     }

@@ -142,6 +142,8 @@ pub fn apply_rename<D: Daemon>(
             } else {
                 chrome.sidebar.project_labels.insert(project_id, value);
             }
+            chrome.prefs.project_labels = chrome.sidebar.project_labels.clone();
+            persist_prefs(workspace.gobby_home(), chrome);
         }
     }
 }

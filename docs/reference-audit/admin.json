@@ -1483,7 +1483,7 @@
   ],
   "native_cli": [
     {
-      "command": "gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] [--no-mouse] [--version] [--help]",
+      "command": "gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] [--no-mouse] [--version] [--help]",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
       "implementation": "crates/gclient/src/startup.rs::parse_args",
       "verification": [

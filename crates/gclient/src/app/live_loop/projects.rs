@@ -1,6 +1,6 @@
-//! Project focus for the live loop: the outgoing project's tab set is saved
-//! to its snapshot, the incoming one is restored from its own or seeded with
-//! a shell (decision 7), and the client session follows the sidebar.
+//! Project focus for the live loop: the outgoing project's tab set is parked
+//! in the chrome, the incoming one is shown or seeded with a shell
+//! (decision 7); the daemon's workspace rows remember the focus.
 
 use std::path::PathBuf;
 
@@ -8,14 +8,12 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
-use crate::persist::{save_session, save_snapshot, ClientSession, WorkspaceSnapshot};
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, RenameKind, WorktreeChoice};
 use crate::ui::sidebar_rows::project_label;
 use crate::ui::{Chrome, Mode};
 
-use super::super::persistence::sidebar_snapshot;
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{
@@ -29,8 +27,8 @@ use super::mouse::Placement;
 use super::workspace_actions::{place_live_terminal, send_workspace_op};
 
 /// Make `project_id` the focused project: its roster replaces the current
-/// one and its tab set the tab bar. The outgoing set is saved first, so the
-/// panes the roster drops are already in that project's snapshot.
+/// one and its tab set the tab bar; the outgoing set stays parked in the
+/// chrome.
 pub async fn focus_project(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -42,8 +40,7 @@ pub async fn focus_project(
     if let Some(current) = workspace.project_id() {
         chrome.focus_project(current);
     }
-    workspace.persist_workspace(chrome.tabs(), &chrome.viewer)?;
-    workspace.restore_project(project_id)?;
+    workspace.select_project(project_id);
     workspace.fetch_roster().await?;
     workspace.attach_ready_panes().await?;
     // The new project's sessions and runs arrive from a background
@@ -52,7 +49,6 @@ pub async fn focus_project(
     chrome.focus_project(project_id);
     chrome.sidebar.expanded_project = Some(project_id.to_owned());
     sync_live_chrome(workspace, chrome);
-    save_client_session(workspace, chrome)?;
     restore_focused(workspace, chrome).await
 }
 
@@ -211,8 +207,8 @@ pub async fn open_worktree(
 
 /// Fill the focused project's tab bar when it is empty. The daemon's tabs
 /// were projected by the chrome sync, so an empty bar means the workspace
-/// has none for the project, and one shell opens its first tab. A
-/// workspace with no Gobby home (nothing to restore) is left alone.
+/// has none for the project, and one shell opens its first tab. A window
+/// without a Gobby home (only the loop tests run that way) seeds nothing.
 pub(super) async fn restore_focused(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -220,45 +216,12 @@ pub(super) async fn restore_focused(
     if let Some(project) = workspace.project_id() {
         chrome.focus_project(project);
     }
-    if !chrome.tabs().tabs.is_empty() || workspace.gobby_home().is_none() {
+    // A window inside a gclient pane shows what the outer window opens and
+    // never seeds a shell of its own.
+    if workspace.in_pane() || !chrome.tabs().tabs.is_empty() || workspace.gobby_home().is_none() {
         return Ok(());
     }
     spawn_live_terminal(workspace, chrome, Placement::Tab).await
-}
-
-/// Write the focused project's snapshot when it differs from the last one
-/// written; `last` carries that between calls.
-pub(super) fn persist_if_changed(
-    workspace: &Workspace<LiveDaemon>,
-    chrome: &Chrome,
-    last: &mut Option<WorkspaceSnapshot>,
-) -> std::io::Result<()> {
-    let Some(snapshot) = workspace.workspace_snapshot(chrome.tabs(), &chrome.viewer) else {
-        return Ok(());
-    };
-    if last.as_ref() == Some(&snapshot) {
-        return Ok(());
-    }
-    if let Some(home) = workspace.gobby_home() {
-        save_snapshot(home, &snapshot)?;
-    }
-    *last = Some(snapshot);
-    Ok(())
-}
-
-/// Write `session.json`: the focused project and the sidebar state.
-pub(super) fn save_client_session(
-    workspace: &Workspace<LiveDaemon>,
-    chrome: &Chrome,
-) -> std::io::Result<()> {
-    let Some(home) = workspace.gobby_home() else {
-        return Ok(());
-    };
-    let session = ClientSession {
-        focused_project: chrome.project_tabs.focused.clone(),
-        sidebar: sidebar_snapshot(&chrome.sidebar),
-    };
-    save_session(home, &session).map(|_| ())
 }
 
 /// Open the new-project dialog on `~/`.

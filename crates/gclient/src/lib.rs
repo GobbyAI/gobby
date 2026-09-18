@@ -7,7 +7,6 @@ pub mod frame_source;
 pub mod input;
 pub mod key_input;
 pub mod logging;
-pub mod persist;
 pub mod prefs;
 pub mod startup;
 pub mod teardown;

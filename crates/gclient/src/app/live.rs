@@ -15,8 +15,9 @@ impl Workspace<LiveDaemon> {
             focus: None,
             next_pane: 1,
             roster_ids: Vec::new(),
-            saved_tab_order: Vec::new(),
-            saved_snapshot: None,
+            pane_order: Vec::new(),
+            attach: AttachTarget::default(),
+            in_pane: false,
             attention: AttentionState::empty(),
             local_machine: String::new(),
             sidebar_rows: SidebarRows::default(),
@@ -49,21 +50,6 @@ impl Workspace<LiveDaemon> {
 
     pub fn select_project(&mut self, project_id: impl Into<String>) {
         self.project_id = Some(project_id.into());
-    }
-
-    /// Selects the project and reads its snapshot: the first roster page
-    /// follows the saved tab order and the loop rebuilds the tab bar from
-    /// it. Without a Gobby home nothing is read, and the loop then neither
-    /// restores nor seeds.
-    pub fn restore_project(&mut self, project_id: &str) -> std::io::Result<()> {
-        self.select_project(project_id);
-        let Some(home) = &self.gobby_home else {
-            return Ok(());
-        };
-        let snapshot = super::persistence::load_saved(home, project_id)?;
-        self.saved_tab_order = snapshot.terminal_ids();
-        self.saved_snapshot = Some(snapshot);
-        Ok(())
     }
 
     pub fn set_frame_delivery(&mut self, frame_delivery: FrameDelivery) {
@@ -140,10 +126,11 @@ impl Workspace<LiveDaemon> {
     }
 
     fn install_live_rows(&mut self, mut rows: Vec<TerminalRow>) {
-        // The saved tab order leads; rows outside it keep daemon order after it.
-        let saved = &self.saved_tab_order;
+        // The window's pane order leads; rows outside it keep daemon order
+        // after it.
+        let pane_order = &self.pane_order;
         rows.sort_by_key(|row| {
-            saved
+            pane_order
                 .iter()
                 .position(|id| id == row.id())
                 .unwrap_or(usize::MAX)
@@ -163,8 +150,8 @@ impl Workspace<LiveDaemon> {
         if self.focus.is_some_and(|id| !self.panes.contains_key(&id)) {
             self.focus = self.order.first().copied();
         }
-        // Roster order is pane order: the saved order first, new rows after
-        // it in daemon order (`ensure_live_pane` appends them).
+        // Roster order is pane order: the window's order first, new rows
+        // after it in daemon order (`ensure_live_pane` appends them).
         self.roster_ids = self.tab_order();
     }
 

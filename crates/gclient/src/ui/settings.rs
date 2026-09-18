@@ -15,6 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const SETTINGS_POPUP_WIDTH: u16 = 76;
 pub const SETTINGS_POPUP_HEIGHT: u16 = 23;
@@ -105,6 +106,12 @@ pub struct ClientPrefs {
     pub right_click_passthrough_modifier: PassthroughModifier,
     /// Order of the sidebar's agent rows.
     pub agent_sort: AgentSort,
+    /// The sidebar starts folded to its rail.
+    pub sidebar_collapsed: bool,
+    /// Project ids in the order the user dragged the cards into.
+    pub project_order: Vec<String>,
+    /// Labels the user gave project cards, by project id.
+    pub project_labels: BTreeMap<String, String>,
 }
 
 impl Default for ClientPrefs {
@@ -122,6 +129,9 @@ impl Default for ClientPrefs {
             sidebar_width: 26,
             right_click_passthrough_modifier: PassthroughModifier::None,
             agent_sort: AgentSort::Grouped,
+            sidebar_collapsed: false,
+            project_order: Vec::new(),
+            project_labels: BTreeMap::new(),
         }
     }
 }

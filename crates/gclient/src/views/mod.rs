@@ -2,10 +2,9 @@
 
 pub mod grid;
 
-use crate::app::{apply_sidebar_snapshot, run_live_loop};
+use crate::app::run_live_loop;
 use crate::daemon::LiveDaemon;
 use crate::frame_source::AttachLocator;
-use crate::persist::load_session;
 use crate::startup::initial_project;
 use crate::theme::Theme;
 use crate::ui::Chrome;
@@ -54,20 +53,22 @@ pub fn run_ready(
             workspace.set_local_machine(
                 gobby_core::machine::read_local_machine_id().unwrap_or_default(),
             );
-            let session = load_session(&ready.gobby_home)?;
-            let project = initial_project(ready.project, session.as_ref());
+            workspace.set_attach_target(ready.attach);
+            workspace.set_in_pane(ready.in_pane);
             workspace.set_launch_dir(ready.launch_dir);
-            workspace.restore_project(&project).map_err(|error| {
-                anyhow::anyhow!("failed to restore the workspace snapshot: {error}")
-            })?;
             workspace.set_frame_delivery(ready.frame_delivery);
+            // The workspace rows remember the project the window last
+            // showed; the loop's reconcile re-attaches on every connect.
+            workspace.attach_live_workspace().await?;
+            let focused = workspace
+                .workspace_model()
+                .and_then(|model| model.workspace.focused_project_id.clone());
+            let project = initial_project(ready.project, focused.as_deref());
+            workspace.select_project(&project);
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
             chrome.apply_prefs(ready.prefs);
             chrome.keymap = ready.keymap;
-            chrome.nested_tmux = ready.nested_tmux;
-            if let Some(session) = session {
-                apply_sidebar_snapshot(&mut chrome.sidebar, &session.sidebar);
-            }
+            chrome.nested = ready.nested;
             chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();

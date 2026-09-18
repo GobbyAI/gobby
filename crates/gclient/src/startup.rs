@@ -1,7 +1,6 @@
 //! Independent `gclient` startup: discover the daemon, probe health, then TUI.
 
 use crate::frame_source::FrameDelivery;
-use crate::persist::ClientSession;
 use crate::prefs::{load_prefs, prefs_path, PREFS_FILE};
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
 use crate::ui::keymap::{default_override_path, default_prefix, Keymap};
@@ -14,13 +13,18 @@ use thiserror::Error;
 
 const HEALTH_PATH: &str = "/api/health";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
-const USAGE: &str = "Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] \
-     [--frame-delivery auto|direct|proxy] [--no-mouse] [--version]";
+const USAGE: &str = "Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] \
+     [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] \
+     [--no-mouse] [--version]";
 const FRAME_DELIVERY_USAGE: &str = "--frame-delivery requires auto, direct, or proxy";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliArgs {
     pub project: Option<String>,
+    /// `--node`: the node whose workspace to attach; `None` is the local node.
+    pub node: Option<String>,
+    /// `--workspace`: a `[n#:]w#` ref or workspace name; `None` is `default`.
+    pub workspace: Option<String>,
     pub daemon_url: Option<String>,
     pub token_file: Option<PathBuf>,
     pub frame_delivery: FrameDelivery,
@@ -29,12 +33,52 @@ pub struct CliArgs {
     pub help: bool,
 }
 
+/// The workspace a window attaches to: what `workspace_attach` sends, with
+/// absent fields left to the daemon (the local node, its `default`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttachTarget {
+    pub node: Option<String>,
+    pub workspace: Option<String>,
+}
+
+impl AttachTarget {
+    /// Combine `--node` and `--workspace`; a full `n#:w#` ref carries its own
+    /// node, which wins over `--node`.
+    pub fn from_flags(node: Option<&str>, workspace: Option<&str>) -> Self {
+        let mut target = Self {
+            node: node.map(str::to_string),
+            workspace: workspace.map(str::to_string),
+        };
+        if let Some((head, rest)) = workspace.and_then(|reference| reference.split_once(':')) {
+            let is_node_ref = head.strip_prefix('n').is_some_and(|digits| {
+                !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+            });
+            if is_node_ref {
+                target.node = Some(head.to_string());
+                target.workspace = Some(rest.to_string());
+            }
+        }
+        target
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ProbeEnv {
     pub daemon_url: String,
     pub token: Option<String>,
     /// An outer tmux client owns this terminal, so its prefix eats `ctrl+b`.
     pub nested_tmux: bool,
+    /// gclient was started inside a gclient pane (`GOBBY_PANE_ID` is set):
+    /// the outer window owns the terminal and its prefix.
+    pub in_pane: bool,
+}
+
+impl ProbeEnv {
+    /// An outer client owns the terminal, so the prefix shifts to
+    /// [`default_prefix`]`(true)`.
+    pub fn nested(&self) -> bool {
+        self.nested_tmux || self.in_pane
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -52,9 +96,14 @@ pub struct Ready {
     pub host_notice: Option<String>,
     pub prefs: ClientPrefs,
     pub keymap: Keymap,
-    /// See [`ProbeEnv::nested_tmux`]; the keymap was built for it.
-    pub nested_tmux: bool,
+    /// The prefix is shifted because an outer client owns the terminal
+    /// (see [`ProbeEnv::nested`]); the keymap was built for it.
+    pub nested: bool,
+    /// See [`ProbeEnv::in_pane`]: the window opens no terminal of its own.
+    pub in_pane: bool,
     pub gobby_home: PathBuf,
+    /// The workspace the window attaches to, from `--node`/`--workspace`.
+    pub attach: AttachTarget,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -196,6 +245,8 @@ where
     let mut iter = args.into_iter();
     let _argv0 = iter.next();
     let mut project = None;
+    let mut node = None;
+    let mut workspace = None;
     let mut daemon_url = None;
     let mut token_file = None;
     let mut frame_delivery = FrameDelivery::default();
@@ -224,6 +275,50 @@ where
                 });
             }
             project = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--node=") {
+            if value.is_empty() {
+                return Err(StartupError::Usage {
+                    message: "--node requires a node ref".into(),
+                });
+            }
+            node = Some(value.to_string());
+            continue;
+        }
+        if arg == "--node" {
+            let value = iter.next().ok_or_else(|| StartupError::Usage {
+                message: "--node requires a node ref".into(),
+            })?;
+            let value = value.as_ref();
+            if value.is_empty() || value.starts_with('-') {
+                return Err(StartupError::Usage {
+                    message: "--node requires a node ref".into(),
+                });
+            }
+            node = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--workspace=") {
+            if value.is_empty() {
+                return Err(StartupError::Usage {
+                    message: "--workspace requires a workspace ref".into(),
+                });
+            }
+            workspace = Some(value.to_string());
+            continue;
+        }
+        if arg == "--workspace" {
+            let value = iter.next().ok_or_else(|| StartupError::Usage {
+                message: "--workspace requires a workspace ref".into(),
+            })?;
+            let value = value.as_ref();
+            if value.is_empty() || value.starts_with('-') {
+                return Err(StartupError::Usage {
+                    message: "--workspace requires a workspace ref".into(),
+                });
+            }
+            workspace = Some(value.to_string());
             continue;
         }
         if arg == "--version" || arg == "-V" {
@@ -299,6 +394,8 @@ where
     }
     Ok(CliArgs {
         project,
+        node,
+        workspace,
         daemon_url,
         token_file,
         frame_delivery,
@@ -321,6 +418,7 @@ pub fn resolve_probe_env_at(
     default_daemon_url: &str,
     default_token_file: &Path,
     nested_tmux: bool,
+    in_pane: bool,
 ) -> Result<ProbeEnv, StartupError> {
     let daemon_url = args
         .daemon_url
@@ -342,6 +440,7 @@ pub fn resolve_probe_env_at(
         daemon_url,
         token: Some(token.to_string()),
         nested_tmux,
+        in_pane,
     })
 }
 
@@ -361,6 +460,7 @@ fn resolve_probe_env(args: &CliArgs) -> Result<ProbeEnv, StartupError> {
         &default_daemon_url,
         &default_token_file,
         crate::tmux_identity::current().is_some(),
+        std::env::var_os("GOBBY_PANE_ID").is_some_and(|id| !id.is_empty()),
     )
 }
 
@@ -395,7 +495,7 @@ pub fn prepare_at(
     if args.no_mouse {
         prefs.mouse_capture = false;
     }
-    let keymap = load_keymap(&prefs, gobby_home, env.nested_tmux)?;
+    let keymap = load_keymap(&prefs, gobby_home, env.nested())?;
     let host = health.fetch_health(&env.daemon_url)?;
     if !host
         .as_ref()
@@ -404,6 +504,7 @@ pub fn prepare_at(
         return Err(degraded_host(host.as_ref()));
     }
     let host_notice = host.as_ref().and_then(host_notice);
+    let nested = env.nested();
     Ok(Ready {
         daemon_url: env.daemon_url,
         token: env.token,
@@ -413,18 +514,20 @@ pub fn prepare_at(
         host_notice,
         prefs,
         keymap,
-        nested_tmux: env.nested_tmux,
+        nested,
+        in_pane: env.in_pane,
         gobby_home: gobby_home.to_path_buf(),
         launch_dir: current_dir.to_path_buf(),
+        attach: AttachTarget::from_flags(args.node.as_deref(), args.workspace.as_deref()),
     })
 }
 
 /// The project the workspace opens on: the resolved one, else the project
 /// the last run left focused, else the personal project (every daemon has
 /// it; its shells start in the launch directory).
-pub fn initial_project(resolved: Option<String>, session: Option<&ClientSession>) -> String {
+pub fn initial_project(resolved: Option<String>, focused: Option<&str>) -> String {
     resolved
-        .or_else(|| session.and_then(|session| session.focused_project.clone()))
+        .or_else(|| focused.map(str::to_string))
         .unwrap_or_else(|| gobby_core::project::PERSONAL_PROJECT_ID.to_string())
 }
 
@@ -439,19 +542,17 @@ pub fn keymap_override_path(prefs: &ClientPrefs, gobby_home: &Path) -> PathBuf {
 }
 
 /// Load the keymap for these prefs: the defaults behind this launch's prefix
-/// (see [`ProbeEnv::nested_tmux`]) merged with the override file when it
+/// (see [`ProbeEnv::nested`]) merged with the override file when it
 /// exists. A rejected file names its path and the error.
 pub fn load_keymap(
     prefs: &ClientPrefs,
     gobby_home: &Path,
-    nested_tmux: bool,
+    nested: bool,
 ) -> Result<Keymap, StartupError> {
     let path = keymap_override_path(prefs, gobby_home);
-    Keymap::load_overrides(&path, default_prefix(nested_tmux)).map_err(|error| {
-        StartupError::Keymap {
-            path: path.display().to_string(),
-            detail: error.to_string(),
-        }
+    Keymap::load_overrides(&path, default_prefix(nested)).map_err(|error| StartupError::Keymap {
+        path: path.display().to_string(),
+        detail: error.to_string(),
     })
 }
 
