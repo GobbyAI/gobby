@@ -15,7 +15,7 @@ use gobby_client::app::run_loop::{
 };
 use gobby_client::app::sidebar_model::GIT_REFRESH_INTERVAL;
 use gobby_client::app::{
-    close_project, close_project_confirmed, create_worktree, focus_project,
+    close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
     remove_worktree, route_modal_key, run_live_loop, sync_live_chrome, AttachState, ModalOutcome,
 };
@@ -9437,5 +9437,268 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
         vec![json!("terminal-b")],
         "close acts on the row under the menu, never on the focused pane"
     );
+    mock.shutdown().await;
+}
+
+/// Closing an external row detaches instead of killing.
+///
+/// An external row is a terminal the user attached -- a tmux pane gclient
+/// never created -- so "close terminal" on it means hand the lease back and
+/// drop the pane, which is what `close_live_pane` already does for the same
+/// case. Without the guard the sidebar's close destroyed a terminal living
+/// outside gclient entirely.
+#[tokio::test]
+async fn closing_an_external_row_releases_the_lease_instead_of_killing_it() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {
+                        "terminal_id": "terminal-tmux",
+                        "backend": "tmux",
+                        "state": "live",
+                        "ownership": "external"
+                    }
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let external = workspace
+        .pane_for_terminal("terminal-tmux")
+        .expect("pane for terminal-tmux");
+    assert!(
+        workspace.pane(external).external,
+        "the roster marks this pane external"
+    );
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    show_roster(&workspace, &mut probe);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_id = format!("{TERMINAL_ROW}terminal-tmux");
+    let anchor = probe
+        .view
+        .agent_hit_areas
+        .iter()
+        .find(|(entry, _)| *entry == row_id)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("external terminal row drawn");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        let press = |button, (column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(button),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        press(MouseButton::Right, anchor).await;
+        // `close terminal` is the fifth item of an unblocked row's menu.
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        websocket_requests(&mock, "terminal_kill").is_empty(),
+        "an external terminal is never killed from the sidebar"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_release_control")
+            .iter()
+            .any(|body| body.get("terminal_id") == Some(&json!("terminal-tmux"))),
+        "closing it hands the lease back instead"
+    );
+    mock.shutdown().await;
+}
+
+/// An id naming neither a sidebar agent nor a terminal row still resolves to
+/// nothing, so the prefix branch widens the resolver without loosening it.
+#[tokio::test]
+async fn an_unknown_sidebar_id_still_resolves_to_no_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-a", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("pane for terminal-a");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    chrome.focus_pane(pane);
+
+    // Driven outside the loop, where ordering is deterministic. A bare
+    // terminal id without the row prefix is not a row id either.
+    for entry in ["run:missing", "session:missing", "terminal-a"] {
+        focus_agent(&mut workspace, &mut chrome, entry)
+            .await
+            .expect("an unresolved row is not an error");
+        assert_eq!(chrome.focused_pane(), Some(pane), "{entry} moves nothing");
+    }
+    mock.shutdown().await;
+}
+
+/// `open in new tab` on a bare terminal row reveals that terminal.
+///
+/// The user's report was that the item could be chosen and did nothing, and
+/// this is the third caller of the same `None`: `open_agent_in_new_tab`
+/// resolves through `agent_pane` and returns `Ok(())` when it answers nothing.
+/// A bare row's pane is already placed -- `bare_terminals` only emits a row
+/// once `pane_for_terminal` resolves -- so `chrome.focus_pane` succeeds and the
+/// item reveals the terminal where it lives rather than duplicating it into a
+/// second tab; the `Placement::Tab` arm is for a pane no tab holds. What the
+/// fix changes is that the item acts at all.
+#[tokio::test]
+async fn opening_a_bare_terminal_row_in_a_new_tab_reveals_that_terminal() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let first = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("pane for terminal-a");
+    let second = workspace
+        .pane_for_terminal("terminal-b")
+        .expect("pane for terminal-b");
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    show_roster(&workspace, &mut probe);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_id = format!("{TERMINAL_ROW}terminal-b");
+    let anchor = probe
+        .view
+        .agent_hit_areas
+        .iter()
+        .find(|(entry, _)| *entry == row_id)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("bare terminal row drawn");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    chrome.focus_pane(first);
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        let press = |button, (column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(button),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        press(MouseButton::Right, anchor).await;
+        // `open in new tab` is the second item of an unblocked row's menu.
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 1)).await;
+        wait_for_take_control_of(&mock, "terminal-b").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        chrome.focused_pane(),
+        Some(second),
+        "the item reveals the terminal the row names"
+    );
+    assert_ne!(second, first, "and moves focus off the starting pane");
     mock.shutdown().await;
 }

@@ -27,7 +27,7 @@ pub use live_loop::mouse::{
     TAB_DRAG_THRESHOLD,
 };
 pub use live_loop::projects::{
-    close_project, close_project_confirmed, create_worktree, focus_project,
+    close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_project_dialog, open_new_worktree_dialog, open_open_worktree_dialog,
     open_remove_worktree_dialog, open_worktree, remove_worktree, rename_project,
     submit_new_project,

@@ -91,7 +91,8 @@ top half of the sidebar (each scrolls inside its cap); Sessions takes the rest.
   focused one) and `[all]`.
 - *Sessions* lists sessions as two-line rows: `glyph #ref: title` over
   `provider · model-effort · task ref or pane title · remote machine`. Bare
-  terminals with no session are listed by pane name with their backend. The
+  terminals with no session are listed by pane name with their backend, and
+  answer to click and right-click the same way a session row does. The
   band's `[view]` control opens a menu with both axes: the scope, `this
   project` (the focused project only) or `all projects` (every project,
   grouped under dim project rows), and the order, `grouped` (tab order, with
@@ -182,7 +183,8 @@ the daemon should track starts in one of three places:
 - A `gclient` pane: open a tab or a split and run the command there.
 - A tmux session you start by hand on the default socket. The daemon lists it as
   an external terminal, and `gclient` opens it in a pane with ownership
-  `external`, so `close_pane` and closing the tab never kill it.
+  `external`, so `close_pane`, closing the tab, and `close terminal` on its
+  sidebar row all release it rather than kill it.
 - A provider session resumed inside a `gclient` pane, for example
   `claude --resume <id>`. The session start binds it to the pane's terminal
   through `GOBBY_TERMINAL_ID`, it appears on the sidebar roster with backend
@@ -500,7 +502,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Click a `▸`/`▾` fold mark | Fold or unfold the card's worktrees |
 | Click `[working]` / `[all]` on the Projects band | Switch the projects filter |
 | Click `[view]` on the Sessions band | Open the menu holding the sessions scope and order |
-| Click a session row | Focus its pane (a needs-you row's question is already on screen) |
+| Click a session or bare terminal row | Focus its pane (a needs-you row's question is already on screen) |
 | Click `[«]` on the footer band | Collapse the sidebar |
 | Click the control indicator | Take, release, or take back control |
 | Drag the sidebar edge or a split border | Resize |
@@ -520,13 +522,16 @@ to keep a gesture for the client instead.
 | Tab | new tab, rename tab, close tab |
 | Project card | rename, close, new worktree, open worktree…, collapse / expand |
 | Worktree row | rename, close, delete worktree checkout… |
-| Session row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
+| Session or bare terminal row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
 | Empty tab bar, empty sidebar, or `[Menu]` | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
 | `[view]` on the Sessions band (left click) | this project / all projects, grouped / priority |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane
-while its modifier is held. `close` on a project card kills every terminal in the
+while its modifier is held. `close terminal` acts on the row you right-clicked
+rather than on the focused pane, and on an external terminal (a tmux pane
+`gclient` never created) it releases the lease and drops the pane instead of
+killing it. `close` on a project card kills every terminal in the
 project's tabs (after a confirm-close dialog) but leaves the project registered.
 `delete worktree checkout…` kills the worktree's terminals and removes the
 checkout through the daemon. `destroy orphaned terminals…` opens the dialog
