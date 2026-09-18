@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from gobby.hooks.events import HookEventType
+from gobby.workflows.engine.block_batching import close_response_batch
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +209,7 @@ def clear_blocked_tool_recovery_state(variables: dict[str, Any]) -> None:
     variables["_last_blocked_tool"] = ""
     variables["_last_blocked_rule_name"] = ""
     variables["_last_blocked_reason"] = ""
+    close_response_batch(variables)
 
 
 def is_blocked_tool_recovery_remediation(

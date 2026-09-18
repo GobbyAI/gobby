@@ -1202,6 +1202,9 @@ class TestConsecutiveBlockScoping:
     The death spiral fix: when Tool A is blocked, only retries of Tool A
     escalate the counter. Attempting a different Tool B resets the counter
     and proceeds to normal rule evaluation, allowing the agent to recover.
+
+    Each retry below closes its assistant response with a tool-batch event, the
+    boundary that separates a genuine retry from a parallel sibling.
     """
 
     @pytest.mark.asyncio
@@ -1217,6 +1220,13 @@ class TestConsecutiveBlockScoping:
             "max_consecutive_blocked_tool_attempts": 5,
         }
 
+        async def close_batch() -> None:
+            await engine.evaluate(
+                _make_event(HookEventType.POST_TOOL_BATCH, data={"tool_calls": []}),
+                SESSION_ID,
+                variables,
+            )
+
         # Attempt 1: counter goes to 1, no escalation yet
         event1 = _make_event(
             HookEventType.BEFORE_TOOL,
@@ -1227,6 +1237,7 @@ class TestConsecutiveBlockScoping:
         # Not escalated yet — passes through to rule evaluation
         # (no rules installed, so it allows)
         assert response1.decision == "allow"
+        await close_batch()
 
         # Re-set blocked-tool tracking (simulates the rule blocking it again)
         variables["_last_blocked_tool"] = "TodoWrite"
@@ -1239,6 +1250,7 @@ class TestConsecutiveBlockScoping:
         response2 = await engine.evaluate(event2, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 2
         assert response2.decision == "allow"
+        await close_batch()
 
         variables["_last_blocked_tool"] = "TodoWrite"
 
@@ -1250,6 +1262,7 @@ class TestConsecutiveBlockScoping:
         response3 = await engine.evaluate(event3, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 3
         assert response3.decision == "allow"
+        await close_batch()
 
         variables["_last_blocked_tool"] = "TodoWrite"
 

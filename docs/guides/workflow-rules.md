@@ -161,6 +161,17 @@ On `turn_start`, the engine resets transient stop-cycle state such as:
 - `tool_block_pending`
 - `stop_attempts`
 - `_block_reasons_shown`
+- `_last_blocked_scopes`
+
+`consecutive_tool_blocks` counts remediation attempts, not denials. A provider
+that closes each assistant response with a tool-batch event (Claude Code's
+`PostToolBatch`) charges one attempt for a whole parallel batch of sibling
+denials, because none of those siblings could act on the first denial; the
+boundary event re-arms counting for the next response. A provider without that
+boundary counts every denial. When a hook payload names the issuing agent
+(`agent_id`), that context's counter and `_block_reasons_shown` live in its own
+`_last_blocked_scopes` slot, so concurrent subagents sharing one session id
+never spend each other's budget.
 
 On the first turn where `servers_listed` is false, the engine also queues the
 hard-coded auto-discovery MCP call that seeds available Gobby MCP servers.
