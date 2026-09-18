@@ -24,6 +24,7 @@ from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
 )
 from gobby.workflows.monolith_guard import MONOLITH_SOURCE_EXTENSIONS
+from gobby.workflows.rust_test_evidence import rust_edit_is_test_writing
 
 logger = logging.getLogger(__name__)
 
@@ -236,10 +237,10 @@ def is_ui_design_path(path: str) -> bool:
 def _first_matching_path(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,
-    predicate: Callable[[str], bool],
+    predicate: Callable[[str, Any], bool],
 ) -> str:
     for path in _event_and_tool_paths(event_data, tool_input):
-        if predicate(path):
+        if predicate(path, tool_input):
             return path
     return ""
 
@@ -288,18 +289,19 @@ def _path_has_segment(path: str, segment: str) -> bool:
     return segment in [part for part in _normalize_condition_path(path).split("/") if part]
 
 
-def _is_tdd_code_path(path: str) -> bool:
+def _is_tdd_code_path(path: str, tool_input: Any = None) -> bool:
     normalized = _normalize_condition_path(path)
     name = normalized.rsplit("/", 1)[-1]
     return (
         any(normalized.casefold().endswith(suffix) for suffix in MONOLITH_SOURCE_EXTENSIONS)
         and name not in {"__init__.py", "conftest.py"}
-        and not is_test_convention_path(normalized)
+        and not _is_tdd_test_path(normalized, tool_input)
     )
 
 
-def _is_tdd_test_path(path: str) -> bool:
-    return is_test_convention_path(_normalize_condition_path(path))
+def _is_tdd_test_path(path: str, tool_input: Any = None) -> bool:
+    normalized = _normalize_condition_path(path)
+    return is_test_convention_path(normalized) or rust_edit_is_test_writing(normalized, tool_input)
 
 
 def _is_docker_policy_path(path: str) -> bool:
