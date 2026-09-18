@@ -631,6 +631,17 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""
 
+                # The code-review gates skip a commit that records nothing OCR
+                # would review. Needs no session, because the gates block a
+                # session-less commit too.
+                eval_context["commit_has_reviewable_paths"] = True
+                if event.event_type == HookEventType.BEFORE_TOOL and project_path:
+                    from gobby.workflows.code_review_scope import commit_has_reviewable_paths
+
+                    eval_context["commit_has_reviewable_paths"] = await commit_has_reviewable_paths(
+                        event, project_path
+                    )
+
                 # Snapshot BEFORE observers to capture both observer and rule changes in the diff
                 pre_eval = deepcopy(variables)
 
