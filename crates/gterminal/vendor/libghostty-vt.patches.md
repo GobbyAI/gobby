@@ -103,3 +103,36 @@ runtime member, and force-load all members through Apple's linker:
 ```sh
 cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
 ```
+
+## 0004 honor the run TMPDIR in libsystem_override
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0004-honor-tmpdir-libsystem-override.patch`
+
+upstream discussion/pr: not opened
+
+vendored base: `7aab0a0392369613472bd5dcfd66bef58e78c3ec`
+
+local files:
+
+- `vendor/libghostty-vt/src/build/libsystem_override.sh`
+
+reason: macOS `mktemp` without a template behaves as `-t tmp` and resolves
+`_CS_DARWIN_USER_TEMP_DIR` before `TMPDIR`, so the run-scoped `TMPDIR` that
+Guard set G exports (and the sandbox temp grant behind it) was ignored and
+the script's scratch directory escaped the run root. The template pins the
+directory to `${TMPDIR:-/tmp}` with a `libsystem_override.` prefix and the
+required trailing `X`s.
+
+remove when: upstream's `libsystem_override.sh` passes `mktemp` an explicit
+template that resolves under the run `TMPDIR`.
+
+verification: the focused Guard set G environment test executes the vendored
+`mktemp` line with `TMPDIR` pinned to a fixture directory and asserts the
+created directory stays inside it:
+
+```sh
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test \
+GOBBY_TEST_PROTECT=1 uv run pytest tests/gterminal/test_guard_set_g_zig_cache.py -q
+```
