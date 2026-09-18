@@ -4748,6 +4748,126 @@ async fn wheel_over_a_tmux_pane_asks_the_daemon_for_nothing() {
     mock.shutdown().await;
 }
 
+/// The daemon answers a request that carried no ceiling with `max_rows` equal
+/// to the rows it applied, and that echo can arrive after gterm's real depth
+/// has already been relayed. Taking it at face value would shrink the ceiling
+/// to the pane's own position and wedge the wheel there for good.
+#[tokio::test]
+async fn a_scroll_reply_echoing_its_own_offset_never_lowers_the_ceiling() {
+    const MAX_ROWS: u32 = 10;
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": "terminal-echo", "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane = workspace
+        .pane_for_terminal("terminal-echo")
+        .expect("roster pane");
+    let attachment = workspace.pane(pane).attachment_id().to_string();
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(pane, "terminal-echo");
+    probe.compute_view(&workspace, area);
+    let inner = probe.view.pane_infos[0].inner_rect;
+    let (column, row) = (inner.x + 1, inner.y + 1);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let offsets = || -> Vec<u64> {
+            websocket_requests(&mock, "terminal_set_scroll_offset")
+                .iter()
+                .map(|request| {
+                    request
+                        .get("rows_from_live_edge")
+                        .and_then(Value::as_u64)
+                        .expect("rows from the live edge")
+                })
+                .collect()
+        };
+        let applied = |applied_rows: u32, max_rows: u32| {
+            json!({
+                "type": "terminal_scroll_offset_applied",
+                "terminal_id": "terminal-echo",
+                "attachment_id": attachment,
+                "applied_rows": applied_rows,
+                "max_rows": max_rows,
+            })
+        };
+
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollUp,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 1).await;
+
+        // gterm's real depth lands first, then the daemon's echo of the same
+        // request overtakes it.
+        mock.send_event_and_wait(applied(3, MAX_ROWS)).await;
+        settle_live_event().await;
+        mock.send_event_and_wait(applied(3, 3)).await;
+        settle_live_event().await;
+
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollUp,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 2).await;
+        settle_live_event().await;
+        assert_eq!(
+            offsets(),
+            vec![3, 6],
+            "the echo left the confirmed ceiling alone, so the wheel kept moving"
+        );
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+}
+
 /// 2.5.1: the status line's control indicator is a button for the focused
 /// pane's lease. A click while the pane is held releases control, a click
 /// while it is observed takes control, and once the daemon reports the lease

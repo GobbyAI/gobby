@@ -627,8 +627,7 @@ impl Workspace {
 
     pub fn apply_scroll_applied(&mut self, id: PaneId, applied: u32, max_rows: u32) {
         let pane = self.panes.get_mut(&id).expect("pane");
-        pane.scroll_offset = applied;
-        pane.max_scroll = max_rows;
+        pane.apply_scroll_applied(applied, max_rows);
     }
 
     pub fn jump_to_bottom(&mut self, id: PaneId) -> Result<(), FrameError> {
@@ -935,8 +934,7 @@ impl<D: Daemon> Workspace<D> {
                 applied_rows,
                 max_rows,
             } => {
-                pane.scroll_offset = *applied_rows;
-                pane.max_scroll = *max_rows;
+                pane.apply_scroll_applied(*applied_rows, *max_rows);
                 if *applied_rows == 0 {
                     pane.new_output = false;
                 }

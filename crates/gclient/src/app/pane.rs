@@ -232,6 +232,26 @@ impl Pane {
         self.scroll_offset
     }
 
+    /// Take a `ScrollOffsetApplied`, keeping the confirmed ceiling when the
+    /// reply is only the daemon's echo.
+    ///
+    /// A request that carries no ceiling comes back from the daemon as
+    /// `{applied_rows: n, max_rows: n}` before gterm's real depth is relayed,
+    /// and that echo can land after the relay just as easily as before it.
+    /// Adopting it would shrink `max_scroll` to wherever the pane already
+    /// sits, so the next notch would clamp to its own position and send
+    /// nothing — and the request that would re-learn the depth is the one that
+    /// clamp suppresses. A ceiling equal to its own applied rows that is
+    /// unknown or below the confirmed one is that echo, not a limit; the same
+    /// rule the web applies in `useTerminalScrollOffset`.
+    pub fn apply_scroll_applied(&mut self, applied: u32, max_rows: u32) {
+        let echo = max_rows == applied && (self.max_scroll == 0 || max_rows < self.max_scroll);
+        if !echo {
+            self.max_scroll = max_rows;
+        }
+        self.scroll_offset = applied;
+    }
+
     pub fn has_new_output(&self) -> bool {
         self.new_output
     }
