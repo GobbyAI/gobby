@@ -25,6 +25,7 @@ const PYTHON: LanguageSpec = LanguageSpec {
     symbol_query: r#"
         (function_definition name: (identifier) @name) @definition.function
         (class_definition name: (identifier) @name) @definition.class
+        (module (expression_statement (assignment left: (identifier) @name)) @definition.variable)
     "#,
     import_query: r#"
         (import_statement) @import
@@ -106,6 +107,8 @@ const RUST: LanguageSpec = LanguageSpec {
         (trait_item name: (type_identifier) @name) @definition.type
         (impl_item type: (type_identifier) @name) @definition.class
         (type_item name: (type_identifier) @name) @definition.type
+        (const_item name: (identifier) @name) @definition.variable
+        (static_item name: (identifier) @name) @definition.variable
     "#,
     import_query: r#"
         (use_declaration) @import

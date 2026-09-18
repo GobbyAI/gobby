@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   datastore surface for the relocated `gwiki code` engine and privatize the
   remaining gcode datastore modules. Version: `1.6.1`.
 - **Minor version bump** — `1.7.0`; requires `gobby-core 0.10.0`. Version: `1.7.0`.
+- **Module-level symbol coverage** — Python module-level assignments and
+  annotated assignments with a single-name target, and Rust `const`/`static`
+  items, are indexed as `variable` symbols spanning the whole statement, so
+  `gcode outline` lists them and `gcode symbol-at` anchors a line inside a
+  multi-line constant. Assignments nested in Python functions or classes stay
+  unindexed. The minor bump makes `gcode repair` full-reindex existing
+  projects so they pick up the new symbols. Version: `1.8.0`.
 
 #### gwiki
 

@@ -9,7 +9,7 @@ holds pre-monorepo release history only.
 | Crate | Binary | Version | Tag | Publishes? |
 |---|---|---:|---|---|
 | `gobby-core` | n/a | `0.10.0` | `gobby-core-v0.10.0` | crates.io only |
-| `gobby-code` | `gcode` | `1.7.0` | `gcode-v1.7.0` | crates.io + GitHub binaries |
+| `gobby-code` | `gcode` | `1.8.0` | `gcode-v1.8.0` | crates.io + GitHub binaries |
 | `gobby-daemon` | `gdaemon` | `0.4.0` | `gdaemon-v0.4.0` | crates.io + GitHub binaries |
 | `gobby-hooks` | `ghook` | `0.9.0` | `ghook-v0.9.0` | crates.io + GitHub binaries |
 | `gobby-terminal` | `gterm` | `0.1.0` | `gterm-v0.1.0` | crates.io + GitHub binaries (four Stage-0 triples) |
@@ -37,7 +37,7 @@ After validation passes, push the branch, sync `main`, and merge it into
 `main` with:
 
 ```text
-Merge 0.5.0 into main for release: gobby-core 0.10.0, gcode 1.7.0, gdaemon 0.4.0, ghook 0.9.0
+Merge 0.5.0 into main for release: gobby-core 0.10.0, gcode 1.8.0, gdaemon 0.4.0, ghook 0.9.0
 ```
 
 Push `main` and wait for main CI to pass before tagging. Tags are lightweight
@@ -55,7 +55,7 @@ git push origin gobby-core-v0.10.0
 
 # Wait for crates.io to index gobby-core 0.10.0.
 
-git tag gcode-v1.7.0
+git tag gcode-v1.8.0
 git tag gdaemon-v0.4.0
 git tag ghook-v0.9.0
 
@@ -63,7 +63,7 @@ git tag ghook-v0.9.0
 # any tag when more than three tags arrive in a single push, so a batched
 # `git push origin <tag> <tag> <tag> <tag> ...` silently triggers NO release
 # workflows. Push each tag in its own invocation:
-for tag in gcode-v1.7.0 gdaemon-v0.4.0 ghook-v0.9.0; do
+for tag in gcode-v1.8.0 gdaemon-v0.4.0 ghook-v0.9.0; do
   git push origin "refs/tags/$tag"
 done
 ```
