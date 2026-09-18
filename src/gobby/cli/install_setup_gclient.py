@@ -11,7 +11,13 @@ from urllib.request import Request
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import compare_versions
-from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
+from gobby.install.bin_freshness_promotion import (
+    clear_source_hash,
+    file_sha256,
+    stage_and_promote_binary_file,
+    workspace_binary_is_current,
+    write_source_hash,
+)
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
 
@@ -102,10 +108,10 @@ def install_gclient_from_github(
     )
 
 
-def install_gclient_from_submodule(module: Any, bin_dir: Path) -> bool:
+def install_gclient_from_submodule(module: Any, bin_dir: Path) -> str | None:
     """Build gclient from the local Rust workspace when available (Zig-free)."""
     if not module.shutil.which("cargo"):
-        return False
+        return None
 
     search = Path(__file__).resolve().parent
     for _ in range(10):
@@ -120,7 +126,7 @@ def install_gclient_from_submodule(module: Any, bin_dir: Path) -> bool:
             10,
             Path(__file__).resolve().parent,
         )
-        return False
+        return None
 
     try:
         module.click.echo(
@@ -141,24 +147,27 @@ def install_gclient_from_submodule(module: Any, bin_dir: Path) -> bool:
             timeout=180,
         )
         if result.returncode != 0:
-            return False
+            return None
 
         release_dir = manifest.parent / "target" / "release"
         src_bin = release_dir / module._GCLIENT_BIN_NAME
         if not src_bin.exists():
-            return False
+            return None
 
         dest = bin_dir / module._GCLIENT_BIN_NAME
+        if workspace_binary_is_current(bin_dir, "gclient", src_bin, dest):
+            return "current"
         lock = try_acquire_native_bin_lock("gclient", bin_dir=bin_dir)
         if lock is None:
             module.logger.warning("gclient: native binary update is already in progress")
-            return False
+            return None
         with lock:
             stage_and_promote_binary_file(src_bin, destination=dest)
-        return True
+            write_source_hash(bin_dir, "gclient", file_sha256(src_bin))
+        return "promoted"
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gclient: local workspace build failed: %s", e)
-        return False
+        return None
 
 
 def install_gclient_from_cargo_git(module: Any, bin_dir: Path) -> bool:
@@ -261,16 +270,7 @@ def install_gclient(module: Any, force: bool = False) -> dict[str, Any]:
     installed_version = module._get_installed_gclient_version(bin_dir)
     pinned_version = MANAGED_BIN_VERSION_PINS["gclient"]
     published = is_published("gclient")
-    if gclient_path.exists() and not force:
-        if not published:
-            local_version = installed_version or "unknown"
-            module._write_gclient_version_stamp(bin_dir, local_version)
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": local_version,
-                "method": "local",
-            }
+    if gclient_path.exists() and not force and published:
         if installed_version and managed_version_satisfies_pin("gclient", installed_version):
             module._write_gclient_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
@@ -282,10 +282,31 @@ def install_gclient(module: Any, force: bool = False) -> dict[str, Any]:
     method = None
 
     if not published:
-        if module._install_gclient_from_submodule(bin_dir):
-            method = "workspace"
-        else:
-            raise ManagedBinaryReleaseMissing("gclient")
+        if force:
+            clear_source_hash(bin_dir, "gclient")
+        outcome = module._install_gclient_from_submodule(bin_dir)
+        if not outcome:
+            if force or not gclient_path.exists():
+                raise ManagedBinaryReleaseMissing("gclient")
+            local_version = installed_version or "unknown"
+            module._write_gclient_version_stamp(bin_dir, local_version)
+            return {
+                "installed": False,
+                "skipped": True,
+                "version": local_version,
+                "method": "local",
+                "reason": "unverified: local build unavailable",
+            }
+        if outcome == "current":
+            local_version = installed_version or "unknown"
+            module._write_gclient_version_stamp(bin_dir, local_version)
+            return {
+                "installed": False,
+                "skipped": True,
+                "version": local_version,
+                "method": "local",
+            }
+        method = "workspace"
     elif module._install_gclient_from_github(bin_dir, target, target_version):
         method = "github"
     elif module._install_gclient_from_cargo_binstall(bin_dir, target_version):

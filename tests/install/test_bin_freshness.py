@@ -22,6 +22,13 @@ from gobby.install.bin_freshness_github import (
 from gobby.install.bin_freshness_inspector import inspect_managed_bin
 from gobby.install.bin_freshness_locks import NativeBinFileLock, try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, managed_bin_specs
+from gobby.install.bin_freshness_promotion import (
+    clear_source_hash,
+    file_sha256,
+    read_source_hash,
+    workspace_binary_is_current,
+    write_source_hash,
+)
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -857,6 +864,62 @@ class TestGithubReleaseClient:
         assert calls == [
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
         ]
+
+
+class TestWorkspaceBinaryFreshness:
+    """Content-hash freshness for unpublished managed binaries (gclient, gterm)."""
+
+    def _workspace(self, tmp_path: Path) -> tuple[Path, Path, Path]:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        built = tmp_path / "built" / "gclient"
+        built.parent.mkdir()
+        built.write_bytes(b"fresh-artifact")
+        installed = bin_dir / "gclient"
+        installed.write_bytes(b"installed-and-signed")
+        return bin_dir, built, installed
+
+    def test_recorded_hash_matching_the_build_is_current(self, tmp_path: Path) -> None:
+        bin_dir, built, installed = self._workspace(tmp_path)
+        write_source_hash(bin_dir, "gclient", file_sha256(built))
+
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is True
+
+    def test_changed_build_is_not_current(self, tmp_path: Path) -> None:
+        bin_dir, built, installed = self._workspace(tmp_path)
+        write_source_hash(bin_dir, "gclient", file_sha256(built))
+        built.write_bytes(b"rebuilt-artifact")
+
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is False
+
+    def test_missing_hash_is_not_current(self, tmp_path: Path) -> None:
+        bin_dir, built, installed = self._workspace(tmp_path)
+
+        assert read_source_hash(bin_dir, "gclient") is None
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is False
+
+    def test_missing_installed_binary_is_not_current(self, tmp_path: Path) -> None:
+        bin_dir, built, installed = self._workspace(tmp_path)
+        write_source_hash(bin_dir, "gclient", file_sha256(built))
+        installed.unlink()
+
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is False
+
+    def test_cleared_hash_is_not_current(self, tmp_path: Path) -> None:
+        bin_dir, built, installed = self._workspace(tmp_path)
+        write_source_hash(bin_dir, "gclient", file_sha256(built))
+
+        clear_source_hash(bin_dir, "gclient")
+
+        assert read_source_hash(bin_dir, "gclient") is None
+        assert workspace_binary_is_current(bin_dir, "gclient", built, installed) is False
+
+    def test_clearing_an_absent_hash_is_a_no_op(self, tmp_path: Path) -> None:
+        bin_dir, _, _ = self._workspace(tmp_path)
+
+        clear_source_hash(bin_dir, "gclient")
+
+        assert read_source_hash(bin_dir, "gclient") is None
 
 
 TEST_MACHINE_ID = "8fa1247f-e924-4bd7-a54e-b9dd5704304a"

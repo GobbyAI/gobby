@@ -553,7 +553,7 @@ def _install_gterm_from_github(bin_dir: Path, target: str, version: str | None =
     return _gterm_impl.install_gterm_from_github(_module(), bin_dir, target, version)
 
 
-def _install_gterm_from_submodule(bin_dir: Path) -> bool:
+def _install_gterm_from_submodule(bin_dir: Path) -> str | None:
     return _gterm_impl.install_gterm_from_submodule(_module(), bin_dir)
 
 
@@ -596,7 +596,7 @@ def _install_gclient_from_github(bin_dir: Path, target: str, version: str | None
     return _gclient_impl.install_gclient_from_github(_module(), bin_dir, target, version)
 
 
-def _install_gclient_from_submodule(bin_dir: Path) -> bool:
+def _install_gclient_from_submodule(bin_dir: Path) -> str | None:
     return _gclient_impl.install_gclient_from_submodule(_module(), bin_dir)
 
 

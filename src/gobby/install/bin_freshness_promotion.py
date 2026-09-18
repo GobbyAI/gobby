@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tarfile
@@ -109,3 +110,64 @@ def _write_staged_binary(path: Path, source: IO[bytes]) -> None:
         fileobj.flush()
         os.fsync(fileobj.fileno())
         os.fchmod(fileobj.fileno(), NATIVE_BINARY_MODE)
+
+
+# Unpublished managed binaries (gterm, gclient) carry a static crate version, so
+# their version stamp can never report staleness. The only honest freshness test
+# is the content of the artifact the workspace build just produced, recorded here
+# beside the binary so the next install can compare without promoting.
+SOURCE_HASH_SUFFIX = "-source-sha256"
+
+
+def file_sha256(path: Path) -> str:
+    """Return the hex sha256 of a file, reading it in chunks."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def source_hash_path(bin_dir: Path, name: str) -> Path:
+    """Path of the recorded build-artifact hash for a managed binary."""
+    return bin_dir / f".{name}{SOURCE_HASH_SUFFIX}"
+
+
+def read_source_hash(bin_dir: Path, name: str) -> str | None:
+    """Read the recorded build-artifact hash, or None when absent or unreadable."""
+    path = source_hash_path(bin_dir, name)
+    try:
+        if not path.exists():
+            return None
+        return path.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def write_source_hash(bin_dir: Path, name: str, digest: str) -> None:
+    """Record the build-artifact hash atomically beside the promoted binary."""
+    target = source_hash_path(bin_dir, name)
+    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=f".{name}-sha-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(digest + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, target)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
+def clear_source_hash(bin_dir: Path, name: str) -> None:
+    """Forget the recorded hash so the next workspace build always promotes."""
+    source_hash_path(bin_dir, name).unlink(missing_ok=True)
+
+
+def workspace_binary_is_current(bin_dir: Path, name: str, built: Path, installed: Path) -> bool:
+    """True when the installed binary already came from this exact build artifact."""
+    if not installed.exists():
+        return False
+    recorded = read_source_hash(bin_dir, name)
+    return recorded is not None and recorded == file_sha256(built)

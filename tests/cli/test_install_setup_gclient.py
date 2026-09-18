@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from gobby.cli import install_setup_gclient, install_setup_gterm
+from gobby.install.bin_freshness_promotion import source_hash_path, write_source_hash
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
@@ -23,7 +24,7 @@ def _gclient_install_harness(
     published: bool | None,
     present: bool,
     installed_version: str | None,
-    source_succeeds: bool = False,
+    source_outcome: str | None = None,
     successful_fetch: str | None = None,
 ) -> tuple[SimpleNamespace, Path, MagicMock, MagicMock, MagicMock]:
     bin_dir = tmp_path / ".gobby" / "bin"
@@ -33,10 +34,10 @@ def _gclient_install_harness(
 
     source = MagicMock(name="source")
 
-    def source_build(destination: Path) -> bool:
-        if source_succeeds:
+    def source_build(destination: Path) -> str | None:
+        if source_outcome == "promoted":
             (destination / "gclient").write_bytes(b"workspace")
-        return source_succeeds
+        return source_outcome
 
     source.side_effect = source_build
     fetches = MagicMock(name="fetches")
@@ -94,7 +95,7 @@ def test_unpublished_absent_binary_builds_or_raises(
         published=None,
         present=False,
         installed_version=None,
-        source_succeeds=True,
+        source_outcome="promoted",
     )
 
     result = install_setup_gclient.install_gclient(module)
@@ -116,7 +117,33 @@ def test_unpublished_absent_binary_builds_or_raises(
     assert missing_fetches.mock_calls == []
 
 
-def test_unpublished_present_binary_is_kept(
+def test_unpublished_present_binary_is_kept_when_build_reports_current(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, stamp = _gclient_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=None,
+        present=True,
+        installed_version="0.0.1",
+        source_outcome="current",
+    )
+
+    result = install_setup_gclient.install_gclient(module)
+
+    source.assert_called_once_with(bin_dir)
+    stamp.assert_called_once_with(bin_dir, "0.0.1")
+    assert fetches.mock_calls == []
+    assert (bin_dir / "gclient").read_bytes() == b"existing"
+    assert result == {
+        "installed": False,
+        "skipped": True,
+        "version": "0.0.1",
+        "method": "local",
+    }
+
+
+def test_unpublished_present_binary_is_kept_when_build_is_unavailable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module, bin_dir, source, fetches, stamp = _gclient_install_harness(
@@ -129,14 +156,42 @@ def test_unpublished_present_binary_is_kept(
 
     result = install_setup_gclient.install_gclient(module)
 
+    source.assert_called_once_with(bin_dir)
     stamp.assert_called_once_with(bin_dir, "0.0.1")
-    source.assert_not_called()
     assert fetches.mock_calls == []
+    assert (bin_dir / "gclient").read_bytes() == b"existing"
     assert result == {
         "installed": False,
         "skipped": True,
         "version": "0.0.1",
         "method": "local",
+        "reason": "unverified: local build unavailable",
+    }
+
+
+def test_unpublished_present_binary_is_rebuilt_when_build_promotes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, stamp = _gclient_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=None,
+        present=True,
+        installed_version="0.0.1",
+        source_outcome="promoted",
+    )
+
+    result = install_setup_gclient.install_gclient(module)
+
+    source.assert_called_once_with(bin_dir)
+    assert fetches.mock_calls == []
+    assert (bin_dir / "gclient").read_bytes() == b"workspace"
+    stamp.assert_called_once_with(bin_dir, GCLIENT_PIN)
+    assert result == {
+        "installed": True,
+        "upgraded": True,
+        "version": GCLIENT_PIN,
+        "method": "workspace",
     }
 
 
@@ -214,12 +269,14 @@ def test_force_rebuilds_unpublished_present_binary(
         published=None,
         present=True,
         installed_version=GCLIENT_PIN,
-        source_succeeds=True,
+        source_outcome="promoted",
     )
+    write_source_hash(bin_dir, "gclient", "0" * 64)
 
     result = install_setup_gclient.install_gclient(module, force=True)
 
     source.assert_called_once_with(bin_dir)
+    assert not source_hash_path(bin_dir, "gclient").exists()
     assert fetches.mock_calls == []
     assert result["installed"] is True
     assert result["method"] == "workspace"

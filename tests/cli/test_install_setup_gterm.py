@@ -23,6 +23,11 @@ from gobby.cli.install_setup import (
     _install_gterm_from_submodule,
 )
 from gobby.cli.install_setup_gterm import GTERM_NO_ZIG_SKIP_REASON
+from gobby.install.bin_freshness_promotion import (
+    file_sha256,
+    source_hash_path,
+    write_source_hash,
+)
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
@@ -74,7 +79,7 @@ class TestGtermInstaller:
         ):
             result = _install_gterm_from_submodule(dest)
 
-        assert result is False
+        assert result is None
         mock_run.assert_not_called()
         assert GTERM_NO_ZIG_SKIP_REASON in capsys.readouterr().out
 
@@ -114,7 +119,7 @@ class TestGtermInstaller:
         ):
             result = _install_gterm_from_submodule(dest)
 
-        assert result is True
+        assert result == "promoted"
         command = mock_run.call_args.args[0]
         assert command[:6] == [
             "cargo",
@@ -181,13 +186,45 @@ class TestGclientInstaller:
         ):
             result = _install_gclient_from_submodule(dest)
 
-        assert result is True
+        assert result == "promoted"
         command = mock_run.call_args.args[0]
         assert "--features" not in command
         assert "vt-engine" not in command
         assert command[:5] == ["cargo", "build", "--release", "-p", "gobby-client"]
         assert mock_run.call_args.kwargs["timeout"] == 180
         assert (dest / "gclient").read_bytes() == b"gclient-bin"
+
+    def test_workspace_build_keeps_installed_binary_when_hash_matches(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        (workspace / "crates" / "gclient").mkdir(parents=True)
+        (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
+        (workspace / "Cargo.toml").touch()
+        (workspace / "crates" / "gclient" / "Cargo.toml").touch()
+        source = workspace / "target" / "release" / "gclient"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"gclient-bin")
+        dest = tmp_path / "bin"
+        dest.mkdir()
+        (dest / "gclient").write_bytes(b"gclient-bin-signed")
+        write_source_hash(dest, "gclient", file_sha256(source))
+
+        with (
+            patch("gobby.cli.install_setup.shutil.which", side_effect=_which_cargo_only),
+            patch(
+                "gobby.cli.install_setup.subprocess.run",
+                return_value=MagicMock(returncode=0),
+            ),
+            patch(
+                "gobby.cli.install_setup_gclient.__file__",
+                str(workspace / "src" / "gobby" / "cli" / "install_setup_gclient.py"),
+            ),
+            patch("gobby.cli.install_setup_gclient.stage_and_promote_binary_file") as mock_promote,
+        ):
+            result = _install_gclient_from_submodule(dest)
+
+        assert result == "current"
+        mock_promote.assert_not_called()
+        assert (dest / "gclient").read_bytes() == b"gclient-bin-signed"
 
     def test_github_uses_gclient_tag_prefix(self, tmp_path: Path) -> None:
         with patch(
@@ -208,7 +245,7 @@ def _gterm_install_harness(
     published: bool | None,
     present: bool,
     installed_version: str | None,
-    source_succeeds: bool = False,
+    source_outcome: str | None = None,
     successful_fetch: str | None = None,
 ) -> tuple[SimpleNamespace, Path, MagicMock, MagicMock, MagicMock]:
     bin_dir = tmp_path / ".gobby" / "bin"
@@ -218,10 +255,10 @@ def _gterm_install_harness(
 
     source = MagicMock(name="source")
 
-    def source_build(destination: Path) -> bool:
-        if source_succeeds:
+    def source_build(destination: Path) -> str | None:
+        if source_outcome == "promoted":
             (destination / "gterm").write_bytes(b"workspace")
-        return source_succeeds
+        return source_outcome
 
     source.side_effect = source_build
     fetches = MagicMock(name="fetches")
@@ -279,7 +316,7 @@ def test_unpublished_binary_skips_remote_fetchers(
         published=None,
         present=False,
         installed_version=None,
-        source_succeeds=True,
+        source_outcome="promoted",
     )
 
     result = install_setup_gterm.install_gterm(module)
@@ -297,7 +334,7 @@ def test_unpublished_absent_binary_builds_or_raises(
         published=None,
         present=False,
         installed_version=None,
-        source_succeeds=True,
+        source_outcome="promoted",
     )
 
     result = install_setup_gterm.install_gterm(module)
@@ -319,7 +356,33 @@ def test_unpublished_absent_binary_builds_or_raises(
     assert missing_fetches.mock_calls == []
 
 
-def test_unpublished_present_binary_is_kept(
+def test_unpublished_present_binary_is_kept_when_build_reports_current(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, stamp = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=None,
+        present=True,
+        installed_version="0.0.1",
+        source_outcome="current",
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    source.assert_called_once_with(bin_dir)
+    stamp.assert_called_once_with(bin_dir, "0.0.1")
+    assert fetches.mock_calls == []
+    assert (bin_dir / "gterm").read_bytes() == b"existing"
+    assert result == {
+        "installed": False,
+        "skipped": True,
+        "version": "0.0.1",
+        "method": "local",
+    }
+
+
+def test_unpublished_present_binary_is_kept_when_build_is_unavailable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module, bin_dir, source, fetches, stamp = _gterm_install_harness(
@@ -332,14 +395,42 @@ def test_unpublished_present_binary_is_kept(
 
     result = install_setup_gterm.install_gterm(module)
 
+    source.assert_called_once_with(bin_dir)
     stamp.assert_called_once_with(bin_dir, "0.0.1")
-    source.assert_not_called()
     assert fetches.mock_calls == []
+    assert (bin_dir / "gterm").read_bytes() == b"existing"
     assert result == {
         "installed": False,
         "skipped": True,
         "version": "0.0.1",
         "method": "local",
+        "reason": "unverified: local build unavailable",
+    }
+
+
+def test_unpublished_present_binary_is_rebuilt_when_build_promotes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, stamp = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=None,
+        present=True,
+        installed_version="0.0.1",
+        source_outcome="promoted",
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    source.assert_called_once_with(bin_dir)
+    assert fetches.mock_calls == []
+    assert (bin_dir / "gterm").read_bytes() == b"workspace"
+    stamp.assert_called_once_with(bin_dir, GTERM_PIN)
+    assert result == {
+        "installed": True,
+        "upgraded": True,
+        "version": GTERM_PIN,
+        "method": "workspace",
     }
 
 
@@ -417,12 +508,14 @@ def test_force_rebuilds_unpublished_present_binary(
         published=None,
         present=True,
         installed_version=GTERM_PIN,
-        source_succeeds=True,
+        source_outcome="promoted",
     )
+    write_source_hash(bin_dir, "gterm", "0" * 64)
 
     result = install_setup_gterm.install_gterm(module, force=True)
 
     source.assert_called_once_with(bin_dir)
+    assert not source_hash_path(bin_dir, "gterm").exists()
     assert fetches.mock_calls == []
     assert result["installed"] is True
     assert result["method"] == "workspace"
