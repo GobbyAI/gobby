@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shlex
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,6 +90,8 @@ class ForeignPathOwner:
     path: str
     session_ref: str
     task_ref: str
+    owner_session_id: str
+    owner_task_id: str
 
 
 @dataclass(frozen=True)
@@ -235,7 +238,7 @@ async def foreign_staged_commit_conflict(
         if not owners:
             return ""
 
-        conflicts: set[ForeignPathOwner] = set()
+        owned_candidates: set[str] = set()
         staged_paths_by_cwd: dict[str, set[str]] = {}
         event_cwd = event.cwd if isinstance(event.cwd, str) else None
         for invocation in invocations:
@@ -268,9 +271,19 @@ async def foreign_staged_commit_conflict(
                     )
                     staged_paths_by_cwd[inspect_cwd] = staged_paths
                 candidate_paths = staged_paths
-            for path in candidate_paths:
-                conflicts.update(owners.get(path, ()))
+            owned_candidates.update(path for path in candidate_paths if path in owners)
 
+        # A pathspec lists clean tracked files too, so ownership alone is not a
+        # conflict: only a candidate that still differs from HEAD is foreign work.
+        dirty_paths = await _dirty_owned_paths_releasing_clean(
+            db,
+            owners,
+            owned_candidates,
+            checkout_root=project_path,
+        )
+        if dirty_paths is None:
+            raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
+        conflicts = {owner for path in dirty_paths for owner in owners.get(path, ())}
         return _format_conflict_reason(conflicts) if conflicts else ""
     except DirtyEditOwnershipInspectionError as exc:
         logger.warning(
@@ -324,17 +337,15 @@ async def foreign_dirty_edit_conflict(
         if not candidate_paths:
             return ""
 
-        dirty_paths = await task_dirty_paths_async(candidate_paths, project_path)
+        dirty_paths = await _dirty_owned_paths_releasing_clean(
+            db,
+            owners,
+            candidate_paths,
+            checkout_root=project_path,
+        )
         if dirty_paths is None:
             return _format_unverified_dirty_edit_reason(candidate_paths)
-        normalized_dirty = {
-            normalized
-            for path in dirty_paths
-            if (normalized := normalize_task_edited_path(path)) is not None
-        }
-        conflicts = {
-            owner for path in candidate_paths & normalized_dirty for owner in owners.get(path, ())
-        }
+        conflicts = {owner for path in dirty_paths for owner in owners.get(path, ())}
         if not conflicts:
             return ""
         return _format_dirty_edit_reason(conflicts)
@@ -432,6 +443,8 @@ def _active_path_owners(
                     path=path,
                     session_ref=session_ref,
                     task_ref=task_ref,
+                    owner_session_id=owner_session_id,
+                    owner_task_id=task_id,
                 )
             )
 
@@ -451,6 +464,73 @@ def _active_foreign_path_owners(
         checkout_root=checkout_root,
         exclude_session_id=session_id,
     )
+
+
+def _release_clean_ledger_entries(
+    db: HubDatabase,
+    owners: Mapping[str, tuple[ForeignPathOwner, ...]],
+    clean_paths: AbstractSet[str],
+    checkout_root: str,
+) -> None:
+    """Drop the ledger entries that claim ``clean_paths`` in ``checkout_root``."""
+    variable_manager = SessionVariableManager(db)
+    paths_by_owner: dict[tuple[str, str], list[str]] = {}
+    for path in sorted(clean_paths):
+        for owner in owners.get(path, ()):
+            paths_by_owner.setdefault((owner.owner_session_id, owner.owner_task_id), []).append(
+                path
+            )
+    for (owner_session_id, owner_task_id), paths in paths_by_owner.items():
+        try:
+            variable_manager.release_task_edited_files(
+                owner_session_id,
+                owner_task_id,
+                paths,
+                checkout_root=checkout_root,
+            )
+        except (psycopg.OperationalError, PoolTimeout):
+            # Releasing a stale entry is ledger hygiene, not part of the ownership
+            # decision: git already proved the path clean, so a database hiccup
+            # leaves the entry for a later check instead of failing the caller.
+            logger.warning(
+                "Could not release stale clean ledger entries for session %s task %s",
+                owner_session_id,
+                owner_task_id,
+                exc_info=True,
+            )
+
+
+async def _dirty_owned_paths_releasing_clean(
+    db: HubDatabase,
+    owners: Mapping[str, tuple[ForeignPathOwner, ...]],
+    candidate_paths: AbstractSet[str],
+    *,
+    checkout_root: str,
+) -> set[str] | None:
+    """Split owned candidates into real dirt and released stale entries.
+
+    A ledger entry whose path has no index or worktree difference from HEAD in
+    the checkout that recorded it describes committed work. It is released from
+    that owner's checkout-scoped ledger and dropped from the returned dirt, so
+    the path stops counting as owned even once the next session's own edit
+    dirties it. ``None`` means git could not verify the candidates: nothing is
+    released and every entry stands.
+    """
+    candidates = set(candidate_paths)
+    if not candidates:
+        return set()
+    dirty_paths = await task_dirty_paths_async(candidates, checkout_root)
+    if dirty_paths is None:
+        return None
+    dirty = candidates & {
+        normalized
+        for path in dirty_paths
+        if (normalized := normalize_task_edited_path(path)) is not None
+    }
+    clean = candidates - dirty
+    if clean:
+        await asyncio.to_thread(_release_clean_ledger_entries, db, owners, clean, checkout_root)
+    return dirty
 
 
 def foreign_owned_dirty_paths(
@@ -484,12 +564,15 @@ async def foreign_owned_dirty_paths_async(
     session_id: str,
     project_id: str,
     checkout_root: str,
+    paths: AbstractSet[str] | None = None,
 ) -> set[str]:
     """Return foreign-attributed paths that are dirty in ``checkout_root``.
 
-    Verifies only the paths another active session's open task claims, so git
-    never walks the tree. Raises DirtyEditOwnershipInspectionError when the
-    ownership query or the bounded status is unavailable.
+    Verifies only the paths another active session's open task claims, narrowed
+    to ``paths`` when one is given, so git never walks the tree. Entries whose
+    path is clean there are released as stale. Raises
+    DirtyEditOwnershipInspectionError when the ownership query or the bounded
+    status is unavailable.
     """
     try:
         owners = await asyncio.to_thread(
@@ -501,16 +584,16 @@ async def foreign_owned_dirty_paths_async(
         )
     except (psycopg.OperationalError, PoolTimeout) as exc:
         raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-    if not owners:
-        return set()
-    dirty_paths = await task_dirty_paths_async(set(owners), checkout_root)
+    candidates = set(owners) if paths is None else {path for path in paths if path in owners}
+    dirty_paths = await _dirty_owned_paths_releasing_clean(
+        db,
+        owners,
+        candidates,
+        checkout_root=checkout_root,
+    )
     if dirty_paths is None:
         raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
-    return {
-        normalized
-        for path in dirty_paths
-        if (normalized := normalize_task_edited_path(path)) is not None and normalized in owners
-    }
+    return dirty_paths
 
 
 async def inspect_checkout_path_ownership_async(

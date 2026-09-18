@@ -293,9 +293,27 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
 def test_dirty_edit_reason_lists_one_reclaim_hint_per_task() -> None:
     reason = _format_dirty_edit_reason(
         {
-            ForeignPathOwner(path="docs/a.md", session_ref="#2", task_ref="#7"),
-            ForeignPathOwner(path="src/b.py", session_ref="#2", task_ref="#7"),
-            ForeignPathOwner(path="src/c.py", session_ref="#3", task_ref="#9"),
+            ForeignPathOwner(
+                path="docs/a.md",
+                session_ref="#2",
+                task_ref="#7",
+                owner_session_id="session-2",
+                owner_task_id="task-7",
+            ),
+            ForeignPathOwner(
+                path="src/b.py",
+                session_ref="#2",
+                task_ref="#7",
+                owner_session_id="session-2",
+                owner_task_id="task-7",
+            ),
+            ForeignPathOwner(
+                path="src/c.py",
+                session_ref="#3",
+                task_ref="#9",
+                owner_session_id="session-3",
+                owner_task_id="task-9",
+            ),
         }
     )
 
@@ -350,6 +368,69 @@ async def test_clean_foreign_edit_releases_stale_entry_for_reedit(
     (guard_harness.repo / "foreign.txt").write_text("worker change\n", encoding="utf-8")
     second = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
     assert second.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_foreign_entry_committed_then_modified_again_still_blocks_edit(
+    guard_harness: GuardHarness,
+) -> None:
+    """Committing a path does not license the next edit while newer dirt sits on it."""
+    (guard_harness.repo / "foreign.txt").write_text("foreign work\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+    _git(guard_harness.repo, "commit", "-q", "-m", "foreign work")
+    (guard_harness.repo / "foreign.txt").write_text("more foreign work\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason
+    variables = SessionVariableManager(guard_harness.db)
+    foreign_vars = variables.get_variables(guard_harness.foreign_session.id)
+    assert foreign_vars["task_edited_files"][guard_harness.foreign_task.id] == ["foreign.txt"]
+    assert foreign_vars["task_edited_file_checkouts"][guard_harness.foreign_task.id] == {
+        str(guard_harness.repo): ["foreign.txt"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_stale_release_keeps_the_same_path_in_another_checkout(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    """A clean path here says nothing about the same path in the owner's other worktree."""
+    foreign_checkout = tmp_path / "foreign-checkout"
+    _git(
+        guard_harness.repo,
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "foreign-worktree",
+        str(foreign_checkout),
+    )
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {
+                guard_harness.foreign_task.id: {
+                    str(guard_harness.repo): ["foreign.txt"],
+                    str(foreign_checkout): ["foreign.txt"],
+                }
+            }
+        },
+    )
+    (foreign_checkout / "foreign.txt").write_text("foreign worktree work\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
+
+    assert response.decision == "allow"
+    foreign_vars = variables.get_variables(guard_harness.foreign_session.id)
+    assert foreign_vars["task_edited_file_checkouts"][guard_harness.foreign_task.id] == {
+        str(foreign_checkout): ["foreign.txt"]
+    }
+    assert foreign_vars["task_edited_files"][guard_harness.foreign_task.id] == ["foreign.txt"]
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,11 @@ from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import TaskCleanProof, ValidationResult
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
+    TaskCleanProof,
+    ValidationResult,
+    evaluate_task_clean_proof,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -217,6 +221,21 @@ def _create_foreign_attribution(
     return session, task
 
 
+@asynccontextmanager
+async def _recorded_clean_proof_paths() -> AsyncIterator[list[frozenset[str]]]:
+    """Record every path set close finalization asks Git to prove clean."""
+    proof_sets: list[frozenset[str]] = []
+
+    async def spy_evaluate(
+        ctx: RegistryContext, *, edited_paths: AbstractSet[str], repo_path: str
+    ) -> TaskCleanProof:
+        proof_sets.append(frozenset(edited_paths))
+        return await evaluate_task_clean_proof(ctx, edited_paths=edited_paths, repo_path=repo_path)
+
+    with patch.object(close_finalization, "evaluate_task_clean_proof", spy_evaluate):
+        yield proof_sets
+
+
 def _valid_review() -> ValidationResult:
     return ValidationResult(
         can_close=True,
@@ -371,16 +390,7 @@ async def test_stale_clean_foreign_entry_stays_in_clean_proof_and_releases(
         path="target.py",
         expired=False,
     )
-    proof_sets: list[frozenset[str]] = []
-    real_evaluate = close_finalization.evaluate_task_clean_proof
-
-    async def spy_evaluate(
-        ctx: RegistryContext, *, edited_paths: AbstractSet[str], repo_path: str
-    ) -> TaskCleanProof:
-        proof_sets.append(frozenset(edited_paths))
-        return await real_evaluate(ctx, edited_paths=edited_paths, repo_path=repo_path)
-
-    with patch.object(close_finalization, "evaluate_task_clean_proof", spy_evaluate):
+    async with _recorded_clean_proof_paths() as proof_sets:
         result = await _close_task(close_harness)
 
     assert result["closed"] is True
@@ -402,19 +412,8 @@ async def test_dirty_foreign_entry_stays_dropped_from_clean_proof(
         path="target.py",
         expired=False,
     )
-    (close_harness.repo_path / "target.py").write_text(
-        'VALUE = "foreign dirt"\n', encoding="utf-8"
-    )
-    proof_sets: list[frozenset[str]] = []
-    real_evaluate = close_finalization.evaluate_task_clean_proof
-
-    async def spy_evaluate(
-        ctx: RegistryContext, *, edited_paths: AbstractSet[str], repo_path: str
-    ) -> TaskCleanProof:
-        proof_sets.append(frozenset(edited_paths))
-        return await real_evaluate(ctx, edited_paths=edited_paths, repo_path=repo_path)
-
-    with patch.object(close_finalization, "evaluate_task_clean_proof", spy_evaluate):
+    (close_harness.repo_path / "target.py").write_text('VALUE = "foreign dirt"\n', encoding="utf-8")
+    async with _recorded_clean_proof_paths() as proof_sets:
         result = await _close_task(close_harness)
 
     assert result["closed"] is True

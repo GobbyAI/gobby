@@ -79,11 +79,11 @@ def _task(*, commits: list[str] | None) -> Task:
 @pytest.fixture(autouse=True)
 def _no_foreign_owners(monkeypatch: pytest.MonkeyPatch) -> None:
     """Commit-fallback paths consult live ownership rows; none exist in these tests."""
-    monkeypatch.setattr(
-        close_finalization,
-        "foreign_owned_dirty_paths",
-        lambda *_args, **_kwargs: frozenset(),
-    )
+
+    async def _no_owners(*_args: object, **_kwargs: object) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(close_finalization, "foreign_owned_dirty_paths_async", _no_owners)
 
 
 def _ctx(variables: dict[str, Any]) -> RegistryContext:
