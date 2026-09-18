@@ -576,7 +576,12 @@ async def test_close_ops_kill_owned_terminals_and_release_adopted_ones(
     first = closing.panes[0]
     second = (await h.ops.pane_split(OPERATOR, first.id, "horizontal")).panes[0]
     await h.ops.pane_split(OPERATOR, first.id, "vertical", terminal_id=external.id)
+    await h.ops.workspace_set_focus_hints(
+        OPERATOR, workspace.id, project_id=h.project_id, tab=closing.tabs[0].id, pane=first.id
+    )
     await h.ops.tab_close(OPERATOR, closing.tabs[0].id)
+    unseeded = h.workspaces.get(workspace.id)
+    assert unseeded is not None and unseeded.focused_tab_id is None
 
     kept = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
     third = kept.panes[0]

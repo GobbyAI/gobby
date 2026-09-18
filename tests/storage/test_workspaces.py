@@ -302,10 +302,112 @@ def test_sweep_dead_panes_prunes_layouts(
     assert [pane.id for pane in released.removed_panes] == [panes["in_flight"]]
     assert manager.list_tabs(workspace.id)[0].layout == _leaf(panes["live"])
 
+    manager.set_focus_hints(
+        workspace.id, project_id=project_id, tab_id=tab.id, pane_id=panes["live"]
+    )
     terminals.mark_exited(live.id)
     emptied = manager.sweep_dead_panes(workspace.id)
     assert [row.id for row in emptied.removed_tabs] == [tab.id]
     assert manager.list_tabs(workspace.id) == []
     survivor = manager.get(workspace.id)
     assert survivor is not None
-    assert survivor.name == workspace.name
+    assert (survivor.name, survivor.focused_tab_id) == (workspace.name, None)
+
+
+def _hints(
+    manager: WorkspaceManager, workspace_id: str
+) -> tuple[str | None, dict[str, str | None]]:
+    """The workspace's tab hint and each tab's pane hint, as the next window sees them."""
+    workspace = manager.get(workspace_id)
+    assert workspace is not None
+    return workspace.focused_tab_id, {
+        row.id: row.focused_pane_id for row in manager.list_tabs(workspace_id)
+    }
+
+
+def test_pane_removals_clear_the_tab_pane_hint(
+    manager: WorkspaceManager, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    workspace, _created = manager.create(manager.resolve_node(None).id)
+    created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=project_id)
+    tab, root = created.tabs[0], created.panes[0]
+    other = manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0]
+
+    # Removing the focused pane clears the hint in the returned row; the
+    # workspace's tab hint stays.
+    manager.set_focus_hints(workspace.id, project_id=project_id, tab_id=tab.id, pane_id=other.id)
+    assert manager.remove_pane(other.id).tabs[0].focused_pane_id is None
+    assert _hints(manager, workspace.id) == (tab.id, {tab.id: None})
+
+    # A pane that moves to another tab is no longer its source tab's focus, and a
+    # hint naming a pane that stays survives its neighbour's removal.
+    second = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=project_id)
+    second_tab, second_pane = second.tabs[0], second.panes[0]
+    moving = manager.add_pane(_pane_id(), beside=root.id, axis="horizontal").panes[0]
+    manager.set_focus_hints(workspace.id, project_id=project_id, tab_id=tab.id, pane_id=moving.id)
+    moved = manager.move_pane(moving.id, tab_id=second_tab.id, beside=second_pane.id)
+    assert {row.id: row.focused_pane_id for row in moved.tabs} == {
+        tab.id: None,
+        second_tab.id: None,
+    }
+    manager.set_focus_hints(
+        workspace.id, project_id=project_id, tab_id=second_tab.id, pane_id=second_pane.id
+    )
+    manager.remove_pane(moving.id)
+    expected = {tab.id: None, second_tab.id: second_pane.id}
+    assert _hints(manager, workspace.id) == (second_tab.id, expected)
+
+    # The sweep clears a hint naming a dead pane the same way.
+    terminals = TerminalManager(temp_db)
+    dying = _terminal(terminals, project_id, live=True)
+    doomed = manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0]
+    manager.set_pane_terminal(doomed.id, dying.id, owns_terminal=True)
+    for survivor in (root.id, second_pane.id):
+        manager.mark_spawn_in_flight(survivor)
+    manager.set_focus_hints(workspace.id, project_id=project_id, tab_id=tab.id, pane_id=doomed.id)
+    terminals.mark_exited(dying.id)
+    swept = manager.sweep_dead_panes(workspace.id)
+    assert [(row.id, row.focused_pane_id) for row in swept.tabs] == [(tab.id, None)]
+    assert _hints(manager, workspace.id) == (tab.id, expected)
+
+
+def test_tab_removals_clear_the_workspace_tab_hint(
+    manager: WorkspaceManager, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    node = manager.resolve_node(None)
+    workspace, _created = manager.create(node.id)
+
+    def open_tab() -> tuple[str, str]:
+        created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=project_id)
+        return created.tabs[0].id, created.panes[0].id
+
+    def focus(tab_id: str, pane_id: str) -> None:
+        manager.set_focus_hints(workspace.id, project_id=project_id, tab_id=tab_id, pane_id=pane_id)
+
+    # Closing the focused tab clears the hint; a hint naming another tab survives
+    # a tab removal, including one that empties the tab pane by pane.
+    closing, closing_pane = open_tab()
+    kept, kept_pane = open_tab()
+    focus(closing, closing_pane)
+    manager.close_tab(closing)
+    assert _hints(manager, workspace.id) == (None, {kept: None})
+    focus(kept, kept_pane)
+    _emptied, emptied_pane = open_tab()
+    manager.remove_pane(emptied_pane)
+    assert _hints(manager, workspace.id) == (kept, {kept: kept_pane})
+    manager.remove_pane(kept_pane)
+    assert _hints(manager, workspace.id) == (None, {})
+
+    # A tab moved to another workspace seeds neither workspace; a move within
+    # its workspace keeps the hint.
+    moving, moving_pane = open_tab()
+    focus(moving, moving_pane)
+    target, _created = manager.create(node.id, "target")
+    manager.move_tab(moving, workspace_id=target.id, position=0)
+    assert _hints(manager, workspace.id) == (None, {})
+    assert _hints(manager, target.id) == (None, {moving: moving_pane})
+    manager.set_focus_hints(target.id, project_id=project_id, tab_id=moving, pane_id=moving_pane)
+    manager.move_tab(moving, workspace_id=target.id, position=0)
+    assert _hints(manager, target.id) == (moving, {moving: moving_pane})

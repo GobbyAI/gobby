@@ -372,14 +372,34 @@ def _write_layout(conn: Transaction, tab_id: str, layout: LayoutNode) -> Workspa
     return WorkspaceTab.from_row(_required(row, f"Tab {tab_id}"))
 
 
+def _delete_tab(conn: Transaction, tab_id: str) -> None:
+    """Delete a tab row; a workspace focus hint naming it goes with it.
+
+    ``focused_tab_id`` has no foreign key, so the hint is cleared here rather than
+    by the schema. The workspace row is touched after the caller's tab locks;
+    workspace ops run one at a time on the daemon loop, so that never waits.
+    """
+    conn.execute("DELETE FROM workspace_tabs WHERE id = %s", (tab_id,))
+    conn.execute(
+        "UPDATE workspaces SET focused_tab_id = NULL, updated_at = now() WHERE focused_tab_id = %s",
+        (tab_id,),
+    )
+
+
 def _drop_from_layout(
     conn: Transaction, tab: WorkspaceTab, pane_ids: Collection[str]
 ) -> WorkspaceTab | None:
-    """Collapse removed panes out of a tab; returns None when the emptied tab is deleted."""
+    """Collapse removed panes out of a tab; returns None when the emptied tab is deleted.
+
+    A focus hint naming a removed pane is cleared first, so the returned row never
+    seeds a pane that is gone.
+    """
     layout = _without_panes(tab.layout, pane_ids)
     if layout is None:
-        conn.execute("DELETE FROM workspace_tabs WHERE id = %s", (tab.id,))
+        _delete_tab(conn, tab.id)
         return None
+    if tab.focused_pane_id in pane_ids:
+        conn.execute("UPDATE workspace_tabs SET focused_pane_id = NULL WHERE id = %s", (tab.id,))
     return _write_layout(conn, tab.id, layout)
 
 
@@ -642,6 +662,12 @@ class WorkspaceManager:
                 """,
                 (target_id, _free_ref(conn, "workspace_tabs", target_id), tab_id, target_id),
             )
+            # A tab that left its workspace no longer seeds that workspace's focus.
+            conn.execute(
+                "UPDATE workspaces SET focused_tab_id = NULL, updated_at = now() "
+                "WHERE focused_tab_id = %s AND id <> %s",
+                (tab_id, target_id),
+            )
             order = [
                 str(row["id"])
                 for row in conn.execute(
@@ -674,7 +700,7 @@ class WorkspaceManager:
             panes = conn.execute(
                 "DELETE FROM workspace_panes WHERE tab_id = %s RETURNING *", (tab_id,)
             ).fetchall()
-            conn.execute("DELETE FROM workspace_tabs WHERE id = %s", (tab_id,))
+            _delete_tab(conn, tab_id)
         return LayoutChange(
             removed_panes=tuple(WorkspacePane.from_row(row) for row in panes),
             removed_tabs=(tab,),
