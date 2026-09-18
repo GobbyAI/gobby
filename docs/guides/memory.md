@@ -458,7 +458,8 @@ each search fetches a window proportional to it, so the same memory can rank
 differently at different limits.
 
 `search_memories` supports an explicit `min_score` threshold. Agents search on
-demand; no rule injects memories automatically. The tool returns
+demand; `surface_memories` is the automated path, called by rules. The tool
+returns
 `memories`, `recall_request_id`, `project_id`, and `diagnostics`; each hit
 includes its content, rationale, type, provenance, ranking fields, and duplicate
 fold information. Live-corpus raw cosine score bands are p10 `0.62`, p50
@@ -560,7 +561,8 @@ sequenceDiagram
     participant Agent
 
     User->>RuleEngine: turn_start(prompt)
-    RuleEngine-->>Agent: memory skill on the initial turn, concise reminder later
+    RuleEngine->>Memory: surface_memories(prompt or last assistant message)
+    RuleEngine-->>Agent: ranked memory index, plus the skill or reminder
     Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
     RuleEngine-->>Agent: post-close review request on turn_end or before set_handoff (when tasks closed)
@@ -570,8 +572,9 @@ sequenceDiagram
 The installed `bootstrap-default-agent-core-skills` rule requests memory guidance
 with the other core skills in each context epoch. It replaces the old separate
 initial-turn loader. Installed registry inspection on 2026-09-12 found that
-bootstrap rule and all ten rules below enabled globally. Re-check installed rows
-for the current session before inferring active enforcement from this table.
+bootstrap rule and the ten rules that existed then enabled globally;
+`surface-memories-on-turn-start` postdates that inspection. Re-check installed
+rows for the current session before inferring active enforcement from this table.
 
 Current bundled memory rules:
 
@@ -579,7 +582,6 @@ Current bundled memory rules:
 | --- | --- | --- |
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until `gobby:references/memory/overview.md` is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
-| `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `judge-shadow-relevance-on-response` | `turn_end` | Judges pending shadow-memory recall candidates in the background. |
@@ -587,13 +589,19 @@ Current bundled memory rules:
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
 | `search-memories-on-claim` | `after_tool` | Nudges one subject search after a successful `claim_task` or claimed `create_task`, before editing starts. |
+| `surface-memories-on-turn-start` | `turn_start` | Calls `surface_memories` once per parent turn and injects the ranked index, searching on the prompt when it states work and on the session's last assistant message when it does not. |
+
+Queueing a closed task for review is not one of these rules: the workflow state
+manager writes `_memory_pending_task_reviews` directly, and the two review rows
+above read it.
 
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
 
 ## Retrieval Is Agent-Driven
 
-Agents search on demand; no rule injects memories automatically. Call
+`surface-memories-on-turn-start` pushes one ranked memory index per parent turn;
+everything beyond that index is the agent's own search. Call
 `search_memories` after claiming unfamiliar work and whenever prior project
 knowledge could change the implementation. Judge each hit by its `similarity`,
 `type`, `rationale`, and content; search results are evidence, not

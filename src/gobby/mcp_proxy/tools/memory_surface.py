@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.memory.prompt_triage import is_substantive_prompt
 from gobby.storage.session_resolution import resolve_session_reference
 
 if TYPE_CHECKING:
@@ -80,8 +81,9 @@ def register_memory_surface_tools(
             "Search project/global memories related to a block of text and return the ranked "
             "hits as a compact index. Built for rule-driven surfacing at a turn, an agent "
             "spawn, a task claim, or a handoff; review lessons are excluded because they have "
-            "their own injection path. Never writes memories, and returns an empty result "
-            "rather than failing the caller."
+            "their own injection path. The turn trigger searches the session's last assistant "
+            "message instead when the prompt states no work. Never writes memories, and returns "
+            "an empty result rather than failing the caller."
         ),
     )
     async def surface_memories(
@@ -93,7 +95,11 @@ def register_memory_surface_tools(
             # Truncation is the only edit the text takes: the search service
             # embeds it verbatim, so trimming here would change the vector.
             query = text[:MAX_QUERY_CHARS]
-            if not query.strip() or session_manager is None:
+            # A turn whose prompt says nothing searchable still has an intent:
+            # the one the agent stated in its own last message. That fallback
+            # needs the session row, so the empty-text exit waits for it.
+            fall_back = trigger == "turn" and not is_substantive_prompt(text)
+            if session_manager is None or (not fall_back and not query.strip()):
                 return _empty(trigger)
 
             resolved = await asyncio.to_thread(_resolve_session, session_manager, session_id)
@@ -103,6 +109,12 @@ def register_memory_surface_tools(
             project_id = getattr(session, "project_id", None)
             if not isinstance(project_id, str) or not project_id:
                 return _empty(trigger)
+
+            if fall_back:
+                assistant_text = getattr(session, "last_assistant_content", None)
+                query = assistant_text[:MAX_QUERY_CHARS] if isinstance(assistant_text, str) else ""
+                if not query.strip():
+                    return _empty(trigger)
 
             memories = await memory_manager().search_memories(
                 # The search service embeds ``embed_text`` and hands ``query``

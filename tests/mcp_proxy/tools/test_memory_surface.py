@@ -39,13 +39,18 @@ def _registry(
     *,
     candidates: list[SimpleNamespace] | None = None,
     search_error: Exception | None = None,
+    last_assistant_content: str | None = None,
 ) -> tuple[Any, MagicMock]:
     memory_manager = MagicMock()
     if search_error is not None:
         memory_manager.search_memories = AsyncMock(side_effect=search_error)
     else:
         memory_manager.search_memories = AsyncMock(return_value=candidates or [])
-    session = SimpleNamespace(id=SESSION_ID, project_id=PROJECT_ID)
+    session = SimpleNamespace(
+        id=SESSION_ID,
+        project_id=PROJECT_ID,
+        last_assistant_content=last_assistant_content,
+    )
     session_manager = MagicMock()
     session_manager.get.side_effect = lambda session_id: (
         session if session_id == SESSION_ID else None
@@ -155,6 +160,53 @@ async def test_surface_returns_nothing_for_an_unresolvable_session() -> None:
     assert result["count"] == 0
     assert result["memories"] == []
     memory_manager.search_memories.assert_not_awaited()
+
+
+async def test_turn_trigger_uses_substantive_prompt() -> None:
+    registry, memory_manager = _registry(
+        candidates=[_memory(1)],
+        last_assistant_content="I am about to rewrite the dispatcher",
+    )
+    prompt = "Rework the handoff contract so a spawned worker ends with structured fields"
+
+    result = await registry.call(
+        "surface_memories",
+        {"text": prompt, "trigger": "turn", "session_id": SESSION_ID},
+    )
+
+    kwargs = memory_manager.search_memories.await_args.kwargs
+    assert kwargs["query"] == prompt
+    assert kwargs["embed_text"] == prompt
+    assert result["count"] == 1
+
+
+async def test_turn_trigger_falls_back_to_assistant_text() -> None:
+    assistant_text = "Next I will rebuild promote_workspace_binary_set so the stamp is written"
+    registry, memory_manager = _registry(
+        candidates=[_memory(1)],
+        last_assistant_content=assistant_text,
+    )
+
+    result = await registry.call(
+        "surface_memories",
+        {"text": "go ahead", "trigger": "turn", "session_id": SESSION_ID},
+    )
+
+    kwargs = memory_manager.search_memories.await_args.kwargs
+    assert kwargs["query"] == assistant_text
+    assert kwargs["embed_text"] == assistant_text
+    assert result["count"] == 1
+
+    silent_registry, silent_manager = _registry(candidates=[_memory(1)])
+
+    silent = await silent_registry.call(
+        "surface_memories",
+        {"text": "go ahead", "trigger": "turn", "session_id": SESSION_ID},
+    )
+
+    assert silent["count"] == 0
+    assert silent["memories"] == []
+    silent_manager.search_memories.assert_not_awaited()
 
 
 def test_floor_matches_ranking_fixture() -> None:

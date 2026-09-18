@@ -20,7 +20,10 @@ def test_memory_guide_matches_search_and_tool_contracts() -> None:
     normalized = " ".join(guide.split())
     mcp_section = guide.split("## MCP Tools", 1)[1].split("### Common Calls", 1)[0]
 
-    assert "Agents search on demand; no rule injects memories automatically." in guide
+    assert (
+        "`surface-memories-on-turn-start` pushes one ranked memory index per parent turn;"
+        " everything beyond that index is the agent's own search." in normalized
+    )
     assert "p10 `0.62`, p50 `0.69`, and p90 `0.75`" in normalized
     assert "`review_task_memories`" in mcp_section
     assert "`bootstrap_session_title`" not in mcp_section
