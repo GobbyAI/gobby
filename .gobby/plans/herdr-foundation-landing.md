@@ -126,7 +126,7 @@ never at collection. Group 2 runs with `GOBBY_POSTGRES_TEST_DSN` exported.
 and installed via `uv run gobby install` from the tree being run (`ensure_gdaemon`
 rebuilds `gdaemon` from the workspace whenever its embedded identity differs from the
 tree's `schema_expected_identity.json`, and stages the file under a new inode). Zig
-0.15.2 is installed at `/opt/homebrew/bin/zig`, so `gterm` builds locally with
+0.16.0 is installed at `/opt/homebrew/bin/zig`, so `gterm` builds locally with
 `--features vt-engine`; `gterm` is installed to `~/.gobby/bin/gterm` by the same
 new-inode rule (copy to a dotfile, `mv -f` over the name).
 
