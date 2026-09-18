@@ -65,8 +65,11 @@ fn close_slot(tab: &mut Tab, slot: layout::PaneId) {
     if tab.slots.is_empty() {
         return;
     }
-    tab.layout.focus_pane(slot);
-    let _ = tab.layout.close_focused();
+    if let Some(next) = tab.layout.close_focused(slot) {
+        if tab.focus == slot {
+            tab.focus = next;
+        }
+    }
 }
 
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
@@ -544,7 +547,8 @@ fn live_neighbour_slots(
     chrome: &Chrome,
     direction: NavDirection,
 ) -> Option<(layout::PaneId, layout::PaneId)> {
-    let panes = chrome.active_tab()?.layout.panes(live_layout_area(chrome));
+    let tab = chrome.active_tab()?;
+    let panes = tab.layout.panes(live_layout_area(chrome), tab.focus);
     let focused = panes.iter().find(|pane| pane.is_focused)?;
     let neighbour = find_in_direction(focused, direction, &panes)?;
     Some((focused.id, neighbour))

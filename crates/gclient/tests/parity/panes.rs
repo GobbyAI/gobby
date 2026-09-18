@@ -56,15 +56,16 @@ fn pane_border_title(label: &str, pane_width: u16, focused: bool) -> Option<Stri
 /// workspace pane `first`. Returns the tab and its root slot.
 fn test_tab(first: AppPaneId) -> (Tab, PaneId) {
     let tab = Tab::new("test", first);
-    let root = tab.layout.focused();
+    let root = tab.focus;
     (tab, root)
 }
 
 /// herdr `Workspace::test_split(direction)`: split the focused slot; the
 /// new slot shows `pane` and takes focus, as upstream.
 fn test_split(tab: &mut Tab, direction: Direction, pane: AppPaneId) -> PaneId {
-    let slot = tab.layout.split_focused(direction);
+    let slot = tab.layout.split_focused(tab.focus, direction);
     tab.slots.insert(slot, pane);
+    tab.focus = slot;
     slot
 }
 
@@ -78,7 +79,7 @@ fn app_with_workspace() -> (Chrome, Workspace, PaneId) {
         .expect("open terminal");
     let mut chrome = chrome();
     chrome.open_tab(pane, "test");
-    let root = chrome.active_tab().expect("tab").layout.focused();
+    let root = chrome.active_tab().expect("tab").focus;
     (chrome, ws, root)
 }
 
@@ -182,9 +183,9 @@ parity_tests! {
         fn default_horizontal_split_uses_one_shared_divider_column() {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let right = test_split(&mut tab, Direction::Horizontal, AppPaneId(2));
-            tab.layout.focus_pane(root);
+            tab.focus = root;
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20)), true, false);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), tab.focus), true, false);
             let left = infos.iter().find(|info| info.id == root).unwrap();
             let right = infos.iter().find(|info| info.id == right).unwrap();
 
@@ -196,9 +197,9 @@ parity_tests! {
         fn default_vertical_split_uses_one_shared_divider_row() {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let bottom = test_split(&mut tab, Direction::Vertical, AppPaneId(2));
-            tab.layout.focus_pane(root);
+            tab.focus = root;
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20)), true, false);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), tab.focus), true, false);
             let top = infos.iter().find(|info| info.id == root).unwrap();
             let bottom = infos.iter().find(|info| info.id == bottom).unwrap();
 
@@ -210,9 +211,9 @@ parity_tests! {
         fn pane_gaps_keep_independent_bordered_panes() {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let right = test_split(&mut tab, Direction::Horizontal, AppPaneId(2));
-            tab.layout.focus_pane(root);
+            tab.focus = root;
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20)), true, true);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), tab.focus), true, true);
             let left = infos.iter().find(|info| info.id == root).unwrap();
             let right = infos.iter().find(|info| info.id == right).unwrap();
 
@@ -224,9 +225,9 @@ parity_tests! {
         fn borderless_pane_gaps_add_one_empty_cell_between_panes() {
             let (mut tab, root) = test_tab(AppPaneId(1));
             let right = test_split(&mut tab, Direction::Horizontal, AppPaneId(2));
-            tab.layout.focus_pane(root);
+            tab.focus = root;
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20)), false, true);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), tab.focus), false, true);
             let left = infos.iter().find(|info| info.id == root).unwrap();
             let right = infos.iter().find(|info| info.id == right).unwrap();
 
@@ -240,7 +241,7 @@ parity_tests! {
             let (mut tab, _root) = test_tab(AppPaneId(1));
             test_split(&mut tab, Direction::Horizontal, AppPaneId(2));
 
-            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20)), false, false);
+            let infos = apply_pane_chrome(tab.layout.panes(Rect::new(0, 0, 100, 20), tab.focus), false, false);
 
             for info in infos {
                 assert!(info.borders.is_empty());
@@ -498,7 +499,7 @@ fn split_border_drag_sets_ratio() {
         .expect("open second terminal");
     let tab = chrome.active_tab_mut().expect("active tab");
     test_split(tab, Direction::Horizontal, second);
-    tab.layout.focus_pane(root);
+    tab.focus = root;
     let area = Rect::new(0, 0, 120, 40);
     chrome.compute_view(&ws, area);
     let split = chrome.view.split_borders[0].clone();

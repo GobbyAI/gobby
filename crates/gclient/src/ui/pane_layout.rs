@@ -169,7 +169,7 @@ pub fn pane_geometry(
         };
         let pane_inner = pane_inner_rect(area, borders);
         let info = PaneInfo {
-            id: tab.layout.focused(),
+            id: tab.focus,
             rect: area,
             inner_rect: stable_terminal_inner_rect(pane_inner, prefs.pane_scrollbars),
             scrollbar_rect: None,
@@ -179,8 +179,11 @@ pub fn pane_geometry(
         return (vec![info], Vec::new());
     }
 
-    let mut pane_infos =
-        apply_pane_chrome(tab.layout.panes(area), prefs.pane_borders, prefs.pane_gaps);
+    let mut pane_infos = apply_pane_chrome(
+        tab.layout.panes(area, tab.focus),
+        prefs.pane_borders,
+        prefs.pane_gaps,
+    );
     for info in &mut pane_infos {
         let pane_inner = pane_inner_rect(info.rect, info.borders);
         info.inner_rect = stable_terminal_inner_rect(pane_inner, prefs.pane_scrollbars);
@@ -197,8 +200,9 @@ mod tests {
 
     fn two_pane_tab() -> Tab {
         let mut tab = Tab::new("t", AppPaneId(1));
-        let slot = tab.layout.split_focused(Direction::Horizontal);
+        let slot = tab.layout.split_focused(tab.focus, Direction::Horizontal);
         tab.slots.insert(slot, AppPaneId(2));
+        tab.focus = slot;
         tab
     }
 
@@ -247,7 +251,7 @@ mod tests {
         assert_eq!(infos.len(), 1);
         assert!(splits.is_empty());
         assert_eq!(infos[0].rect, area);
-        assert_eq!(infos[0].id, tab.layout.focused());
+        assert_eq!(infos[0].id, tab.focus);
         let metrics = metrics_for(0, 5, infos[0].inner_rect.height);
         let gutter = scrollbar_gutter(content_inner(area), true, metrics).unwrap();
         assert_eq!(gutter, Rect::new(78, 1, 1, 22));

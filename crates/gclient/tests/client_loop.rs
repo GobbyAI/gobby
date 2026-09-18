@@ -5041,7 +5041,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
     let rect_of = |pane| {
         let slot = tab.slot_for(pane).expect("pane shown in the first tab");
         tab.layout
-            .panes(area)
+            .panes(area, tab.focus)
             .into_iter()
             .find(|info| info.id == slot)
             .expect("slot geometry")
@@ -5411,7 +5411,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
     let rect_of = |pane| {
         let slot = tab.slot_for(pane).expect("pane shown in the tab");
         tab.layout
-            .panes(area)
+            .panes(area, tab.focus)
             .into_iter()
             .find(|info| info.id == slot)
             .expect("slot geometry")

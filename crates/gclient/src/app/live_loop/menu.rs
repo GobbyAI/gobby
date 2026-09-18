@@ -192,7 +192,7 @@ pub fn apply_local_menu_action<D: Daemon>(
 /// Exchange `pane`'s slot with the focused slot of the active tab.
 fn swap_with_focused(chrome: &mut Chrome, pane: PaneId) {
     if let Some(tab) = chrome.active_tab_mut() {
-        let focused = tab.layout.focused();
+        let focused = tab.focus;
         if let Some(slot) = tab.slot_for(pane).filter(|slot| *slot != focused) {
             tab.layout.swap_panes(focused, slot);
         }

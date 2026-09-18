@@ -310,6 +310,8 @@ impl SidebarState {
 pub struct Tab {
     pub title: String,
     pub layout: TileLayout,
+    /// The slot this window focuses inside `layout`.
+    pub focus: layout::PaneId,
     pub slots: HashMap<layout::PaneId, PaneId>,
     pub zoomed: bool,
     /// The worktree this tab's shell was opened in, when a worktree row
@@ -325,6 +327,7 @@ impl Tab {
         Self {
             title: title.into(),
             layout,
+            focus: slot,
             slots,
             zoomed: false,
             worktree_id: None,
@@ -336,10 +339,12 @@ impl Tab {
         title: impl Into<String>,
         layout: TileLayout,
         slots: HashMap<layout::PaneId, PaneId>,
+        focus: layout::PaneId,
     ) -> Self {
         Self {
             title: title.into(),
             layout,
+            focus,
             slots,
             zoomed: false,
             worktree_id: None,
@@ -347,7 +352,7 @@ impl Tab {
     }
 
     pub fn focused_pane(&self) -> Option<PaneId> {
-        self.slots.get(&self.layout.focused()).copied()
+        self.slots.get(&self.focus).copied()
     }
 
     pub fn slot_for(&self, pane: PaneId) -> Option<layout::PaneId> {
@@ -591,14 +596,15 @@ impl Chrome {
         let set = self.tabs_mut();
         if set.tabs.is_empty() {
             let tab = Tab::new(title, pane);
-            let slot = tab.layout.focused();
+            let slot = tab.focus;
             set.tabs.push(tab);
             set.active_tab = 0;
             return slot;
         }
         let tab = &mut set.tabs[set.active_tab];
-        let slot = tab.layout.split_focused(direction);
+        let slot = tab.layout.split_focused(tab.focus, direction);
         tab.slots.insert(slot, pane);
+        tab.focus = slot;
         slot
     }
 
@@ -613,12 +619,15 @@ impl Chrome {
     pub fn close_focused(&mut self) -> Option<PaneId> {
         let set = self.tabs_mut();
         let tab = set.tabs.get_mut(set.active_tab)?;
-        let slot = tab.layout.focused();
+        let slot = tab.focus;
         let pane = tab.slots.remove(&slot);
-        if !tab.layout.close_focused() {
-            set.tabs.remove(set.active_tab);
-            if set.active_tab > 0 && set.active_tab >= set.tabs.len() {
-                set.active_tab = set.tabs.len().saturating_sub(1);
+        match tab.layout.close_focused(slot) {
+            Some(next) => tab.focus = next,
+            None => {
+                set.tabs.remove(set.active_tab);
+                if set.active_tab > 0 && set.active_tab >= set.tabs.len() {
+                    set.active_tab = set.tabs.len().saturating_sub(1);
+                }
             }
         }
         pane
@@ -643,7 +652,7 @@ impl Chrome {
             set.active_tab = index;
             self.tab_scroll_follow_active = true;
         }
-        self.tabs_mut().tabs[index].layout.focus_pane(slot);
+        self.tabs_mut().tabs[index].focus = slot;
         if previous != Some(pane) {
             self.last_focused = previous;
         }

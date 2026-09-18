@@ -79,7 +79,7 @@ impl TabSet {
                 .and_then(|pane| slots.iter().find(|(_, app)| **app == pane))
                 .map_or_else(|| first_slot(&root), |(slot, _)| *slot);
             let mut tab =
-                Tab::with_layout(&saved.title, TileLayout::from_saved(root, focus), slots);
+                Tab::with_layout(&saved.title, TileLayout::from_saved(root), slots, focus);
             tab.worktree_id = saved.worktree_id.clone();
             set.tabs.push(tab);
         }
