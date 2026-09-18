@@ -20,6 +20,8 @@ pub const READ_ONLY_INPUT: &str =
     "read-only after an unconfirmed write: take control (prefix+t) to type";
 /// Status shown when a key lands while a take-control request is pending.
 pub const ACQUIRING_CONTROL: &str = "acquiring control: keys typed before the grant are dropped";
+pub const HELD_BY_PEER: &str =
+    "another viewer holds control: take control again or take back (prefix+shift+a) to type";
 
 pub(super) async fn focus_live_pane(
     workspace: &mut Workspace<LiveDaemon>,
@@ -29,7 +31,7 @@ pub(super) async fn focus_live_pane(
         return Ok(());
     }
     if !workspace.pane(pane_id).is_held() {
-        take_live_control(workspace, pane_id).await?;
+        request_live_control(workspace, pane_id, false).await?;
     }
     Ok(())
 }
@@ -60,9 +62,30 @@ async fn move_live_focus(
     Ok(true)
 }
 
+/// An explicit take: the indicator, the context menu, `prefix+t`,
+/// `prefix+shift+a`, and a key typed into an observed pane all land here.
+///
+/// A pane already showing take-back has had a polite request refused or lost
+/// its lease to another attachment, so an explicit take on it is a takeover.
+/// The daemon refuses every non-takeover request while another attachment
+/// holds the lease, so without this the documented take-back path could
+/// never succeed and a held pane had no way out. Focus stays polite: see
+/// `focus_live_pane`.
 pub(super) async fn take_live_control(
     workspace: &mut Workspace<LiveDaemon>,
     pane_id: PaneId,
+) -> Result<(), FrameError> {
+    let takeover = workspace
+        .panes
+        .get(&pane_id)
+        .is_some_and(|pane| pane.has_take_back());
+    request_live_control(workspace, pane_id, takeover).await
+}
+
+async fn request_live_control(
+    workspace: &mut Workspace<LiveDaemon>,
+    pane_id: PaneId,
+    takeover: bool,
 ) -> Result<(), FrameError> {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return Ok(());
@@ -79,7 +102,7 @@ pub(super) async fn take_live_control(
             "type": "terminal_take_control",
             "terminal_id": terminal_id,
             "attachment_id": attachment_id,
-            "takeover": false,
+            "takeover": takeover,
         }))
         .await
     {
@@ -97,11 +120,11 @@ pub(super) async fn take_live_control(
         .get("granted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let refusal_reason = reply
-        .get("reason")
-        .and_then(Value::as_str)
-        .unwrap_or("control request denied")
-        .to_string();
+    let refusal_reason = match reply.get("reason").and_then(Value::as_str) {
+        Some("held") => HELD_BY_PEER.to_string(),
+        Some(reason) => reason.to_string(),
+        None => "control request denied".to_string(),
+    };
     let pending = {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
         if generation < pane.lease_generation() {
