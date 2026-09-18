@@ -324,3 +324,97 @@ class TestBlockReasonScoping:
         shown = variables[BLOCK_SCOPES_VARIABLE]["agent-a"]["_block_reasons_shown"]
         assert len(shown) == 1
         assert variables.get("_block_reasons_shown") is None
+
+
+class TestEnforcementBlockScoping:
+    """Agent-level enforcement blocks record recovery state in the issuing scope.
+
+    ``_finalize_block_response`` is the single writer of blocked-tool recovery
+    state. An enforcement path that also stamped the flat variables would leak a
+    subagent's block into the main agent's budget: the parent's next call either
+    resets its accumulated count or is charged a retry it never made.
+    """
+
+    @staticmethod
+    def _enforcing_variables(**extra: Any) -> dict[str, Any]:
+        return {
+            "_agent_type": "backend-developer",
+            "_agent_blocked_tools": ["TodoWrite"],
+            **extra,
+        }
+
+    @pytest.mark.asyncio
+    async def test_subagent_enforcement_block_leaves_the_main_scope_untouched(
+        self, db: HubDatabase
+    ) -> None:
+        engine = RuleEngine(db)
+        variables = self._enforcing_variables()
+
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "TodoWrite", "agent_id": "agent-a"}),
+            SESSION_ID,
+            variables,
+        )
+
+        assert response.decision == "block"
+        assert "_last_blocked_tool" not in variables
+        scope = variables[BLOCK_SCOPES_VARIABLE]["agent-a"]
+        assert scope["_last_blocked_tool"] == "TodoWrite"
+        assert scope["_last_blocked_rule_name"] == "agent-tool-enforcement"
+        assert scope["_last_blocked_reason"]
+
+    @pytest.mark.asyncio
+    async def test_main_agent_enforcement_block_still_records_flat_state(
+        self, db: HubDatabase
+    ) -> None:
+        engine = RuleEngine(db)
+        variables = self._enforcing_variables()
+
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "TodoWrite"}),
+            SESSION_ID,
+            variables,
+        )
+
+        assert response.decision == "block"
+        assert variables["_last_blocked_tool"] == "TodoWrite"
+        assert variables["_last_blocked_rule_name"] == "agent-tool-enforcement"
+        assert variables["_last_blocked_reason"]
+        assert BLOCK_SCOPES_VARIABLE not in variables
+
+    @pytest.mark.asyncio
+    async def test_subagent_enforcement_block_does_not_spend_the_parent_budget(
+        self, db: HubDatabase
+    ) -> None:
+        """The leak's concrete cost: a parent mid-escalation loses its budget.
+
+        The parent is two attempts into retrying ``Edit``. A subagent is then
+        blocked on a different tool. Stamping that tool onto the flat scope would
+        make the parent's next ``Edit`` look like a switch to a new tool, which
+        resets its count to zero and hands it five fresh attempts.
+        """
+        engine = RuleEngine(db)
+        variables = self._enforcing_variables(
+            _last_blocked_tool="Edit",
+            _last_blocked_rule_name="require-python-skill",
+            _last_blocked_reason="Load the python skill.",
+            consecutive_tool_blocks=2,
+            max_consecutive_blocked_tool_attempts=5,
+        )
+
+        await engine.evaluate(
+            _make_event(data={"tool_name": "TodoWrite", "agent_id": "agent-a"}),
+            SESSION_ID,
+            variables,
+        )
+
+        assert variables["_last_blocked_tool"] == "Edit"
+        assert variables["consecutive_tool_blocks"] == 2
+
+        await engine.evaluate(
+            _make_event(data={"tool_name": "Edit"}),
+            SESSION_ID,
+            variables,
+        )
+
+        assert variables["consecutive_tool_blocks"] == 3

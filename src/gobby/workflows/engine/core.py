@@ -521,7 +521,6 @@ class RuleEngine(
                     )
                     await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:
-                        variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
                         return await self._finalize_block_response(
@@ -548,7 +547,6 @@ class RuleEngine(
                     )
                     await self._flush_pending_terminal_denial(session_id)
                     if step_block is not None:
-                        variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
@@ -689,7 +687,6 @@ class RuleEngine(
                         )
                         await self._flush_pending_terminal_denial(session_id)
                         if agent_block is not None:
-                            variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                             if _is_write_like_event_data(event.data):
                                 _clear_edit_write_state(variables)
                             return await self._finalize_block_response(
@@ -708,7 +705,6 @@ class RuleEngine(
                         )
                         await self._flush_pending_terminal_denial(session_id)
                         if step_block is not None:
-                            variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                             if _is_write_like_event_data(event.data):
                                 _clear_edit_write_state(variables)
                             return await self._finalize_block_response(
