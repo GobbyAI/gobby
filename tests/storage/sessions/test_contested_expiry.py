@@ -30,6 +30,7 @@ from gobby.storage.sessions._constants import (
     is_contestable_terminal_expiry,
 )
 from gobby.storage.sessions._contested_expiry import read_session_variables
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -47,6 +48,7 @@ def _registered(
     sample_project: dict[str, Any],
     *,
     session_type: str = "terminal",
+    terminal_context: dict[str, Any] | None = None,
 ) -> Session:
     manager = SessionManager(temp_db)
     session = manager.register(
@@ -54,10 +56,17 @@ def _registered(
         machine_id=MACHINE_ID,
         source="claude",
         project_id=sample_project["id"],
-        terminal_context={"tty": "/dev/ttys004"},
+        terminal_context=terminal_context or {"tty": "/dev/ttys004"},
         session_type=session_type,
     )
     return session
+
+
+def _cleared_for(temp_db: HubDatabase, session_id: str, successor_id: str | None) -> None:
+    """Leave the marker a consumed (or still pending) clear handoff leaves behind."""
+    SessionVariableManager(temp_db).merge_variables(
+        session_id, {"clear_attempt": {"consumed_by": successor_id}}
+    )
 
 
 @pytest.mark.parametrize("cause", ["context_reuse", "parent_registration"])
@@ -280,3 +289,59 @@ def test_a_contest_survived_grants_nothing_to_the_next_expiry(
     expired = cast(Session, manager.get(session.id))
     assert expired.status == "expired"
     assert not is_contestable_terminal_expiry(expired, read_session_variables(temp_db, session.id))
+
+
+def test_a_cleared_session_whose_marker_was_consumed_is_never_revived(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A consumed clear marker means the CLI cleared the session and a successor
+    owns the pane; a late hook carrying the old external id must not bring the
+    row back beside the successor (#22525, native branch: no tmux identity).
+    """
+    manager = SessionManager(temp_db)
+    session = _registered(temp_db, sample_project)
+    successor = _registered(temp_db, sample_project)
+    manager.update_status(session.id, "expired")
+    _cleared_for(temp_db, session.id, successor.id)
+
+    revived = manager.revive_expired_terminal_session(session.id)
+
+    assert revived is not None
+    assert revived.status == "expired"
+    assert cast(Session, manager.get(successor.id)).status == "active"
+
+
+def test_a_cleared_tmux_session_whose_marker_was_consumed_is_never_revived(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The tmux ownership branch honors the same marker (#22525)."""
+    manager = SessionManager(temp_db)
+    terminal_context = {"tmux_pane": "%154", "tmux_socket_path": "/tmp/tmux-501/default"}
+    session = _registered(temp_db, sample_project, terminal_context=terminal_context)
+    successor = _registered(temp_db, sample_project, terminal_context=terminal_context)
+    manager.update_status(session.id, "expired")
+    _cleared_for(temp_db, session.id, successor.id)
+
+    revived = manager.revive_expired_terminal_session(session.id)
+
+    assert revived is not None
+    assert revived.status == "expired"
+    assert cast(Session, manager.get(successor.id)).status == "active"
+
+
+def test_an_unconsumed_clear_marker_does_not_block_revival(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Only a marker another session consumed proves the row is finished."""
+    manager = SessionManager(temp_db)
+    session = _registered(temp_db, sample_project)
+    manager.update_status(session.id, "expired")
+    _cleared_for(temp_db, session.id, None)
+
+    revived = manager.revive_expired_terminal_session(session.id)
+
+    assert revived is not None
+    assert revived.status == "active"

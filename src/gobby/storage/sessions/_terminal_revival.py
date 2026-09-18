@@ -18,6 +18,7 @@ from gobby.utils.datetime import utc_now
 from ._constants import LIVE_SESSION_STATUSES, get_logger, past_terminal_revival_horizon
 from ._contested_expiry import (
     clear_contested_terminal_expiry,
+    read_session_variables,
     session_has_active_native_subagent,
 )
 
@@ -48,6 +49,27 @@ class _TerminalRevivalMixin:
         if current.session_type != "terminal":
             return current
         if current.status not in {*TERMINAL_OWNER_STATUSES, "expired"}:
+            return current
+
+        successor_id = _clear_successor_of(self.db, session_id)
+        if successor_id is not None:
+            # The CLI cleared this session and a successor bound to the pane, so
+            # the row is finished by construction. A late hook still carrying its
+            # external id must not bring it back beside the successor: two live
+            # rows on one terminal context tie caller resolution and every
+            # implicit proxy call in the pane fails with SESSION_REQUIRED (#22525).
+            get_logger().info(
+                "Suppressed revival of cleared terminal session %s; its clear marker "
+                "was consumed by %s",
+                session_id,
+                successor_id,
+                extra={
+                    "event": "terminal_session_revival_suppressed_cleared",
+                    "session_id": session_id,
+                    "clear_successor_session_id": successor_id,
+                    "status": current.status,
+                },
+            )
             return current
 
         past_horizon = past_terminal_revival_horizon(current)
@@ -275,3 +297,16 @@ class _TerminalRevivalMixin:
                 )
 
         return self.get(session_id)
+
+
+def _clear_successor_of(db: HubDatabase, session_id: str) -> str | None:
+    """Return the session that consumed this row's clear marker, if any."""
+    # Module-level import would be circular: clear_continuation imports this package.
+    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+
+    variables = read_session_variables(db, session_id)
+    marker = variables.get(CLEAR_ATTEMPT_VARIABLE) if variables else None
+    consumed_by = marker.get("consumed_by") if isinstance(marker, dict) else None
+    if isinstance(consumed_by, str) and consumed_by and consumed_by != session_id:
+        return consumed_by
+    return None
