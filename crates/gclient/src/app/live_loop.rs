@@ -534,7 +534,7 @@ fn begin_reconnect(
     error: DaemonError,
 ) {
     let generation = daemon.generation();
-    drop(supervisor.request(generation, &error));
+    drop(supervisor.request(generation));
     workspace.observe_daemon_disconnect(generation, error);
 }
 
@@ -548,8 +548,8 @@ async fn handle_live_event(
         DaemonEvent::Terminal { payload, .. }
             if payload.get("event").and_then(Value::as_str) == Some("created")
     );
-    if let DaemonEvent::Disconnected { generation, error } = &event {
-        drop(supervisor.request(*generation, error));
+    if let DaemonEvent::Disconnected { generation, .. } = &event {
+        drop(supervisor.request(*generation));
     }
     if let DaemonEvent::Message(message) = &event {
         apply_live_write_outcome(workspace, message);
@@ -585,14 +585,9 @@ async fn handle_reconnect_outcome(
             }
             Err(error) => {
                 workspace.observe_daemon_disconnect(generation, error.clone());
-                if let ReconnectAttempt::Exhausted(error) = supervisor.handshake_failed(error) {
-                    workspace.latch_exit(error.to_string());
-                }
+                supervisor.handshake_failed(error);
             }
         },
-        ReconnectAttempt::Exhausted(error) => {
-            workspace.latch_exit(error.to_string());
-        }
         ReconnectAttempt::RetryScheduled { .. } | ReconnectAttempt::Idle => {}
     }
 }

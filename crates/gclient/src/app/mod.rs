@@ -814,9 +814,7 @@ impl<D: Daemon> Workspace<D> {
         let mut submitted = 0;
         for pane in self.panes.values_mut() {
             if let Some(generation) = pane.take_expired_detach_generation(now) {
-                drop(
-                    supervisor.request(generation, &DaemonError::Unavailable { retry_after: None }),
-                );
+                drop(supervisor.request(generation));
                 submitted += 1;
             }
         }

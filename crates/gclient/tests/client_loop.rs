@@ -2701,26 +2701,21 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
     let unavailable = || DaemonError::Unavailable { retry_after: None };
     let daemon = ReconnectDaemon::new((0..5).map(|_| Err(unavailable())));
     let mut supervisor = ReconnectSupervisor::new();
-    let waiter = supervisor.request(
-        Generation(7),
-        &DaemonError::Unavailable { retry_after: None },
-    );
+    let waiter = supervisor.request(Generation(7));
     let mut elapsed = Vec::new();
 
+    // Five failures in a row: the ladder's last delay repeats past its end
+    // instead of giving up.
     for attempt in 0..5 {
         let started = Instant::now();
         let outcome = supervisor.attempt_when_due(&daemon).await;
         elapsed.push(Instant::now() - started);
-        if attempt < 4 {
-            assert_eq!(
-                outcome,
-                ReconnectAttempt::RetryScheduled {
-                    delay: [250, 500, 1_000, 2_000].map(Duration::from_millis)[attempt]
-                }
-            );
-        } else {
-            assert_eq!(outcome, ReconnectAttempt::Exhausted(unavailable()));
-        }
+        assert_eq!(
+            outcome,
+            ReconnectAttempt::RetryScheduled {
+                delay: [250, 500, 1_000, 2_000, 2_000].map(Duration::from_millis)[attempt]
+            }
+        );
     }
 
     for (actual, expected) in elapsed
@@ -2730,7 +2725,11 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
         assert!(actual >= expected && actual <= expected + Duration::from_millis(1));
     }
     assert_eq!(daemon.calls(), vec![Generation(7); 5]);
-    assert_eq!(waiter.await.expect("exhaustion waiter"), Err(unavailable()));
+    assert_eq!(supervisor.attempt_count(), 5);
+    assert!(
+        supervisor.next_attempt_at().is_some(),
+        "a sixth attempt is scheduled; the episode never exhausts"
+    );
 
     let clamped = ReconnectDaemon::new([
         Err(DaemonError::Unavailable {
@@ -2740,10 +2739,7 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
             retry_after: Some(Duration::from_secs(30)),
         }),
     ]);
-    let cancelled = supervisor.request(
-        Generation(8),
-        &DaemonError::Unavailable { retry_after: None },
-    );
+    let cancelled = supervisor.request(Generation(8));
     assert_eq!(
         supervisor.attempt_when_due(&clamped).await,
         ReconnectAttempt::RetryScheduled {
@@ -2766,12 +2762,16 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
         cancelled.await.expect("cancelled waiter"),
         Err(DaemonError::Protocol { detail }) if detail == "quit"
     ));
+    assert!(
+        matches!(
+            waiter.await.expect("first waiter"),
+            Err(DaemonError::Protocol { detail }) if detail == "quit"
+        ),
+        "the first loss's waiter settles only when the episode is cancelled"
+    );
 
     let reset = ReconnectDaemon::new([Ok(Generation(10)), Ok(Generation(11))]);
-    let first = supervisor.request(
-        Generation(9),
-        &DaemonError::Unavailable { retry_after: None },
-    );
+    let first = supervisor.request(Generation(9));
     assert_eq!(
         supervisor.attempt_when_due(&reset).await,
         ReconnectAttempt::Reconnected(Generation(10))
@@ -2934,18 +2934,12 @@ async fn reconnect_episode_rolls_generation_forward() {
     tokio::time::pause();
     let daemon = ReconnectDaemon::new([Ok(Generation(2)), Ok(Generation(3))]);
     let mut supervisor = ReconnectSupervisor::new();
-    let first = supervisor.request(
-        Generation(1),
-        &DaemonError::Unavailable { retry_after: None },
-    );
+    let first = supervisor.request(Generation(1));
     let first_attempt = supervisor
         .start_due_attempt(daemon.clone())
         .expect("first reconnect attempt");
 
-    let rolled = supervisor.request(
-        Generation(2),
-        &DaemonError::Unavailable { retry_after: None },
-    );
+    let rolled = supervisor.request(Generation(2));
     assert_eq!(
         supervisor.complete_attempt(first_attempt.await),
         ReconnectAttempt::Idle,
@@ -3359,13 +3353,13 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         200,
         json!({
             "items": [
-                {"terminal_id": "terminal-exhaustion", "backend": "native", "state": "live"}
+                {"terminal_id": "terminal-outage", "backend": "native", "state": "live"}
             ],
             "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-exhaustion", "seq": 1}
+            "snapshot": {"daemon_epoch": "epoch-outage", "seq": 1}
         }),
     );
-    for _ in 0..3 {
+    for _ in 0..4 {
         mock.enqueue(
             "GET",
             "/api/terminals?",
@@ -3373,13 +3367,25 @@ async fn daemon_loss_renders_read_only_until_recovery() {
             json!({"code": "reconcile_failed", "message": "roster unavailable"}),
         );
     }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "terminal-outage", "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-outage", "seq": 1}
+        }),
+    );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
-        .expect("connect budget-exhaustion daemon");
+        .expect("connect long-outage daemon");
     mock.fail_next_websocket();
     mock.fail_next_websocket();
     let mut workspace = Workspace::live(daemon);
-    let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-exhaustion"]);
+    let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-outage"]);
     let observed_daemon = workspace.daemon().clone();
     let observed_generation = observed_daemon.generation();
     let (_, mut observed_events) = observed_daemon.subscribe();
@@ -3421,7 +3427,11 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         }
         tokio::time::pause();
 
-        for (expected_handshakes, expected_roster_reads) in [(3, 1), (4, 2), (5, 3), (6, 4)] {
+        // Two socket failures and four roster failures outlast the delay
+        // ladder; the seventh attempt finds the daemon back.
+        for (expected_handshakes, expected_roster_reads) in
+            [(3, 1), (4, 2), (5, 3), (6, 4), (7, 5), (8, 6)]
+        {
             for _ in 0..8 {
                 let roster_reads = mock
                     .requests()
@@ -3467,6 +3477,8 @@ async fn daemon_loss_renders_read_only_until_recovery() {
             "the shared retry episode originates from exactly one disconnect"
         );
         tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        drop(input_tx);
     };
 
     let mut switch = TerminalGuard::recording().0;
@@ -3480,15 +3492,17 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         ),
         driver
     );
-    drop(input_tx);
-    result.expect("budget exhaustion exits the live loop cleanly");
-    let exit_reason = workspace.exit_reason();
+    result.expect("a long outage never exits the live loop");
     assert_eq!(
-        exit_reason,
-        Some("Daemon unavailable."),
-        "the shared socket-and-roster retry budget must latch the live-loop exit"
+        workspace.exit_reason(),
+        Some("terminal input closed"),
+        "an unexpected loss must never latch the daemon-unavailable exit"
     );
-    assert_eq!(mock.websocket_handshakes(), 6);
+    assert_eq!(
+        mock.websocket_handshakes(),
+        8,
+        "the client keeps retrying past the delay ladder until the daemon answers"
+    );
     assert_eq!(
         mock.requests()
             .iter()
@@ -3496,20 +3510,24 @@ async fn daemon_loss_renders_read_only_until_recovery() {
                 request.method == "GET" && request.target.starts_with("/api/terminals?")
             })
             .count(),
-        4,
-        "one startup roster plus three failed reconnect rosters share the budget"
+        6,
+        "one startup roster, four failed reconnect rosters, one recovery roster"
     );
-    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 1);
+    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
     assert_eq!(
         websocket_requests(&mock, "terminal_take_control").len(),
-        1,
-        "failed reconciliation never restores writable control"
+        2,
+        "the recovered handshake restores writable control"
     );
+    let recovered = workspace
+        .pane_for_terminal("terminal-outage")
+        .expect("recovered outage pane");
+    assert!(workspace.pane(recovered).writable());
     mock.shutdown().await;
 }
 
 /// #22002: a daemon stop or restart closes the socket with 1001. gclient must
-/// keep its panes, retry past the unexpected-loss budget, and re-attach to the
+/// keep its panes, retry past the delay ladder, and re-attach to the
 /// same terminal ids once the daemon returns; the close frame never exits it.
 #[tokio::test]
 async fn daemon_restart_keeps_panes_and_reattaches() {
@@ -3552,7 +3570,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     chrome.status_message = Some("Daemon request timed out.".to_string());
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
-    // More failed handshakes than an unexpected loss is allowed before exiting.
+    // More failed handshakes than the delay ladder has rungs.
     let failed_handshakes = RECONNECT_DELAYS.len() + 2;
     let expected_handshakes = 1 + failed_handshakes + 1;
 
@@ -3618,7 +3636,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     assert_eq!(
         mock.websocket_handshakes(),
         expected_handshakes,
-        "the client keeps retrying past the unexpected-loss budget"
+        "the client keeps retrying past the delay ladder"
     );
     assert_eq!(
         workspace.pane_for_terminal("terminal-restart"),

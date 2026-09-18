@@ -33,7 +33,9 @@ use crate::ui::{Action, Chrome, Mode};
 /// The steady render cadence used by both the real loop and paused-clock tests.
 pub const RENDER_TICK: Duration = Duration::from_millis(16);
 
-/// Fixed reconnect episode: one immediate attempt and four delayed attempts.
+/// Reconnect backoff: one immediate attempt, then these delays, the last of
+/// which repeats until the daemon answers. The client never gives up on its
+/// own: the status line shows the outage and the quit key ends the wait.
 pub const RECONNECT_DELAYS: [Duration; 4] = [
     Duration::from_millis(250),
     Duration::from_millis(500),
@@ -460,7 +462,6 @@ impl<D: Daemon> Workspace<D> {
 pub enum ReconnectAttempt {
     Reconnected(Generation),
     RetryScheduled { delay: Duration },
-    Exhausted(DaemonError),
     Idle,
 }
 
@@ -472,16 +473,14 @@ enum ReconnectPhase {
     AwaitingHandshake,
 }
 
+/// One outage. Every loss joins it, and it ends only with a handshake or a
+/// cancel: a daemon restart (#22002) and an unexpected drop retry alike.
 #[derive(Debug)]
 struct ReconnectEpisode {
     observed: Generation,
     attempts: usize,
     phase: ReconnectPhase,
     waiters: Vec<oneshot::Sender<Result<Generation, DaemonError>>>,
-    /// Unexpected losses spend the `RECONNECT_DELAYS` budget and then exit.
-    /// A deliberate daemon stop or restart (`DaemonError::GoingAway`) keeps
-    /// retrying at the last delay until the daemon returns (#22002).
-    bounded: bool,
 }
 
 fn reconnect_delay(attempts: usize) -> Duration {
@@ -501,20 +500,14 @@ impl ReconnectSupervisor {
     pub fn request(
         &mut self,
         observed: Generation,
-        cause: &DaemonError,
     ) -> oneshot::Receiver<Result<Generation, DaemonError>> {
         let (sender, receiver) = oneshot::channel();
-        let going_away = matches!(cause, DaemonError::GoingAway);
         let episode = self.episode.get_or_insert_with(|| ReconnectEpisode {
             observed,
             attempts: 0,
             phase: ReconnectPhase::ReadyAt(Instant::now()),
             waiters: Vec::new(),
-            bounded: !going_away,
         });
-        if going_away {
-            episode.bounded = false;
-        }
         let rolled_forward = observed > episode.observed;
         episode.observed = episode.observed.max(observed);
         if rolled_forward && matches!(episode.phase, ReconnectPhase::AwaitingHandshake) {
@@ -574,11 +567,6 @@ impl ReconnectSupervisor {
                 let episode = self.episode.as_mut().expect("episode exists");
                 episode.observed = episode.observed.max(generation);
             }
-            if self.budget_exhausted() {
-                let error = DaemonError::Unavailable { retry_after: None };
-                self.settle(Err(error.clone()));
-                return ReconnectAttempt::Exhausted(error);
-            }
             return ReconnectAttempt::Idle;
         }
         match result {
@@ -618,17 +606,7 @@ impl ReconnectSupervisor {
         self.settle(Err(error));
     }
 
-    fn budget_exhausted(&self) -> bool {
-        self.episode
-            .as_ref()
-            .is_some_and(|episode| episode.bounded && episode.attempts > RECONNECT_DELAYS.len())
-    }
-
     fn record_failure(&mut self, error: DaemonError) -> ReconnectAttempt {
-        if self.budget_exhausted() {
-            self.settle(Err(error.clone()));
-            return ReconnectAttempt::Exhausted(error);
-        }
         let Some(episode) = self.episode.as_mut() else {
             return ReconnectAttempt::Idle;
         };

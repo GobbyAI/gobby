@@ -563,9 +563,10 @@ The client rides through the gap. When the daemon's connection drops:
 
 1. The status line shows `daemon unreachable` and the error that broke the
    connection.
-2. The client retries with backoff. A daemon shutdown is recognised as *going
-   away* and is retried without limit; other losses stop after a bounded budget,
-   after which the client exits with the reason.
+2. The client retries with backoff until the daemon answers, however the
+   connection was lost: a deliberate stop or restart shows as *going away*, any
+   other loss as *unavailable*. It never gives up on its own; `prefix+shift+q`
+   quits a client whose daemon is not coming back.
 3. On reconnect it re-attaches the workspace and takes the daemon's fresh
    snapshot of its rows: a pane whose terminal was killed during the restart is
    gone, and so is a tab that lost every pane.
