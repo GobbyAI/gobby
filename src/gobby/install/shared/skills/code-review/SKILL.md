@@ -180,6 +180,13 @@ blocks the first such operation of a context epoch until this skill is loaded.
 skill once does not clear the rest of the session. Run this self-review before
 each of them; it costs two `ocr` calls.
 
+Neither gate covers a commit that records only documentation OCR excludes as
+`unsupported_ext` (`.md`, `.mdx`, `.txt`, `.rst`, `.adoc`), because the review
+would read nothing. Every other commit is gated, including one whose recorded
+paths the command leaves undeterminable — a pathspec read from a file, an
+`--amend`, or a commit chained after another command. Such a commit still
+spends a review the session already holds.
+
 1. `ocr delegate preview --format json` (workspace mode). Intersect
    `reviewable_files` with `git diff --cached --name-only`; only staged paths
    count.

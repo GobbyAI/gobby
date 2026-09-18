@@ -6,9 +6,15 @@ rules:
     event: before_tool
     enabled: true
     priority: 30
+    # commit_has_reviewable_paths is false only when every path the commit
+    # records is documentation OCR excludes as unsupported_ext, so the review
+    # this gate buys would read nothing. It stays true for every other gated
+    # operation and for any commit whose paths are undeterminable. Computed in
+    # src/gobby/workflows/code_review_scope.py.
     when: >
       not skill_loaded('code-review')
       and source != 'pipeline'
+      and commit_has_reviewable_paths
     effects:
       - type: block
         tools: [Bash]
@@ -34,10 +40,15 @@ rules:
     # The skill-load gate above covers the first operation of an epoch. This one
     # covers every later operation, so a single get_skill no longer buys a whole
     # session of ungated commits and merges.
+    # Same documentation-only exemption as the gate above: a commit OCR would
+    # exclude entirely cannot be reviewed, so demanding a fresh review of it
+    # only costs a pass that reads nothing. The commit still spends a review
+    # the session already holds, which keeps the next code commit gated.
     when: >
       skill_loaded('code-review')
       and not variables.get('code_review_fresh')
       and source != 'pipeline'
+      and commit_has_reviewable_paths
     effects:
       - type: block
         tools: [Bash]

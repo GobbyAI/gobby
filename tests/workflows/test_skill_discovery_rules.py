@@ -3174,6 +3174,7 @@ class TestCodeReviewFreshnessConditions:
         *,
         variables: dict[str, Any] | None = None,
         is_failure: bool | None = None,
+        commit_has_reviewable_paths: bool = True,
     ) -> bool:
         tool_input = {"command": command}
         context = {
@@ -3184,6 +3185,7 @@ class TestCodeReviewFreshnessConditions:
             ),
             "tool_input": tool_input,
             "source": "interactive",
+            "commit_has_reviewable_paths": commit_has_reviewable_paths,
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
@@ -3207,6 +3209,27 @@ class TestCodeReviewFreshnessConditions:
     def test_freshness_gate_defers_to_the_skill_gate(self) -> None:
         """Only one of the two blocks at a time, so the reason is never doubled."""
         assert self._eval(self.FRESHNESS_GATE, "git commit -m x") is False
+
+    def test_neither_gate_covers_a_commit_with_nothing_reviewable(self) -> None:
+        """A commit OCR excludes entirely has no review to demand."""
+        assert (
+            self._eval(self.SKILL_GATE, "git commit -m docs", commit_has_reviewable_paths=False)
+            is False
+        )
+        loaded = {"loaded_skills": ["code-review"]}
+        assert (
+            self._eval(
+                self.FRESHNESS_GATE,
+                "git commit -m docs",
+                variables=loaded,
+                commit_has_reviewable_paths=False,
+            )
+            is False
+        )
+
+    def test_documentation_only_commit_still_spends_a_held_review(self) -> None:
+        """The next code commit re-reviews; freshness is not saved by the skip."""
+        assert self._eval(self.CLEAR, "git commit -m docs", is_failure=False) is True
 
     def test_review_grants_freshness_only_on_a_proven_success(self) -> None:
         rule_call = "ocr delegate rule --format json src/a.py"
