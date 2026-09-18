@@ -80,20 +80,17 @@ def parse_close_verdict(
         else []
     )
 
-    matched = _match_entries(entries, expected_criteria)
+    matched, claimed = _match_entries(entries, expected_criteria)
+    _require_exact_index_set(claimed, len(entries), len(expected_criteria))
     criteria: list[CloseCriterionVerdict] = []
-    inherited_satisfied = status == "valid"
+    default_satisfied = status == "valid"
     for index, criterion in enumerate(expected_criteria, start=1):
-        entry = matched.get(index)
-        if entry is None:
-            satisfied = inherited_satisfied
-            state: CriterionVerdictState = "satisfied" if satisfied else "gap"
-        else:
-            satisfied = _coerce_satisfied(entry.get("satisfied"), inherited_satisfied)
-            state = _coerce_criterion_state(
-                entry.get("state"),
-                "satisfied" if satisfied else "gap",
-            )
+        entry = matched[index]
+        satisfied = _coerce_satisfied(entry.get("satisfied"), default_satisfied)
+        state: CriterionVerdictState = _coerce_criterion_state(
+            entry.get("state"),
+            "satisfied" if satisfied else "gap",
+        )
         deferred = defer_external_criteria and is_external_criterion(criterion)
         if state == "pending_external" and not deferred:
             # Only a spawned-agent close defers Live: criteria; any other close is
@@ -113,14 +110,8 @@ def parse_close_verdict(
             gap = None
         else:
             satisfied = False
-            gap = _coerce_gap(entry.get("gap")) if entry is not None else feedback
-            if gap is None:
-                gap = feedback
-        required_evidence = (
-            _coerce_gap(entry.get("required_evidence"))
-            if entry is not None and state == "gap"
-            else None
-        )
+            gap = _coerce_gap(entry.get("gap")) or feedback
+        required_evidence = _coerce_gap(entry.get("required_evidence")) if state == "gap" else None
         criteria.append(
             CloseCriterionVerdict(
                 index=index,
@@ -175,21 +166,45 @@ def _coerce_feedback(value: object, status: VerdictStatus) -> str:
     return "Criteria review passed." if status == "valid" else "Criteria review found a gap."
 
 
+def _require_exact_index_set(
+    claimed: Sequence[int],
+    entry_count: int,
+    expected_count: int,
+) -> None:
+    """Reject a submission that does not cover each criterion index exactly once."""
+    expected = list(range(1, expected_count + 1))
+    received = list(claimed)
+    unresolved = entry_count - len(received)
+    if received == expected and unresolved == 0:
+        return
+    detail = f"expected {expected}, received {received}"
+    if unresolved:
+        detail += f", plus entries matching no criterion (count {unresolved})"
+    raise CloseVerdictParseError(
+        "Close verdict must report every criterion index exactly once: "
+        f"{detail}. Resubmit one entry per criterion index."
+    )
+
+
 def _match_entries(
     entries: Sequence[Mapping[str, Any]],
     expected_criteria: Sequence[str],
-) -> dict[int, Mapping[str, Any]]:
+) -> tuple[dict[int, Mapping[str, Any]], tuple[int, ...]]:
+    """Map criterion indexes to entries and report every index the submission claimed."""
     matched: dict[int, Mapping[str, Any]] = {}
-    unmatched: list[Mapping[str, Any]] = []
+    claimed: list[int] = []
+    unmatched: list[tuple[Mapping[str, Any], int | None]] = []
     for entry in entries:
         index = _coerce_index(entry.get("index"))
+        if index is not None:
+            claimed.append(index)
         if index is not None and 1 <= index <= len(expected_criteria) and index not in matched:
             matched[index] = entry
         else:
-            unmatched.append(entry)
+            unmatched.append((entry, index))
 
     available = {index for index in range(1, len(expected_criteria) + 1) if index not in matched}
-    for entry in unmatched:
+    for entry, claimed_index in unmatched:
         text = _entry_text(entry)
         if not text or not available:
             continue
@@ -200,7 +215,11 @@ def _match_entries(
         if score >= 0.58:
             matched[best_index] = entry
             available.remove(best_index)
-    return matched
+            # A mis-indexed entry keeps claiming its own bad index, so only an
+            # entry that named no index at all is credited with the match.
+            if claimed_index is None:
+                claimed.append(best_index)
+    return matched, tuple(sorted(claimed))
 
 
 def _coerce_index(value: object) -> int | None:

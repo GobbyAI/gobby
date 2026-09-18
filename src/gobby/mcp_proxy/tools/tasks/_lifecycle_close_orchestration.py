@@ -84,12 +84,15 @@ async def launch_close_review(
     diff_sha = str(evaluation.extra.get("diff_sha") or "")
     test_bodies_sha = str(evaluation.extra.get("test_bodies_sha") or "")
     stable_facts = evaluation.extra.get("stable_facts")
+    criterion_count = evaluation.extra.get("criterion_count")
     if (
         not review_fingerprint
         or not evidence_fingerprint
         or not diff_sha
         or not test_bodies_sha
         or not isinstance(stable_facts, Mapping)
+        or not isinstance(criterion_count, int)
+        or criterion_count < 1
     ):
         return evaluation.response(preview=bool(close_arguments.get("preview")))
 
@@ -144,6 +147,7 @@ async def launch_close_review(
         closure_reason=str(close_arguments.get("reason") or "completed"),
         review_fingerprint=review.review_fingerprint,
         evidence_fingerprint=review.evidence_fingerprint,
+        criterion_count=criterion_count,
         validation_commands=(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
@@ -261,6 +265,8 @@ async def launch_close_review(
         "validator_model": overrides.get("model"),
         "prompt_chars": len(prompt),
         "prompt_limit": prompt_limit,
+        "criterion_count": criterion_count,
+        "criterion_indexes": list(range(1, criterion_count + 1)),
         "manifest_count": evaluation.extra.get("manifest_count"),
         "excerpt_chars": evaluation.extra.get("excerpt_chars"),
         "criteria_review_duration_ms": evaluation.extra.get("criteria_review_duration_ms"),

@@ -23,7 +23,6 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import Project
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn

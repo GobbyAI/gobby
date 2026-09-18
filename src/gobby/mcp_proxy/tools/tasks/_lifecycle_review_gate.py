@@ -227,6 +227,9 @@ async def evaluate_close_criteria(
         extra={
             "prompt_chars": prepared.prompt_chars,
             "prompt_limit": prepared.prompt_limit,
+            # The validator judges the normalized criteria, not the raw text it
+            # reads, so the launch carries the exact index set it must return.
+            "criterion_count": len(prepared.criteria),
             "review_fingerprint": prepared.review_fingerprint,
             "deterministic_evidence_fingerprint": prepared.evidence_fingerprint,
             "diff_sha": prepared.diff_sha,
