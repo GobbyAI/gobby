@@ -11,6 +11,9 @@ from typing import Any
 from jinja2 import Environment, StrictUndefined
 
 from gobby.plans.parser import (
+    ArtifactKind,
+    Kind,
+    ManifestEntry,
     PlanDocument,
     PlanSection,
     extract_section_dependencies,
@@ -20,6 +23,7 @@ from gobby.plans.parser import (
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.tasks import Task
+from gobby.tasks.acceptance_artifacts import parse_test_reference
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
 _DEFAULT_AGENT = "backend-developer"
@@ -399,3 +403,41 @@ def _dedupe_dependencies(dependencies: list[dict[str, str]]) -> list[dict[str, s
         seen.add(key)
         deduped.append({"task_id": edge["task_id"], "depends_on": edge["depends_on"]})
     return deduped
+
+
+def validate_contract_manifest(plan_doc: PlanDocument) -> dict[str, ManifestEntry]:
+    """Check a manifest-bearing plan against the requirements expansion compiles.
+
+    Expansion preflight and the deterministic compiler both call this, so a plan
+    that passes ``gobby plans validate --mode expansion`` cannot be rejected at
+    compile time for a requirement preflight never checked. Raises ``ValueError``
+    describing the first violation.
+    """
+    section_by_id = {section.section_id: section for section in plan_doc.sections}
+    manifest_entry_by_section = {entry.source_section: entry for entry in plan_doc.manifest_entries}
+    for entry in plan_doc.manifest_entries:
+        section = section_by_id.get(entry.source_section)
+        if section is None or section.kind is not Kind.deliverable:
+            raise ValueError(
+                f"manifest entry source_section={entry.source_section!r} "
+                "does not resolve to a kind: deliverable section"
+            )
+        for item in section.acceptance_items:
+            if (
+                item.artifact_kind is ArtifactKind.test
+                and parse_test_reference(item.artifact_ref) is None
+            ):
+                raise ValueError(
+                    f"acceptance item {item.item_id!r} test artifact "
+                    f"{item.artifact_ref!r} must use path::test_symbol"
+                )
+
+    deliverable_ids = {
+        section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable
+    }
+    orphan_deliverables = sorted(deliverable_ids - set(manifest_entry_by_section))
+    if orphan_deliverables:
+        raise ValueError(
+            f"kind: deliverable sections without manifest entries: {', '.join(orphan_deliverables)}"
+        )
+    return manifest_entry_by_section

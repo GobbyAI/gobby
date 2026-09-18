@@ -387,3 +387,84 @@ def test_bound_plan_derivation_surfaces_ambiguous_active_plans(
             cast(RegistryContext, SimpleNamespace()),
             cast(ExpansionRun, _FakeRun()),
         )
+
+
+def _deferred_plan_file(tmp_path: Path) -> tuple[Path, str]:
+    path = tmp_path / "plan.md"
+    path.write_text(
+        """> **Plan ID:** plan
+
+## A1 Deferred Work
+`kind: deferred`
+
+```yaml
+deferral:
+  task_ref: "#999"
+  reason: "covered by follow-up"
+  owner: "backend"
+  original_acceptance_items:
+    - A1.1
+```
+
+## A2 Uncovered Work [category: code]
+`kind: deliverable`
+
+Target: `src/uncovered.py`
+
+Implement the uncovered behavior.
+
+**Acceptance:**
+- A2.1 - Behavior exists. file: `src/uncovered.py`
+""",
+        encoding="utf-8",
+    )
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_coverage_failures_report_deferral_validator_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA failures name why a deferral failed, keeping the status for rows without detail."""
+    _, plan_hash = _deferred_plan_file(tmp_path)
+
+    monkeypatch.setattr(qa_module, "TaskArtifactManager", _FakeArtifactManager)
+    monkeypatch.setattr(qa_module, "LocalExpansionRunManager", _FakeRunManager)
+
+    def _evaluator(**kwargs: Any) -> Any:
+        return evaluate(
+            plan=kwargs["plan_path"],
+            plan_id=kwargs["plan_id"],
+            plan_hash=kwargs["plan_hash"],
+            task_tree=kwargs["task_tree"],
+            root_task_ref=kwargs["root_task_ref"],
+            project_id=kwargs["project_id"],
+            task_records=[
+                {"ref": f"#{_ROOT_REF}", "path_cache": _ROOT_REF, "dependencies": ["#999"]},
+                {
+                    "ref": "#999",
+                    "path_cache": f"{_ROOT_REF}.999",
+                    "state": "ready",
+                    "labels": [],
+                    "validation_criteria": "Follow-up owns A1.1.",
+                },
+            ],
+        )
+
+    result = qa_module.run_expansion_qa_coverage(
+        task_manager=cast(LocalTaskManager, _FakeTaskManager()),
+        run=cast(ExpansionRun, _FakeRun()),
+        repo_path=tmp_path,
+        plan_path="plan.md",
+        plan_id="plan",
+        plan_hash=plan_hash,
+        root_task_ref=f"#{_ROOT_REF}",
+        project_id=_PROJECT_ID,
+        evaluator=_evaluator,
+    )
+
+    assert result["passed"] is False
+    failures = result["qa_result"]["failures"]
+    assert [(failure["item_id"], failure["status"], failure["detail"]) for failure in failures] == [
+        ("A1.1", "invalid", "task labels do not include 'deferred-from:plan:A1'"),
+        ("A2.1", "missing", "coverage status missing"),
+    ]

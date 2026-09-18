@@ -1042,7 +1042,7 @@ def _round_entry_plan(tmp_path: Path) -> Path:
                 "Target: `src/example.py`",
                 "",
                 "**Acceptance:**",
-                "- 1.1.1 — Behavior exists. test: `tests/test_example.py`",
+                "- 1.1.1 — Behavior exists. test: `tests/test_example.py::test_example`",
                 "",
                 "## V1 Plan Changelog",
                 "`kind: verification`",

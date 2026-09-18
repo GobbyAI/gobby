@@ -33,7 +33,7 @@ PLAN_TEXT = "\n".join(
         "Target: `src/example.py`",
         "",
         "**Acceptance:**",
-        "- 1.1.1 — Behavior exists. test: `tests/test_example.py`",
+        "- 1.1.1 — Behavior exists. test: `tests/test_example.py::test_example`",
         "",
         "### 1.2 Follow-up",
         "`kind: deliverable`",

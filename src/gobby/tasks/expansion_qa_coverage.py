@@ -420,7 +420,7 @@ def _coverage_failures(report: Any) -> list[dict[str, Any]]:
                 "section_id": _field(row, "section_id", ""),
                 "item_id": _field(row, "item_id", ""),
                 "status": status,
-                "detail": _field(row, "detail", f"coverage status {status}"),
+                "detail": _field(row, "detail", "") or f"coverage status {status}",
                 "leaves": leaves,
             }
         )

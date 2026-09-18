@@ -72,6 +72,15 @@ container-qualified within one file, such as `Symbol.make_id`. They are not
 module- or package-qualified import paths; include a `file` artifact when a
 symbol name needs disambiguation.
 
+A `test` artifact MUST name one test symbol as `path::test_symbol`. A bare test
+file path is invalid: the close gate resolves an acceptance test by symbol, so a
+file alone names no verifiable obligation. In a manifest-bearing plan the rule is
+enforced by `validate_contract_manifest`
+(`src/gobby/tasks/expansion/_common.py`), which expansion preflight
+(`gobby plans validate --mode expansion`) and the deterministic compiler both
+call, so the requirement fails validation before expansion creates anything
+rather than after.
+
 ```markdown
 **Acceptance:**  (under section `A1`, letter-prefixed)
 

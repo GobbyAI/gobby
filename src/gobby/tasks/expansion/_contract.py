@@ -19,7 +19,6 @@ from gobby.plans.manifest_emitter import (
     section_dependency_refs,
 )
 from gobby.plans.parser import (
-    ArtifactKind,
     Kind,
     ManifestEntry,
     PlanDocument,
@@ -30,7 +29,6 @@ from gobby.plans.parser import (
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.tasks import Task
-from gobby.tasks.acceptance_artifacts import parse_test_reference
 from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
@@ -44,6 +42,7 @@ from gobby.tasks.expansion._common import (
     _contract_section_body,
     _contract_single_task_id,
     _dedupe_dependencies,
+    validate_contract_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,7 +57,7 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
     plan_id = _contract_plan_id(plan_doc)
     section_by_id = {section.section_id: section for section in plan_doc.sections}
     phase_by_section_id = self._contract_phase_index(plan_doc)
-    manifest_entry_by_section = self._validate_contract_manifest(plan_doc, section_by_id)
+    manifest_entry_by_section = validate_contract_manifest(plan_doc)
 
     phases: list[dict[str, Any]] = []
     phase_by_id: dict[str, dict[str, Any]] = {}
@@ -140,40 +139,6 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
         "deliverable_count": len(plan_doc.manifest_entries),
         "tdd_mode": "skill_backed",
     }
-
-
-def _validate_contract_manifest(
-    self: Any,
-    plan_doc: PlanDocument,
-    section_by_id: dict[str, PlanSection],
-) -> dict[str, ManifestEntry]:
-    manifest_entry_by_section = {entry.source_section: entry for entry in plan_doc.manifest_entries}
-    for entry in plan_doc.manifest_entries:
-        section = section_by_id.get(entry.source_section)
-        if section is None or section.kind is not Kind.deliverable:
-            raise ValueError(
-                f"manifest entry source_section={entry.source_section!r} "
-                "does not resolve to a kind: deliverable section"
-            )
-        for item in section.acceptance_items:
-            if (
-                item.artifact_kind is ArtifactKind.test
-                and parse_test_reference(item.artifact_ref) is None
-            ):
-                raise ValueError(
-                    f"acceptance item {item.item_id!r} test artifact "
-                    f"{item.artifact_ref!r} must use path::test_symbol"
-                )
-
-    deliverable_ids = {
-        section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable
-    }
-    orphan_deliverables = sorted(deliverable_ids - set(manifest_entry_by_section))
-    if orphan_deliverables:
-        raise ValueError(
-            f"kind: deliverable sections without manifest entries: {', '.join(orphan_deliverables)}"
-        )
-    return manifest_entry_by_section
 
 
 def _contract_deferrals(self: Any, plan_doc: PlanDocument) -> list[dict[str, Any]]:

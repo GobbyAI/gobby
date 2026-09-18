@@ -49,7 +49,7 @@ def review_setup(
                 "Target: `src/example.py`",
                 "",
                 "**Acceptance:**",
-                "- 1.1.1 — Behavior exists. test: `tests/test_example.py`",
+                "- 1.1.1 — Behavior exists. test: `tests/test_example.py::test_example`",
                 "",
                 "## Task Mapping",
                 "`kind: framing`",

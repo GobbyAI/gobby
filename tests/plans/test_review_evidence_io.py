@@ -38,7 +38,7 @@ def _plan_text(*, manifest_count: int = 0, trailing_section: bool = False) -> st
         "Target: `src/example.py`",
         "",
         "**Acceptance:**",
-        "- 1.1.1 — Behavior exists. test: `tests/test_example.py`",
+        "- 1.1.1 — Behavior exists. test: `tests/test_example.py::test_example`",
         "",
         "## Task Mapping",
         "`kind: framing`",

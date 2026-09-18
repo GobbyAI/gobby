@@ -341,7 +341,7 @@ def _plan_text(body: str = "Stable requirement.") -> str:
             body,
             "",
             "**Acceptance:**",
-            "- 1.1.1 — Works. test: `tests/test_work.py`",
+            "- 1.1.1 — Works. test: `tests/test_work.py::test_work`",
             "",
             "## Task Mapping",
             "`kind: framing`",
