@@ -7,7 +7,7 @@
 //! `Chrome::gesture`: a press may start one, drags feed it, and a release
 //! always ends it, handing it to `pointer::up` to finish.
 
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
 use crate::ui::dialogs::{CloseTarget, Dialog};
@@ -17,7 +17,8 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
 use super::menu::{activate_menu, close_menu, menu_hit, ContextMenuKind, MenuAction};
-use super::modal_input::{activate_settings_row, close_modal};
+use super::modal_input::{activate_settings_row, close_modal, ModalOutcome};
+use super::projects::project_dialog_key;
 
 mod forward;
 mod links;
@@ -128,6 +129,10 @@ pub enum MouseOutcome {
     /// A split-border drag ended on a daemon tab: send the ratio it
     /// reached through `slot`, a pane directly under the split.
     ResizeSplit { slot: layout::PaneId, ratio: f32 },
+    /// A project dialog's button was clicked: the loop applies the outcome
+    /// its key would have produced (Enter for the primary button, Esc for
+    /// the rest).
+    Modal(ModalOutcome),
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -170,11 +175,10 @@ pub fn route_mouse<W: WorkspaceView>(
         Mode::Copy => return MouseOutcome::Ignore,
         Mode::Settings => return settings_mouse(ws, chrome, mouse),
         Mode::ConfirmClose => return confirm_close_mouse(chrome, mouse),
-        Mode::Rename
-        | Mode::Respond
-        | Mode::ProjectDialog
-        | Mode::KeybindHelp
-        | Mode::Navigator => return MouseOutcome::Handled,
+        Mode::ProjectDialog => return project_dialog_mouse(chrome, mouse),
+        Mode::Rename | Mode::Respond | Mode::KeybindHelp | Mode::Navigator => {
+            return MouseOutcome::Handled
+        }
         Mode::ContextMenu => return menu_mouse(chrome, mouse),
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Resize => {}
     }
@@ -257,6 +261,21 @@ fn confirm_close_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome 
         }
         _ => MouseOutcome::Handled,
     }
+}
+
+/// Project dialogs: the primary button is Enter and every other button is
+/// Esc, exactly as the keys route, so a click on `destroy` confirms and a
+/// click on `cancel` closes; any other mouse event stays with the dialog.
+fn project_dialog_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return MouseOutcome::Handled;
+    }
+    let code = match hit_test(&chrome.view, mouse.column, mouse.row) {
+        Hit::DialogButton(0) => KeyCode::Enter,
+        Hit::DialogButton(_) => KeyCode::Esc,
+        _ => return MouseOutcome::Handled,
+    };
+    MouseOutcome::Modal(project_dialog_key(chrome, &KeyEvent::from(code)))
 }
 
 /// Settings overlay: a left press on a row selects and activates it, the

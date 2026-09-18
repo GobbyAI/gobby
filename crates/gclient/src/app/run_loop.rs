@@ -173,6 +173,7 @@ fn apply_scripted_mouse_outcome(
         | MouseOutcome::Spawn { .. }
         | MouseOutcome::OpenLink(_)
         | MouseOutcome::Confirm(_)
+        | MouseOutcome::Modal(_)
         | MouseOutcome::MoveTab { .. }
         | MouseOutcome::ResizeSplit { .. } => {}
         MouseOutcome::Focus { pane, observe_only } => {

@@ -228,7 +228,9 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             rows,
             checked,
             selected,
-        }) => orphans::render_destroy_orphans(frame, area, chrome, rows, checked, *selected),
+        }) => {
+            return orphans::render_destroy_orphans(frame, area, chrome, rows, checked, *selected);
+        }
         Some(Dialog::RemoveWorktree {
             branch,
             path,

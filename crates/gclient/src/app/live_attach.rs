@@ -171,7 +171,10 @@ impl Workspace<LiveDaemon> {
             | FrameError::Cancelled
             | FrameError::Io(_)
             | FrameError::Protocol(_) => self.recover_proxy_source(pane_id).await?,
-            FrameError::HostEpochChanged { .. } | FrameError::Other(_) => {}
+            // A refused control request never reaches a frame source; nothing
+            // to recover.
+            FrameError::HostEpochChanged { .. } | FrameError::Other(_) | FrameError::Refused(_) => {
+            }
         }
         Ok(())
     }

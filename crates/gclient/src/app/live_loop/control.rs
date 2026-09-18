@@ -5,7 +5,7 @@ use gobby_terminal::protocol::ClientMessage;
 use serde_json::{json, Value};
 use tokio::time::Instant;
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon};
+use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
 use crate::ui::Chrome;
 
@@ -148,9 +148,7 @@ async fn request_live_control(
         send_live_write(workspace, pane_id, &data, false).await?;
     }
     if !granted {
-        return Err(FrameError::from(DaemonError::Protocol {
-            detail: refusal_reason,
-        }));
+        return Err(FrameError::Refused(refusal_reason));
     }
     Ok(())
 }

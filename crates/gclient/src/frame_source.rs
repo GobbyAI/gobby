@@ -100,6 +100,10 @@ pub enum FrameError {
     Protocol(String),
     #[error("frame source failed: {0}")]
     Other(String),
+    /// The daemon refused a control request; the message is the status line
+    /// the loop shows, so it carries no failure prefix.
+    #[error("{0}")]
+    Refused(String),
 }
 
 impl From<std::io::Error> for FrameError {

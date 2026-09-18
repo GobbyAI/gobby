@@ -212,6 +212,9 @@ pub(super) async fn apply_live_mouse_outcome(
             return apply_live_modal_outcome(workspace, chrome, ModalOutcome::Confirm(target))
                 .await;
         }
+        MouseOutcome::Modal(outcome) => {
+            return apply_live_modal_outcome(workspace, chrome, outcome).await;
+        }
         MouseOutcome::MoveTab { tab, position } => {
             move_daemon_tab(workspace, chrome, tab, position).await?;
         }

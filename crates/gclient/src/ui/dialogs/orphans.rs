@@ -29,15 +29,15 @@ pub fn render_destroy_orphans(
     rows: &[OrphanRow],
     checked: &[bool],
     selected: usize,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let list_rows = rows.len().clamp(1, usize::from(u16::MAX)) as u16;
     let Some(inner) = render_modal_shell(frame, area, POPUP_WIDTH, BASE_HEIGHT + list_rows, p)
     else {
-        return;
+        return Vec::new();
     };
     if inner.height < 5 {
-        return;
+        return Vec::new();
     }
     let areas = Layout::vertical([
         Constraint::Length(1),
@@ -116,6 +116,8 @@ pub fn render_destroy_orphans(
             secondary_button_style(chrome),
         );
     }
+    // The loop hit-tests these as `DialogButton(0)` (destroy) and `(1)` (cancel).
+    rects
 }
 
 /// `name · backend · owner-or-"no session" · last seen HH:MM`.
