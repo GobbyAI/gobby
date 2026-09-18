@@ -1890,6 +1890,7 @@ class TestExecuteSpawnSandbox:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Sandboxed agents get writable caches and a hook inbox, not managed binaries."""
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         env_vars = {
             "GOBBY_SESSION_ID": "child/session:one",
@@ -1903,9 +1904,7 @@ class TestExecuteSpawnSandbox:
         assert resolved is not None
         assert resolved.enabled is True
         assert env_vars[CARGO_HOME]
-        cargo_home_parts = Path(env_vars[CARGO_HOME]).parts
-        assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
-        assert cargo_home_parts[-1].startswith("child-session-one-")
+        assert Path(env_vars[CARGO_HOME]) == tmp_path / ".gobby" / "cache" / "cargo-home"
         assert "/already-allowed" in resolved.extra_write_paths
         assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
         assert env_vars[CARGO_HOME] in resolved.extra_write_paths

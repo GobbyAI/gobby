@@ -128,15 +128,12 @@ class TestGetTerminalEnvVars:
         assert result[GOBBY_AGENT_RUN_ID] == "run-123"
         assert result[GOBBY_PROJECT_ID] == "proj-abc"
         uv_cache_parts = Path(result[UV_CACHE_DIR]).parts
-        cargo_home_parts = Path(result[CARGO_HOME]).parts
         assert uv_cache_parts[-3:-1] == ("gobby", "uv-cache")
         assert uv_cache_parts[-1].startswith("sess-child-")
         assert _HASH_SUFFIX_RE.fullmatch(uv_cache_parts[-1])
         assert uv_cache_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
-        assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
-        assert cargo_home_parts[-1].startswith("sess-child-")
-        assert _HASH_SUFFIX_RE.fullmatch(cargo_home_parts[-1])
-        assert cargo_home_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
+        shared_cargo_home = tmp_path / "cache" / "cargo-home"
+        assert result[CARGO_HOME] == str(shared_cargo_home)
         shared_target = tmp_path / "cache" / "cargo-target" / "proj-abc"
         assert result[CARGO_TARGET_DIR] == str(shared_target)
         assert shared_target.is_dir()
@@ -199,17 +196,32 @@ class TestGetTerminalEnvVars:
         assert _HASH_SUFFIX_RE.fullmatch(result_path.parts[-1])
         assert result_path.parts[-1] == _expected_cache_leaf("sess-child-one", "sess/child:one")
 
-    def test_cargo_home_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Cargo home paths are writable temp paths scoped to safe session IDs."""
-        monkeypatch.setattr("gobby.agents.constants.tempfile.gettempdir", lambda: "/tmp/test-tmp")
+    def test_cargo_home_is_shared_across_sessions(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Every spawned agent gets one Cargo home under Gobby home, not a per-session one.
 
-        result = get_agent_cargo_home_dir("sess/child:one")
+        Cargo fingerprints embed dependency source paths, so a per-session home
+        would invalidate every dependency in the shared CARGO_TARGET_DIR.
+        """
+        monkeypatch.setattr("gobby.agents.constants.get_gobby_home", lambda: tmp_path)
 
-        result_path = Path(result)
-        assert result_path.parts[-3:-1] == ("gobby", "cargo-home")
-        assert result_path.parts[-1].startswith("sess-child-one-")
-        assert _HASH_SUFFIX_RE.fullmatch(result_path.parts[-1])
-        assert result_path.parts[-1] == _expected_cache_leaf("sess-child-one", "sess/child:one")
+        first = get_agent_cargo_home_dir("sess/child:one")
+        second = get_agent_cargo_home_dir("a-totally-different-session")
+
+        assert first == second
+        assert Path(first) == tmp_path / "cache" / "cargo-home"
+
+    def test_cargo_home_never_touches_operator_cargo_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The shared home stays under Gobby home and never resolves to ~/.cargo."""
+        monkeypatch.setattr("gobby.agents.constants.get_gobby_home", lambda: tmp_path)
+
+        result = Path(get_agent_cargo_home_dir("sess-one"))
+
+        assert result.is_relative_to(tmp_path)
+        assert result != Path.home() / ".cargo"
 
     def test_includes_managed_tool_bin_on_path(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

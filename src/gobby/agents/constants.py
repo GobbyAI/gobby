@@ -11,6 +11,7 @@ import re
 import tempfile
 from pathlib import Path
 
+from gobby.paths import get_gobby_home
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
 from gobby.utils.machine_id import get_machine_id
 
@@ -138,14 +139,34 @@ def ensure_agent_uv_cache_dir(session_id: str) -> str:
     return str(cache_dir)
 
 
+def shared_agent_cargo_home_dir() -> Path:
+    """Return the one Cargo home that every spawned agent shares.
+
+    Cargo fingerprints embed dependency source paths under
+    ``$CARGO_HOME/registry/src``, so a per-session home invalidates every
+    dependency in the deliberately shared ``CARGO_TARGET_DIR`` and makes each
+    agent rebuild the whole graph. This lives beside that shared target
+    directory under Gobby home; the operator's own ``~/.cargo`` is untouched.
+    """
+    return get_gobby_home() / "cache" / "cargo-home"
+
+
 def get_agent_cargo_home_dir(session_id: str) -> str:
-    """Return a writable, per-session Cargo home directory for sandboxed agents."""
-    return str(get_agent_session_cache_dir(session_id, "gobby", "cargo-home"))
+    """Return the shared Cargo home directory for sandboxed agents.
+
+    ``session_id`` is deliberately unused: the home is shared on purpose. The
+    parameter stays so this keeps satisfying the ``Callable[[str], str]``
+    contract of the ``SPAWN_CACHE_POLICY`` table.
+    """
+    return str(shared_agent_cargo_home_dir())
 
 
 def ensure_agent_cargo_home_dir(session_id: str) -> str:
-    """Create and return the spawned agent's Cargo home directory."""
-    cargo_home = get_agent_session_cache_dir(session_id, "gobby", "cargo-home")
+    """Create and return the shared Cargo home directory.
+
+    ``session_id`` is deliberately unused; see ``get_agent_cargo_home_dir``.
+    """
+    cargo_home = shared_agent_cargo_home_dir()
     cargo_home.mkdir(parents=True, exist_ok=True)
     return str(cargo_home)
 
