@@ -235,17 +235,20 @@ class TestEnforceTddBlockStructure:
 # --- enforce-tdd-block condition evaluation ---
 
 
-_RUST_MODULE_SOURCE = """\
+_RUST_ENCODE_BODY = (
+    'pub fn encode(frame: &Frame) -> String {\n    format!("frame {}", frame.id)\n}\n'
+)
+
+_RUST_PRODUCTION_SOURCE = f"""\
 use std::fmt;
 
-pub struct Frame {
+pub struct Frame {{
     pub id: u64,
-}
+}}
 
-pub fn encode(frame: &Frame) -> String {
-    format!("frame {}", frame.id)
-}
+{_RUST_ENCODE_BODY}"""
 
+_RUST_TEST_MODULE = """
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,11 +260,13 @@ mod tests {
 }
 """
 
+_RUST_MODULE_SOURCE = _RUST_PRODUCTION_SOURCE + _RUST_TEST_MODULE
 
-def _write_rust_module_file(tmp_path: Path) -> str:
+
+def _write_rust_module_file(tmp_path: Path, text: str = _RUST_MODULE_SOURCE) -> str:
     path = tmp_path / "src" / "store.rs"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_RUST_MODULE_SOURCE, encoding="utf-8")
+    path.write_text(text, encoding="utf-8")
     return str(path)
 
 
@@ -348,20 +353,15 @@ class TestEnforceTddBlockCondition:
     def test_skips_rust_module_tests_rs_write(self) -> None:
         assert self._eval("/project/crates/gterminal/src/host/backpressure/tests.rs") is False
 
-    def test_skips_rust_inline_cfg_test_module_addition(self) -> None:
-        path = "/project/crates/gcore/src/store.rs"
+    def test_skips_rust_inline_cfg_test_module_addition(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path, text=_RUST_PRODUCTION_SOURCE)
         assert (
             self._eval(
                 path,
                 tool_input={
                     "file_path": path,
-                    "old_str": "pub fn encode(frame: &Frame) -> String {",
-                    "new_str": (
-                        "pub fn encode(frame: &Frame) -> String {\n"
-                        '    format!("frame {}", frame.id)\n'
-                        "}\n\n#[cfg(test)]\nmod tests {\n"
-                        "    #[test]\n    fn encode_reports_id() {}\n}\n"
-                    ),
+                    "old_str": _RUST_ENCODE_BODY,
+                    "new_str": _RUST_ENCODE_BODY + _RUST_TEST_MODULE,
                 },
             )
             is False
@@ -395,6 +395,11 @@ class TestEnforceTddBlockCondition:
             )
             is True
         )
+
+    def test_blocks_rust_write_changing_production_beside_test_module(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path)
+        rewritten = _RUST_MODULE_SOURCE.replace("pub fn encode(", "pub fn encode_quoted(")
+        assert self._eval(path, tool_input={"file_path": path, "content": rewritten}) is True
 
 
 # --- enforce-tdd-track-tests structure ---
@@ -510,20 +515,15 @@ class TestEnforceTddTrackTestsCondition:
     def test_tracks_rust_module_tests_rs_write(self) -> None:
         assert self._eval("/project/crates/gterminal/src/host/backpressure/tests.rs") is True
 
-    def test_tracks_rust_inline_cfg_test_addition(self) -> None:
-        path = "/project/crates/gcore/src/store.rs"
+    def test_tracks_rust_inline_cfg_test_addition(self, tmp_path: Path) -> None:
+        path = _write_rust_module_file(tmp_path, text=_RUST_PRODUCTION_SOURCE)
         assert (
             self._eval(
                 path,
                 tool_input={
                     "file_path": path,
-                    "old_str": "pub fn encode(frame: &Frame) -> String {",
-                    "new_str": (
-                        "pub fn encode(frame: &Frame) -> String {\n"
-                        '    format!("frame {}", frame.id)\n'
-                        "}\n\n#[cfg(test)]\nmod tests {\n"
-                        "    #[test]\n    fn encode_reports_id() {}\n}\n"
-                    ),
+                    "old_str": _RUST_ENCODE_BODY,
+                    "new_str": _RUST_ENCODE_BODY + _RUST_TEST_MODULE,
                 },
             )
             is True

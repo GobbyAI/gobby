@@ -1,9 +1,9 @@
-"""Rust cfg(test) test-writing evidence for the TDD gate.
+"""Rust cfg(test) evidence for the TDD gate.
 
 Covers the two shapes the gate must recognize beyond path conventions for
-Rust: Edit/Write changes that introduce an inline `#[cfg(test)]` module and
-edits that land entirely inside an existing test module of a production
-file. Rust edits outside such blocks stay production writes.
+Rust: Edit/Write changes that introduce a `#[cfg(test)]` item and changes that
+land entirely inside an existing one. Changes that also touch production text
+stay production writes.
 """
 
 from __future__ import annotations
@@ -11,9 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from gobby.workflows.rust_test_evidence import rust_edit_is_test_writing
 
-MODULE_WITH_TESTS = """\
+RELATIVE_PATH = "crates/gcore/src/store.rs"
+
+PRODUCTION_ONLY = """\
 use std::fmt;
 
 pub struct Frame {
@@ -23,7 +27,9 @@ pub struct Frame {
 pub fn encode(frame: &Frame) -> String {
     format!("frame {}", frame.id)
 }
+"""
 
+TEST_MODULE = """
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -35,247 +41,316 @@ mod tests {
 }
 """
 
-INSIDE_MODULE_OLD = '        assert_eq!(encode(&Frame { id: 7 }), "frame 7");'
-INSIDE_MODULE_NEW = '        assert_eq!(encode(&Frame { id: 9 }), "frame 9");'
+MODULE_WITH_TESTS = PRODUCTION_ONLY + TEST_MODULE
 
-INLINE_MODULE_ADDITION = (
-    "pub fn encode(frame: &Frame) -> String {\n"
-    '    format!("frame {}", frame.id)\n'
-    "}\n"
-    "\n"
-    "#[cfg(test)]\n"
-    "mod tests {\n"
-    "    use super::*;\n"
-    "\n"
-    "    #[test]\n"
-    "    fn encode_reports_id() {\n"
-    '        assert_eq!(encode(&Frame { id: 7 }), "frame 7");\n'
-    "    }\n"
-    "}\n"
+MODULE_WITH_HIDDEN_BRACES = (
+    PRODUCTION_ONLY
+    + """
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CLOSING: &str = "}";
+    // a stray } inside a comment
+    const BRACE: char = '}';
+
+    fn borrow<'a>(value: &'a str) -> &'a str {
+        value
+    }
+
+    #[test]
+    fn encode_reports_id() {
+        assert_eq!(encode(&Frame { id: 7 }), "frame 7");
+    }
+}
+"""
 )
 
+INSIDE_OLD = '        assert_eq!(encode(&Frame { id: 7 }), "frame 7");'
+INSIDE_NEW = '        assert_eq!(encode(&Frame { id: 9 }), "frame 9");'
 
-def _write_rust_file(tmp_path: Path, relative: str, text: str) -> str:
+PRODUCTION_BODY = 'pub fn encode(frame: &Frame) -> String {\n    format!("frame {}", frame.id)\n}\n'
+
+
+def _rust_file(tmp_path: Path, text: str, relative: str = RELATIVE_PATH) -> str:
     path = tmp_path / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return str(path)
 
 
-class TestInlineCfgTestAdditions:
-    def test_edit_adding_inline_cfg_test_module(self) -> None:
+class TestIntroducedTestItems:
+    """Changes that add cfg(test) code to a production file."""
+
+    def test_edit_appending_inline_test_module_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
         tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "old_str": "pub fn encode(frame: &Frame) -> String {",
-            "new_str": INLINE_MODULE_ADDITION,
+            "file_path": path,
+            "old_string": PRODUCTION_BODY,
+            "new_string": PRODUCTION_BODY + TEST_MODULE,
         }
 
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is True
+        assert rust_edit_is_test_writing(path, tool_input) is True
 
-    def test_claude_edit_key_names(self) -> None:
-        tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "old_string": "pub fn encode(frame: &Frame) -> String {",
-            "new_string": "#[cfg(all(test, unix))]\nmod tests {\n    #[test]\n    fn unix_only() {}\n}\n",
-        }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is True
-
-    def test_write_content_adding_inline_module(self) -> None:
-        tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "content": "pub fn encode() {}\n\n#[cfg(test)]\nmod tests {}\n",
-        }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is True
-
-    def test_cfg_with_test_among_any_predicates(self) -> None:
-        tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "new_str": "#[cfg(any(unix, test))]\nmod tests {}\n",
-        }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is True
-
-    def test_path_attribute_declaration_counts(self) -> None:
-        tool_input = {
-            "file_path": "crates/gterminal/src/host/backpressure.rs",
-            "new_str": '#[cfg(test)]\n#[path = "backpressure/tests.rs"]\nmod tests;\n',
-        }
+    def test_write_adding_inline_test_module_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
 
         assert (
-            rust_edit_is_test_writing("crates/gterminal/src/host/backpressure.rs", tool_input)
+            rust_edit_is_test_writing(path, {"file_path": path, "content": MODULE_WITH_TESTS})
             is True
         )
 
-    def test_negated_cfg_not_test_does_not_count(self) -> None:
+    def test_module_declaration_for_tests_rs_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
         tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "new_str": "#[cfg(not(test))]\nmod nightly {}\n",
+            "file_path": path,
+            "old_str": PRODUCTION_BODY,
+            "new_str": PRODUCTION_BODY + "\n#[cfg(test)]\nmod tests;\n",
         }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is False
-
-    def test_marker_inside_string_literal_does_not_count(self) -> None:
-        tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "new_str": 'let source = "#[cfg(test)] mod tests {}";\n',
-        }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is False
-
-    def test_marker_inside_comment_does_not_count(self) -> None:
-        tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
-            "new_str": "// keep the #[cfg(test)] module below\n",
-        }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", tool_input) is False
-
-    def test_non_rust_path_never_counts(self) -> None:
-        tool_input = {"file_path": "src/gobby/store.py", "new_str": "#[cfg(test)]\nmod tests;\n"}
-
-        assert rust_edit_is_test_writing("src/gobby/store.py", tool_input) is False
-
-    def test_input_without_edit_text_never_counts(self) -> None:
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", {"file_path": "x"}) is False
-        assert rust_edit_is_test_writing("crates/gcore/src/store.rs", {}) is False
-
-
-class TestEditsInsideExistingModule:
-    def test_edit_inside_module_before_write(self, tmp_path: Path) -> None:
-        path = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
-        tool_input = {"file_path": path, "old_str": INSIDE_MODULE_OLD, "new_str": INSIDE_MODULE_NEW}
 
         assert rust_edit_is_test_writing(path, tool_input) is True
 
-    def test_edit_inside_module_after_write(self, tmp_path: Path) -> None:
-        edited = MODULE_WITH_TESTS.replace(INSIDE_MODULE_OLD, INSIDE_MODULE_NEW)
-        path = _write_rust_file(tmp_path, "src/store.rs", edited)
-        tool_input = {"file_path": path, "old_str": INSIDE_MODULE_OLD, "new_str": INSIDE_MODULE_NEW}
+    def test_cfg_test_use_item_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
+        tool_input = {
+            "file_path": path,
+            "old_str": PRODUCTION_BODY,
+            "new_str": PRODUCTION_BODY + "\n#[cfg(test)]\nuse std::sync::{Arc, Mutex};\n",
+        }
 
         assert rust_edit_is_test_writing(path, tool_input) is True
 
-    def test_public_crate_module_visibility_is_recognized(self, tmp_path: Path) -> None:
-        source = MODULE_WITH_TESTS.replace(
-            "#[cfg(test)]\nmod tests {", "#[cfg(test)]\npub(crate) mod tests {"
+    def test_test_among_cfg_predicates_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
+        tool_input = {
+            "file_path": path,
+            "old_str": PRODUCTION_BODY,
+            "new_str": PRODUCTION_BODY
+            + "\n#[cfg(all(test, unix))]\nmod tests {\n    #[test]\n    fn unix_only() {}\n}\n",
+        }
+
+        assert rust_edit_is_test_writing(path, tool_input) is True
+
+    def test_new_file_write_of_only_test_code_counts(self, tmp_path: Path) -> None:
+        path = str(tmp_path / RELATIVE_PATH)
+        content = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn works() {}\n}\n"
+
+        assert rust_edit_is_test_writing(path, {"file_path": path, "content": content}) is True
+
+    def test_new_file_write_of_production_code_stays_production(self, tmp_path: Path) -> None:
+        path = str(tmp_path / RELATIVE_PATH)
+
+        assert (
+            rust_edit_is_test_writing(path, {"file_path": path, "content": MODULE_WITH_TESTS})
+            is False
         )
-        path = _write_rust_file(tmp_path, "src/store.rs", source)
-        tool_input = {"file_path": path, "old_str": INSIDE_MODULE_OLD, "new_str": INSIDE_MODULE_NEW}
+
+
+class TestEditsInsideExistingTestModule:
+    """Changes confined to an existing cfg(test) module."""
+
+    def test_edit_inside_module_before_the_write_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+        tool_input = {"file_path": path, "old_str": INSIDE_OLD, "new_str": INSIDE_NEW}
 
         assert rust_edit_is_test_writing(path, tool_input) is True
 
-    def test_production_edit_outside_module_stays_production(self, tmp_path: Path) -> None:
-        path = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
+    def test_edit_inside_module_after_the_write_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS.replace(INSIDE_OLD, INSIDE_NEW))
+        tool_input = {"file_path": path, "old_str": INSIDE_OLD, "new_str": INSIDE_NEW}
+
+        assert rust_edit_is_test_writing(path, tool_input) is True
+
+    def test_braces_hidden_in_strings_comments_and_literals_keep_the_span(
+        self, tmp_path: Path
+    ) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_HIDDEN_BRACES)
+        tool_input = {"file_path": path, "old_str": INSIDE_OLD, "new_str": INSIDE_NEW}
+
+        assert rust_edit_is_test_writing(path, tool_input) is True
+
+    def test_production_edit_beside_hidden_braces_stays_production(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_HIDDEN_BRACES)
         tool_input = {
             "file_path": path,
-            "old_str": "pub fn encode(frame: &Frame) -> String {",
-            "new_str": "pub fn encode(frame: &Frame, quoted: bool) -> String {",
+            "old_str": "pub fn encode(frame: &Frame)",
+            "new_str": "pub fn encode(frame: &Frame, pretty: bool)",
         }
 
         assert rust_edit_is_test_writing(path, tool_input) is False
 
-    def test_edit_spanning_module_boundary_stays_production(self, tmp_path: Path) -> None:
-        path = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
-        tool_input = {
-            "file_path": path,
-            "old_str": '    format!("frame {}", frame.id)\n}\n\n#[cfg(test)]\nmod tests {',
-            "new_str": '    format!("frame {}", frame.id)\n}\n\nmod tests {',
-        }
-
-        assert rust_edit_is_test_writing(path, tool_input) is False
-
-    def test_multi_edit_fully_inside_module_counts(self, tmp_path: Path) -> None:
-        path = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
+    def test_multi_edit_entirely_inside_module_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
         tool_input = {
             "file_path": path,
             "edits": [
-                {"old_str": "    use super::*;", "new_str": "    use super::*;\n    use std::fmt;"},
-                {"old_str": INSIDE_MODULE_OLD, "new_str": INSIDE_MODULE_NEW},
+                {"old_string": INSIDE_OLD, "new_string": INSIDE_NEW},
+                {"old_string": "    use super::*;", "new_string": "    use super::encode;"},
             ],
         }
 
         assert rust_edit_is_test_writing(path, tool_input) is True
 
     def test_multi_edit_with_one_production_change_stays_production(self, tmp_path: Path) -> None:
-        path = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
         tool_input = {
             "file_path": path,
             "edits": [
-                {"old_str": INSIDE_MODULE_OLD, "new_str": INSIDE_MODULE_NEW},
-                {"old_str": "pub fn encode", "new_str": "pub fn encode_quoted"},
+                {"old_string": INSIDE_OLD, "new_string": INSIDE_NEW},
+                {"old_string": "pub fn encode", "new_string": "pub fn encode_frame"},
             ],
         }
 
         assert rust_edit_is_test_writing(path, tool_input) is False
 
-    def test_unbalanced_string_brace_still_spans_module(self, tmp_path: Path) -> None:
-        source = (
-            "#[cfg(test)]\n"
-            "mod tests {\n"
-            "    #[test]\n"
-            "    fn string_brace_is_masked() {\n"
-            '        let open = "{";\n'
-            "        assert_eq!(open.len(), 1);\n"
-            "    }\n"
-            "}\n"
-        )
-        path = _write_rust_file(tmp_path, "src/store.rs", source)
+    def test_replace_all_reaching_production_stays_production(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
         tool_input = {
             "file_path": path,
-            "old_str": "        assert_eq!(open.len(), 1);",
-            "new_str": "        assert_eq!(open.len(), 2);",
-        }
-
-        assert rust_edit_is_test_writing(path, tool_input) is True
-
-    def test_comment_close_brace_still_spans_module(self, tmp_path: Path) -> None:
-        source = (
-            "#[cfg(test)]\n"
-            "mod tests {\n"
-            "    // } a closing brace inside a comment\n"
-            "    #[test]\n"
-            "    fn comment_brace_is_masked() {\n"
-            "        assert!(true);\n"
-            "    }\n"
-            "}\n"
-        )
-        path = _write_rust_file(tmp_path, "src/store.rs", source)
-        tool_input = {
-            "file_path": path,
-            "old_str": "        assert!(true);",
-            "new_str": "        assert!(false);",
-        }
-
-        assert rust_edit_is_test_writing(path, tool_input) is True
-
-    def test_missing_file_without_marker_stays_production(self) -> None:
-        tool_input = {
-            "file_path": "crates/gcore/src/absent.rs",
-            "old_str": "fn helper() {}",
-            "new_str": "fn helper(code: u8) {}",
-        }
-
-        assert rust_edit_is_test_writing("crates/gcore/src/absent.rs", tool_input) is False
-
-
-class TestPathScopedEditInput:
-    def test_foreign_file_path_input_is_ignored(self, tmp_path: Path) -> None:
-        path = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
-        tool_input = {
-            "file_path": "/other/project/src/lib.rs",
-            "new_str": "#[cfg(test)]\nmod tests {}\n",
+            "old_string": "frame",
+            "new_string": "packet",
+            "replace_all": True,
         }
 
         assert rust_edit_is_test_writing(path, tool_input) is False
 
+
+class TestProductionChanges:
+    """Changes the gate must keep treating as production writes."""
+
+    def test_production_edit_outside_module_stays_production(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+        tool_input = {
+            "file_path": path,
+            "old_str": "pub fn encode",
+            "new_str": "pub fn encode_frame",
+        }
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+    def test_write_changing_production_beside_existing_module_stays_production(
+        self, tmp_path: Path
+    ) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+        content = MODULE_WITH_TESTS.replace("pub fn encode(", "pub fn encode_frame(")
+
+        assert rust_edit_is_test_writing(path, {"file_path": path, "content": content}) is False
+
+    def test_edit_spanning_the_module_boundary_stays_production(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+        old = '    format!("frame {}", frame.id)\n}\n\n#[cfg(test)]'
+        tool_input = {
+            "file_path": path,
+            "old_str": old,
+            "new_str": old.replace("frame {}", "frame #{}"),
+        }
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+    def test_edit_mixing_production_change_and_new_module_stays_production(
+        self, tmp_path: Path
+    ) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
+        tool_input = {
+            "file_path": path,
+            "old_str": PRODUCTION_BODY,
+            "new_str": PRODUCTION_BODY.replace("-> String", "-> Option<String>") + TEST_MODULE,
+        }
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+    def test_cfg_not_test_item_stays_production(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
+        added = "\n#[cfg(not(test))]\nmod release {\n    pub fn go() {}\n}\n"
+        tool_input = {
+            "file_path": path,
+            "old_str": PRODUCTION_BODY,
+            "new_str": PRODUCTION_BODY + added,
+        }
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+    @pytest.mark.parametrize(
+        "added",
+        [
+            'pub const SAMPLE: &str = "#[cfg(test)] mod tests { }";\n',
+            "// #[cfg(test)] mod tests { }\npub fn touched() {}\n",
+        ],
+        ids=["string-literal", "comment"],
+    )
+    def test_marker_outside_code_stays_production(self, tmp_path: Path, added: str) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
+        tool_input = {
+            "file_path": path,
+            "old_str": PRODUCTION_BODY,
+            "new_str": PRODUCTION_BODY + "\n" + added,
+        }
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+
+class TestInputAndPathScoping:
+    """Guards on which payloads and paths the classifier reads."""
+
+    def test_non_rust_path_never_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS, relative="src/gobby/app.py")
+        tool_input = {"file_path": path, "content": MODULE_WITH_TESTS}
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+    def test_input_without_edit_text_never_counts(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+
+        assert rust_edit_is_test_writing(path, {"file_path": path}) is False
+
+    def test_edit_of_a_missing_file_stays_production(self, tmp_path: Path) -> None:
+        path = str(tmp_path / RELATIVE_PATH)
+        tool_input = {"file_path": path, "old_str": INSIDE_OLD, "new_str": INSIDE_NEW}
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
+    def test_relative_path_is_never_read_from_the_working_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _rust_file(tmp_path, MODULE_WITH_TESTS)
+        monkeypatch.chdir(tmp_path)
+        tool_input = {"file_path": RELATIVE_PATH, "old_str": INSIDE_OLD, "new_str": INSIDE_NEW}
+
+        assert rust_edit_is_test_writing(RELATIVE_PATH, tool_input) is False
+
+    def test_foreign_file_path_input_is_ignored(self, tmp_path: Path) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+        other = str(tmp_path / "crates/gcore/src/other.rs")
+        tool_input = {"file_path": other, "old_str": INSIDE_OLD, "new_str": INSIDE_NEW}
+
+        assert rust_edit_is_test_writing(path, tool_input) is False
+
     def test_batch_changes_are_path_scoped(self, tmp_path: Path) -> None:
-        store = _write_rust_file(tmp_path, "src/store.rs", MODULE_WITH_TESTS)
-        other = _write_rust_file(tmp_path, "src/other.rs", MODULE_WITH_TESTS)
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+        other = _rust_file(tmp_path, PRODUCTION_ONLY, relative="crates/gcore/src/other.rs")
         changes: list[dict[str, Any]] = [
-            {"path": other, "old_str": "pub fn encode", "new_str": "pub fn encode_quoted"},
-            {"path": store, "old_str": INSIDE_MODULE_OLD, "new_str": INSIDE_MODULE_NEW},
+            {"file_path": other, "old_string": "pub fn encode", "new_string": "pub fn encode_all"},
+            {"file_path": path, "old_string": INSIDE_OLD, "new_string": INSIDE_NEW},
         ]
 
-        assert rust_edit_is_test_writing(store, {"changes": changes}) is True
-        assert rust_edit_is_test_writing(other, {"changes": changes}) is False
+        assert rust_edit_is_test_writing(path, {"changes": changes}) is True
+
+    def test_written_file_already_on_disk_counts_when_it_holds_test_code(
+        self, tmp_path: Path
+    ) -> None:
+        path = _rust_file(tmp_path, MODULE_WITH_TESTS)
+
+        assert (
+            rust_edit_is_test_writing(path, {"file_path": path, "content": MODULE_WITH_TESTS})
+            is True
+        )
+
+    def test_written_file_already_on_disk_without_test_code_stays_production(
+        self, tmp_path: Path
+    ) -> None:
+        path = _rust_file(tmp_path, PRODUCTION_ONLY)
+
+        assert (
+            rust_edit_is_test_writing(path, {"file_path": path, "content": PRODUCTION_ONLY})
+            is False
+        )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
@@ -732,6 +733,14 @@ class TestTaskCommitProjectPathAllowlistViolation:
         assert task_commit_project_path_allowlist_violation(event_data, tool_input) is False
 
 
+def _rust_store_file(tmp_path: Path) -> str:
+    """Write a production Rust file the TDD helpers can read before an edit."""
+    path = tmp_path / "crates" / "gcore" / "src" / "store.rs"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("pub fn encode() {}\n", encoding="utf-8")
+    return str(path)
+
+
 class TestTddPathHelpers:
     def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
         event_data = {
@@ -765,24 +774,26 @@ class TestTddPathHelpers:
 
         assert first_tdd_code_path({}, tool_input) == "src/new_module.py"
 
-    def test_rust_inline_cfg_test_edit_counts_as_test_path(self) -> None:
+    def test_rust_inline_cfg_test_edit_counts_as_test_path(self, tmp_path: Path) -> None:
+        path = _rust_store_file(tmp_path)
         tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
+            "file_path": path,
             "old_str": "pub fn encode() {}",
             "new_str": "pub fn encode() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n",
         }
 
-        assert first_tdd_test_path({}, tool_input) == "crates/gcore/src/store.rs"
+        assert first_tdd_test_path({}, tool_input) == path
         assert first_tdd_code_path({}, tool_input) == ""
 
-    def test_rust_production_edit_stays_code_path(self) -> None:
+    def test_rust_production_edit_stays_code_path(self, tmp_path: Path) -> None:
+        path = _rust_store_file(tmp_path)
         tool_input = {
-            "file_path": "crates/gcore/src/store.rs",
+            "file_path": path,
             "old_str": "pub fn encode() {}",
             "new_str": "pub fn encode(quoted: bool) {}",
         }
 
-        assert first_tdd_code_path({}, tool_input) == "crates/gcore/src/store.rs"
+        assert first_tdd_code_path({}, tool_input) == path
         assert first_tdd_test_path({}, tool_input) == ""
 
 
