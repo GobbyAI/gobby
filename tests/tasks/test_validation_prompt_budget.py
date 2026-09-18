@@ -13,11 +13,24 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.validation import TaskValidator, ValidationPromptTooLarge
 
 
-def _validator(config: TaskValidationConfig) -> tuple[TaskValidator, MagicMock]:
+def _satisfied_verdict(criterion_count: int) -> dict[str, Any]:
+    """A verdict payload that reports every criterion index exactly once."""
+    return {
+        "status": "valid",
+        "criteria": [
+            {"index": index, "state": "satisfied", "satisfied": True}
+            for index in range(1, criterion_count + 1)
+        ],
+        "feedback": "Complete.",
+    }
+
+
+def _validator(
+    config: TaskValidationConfig,
+    criterion_count: int = 1,
+) -> tuple[TaskValidator, MagicMock]:
     llm_service = MagicMock(spec=LLMService)
-    llm_service.call_json_feature = AsyncMock(
-        return_value={"status": "valid", "criteria": [], "feedback": "Complete."}
-    )
+    llm_service.call_json_feature = AsyncMock(return_value=_satisfied_verdict(criterion_count))
     validator = TaskValidator(
         config,
         llm_service,
@@ -40,7 +53,7 @@ def _render_context(
 async def test_prompt_between_legacy_and_default_limits_reaches_llm_intact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    validator, llm_service = _validator(TaskValidationConfig())
+    validator, llm_service = _validator(TaskValidationConfig(), criterion_count=45)
     monkeypatch.setattr(validator._loader, "render", _render_context)
     paths = [f"src/module_{index:02d}.py" for index in range(35)]
     diff_text = "".join(
@@ -297,7 +310,7 @@ async def test_large_multifile_diff_prompt_lands_under_working_budget(
 async def test_criteria_named_strings_survive_prompt_truncation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    validator, llm_service = _validator(TaskValidationConfig())
+    validator, llm_service = _validator(TaskValidationConfig(), criterion_count=4)
     monkeypatch.setattr(validator._loader, "render", _render_context)
 
     planted_command = "+    check('DATABASE_URL=... uv run pytest tests/tasks/test_validation.py')"

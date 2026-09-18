@@ -203,6 +203,8 @@ def test_excluded_occurrence_does_not_hide_a_later_required_occurrence() -> None
         "uv run gobby restart",
         "uv run gobby restart --wait",
         "uv run gobby cutover --allow-dirty",
+        "uv run --frozen gobby restart --wait",
+        "GOBBY_ALLOW_WORKTREE_DAEMON=1 gobby start",
     ],
 )
 def test_daemon_lifecycle_criterion_spans_never_block_close(span: str) -> None:

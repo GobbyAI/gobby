@@ -16,7 +16,7 @@ from gobby.tasks.command_equivalence import (
     parse_validation_shell,
     scope_difference,
 )
-from gobby.tasks.criteria_contract import is_external_criterion
+from gobby.tasks.criteria_contract import external_criterion_ranges
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -62,11 +62,11 @@ _CRITERION_COMMAND_PREFIXES = frozenset(
     }
 )
 _DAEMON_LIFECYCLE_SUBCOMMANDS = frozenset({"start", "stop", "restart", "cutover"})
+_GOBBY_OPTIONS_WITH_VALUES = frozenset({"--config"})
 DAEMON_LIFECYCLE_COMMAND_REASON = (
     "daemon lifecycle commands (start/stop/restart/cutover) mutate the live daemon, "
     "so they never register as mandatory criterion commands; the coordinator runs them"
 )
-_INLINE_CRITERION_MARKER_RE = re.compile(r"\b(?P<number>\d+)[.)]\s+")
 
 
 def expand_successful_and_segments(
@@ -205,41 +205,30 @@ def criterion_command_records(
 
 
 def _daemon_lifecycle_command(command: str) -> bool:
-    """Whether a command span mutates the live daemon's lifecycle."""
-    tokens = safe_split(command)
-    if tuple(tokens[:2]) == ("uv", "run"):
-        tokens = tokens[2:]
-    if len(tokens) < 2 or posixpath.basename(tokens[0]).casefold() != "gobby":
-        return False
-    return tokens[1].casefold() in _DAEMON_LIFECYCLE_SUBCOMMANDS
+    """Whether a command span starts, stops, restarts, or cuts over the daemon.
 
-
-def _span_in_external_criterion(criteria: str, match: re.Match[str]) -> bool:
-    """Whether a span sits inside a coordinator-owned ``Live:`` criterion.
-
-    Mirrors ``split_validation_criteria``: a list item owns its line, and a
-    single-line value may pack inline numbered criteria.
+    Launchers, environment assignments, and ``cd`` prefixes may precede the
+    ``gobby`` token, so every token of every segment is a candidate.
     """
-    line_start = criteria.rfind("\n", 0, match.start()) + 1
-    line_end = criteria.find("\n", match.end())
-    line = criteria[line_start : len(criteria) if line_end == -1 else line_end]
-    segment = line
-    if line_start == 0 and line_end == -1:
-        markers = list(_INLINE_CRITERION_MARKER_RE.finditer(line))
-        sequential = [marker["number"] for marker in markers] == [
-            str(number) for number in range(1, len(markers) + 1)
-        ]
-        if len(markers) >= 2 and markers[0].start() == 0 and sequential:
-            prefix_end = match.start() - line_start
-            for marker in markers:
-                if marker.end() <= prefix_end:
-                    segment = line[marker.end() :]
-    return is_external_criterion(segment)
+    for segment in parse_shell_command(command).segments:
+        for index, token in enumerate(segment):
+            if posixpath.basename(token).casefold() != "gobby":
+                continue
+            arguments = segment[index + 1 :]
+            while arguments and arguments[0].startswith("-"):
+                consumed = 2 if arguments[0] in _GOBBY_OPTIONS_WITH_VALUES else 1
+                arguments = arguments[consumed:]
+            if arguments and arguments[0].casefold() in _DAEMON_LIFECYCLE_SUBCOMMANDS:
+                return True
+    return False
 
 
 def _command_is_excluded(criteria: str, match: re.Match[str]) -> bool:
     # Live: criteria are coordinator-owned, so their command spans are never mandatory.
-    if _span_in_external_criterion(criteria, match):
+    if any(
+        start <= match.start() and match.end() <= end
+        for start, end in external_criterion_ranges(criteria)
+    ):
         return True
     # Mask command contents so dots/semicolons inside shell arguments are not
     # mistaken for prose clause boundaries. Never let another clause negate this one.
@@ -346,8 +335,7 @@ def criterion_command_authoring_payload(criteria: str) -> dict[str, object]:
     excluded = excluded_daemon_lifecycle_commands(criteria)
     if excluded:
         payload["excluded_criterion_commands"] = [
-            {"command": command, "reason": DAEMON_LIFECYCLE_COMMAND_REASON}
-            for command in excluded
+            {"command": command, "reason": DAEMON_LIFECYCLE_COMMAND_REASON} for command in excluded
         ]
     return payload
 

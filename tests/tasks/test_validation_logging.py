@@ -18,7 +18,11 @@ async def test_close_review_diagnostics_log_at_debug(
 ) -> None:
     llm_service = cast(LLMService, MagicMock(spec=LLMService))
     call_json_feature = AsyncMock(
-        return_value={"status": "valid", "feedback": "All criteria are satisfied."}
+        return_value={
+            "status": "valid",
+            "criteria": [{"index": 1, "state": "satisfied", "satisfied": True}],
+            "feedback": "All criteria are satisfied.",
+        }
     )
     validator = make_task_validator(
         TaskValidationConfig(enabled=True),
