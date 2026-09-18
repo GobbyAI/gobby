@@ -1,0 +1,32 @@
+tags: [memory-lifecycle, memory, lifecycle, gobby, default]
+
+rules:
+  surface-memories-on-turn-start:
+    description: "Surface a ranked memory index once per parent turn from the prompt or the agent's last message"
+    # Priority 12 runs after increment-parent-turn-seq (1), so the guard below
+    # compares against this turn's counter rather than the previous turn's.
+    event: turn_start
+    enabled: true
+    priority: 12
+    when: >
+      not variables.get('is_spawned_agent')
+      and variables.get('parent_turn_seq') is not none
+      and variables.get('_memory_surface_turn_seq')
+          != variables.get('parent_turn_seq')
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: surface_memories
+        # capture_turn_prompt writes _current_user_prompt, which carries the
+        # prompt for providers whose turn_start event omits it. The tool
+        # triages that text and falls back to the session's last assistant
+        # message when it says nothing searchable.
+        arguments:
+          text: "{{ event.data.get('prompt') or variables.get('_current_user_prompt') or '' }}"
+          trigger: turn
+        background: false
+        inject_result: true
+      - type: set_variable
+        delivery: on_receipt
+        variable: _memory_surface_turn_seq
+        value: "{{ variables.get('parent_turn_seq') }}"
