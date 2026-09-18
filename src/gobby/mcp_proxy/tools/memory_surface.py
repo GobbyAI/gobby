@@ -90,8 +90,10 @@ def register_memory_surface_tools(
         session_id: str,
     ) -> dict[str, Any]:
         try:
-            query = text.strip()[:MAX_QUERY_CHARS]
-            if not query or session_manager is None:
+            # Truncation is the only edit the text takes: the search service
+            # embeds it verbatim, so trimming here would change the vector.
+            query = text[:MAX_QUERY_CHARS]
+            if not query.strip() or session_manager is None:
                 return _empty(trigger)
 
             resolved = await asyncio.to_thread(_resolve_session, session_manager, session_id)

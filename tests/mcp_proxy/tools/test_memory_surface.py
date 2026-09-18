@@ -59,19 +59,18 @@ def _registry(
 
 async def test_surface_search_arguments() -> None:
     registry, memory_manager = _registry(candidates=[_memory(1), _memory(2)])
+    # Surrounding whitespace rides along: the search service embeds the text
+    # verbatim, so the tool must not reshape it.
+    text = "\n  Rebuilding the session handoff contract  \n"
 
     result = await registry.call(
         "surface_memories",
-        {
-            "text": "Rebuilding the session handoff contract",
-            "trigger": "spawn_agent",
-            "session_id": SESSION_ID,
-        },
+        {"text": text, "trigger": "spawn_agent", "session_id": SESSION_ID},
     )
 
     kwargs = memory_manager.search_memories.await_args.kwargs
-    assert kwargs["query"] == "Rebuilding the session handoff contract"
-    assert kwargs["embed_text"] == "Rebuilding the session handoff contract"
+    assert kwargs["query"] == text
+    assert kwargs["embed_text"] == text
     assert kwargs["limit"] == 5
     assert kwargs["tags_none"] == ["review-lesson"]
     assert kwargs["min_score"] == SURFACE_MIN_SCORE
@@ -119,7 +118,7 @@ async def test_surface_truncates_overlong_text() -> None:
     )
 
     kwargs = memory_manager.search_memories.await_args.kwargs
-    assert kwargs["query"] == text.strip()[:2000]
+    assert kwargs["query"] == text[:2000]
     assert kwargs["embed_text"] == kwargs["query"]
     assert len(kwargs["query"]) == 2000
 
