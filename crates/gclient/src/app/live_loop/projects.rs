@@ -11,6 +11,7 @@ use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, RenameKind, WorktreeChoice};
+use crate::ui::sidebar::TERMINAL_ROW;
 use crate::ui::sidebar_rows::project_label;
 use crate::ui::{Chrome, Mode};
 
@@ -133,23 +134,40 @@ pub async fn mark_agent_seen(
 
 /// The entry's pane once its project is the focused one: another project's
 /// agent focuses that project first, whose roster attaches the pane.
+///
+/// A sidebar row is either a session the roster joined to an agent entry or a
+/// bare terminal keyed `terminal:<terminal_id>` (`bare_terminals`). Only the
+/// first kind appears in `sidebar().agents`, so resolving through that list
+/// alone answered `None` for every bare row — and each caller reads `None` as
+/// "nothing to do" and returns `Ok(())`. That one miss is why clicking such a
+/// row did nothing, why "open in new tab" did nothing, and why a right-click
+/// close fell through to whatever pane happened to be focused: `focus_menu_target`
+/// retargets through here before the action runs. A bare row carries its
+/// terminal in its own id and belongs to the focused project already, so the
+/// id is the whole answer.
 async fn agent_pane(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     entry_id: &str,
 ) -> Result<Option<PaneId>, FrameError> {
-    let Some((project, terminal_id)) = workspace
+    let agent = workspace
         .sidebar()
         .agents
         .iter()
         .find(|agent| agent.entry_id == entry_id)
-        .map(|agent| (agent.project_id.clone(), agent.terminal_id.clone()))
-    else {
-        return Ok(None);
+        .map(|agent| (agent.project_id.clone(), agent.terminal_id.clone()));
+    let terminal_id = match agent {
+        Some((project, terminal_id)) => {
+            if workspace.project_id() != Some(project.as_str()) {
+                focus_project(workspace, chrome, &project).await?;
+            }
+            terminal_id
+        }
+        None => match entry_id.strip_prefix(TERMINAL_ROW) {
+            Some(terminal_id) => terminal_id.to_string(),
+            None => return Ok(None),
+        },
     };
-    if workspace.project_id() != Some(project.as_str()) {
-        focus_project(workspace, chrome, &project).await?;
-    }
     if let Some(pane) = attention_pane(workspace, entry_id) {
         return Ok(Some(pane));
     }

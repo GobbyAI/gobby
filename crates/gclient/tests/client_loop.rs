@@ -41,6 +41,7 @@ use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
 use gobby_client::ui::settings::{ClientPrefs, PassthroughModifier};
+use gobby_client::ui::sidebar::TERMINAL_ROW;
 use gobby_client::ui::status::{Toast, ToastKind};
 use gobby_client::ui::{render_workspace, Chrome, WorkspaceView};
 use gobby_client::Workspace;
@@ -9199,6 +9200,242 @@ async fn a_busy_refusal_of_a_pane_close_still_shows() {
         chrome.status_message.as_deref(),
         Some("another window is moving the workspace"),
         "a busy refusal of pane.close reaches the status line"
+    );
+    mock.shutdown().await;
+}
+
+/// Wait for a `terminal_take_control` naming `terminal_id`.
+///
+/// The loop takes control of whatever it focuses, so counting requests would
+/// also match the pane focused at startup. Per the loop-ordering rule, an
+/// assertion after `run_live_loop` has to wait for a mock-visible request the
+/// loop can only send once it applied the click, then drop the input.
+async fn wait_for_take_control_of(mock: &MockDaemon, terminal_id: &str) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if websocket_requests(mock, "terminal_take_control")
+                .iter()
+                .any(|body| body.get("terminal_id") == Some(&json!(terminal_id)))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for take control of {terminal_id}"));
+}
+
+/// A bare terminal row is a click target.
+///
+/// `bare_terminals` keys such a row `terminal:<terminal_id>`, and only rows the
+/// roster joined to an agent entry appear in `sidebar().agents`. `agent_pane`
+/// searched that list alone, so every bare row answered `None`, and each caller
+/// reads `None` as nothing to do: the click, `open in new tab`, and the focus
+/// retarget a right-click close depends on were all silent no-ops. The user saw
+/// rows that highlighted when their pane was clicked but could never be clicked
+/// themselves.
+#[tokio::test]
+async fn clicking_a_bare_terminal_row_focuses_that_terminal() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let first = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("pane for terminal-a");
+    let second = workspace
+        .pane_for_terminal("terminal-b")
+        .expect("pane for terminal-b");
+
+    // Sidebar hit areas exist only once the rows have been drawn, so the probe
+    // renders a real frame to find the row's cell.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    show_roster(&workspace, &mut probe);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_id = format!("{TERMINAL_ROW}terminal-b");
+    let (column, row) = probe
+        .view
+        .agent_hit_areas
+        .iter()
+        .find(|(entry, _)| *entry == row_id)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("bare terminal row drawn");
+    assert!(
+        matches!(hit_test(&probe.view, column, row), Hit::Agent(_)),
+        "the click lands on the bare terminal row"
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    chrome.focus_pane(first);
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_take_control_of(&mock, "terminal-b").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        chrome.focused_pane(),
+        Some(second),
+        "clicking the row focuses the terminal it names"
+    );
+    assert_ne!(second, first, "the click moved focus off the starting pane");
+    mock.shutdown().await;
+}
+
+/// Right-click close on a bare terminal row acts on that row's terminal.
+///
+/// `focus_menu_target` retargets focus to the menu's subject before the action
+/// runs, which is how every untargeted row action reaches the right pane. It
+/// retargets through `agent_pane`, so while that answered `None` for a bare
+/// terminal row the retarget silently did nothing and `Action::CloseTerminal`
+/// fell through to `chrome.focused_pane()` -- killing whatever the user
+/// happened to be looking at instead of the row they clicked.
+#[tokio::test]
+async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let first = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("pane for terminal-a");
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    show_roster(&workspace, &mut probe);
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_id = format!("{TERMINAL_ROW}terminal-b");
+    let anchor = probe
+        .view
+        .agent_hit_areas
+        .iter()
+        .find(|(entry, _)| *entry == row_id)
+        .map(|(_, rect)| (rect.x + 1, rect.y))
+        .expect("bare terminal row drawn");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    chrome.focus_pane(first);
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        let press = |button, (column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(button),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        // `agent_items` for an unblocked bare row: focus, open in new tab,
+        // mark seen, take control, close terminal.
+        press(MouseButton::Right, anchor).await;
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let killed: Vec<Value> = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(
+        killed
+            .iter()
+            .map(|body| body.get("terminal_id").cloned().unwrap_or(Value::Null))
+            .collect::<Vec<_>>(),
+        vec![json!("terminal-b")],
+        "close acts on the row under the menu, never on the focused pane"
     );
     mock.shutdown().await;
 }

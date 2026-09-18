@@ -407,8 +407,17 @@ pub(super) async fn handle_live_action(
         Action::NewProject => open_new_project_dialog(chrome),
         Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {
-                terminate_live_terminal(workspace, pane_id).await?;
-                sync_live_chrome(workspace, chrome);
+                // An external pane is a terminal the user attached rather than
+                // one gclient spawned, so closing it is a detach: release the
+                // lease and drop the pane, the way `close_live_pane` already
+                // does. Killing it would destroy a tmux pane gclient never
+                // created.
+                if workspace.pane(pane_id).external {
+                    close_live_pane(workspace, chrome).await?;
+                } else {
+                    terminate_live_terminal(workspace, pane_id).await?;
+                    sync_live_chrome(workspace, chrome);
+                }
             }
         }
         Action::ClosePane => close_live_pane(workspace, chrome).await?,
