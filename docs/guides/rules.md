@@ -37,13 +37,15 @@ agent step workflows for that.
 ## Bundled Memory Gates
 
 The `memory-lifecycle` rule group keeps memory use explicit and bounded across
-providers. `search-memories-on-claim` prompts an agent to search for relevant
-project knowledge after a successful task claim. `guard-plan-memory-writes`
-keeps draft findings in the plan artifact unless they are durable preferences
-or finalized decisions. The `review-closed-task-memories-before-handoff` and
-`review-closed-task-memories-on-stop` gates request one
-`review_task_memories` pass for each closure batch. These rules guide and gate
-agent behavior; they do not inject project memories automatically. See
+providers. The four `surface-memories-*` rules inject a bounded memory index at
+the tool intents that change what an agent is about to do: an agent spawn, a
+claiming `create_task`, a successful `claim_task`, and a handoff read.
+`guard-plan-memory-writes` keeps draft findings in the plan artifact unless they
+are durable preferences or finalized decisions. The
+`review-closed-task-memories-before-handoff` and
+`review-closed-task-memories-on-stop` gates request one `review_task_memories`
+pass for each closure batch. Outside those four surfacing intents, retrieval
+stays a deliberate agent search. See
 [Memory System Guide](./memory.md#lifecycle-rules) for the complete installed
 rule table.
 

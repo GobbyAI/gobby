@@ -570,8 +570,10 @@ sequenceDiagram
 The installed `bootstrap-default-agent-core-skills` rule requests memory guidance
 with the other core skills in each context epoch. It replaces the old separate
 initial-turn loader. Installed registry inspection on 2026-09-12 found that
-bootstrap rule and all ten rules below enabled globally. Re-check installed rows
-for the current session before inferring active enforcement from this table.
+bootstrap rule and every rule then bundled enabled globally; the four
+`surface-memories-*` rows are newer, so confirm them with `gobby rules list`
+after the next template sync. Re-check installed rows for the current session
+before inferring active enforcement from this table.
 
 Current bundled memory rules:
 
@@ -579,27 +581,31 @@ Current bundled memory rules:
 | --- | --- | --- |
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until `gobby:references/memory/overview.md` is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
-| `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `judge-shadow-relevance-on-response` | `turn_end` | Judges pending shadow-memory recall candidates in the background. |
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
-| `search-memories-on-claim` | `after_tool` | Nudges one subject search after a successful `claim_task` or claimed `create_task`, before editing starts. |
+| `surface-memories-before-spawn` | `before_tool` | Surfaces a ranked memory index for the spawn prompt before `gobby-agents:spawn_agent` runs. |
+| `surface-memories-before-claiming-create` | `before_tool` | Surfaces the index for a `create_task` title when the same call claims the task. |
+| `surface-memories-after-claim` | `after_tool` | Surfaces the index for the claimed task's title after a successful `claim_task`. |
+| `surface-memories-after-handoff` | `after_tool` | Surfaces the index for the handoff text `gobby-sessions:get_handoff` returned. |
 
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
 
 ## Retrieval Is Agent-Driven
 
-Agents search on demand; no rule injects memories automatically. Call
-`search_memories` after claiming unfamiliar work and whenever prior project
-knowledge could change the implementation. Judge each hit by its `similarity`,
-`type`, `rationale`, and content; search results are evidence, not
-authority.
+Automatic surfacing is bounded to the four tool intents in the rule table above:
+an agent spawn, a claiming `create_task`, a successful `claim_task`, and a
+handoff read. Everywhere else agents search on demand. Call `search_memories`
+after claiming unfamiliar work and whenever prior project knowledge could change
+the implementation. Judge each hit by its `similarity`, `type`, `rationale`, and
+content; search results are evidence, not authority.
 
-Rule-delivered review lessons are deduplicated for one context epoch through
+Rule-delivered review lessons and surfaced memory indexes are deduplicated for
+one context epoch through
 `injected_memory_ids`. Clear, compact, and selected resume events start a new
 context epoch by resetting that variable, allowing relevant guidance to appear
 again without suppressing it for the whole session.

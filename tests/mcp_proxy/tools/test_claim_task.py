@@ -154,6 +154,9 @@ class TestClaimTaskTool:
 
             # Should succeed
             assert "error" not in result
+            # The claim payload names the task so surfacing rules can query the
+            # subject without a second read.
+            assert result["title"] == sample_task.title
             mock_task_manager.claim_task_for_agent.assert_called_once_with(
                 sample_task.id,
                 session_id="my-session-id",
@@ -482,6 +485,7 @@ class TestClaimTaskTool:
             # Should succeed (idempotent operation)
             assert "error" not in result
             assert result["already_claimed"] is True
+            assert result["title"] == task_claimed_by_self.title
             assert (
                 'get_task(task_id="550e8400-e29b-41d4-a716-446655440002", brief=false)'
                 in (result["message"])
