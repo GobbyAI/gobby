@@ -146,6 +146,15 @@ and the workspace id in both `terminal_id` and `attachment_id`. An event above
 the 16 MiB reassembly bound arrives with `workspace: null` and empty `tabs` and
 `panes`; the client requests `workspace_snapshot` again.
 
+The same rows are exposed by the `gobby workspaces`, `gobby panes`, and
+`gobby nodes` commands ([cli-commands.md](../guides/cli-commands.md#workspaces))
+and by the `gobby-workspaces` MCP registry ([mcp-tools.md](../guides/mcp-tools.md));
+the user-facing model, refs, multi-window focus hints, and pane environment are
+in the gclient user guide's [Workspaces](../guides/gclient-user-guide.md#workspaces)
+section. A pane spawn exports `GOBBY_TERMINAL_ID` and `GOBBY_PANE_REF`, which
+hooks report as `gobby_terminal_id` and `gobby_pane_ref`
+([Terminal Context](../guides/ghook-development-guide.md#terminal-context)).
+
 ## Backpressure
 
 Each attachment has a droppable 64-entry / 2 MiB delta queue (overflow resyncs

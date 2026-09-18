@@ -2,7 +2,7 @@
 //!
 //! An orphan is a row only the daemon can clean up: a native row in state
 //! `orphaned` (its host epoch is gone) or an external tmux session with no
-//! attached client (a Ghostty tab closed with `destroy-unattached off`).
+//! attached client (a tmux session started by hand and left detached).
 //! Gobby-owned tmux rows are always detached and are never listed. The
 //! candidates come from the WS `terminal_list` inventory on activation, so
 //! the menu item needs no polling; the dialog pre-checks every row, and the

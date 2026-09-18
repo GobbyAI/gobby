@@ -1,11 +1,11 @@
 # gclient User Guide
 
 `gclient` is Gobby's terminal workspace client. It runs in your terminal, attaches
-to the terminals the Gobby daemon hosts, lays them out in tabs and split panes,
-lists the agents that need your attention, and lets you take or hand back
-keyboard control of any terminal. This guide covers the client as a user: how to
-launch it, what is on screen, every default keybinding, the mouse, and what
-happens across daemon restarts.
+to a workspace the Gobby daemon owns, shows its tabs and split panes of hosted
+terminals, lists the agents that need your attention, and lets you take or hand
+back keyboard control of any terminal. This guide covers the client as a user: how
+to launch it, what is on screen, how workspaces work, every default keybinding,
+the mouse, and what happens across daemon restarts.
 
 For building, installing, and the wire protocols, read
 [gterminal-development-guide.md](gterminal-development-guide.md).
@@ -20,12 +20,14 @@ gclient
 ```
 
 ```text
-Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] [--no-mouse] [--version]
+Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] [--no-mouse] [--version]
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it reopens the project it last had focused, or the personal project with one shell in the directory it was launched from. |
+| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it opens the project the workspace's rows say was focused last, or the personal project with one shell in the directory it was launched from. |
+| `--workspace WORKSPACE` | The workspace to attach: a ref (`w1`, or `n2:w1`, whose node overrides `--node`) or a name. Defaults to `default`, which is created on first use. See [Workspaces](#workspaces). |
+| `--node NODE` | The node that owns the workspace: a ref (`n2`), a node id, a hostname, or a label. Defaults to the daemon's own node. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
 | `--token-file PATH` | Bearer token file. Defaults to `~/.gobby/local_cli_token`. |
 | `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. |
@@ -117,15 +119,17 @@ rail: a dot per machine, then numbered project cards, then numbered sessions,
 each list under a `─` rule, with `»` on the last row to expand.
 
 **Tab bar.** One row of tabs for the focused project; each project keeps its own
-tab set. Auto-named tabs show their index, renamed tabs their name, and a zoomed
-tab adds ` Z`. A new-tab button follows the last tab; scroll arrows appear when tabs
-overflow. The bar hides when only one tab is open if you turn on
-`hide tab bar with one tab` in settings.
+tab set, and every tab is a row of the attached workspace (see
+[Workspaces](#workspaces)). Auto-named tabs show their index, renamed tabs their
+name, and a zoomed tab adds ` Z`. A new-tab button follows the last tab; scroll
+arrows appear when tabs overflow. The bar hides when only one tab is open if you
+turn on `hide tab bar with one tab` in settings.
 
-**Panes.** A tab holds one or more terminals in nested splits. The focused pane's
-border title starts with `▸`. A pane that has not yet received a frame says
-`waiting for frames`; a pane whose size another viewer set says `sized by <viewer>`
-on its bottom row. An empty tab area shows `no pane open`.
+**Panes.** A tab holds one or more terminals in nested splits; each pane is a
+workspace row with a ref such as `n1:w1:t2:p3`, and its name is that row's label.
+The focused pane's border title starts with `▸`. A pane that has not yet received
+a frame says `waiting for frames`; a pane whose size another viewer set says
+`sized by <viewer>` on its bottom row. An empty tab area shows `no pane open`.
 
 **Status line.** From left to right: the focused pane's control indicator
 (`[● held]`, `[○ observe]`, `[▲ take-back]`, `[◌ lease lost]`, or
@@ -134,6 +138,56 @@ on its bottom row. An empty tab area shows `no pane open`.
 shifted when the client runs inside tmux, `daemon unreachable` during an
 outage, and the latest status message. Clicking the control indicator takes, releases, or takes
 back control.
+
+## Workspaces
+
+A workspace is the daemon's record of a layout: its tabs, the panes in them, and
+the terminal each pane shows. The client attaches one workspace at startup
+(`--workspace`, default `default`, created on first use) and renders its rows; it
+keeps no layout of its own. Every window attached to the same workspace shows the
+same tabs, panes, and names, whether a change came from another `gclient`, from
+`gobby panes split`, or from an agent calling the `gobby-workspaces` MCP tools.
+
+**Refs.** Nodes, workspaces, tabs, and panes are addressed by short refs:
+`n1:w1:t2:p3` is pane 3 of tab 2 of workspace 1 on node 1. Each number is the
+lowest free one in its scope, so a closed pane's number is reused by the next
+split. Underneath, every row also has a UUID.
+
+**Several windows.** More than one `gclient` may attach the same workspace. Each
+window keeps its own focus, zoom, active tab, scrollback position, copy mode, and
+sidebar filters. The rows hold focus hints (the focused project, tab, and pane)
+that every window writes as its focus moves and that the next window, or the next
+launch, opens on. Two windows typing into one pane are arbitrated by the control
+lease described under [Attach and control](#attach-and-control).
+
+**Pane environment.** A shell the workspace starts inherits `GOBBY_TERMINAL_ID`,
+`GOBBY_NODE_ID`, `GOBBY_NODE_REF`, `GOBBY_WORKSPACE_ID`, `GOBBY_TAB_ID`,
+`GOBBY_PANE_ID`, and `GOBBY_PANE_REF`. A `gclient` launched inside such a pane
+opens no shell of its own and shifts its prefix to `ctrl+]`. Hooks see the same
+binding as `gobby_terminal_id` and `gobby_pane_ref`; see the ghook guide's
+[Terminal Context](ghook-development-guide.md#terminal-context).
+
+**Other surfaces.** The same rows are reachable from the CLI (`gobby workspaces`,
+`gobby panes`, and `gobby nodes` in [cli-commands.md](cli-commands.md#workspaces)),
+from the `gobby-workspaces` MCP registry ([mcp-tools.md](mcp-tools.md)), and over
+the WebSocket workspace messages in
+[gterm-protocols.md](../contracts/gterm-protocols.md#workspace-messages).
+
+### Bringing a bare terminal in
+
+A Ghostty tab, or any terminal window you opened yourself, runs a plain shell the
+daemon knows nothing about, and it cannot be adopted into a workspace later. Work
+the daemon should track starts in one of three places:
+
+- A `gclient` pane: open a tab or a split and run the command there.
+- A tmux session you start by hand on the default socket. The daemon lists it as
+  an external terminal, and `gclient` opens it in a pane with ownership
+  `external`, so `close_pane` and closing the tab never kill it.
+- A provider session resumed inside a `gclient` pane, for example
+  `claude --resume <id>`. The session start binds it to the pane's terminal
+  through `GOBBY_TERMINAL_ID`, it appears on the sidebar roster with backend
+  `native`, quitting the provider leaves the pane's shell live, and restarting
+  the provider there rebinds it.
 
 ## The prefix key
 
@@ -262,8 +316,11 @@ closing a tab first opens a dialog that names the tab and counts its panes; `y`
 or `enter` confirms, `n` or `esc` cancels. If the daemon refuses a kill, that
 pane stays, and so does its tab.
 
-Renames apply locally: a tab name, a pane name, or a project label is yours and
-does not change the daemon's terminal title.
+A tab name and a pane name are workspace row state: rename one and every window
+on the workspace shows it, it survives daemon restarts, and
+`gobby panes rename REF [NAME]` sets or clears the same label from the CLI.
+Neither changes the terminal's own title. A project label is yours alone; the
+client keeps it in `prefs.toml`.
 
 ## Attach and control
 
@@ -364,7 +421,10 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | agent sort | `grouped` | `grouped` or `priority` order in the Sessions section |
 
 The file is optional and every key in it is optional; an unknown key is a
-startup error that names the line.
+startup error that names the line. The sidebar writes three keys of its own as
+you use it: `sidebar_collapsed`, `project_order` (project ids in the order you
+dragged them; projects it does not name follow in the daemon's order), and the
+`[ui.project_labels]` table (your label per project id).
 
 ```toml
 [ui]
@@ -376,6 +436,11 @@ pane_gaps = true
 confirm_close = true
 hide_tab_bar_when_single_tab = false
 sidebar_width = 26
+sidebar_collapsed = false
+project_order = ["4b1c…", "9e2f…"]
+
+[ui.project_labels]
+"4b1c…" = "api"
 
 [keymap]
 path = "client/keymap.toml"
@@ -469,19 +534,23 @@ described under *Orphaned terminals*.
 
 ## Workspace persistence
 
-The client saves its layout as it changes and restores it on the next launch.
+The layout is the daemon's, not the client's. Tabs, splits, names, and the focus
+hints live in the workspace rows on the daemon, and the gterm host keeps the
+terminals themselves, so the same workspace comes back in the next window and
+after a daemon restart. The client writes nothing about layout.
 
-| File | Contents |
+| Where | What it holds |
 | --- | --- |
-| `~/.gobby/client/<project-id>/workspace.json` | That project's tabs, split layout, focused pane, and worktree tags |
-| `~/.gobby/client/session.json` | The focused project, sidebar width and collapse, the projects filter and sessions scope (`all_projects`, `all_sessions`), machine filter, project order, and project labels |
-| `~/.gobby/client/prefs.toml` | Settings, as above |
+| Workspace rows on the daemon | Tabs, split layout, tab and pane names, and the focus hints (focused project, tab, and pane) |
+| `~/.gobby/client/prefs.toml` | Settings, plus `sidebar_collapsed`, `project_order`, and `[ui.project_labels]`, which the sidebar writes as you change them |
+| The window's own memory | Zoom, scrollback position, copy mode, and the machine, projects, and sessions filters |
 
-On launch the client restores the focused project's tabs to the terminals that
-still exist; a terminal that has gone is dropped from its split, and a tab with no
-surviving panes is dropped. If no snapshot exists, one shell opens in the project
-checkout. Layout is never written to `prefs.toml`; a corrupt snapshot is moved
-aside and the client starts from an empty layout.
+On launch the client attaches the workspace and opens the focused project. A
+project with no tabs gets one shell in its checkout (for the personal project,
+the directory `gclient` was launched from). A pane whose terminal died is dropped
+from its split by the daemon's restart sweep, and a tab with no surviving panes
+is dropped with it; a project that lost every tab starts again with that one
+shell. There is no snapshot file to move aside.
 
 ## Daemon restarts and reconnects
 
@@ -497,7 +566,10 @@ The client rides through the gap. When the daemon's connection drops:
 2. The client retries with backoff. A daemon shutdown is recognised as *going
    away* and is retried without limit; other losses stop after a bounded budget,
    after which the client exits with the reason.
-3. On reconnect it re-attaches every pane to the same terminal ids, retakes
+3. On reconnect it re-attaches the workspace and takes the daemon's fresh
+   snapshot of its rows: a pane whose terminal was killed during the restart is
+   gone, and so is a tab that lost every pane.
+4. It then re-attaches every surviving pane to the same terminal ids, retakes
    control of the focused pane, clears the stale failure banner, and refreshes
    the sidebar.
 
@@ -516,8 +588,8 @@ both from one place:
   alone marks it; no word is printed), and its context menu offers
   `destroy orphaned terminal` in place of `close terminal`.
 - A tmux session on the default or gobby socket with no attached client, for
-  example a Ghostty tab you closed. Gobby-owned agent sessions are always
-  detached and are never listed.
+  example one you started by hand and detached from. Gobby-owned agent sessions
+  are always detached and are never listed.
 
 `destroy orphaned terminals…` on the global menu (right-click empty chrome, or
 the sidebar's `[Menu]` control) fetches the current candidates from the daemon and
@@ -528,8 +600,8 @@ the time it was last seen. `j` / `k` or the arrows move, `space` toggles a row,
 The status line then reads `destroyed N of M orphaned terminals`, naming any row
 the daemon refused; with nothing to clean up it reads `no orphaned terminals`.
 
-With this action available you can set `destroy-unattached off` in
-`~/.tmux.conf`, so closing a tab detaches its session instead of killing it, and
-clear the leftovers from here when you are done with them.
+A Ghostty tab is a plain shell and never appears here; see
+[Bringing a bare terminal in](#bringing-a-bare-terminal-in) for where
+daemon-tracked work starts.
 
-_Last verified: 2026-09-13_
+_Last verified: 2026-09-18_

@@ -245,7 +245,7 @@ capability guides and agent reference library.
 | `gobby-metrics` | Usage and observability |
 | `gobby-agents` | Agent lifecycle and inter-session messaging |
 | `gobby-worktrees` | Worktree isolation lifecycle |
-| `gobby-workspaces` | Workspaces, tabs, and panes by ref, with pane input, reads, and waits |
+| `gobby-workspaces` | Workspaces, tabs, and panes by ref, with pane input, reads, and waits; the same rows as [`gobby workspaces` and `gobby panes`](cli-commands.md#workspaces), the [`gclient` window](gclient-user-guide.md#workspaces), and the [workspace messages](../contracts/gterm-protocols.md#workspace-messages) |
 | `gobby-clones` | Clone isolation lifecycle |
 | `gobby-merge` | Merge operations |
 | `gobby-hub` | Machine/project and cross-project queries |

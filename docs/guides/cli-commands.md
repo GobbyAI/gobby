@@ -807,7 +807,11 @@ These groups call the daemon's `gobby-workspaces` registry with the local CLI
 token, so they act as the `operator`. A node (`n#`) holds workspaces (`w#`) whose
 tabs (`t#`) hold panes (`p#`): address a row by ref, such as `n2:w1:t1:p2`, or by
 id. `--node` takes a node ref, id, hostname, or label and defaults to the daemon's
-own node; a ref that names its own node overrides it.
+own node; a ref that names its own node overrides it. The same rows back the
+`gclient` window ([Workspaces](gclient-user-guide.md#workspaces) in its user
+guide), the `gobby-workspaces` MCP registry ([mcp-tools.md](mcp-tools.md)), and
+the [workspace messages](../contracts/gterm-protocols.md#workspace-messages) on
+the WebSocket.
 
 `panes split` takes exactly one direction and opens a shell, or adopts the live
 terminal `--terminal` names. A new pane lands after the one it splits, so `--left`
