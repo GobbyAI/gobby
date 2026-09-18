@@ -20,6 +20,7 @@ STANDALONE = set(
     "brevity restraint proportionality elicit ideate research architecture prd "
     "code-review decompose-monolith repository-maintenance test-driven-development "
     "triage-judgment impeccable tech-writer bridge browser-testing coderabbit context7 "
+    "app-store-development app-store-review safari-extension-development "
     "bash c cpp csharp dart elixir go java javascript json kotlin lua objc php python "
     "ruby rust scala swift typescript yaml".split()
 )
@@ -30,7 +31,7 @@ def test_reference_contract_5_2_1() -> None:
     root = get_bundled_skills_path()
     catalog = load_capability_catalog(root / "gobby")
     assert len(catalog.folded_skills) == 30
-    assert len(STANDALONE) == 40
+    assert len(STANDALONE) == 43
     assert {path.parent.name for path in root.glob("*/SKILL.md")} == STANDALONE | {
         "gobby",
         "annotate",
@@ -119,7 +120,8 @@ def test_reference_contract_5_2_2(temp_db: HubDatabase, tmp_path: Path, upgrade:
     for carrier in (commands / "gobby.md", native / "gobby/SKILL.md"):
         content = carrier.read_text()
         assert "get_skill" in content
-        assert "tasks" in content
+        # The thin router points at the catalog instead of naming capabilities.
+        assert "catalog.json" in content
         assert "references" in content
     manifest = build_bundled_content_manifest(root.parent)
     for path in (root / "gobby").rglob("*"):

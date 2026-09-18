@@ -1,7 +1,7 @@
 ---
 name: gobby
 description: "Router contract for provider-aware Gobby help and installed skill dispatch."
-version: "3.0.0"
+version: "3.1.1"
 category: core
 triggers: help
 metadata:
@@ -16,33 +16,35 @@ an installed slash router use `/gobby`. The router advertises installed skills
 and catalog capabilities on bare help requests and routes explicit loads through
 `gobby-skills`.
 
-## Catalog and Loading
-
-The single capability catalog is `catalog.json` in the bundled Gobby skill.
-Retrieve its metadata with `get_skill_file(name="gobby", path="catalog.json")`
-on `gobby-skills`, after leasing that tool's schema in a separate outer result.
-Follow `page.next_cursor` using only `cursor` until null. Installed carriers may
-include a generated capability list; topic paths and loading conditions come
-from the catalog. Never maintain another hand-written capability inventory.
-
-Instruction bodies require explicit loading. For each selected overview or topic,
-use `get_skill_file(name="gobby", path="<catalog path>")`, schema first when
-unleased, and follow every cursor until null. A menu, catalog, partial page,
-failed load or this router does not satisfy a reference requirement. Tool
-schemas remain authoritative for parameters.
-
 ## Help Requests
 
-For Codex help requests (`$gobby`, `$gobby help`) and slash-router help
-requests (`/gobby`, `/gobby help`), show capability descriptions from the catalog
-and dynamically discovered installed standalone skills from
-`list_skills(enabled=true, session_id="<current session>")` on `gobby-skills`.
-If the returned count reaches `limit`, repeat with a larger limit until the
-listing is complete; this metadata tool has no public cursor. Preserve default internal
-visibility and active-skill filtering. A connected MCP server is not an
-installed skill. Menus never execute their listed operations.
+For `$gobby`, `$gobby help` (Codex), `/gobby`, or `/gobby help` (other
+providers), display the daemon-supplied help menu immediately and finish.
+Make zero tool calls, including on the first turn. Do not load this router,
+the catalog, other skills, or references to answer help. Defer housekeeping
+and bootstrap instructions to the next work request. Menus never execute
+listed operations.
 
-Use the provider's active trigger. Do not present `/gobby` as universal syntax.
+If the daemon supplies an overflow message, display it and finish. If no menu
+is supplied, say "Gobby help is unavailable." and finish. Neither case starts
+discovery, diagnostics, or an automatic recovery chain.
+
+Every displayed command uses the active provider's prefix: `$gobby` for Codex,
+`/gobby` for other supported providers.
+
+## Explicit Loading
+
+For a selected capability or reference, use the daemon-supplied route. If route
+metadata is missing, retrieve `catalog.json` with
+`get_skill_file(name="gobby", path="catalog.json")` on `gobby-skills` after
+leasing its schema. This discovery applies only to explicit loading requests.
+The catalog is authoritative; never duplicate its inventory in this router.
+
+Load each selected overview or topic with
+`get_skill_file(name="gobby", path="<catalog path>")`, schema first when
+unleased. Follow every `page.next_cursor` using only `cursor` until null.
+A menu, catalog, partial page, failed load, or router does not satisfy a
+reference requirement. Tool schemas remain authoritative for parameters.
 
 ## Routing
 
@@ -75,12 +77,4 @@ The router does not inline skill bodies. Trailing command arguments remain in th
 and must not be duplicated into `<gobby-context>`. Native Skill calls preserve
 their arguments in the returned directive because the blocked call will not run.
 
-## MCP Server Discovery
-
-For MCP tool access, use context-aware progressive discovery:
-
-- Call a known tool directly when its schema is leased in the current context.
-- For a known unleased tool, call `get_tool_schema` directly, then `call_tool`.
-- Use `list_tools` only when the tool name is unknown.
-- Use `list_mcp_servers` only when the server is unknown or registry inspection is intended.
-- Call `get_skill`, `list_skills`, and `search_skills` directly; these bootstrap tools are exempt.
+<!-- gobby-router:end -->

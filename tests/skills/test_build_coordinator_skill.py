@@ -116,7 +116,7 @@ def test_build_coordinator_documents_set_handoff_tool_path() -> None:
     content = (REFERENCES.parent / "sessions/handoffs.md").read_text()
     assert "`gobby-sessions:set_handoff`" in content
     assert "Fetch the applicable schemas" in content
-    assert "Call `set_handoff` last" in content
+    assert "Interactive sessions call `set_handoff` last" in content
     assert "Delivery starts after successful tool completion" in content
     assert "staged success is not proof" in content
 
