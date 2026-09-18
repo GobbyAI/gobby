@@ -17,8 +17,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.plans.parser import parse_plan
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion import _compile as compile_module
+from gobby.tasks.expansion._common import validate_contract_manifest
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -343,3 +345,93 @@ def test_expansion_plan_context_preserves_isolation_markers(
     )
 
     assert result == project_context
+
+
+def _write_plan_with_test_artifact(path: Path, artifact_ref: str) -> Path:
+    """Write a manifest-bearing plan whose acceptance item cites a test artifact.
+
+    Args:
+        path: Destination Markdown file.
+        artifact_ref: Value of the acceptance item's ``test:`` reference.
+
+    Returns:
+        The written plan path.
+    """
+    path.write_text(
+        f"""> **Plan ID:** test-artifact
+
+# Test Artifact Shape
+
+## P1: Verification
+`kind: framing`
+
+### 1.1 Cover the behavior [category: test]
+`kind: deliverable`
+
+Targets:
+- `tests/test_behavior.py`
+
+Add the regression test.
+
+**Acceptance:**
+- 1.1.1 - Regression test exists. test: `{artifact_ref}`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Cover the behavior"
+  category: test
+  task_type: task
+  depends_on: []
+  validation_criteria: "The regression test passes"
+  labels:
+    - "covers:test-artifact:1.1:1.1.1"
+  tdd: false
+  source_section: "1.1"
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_validate_plan_file_rejects_bare_test_acceptance_artifact(
+    service: ExpansionService, tmp_path: Path
+) -> None:
+    """Reject a test acceptance artifact that names no test symbol."""
+    plan_path = _write_plan_with_test_artifact(tmp_path / "bare-test.md", "tests/test_behavior.py")
+
+    result = service.validate_plan_file(plan_path)
+
+    assert result["valid"] is False
+    assert result["errors"] == [
+        "acceptance item '1.1.1' test artifact 'tests/test_behavior.py' must use path::test_symbol"
+    ]
+
+
+def test_validate_plan_file_accepts_symbol_qualified_test_artifact(
+    service: ExpansionService, tmp_path: Path
+) -> None:
+    """Accept a test acceptance artifact in the compiler's path::test_symbol form."""
+    plan_path = _write_plan_with_test_artifact(
+        tmp_path / "symbol-test.md", "tests/test_behavior.py::test_behavior"
+    )
+
+    result = service.validate_plan_file(plan_path)
+
+    assert result["valid"] is True
+    assert result["deliverable_count"] == 1
+
+
+def test_validate_plan_file_reports_the_compilers_manifest_error(
+    service: ExpansionService, tmp_path: Path
+) -> None:
+    """Preflight and the compiler report one shared contract-manifest failure."""
+    plan_path = _write_plan_with_test_artifact(tmp_path / "parity.md", "tests/test_behavior.py")
+    plan_doc = parse_plan(plan_path, parse_mode="expansion")
+
+    with pytest.raises(ValueError) as compiler_error:
+        validate_contract_manifest(plan_doc)
+
+    assert service.validate_plan_file(plan_path)["errors"] == [str(compiler_error.value)]

@@ -55,7 +55,7 @@ def handoff_setup(
                 "Target: `src/example.py`",
                 "",
                 "**Acceptance:**",
-                "- 1.1.1 — Handoff is implemented. test: `tests/test_example.py`",
+                "- 1.1.1 — Handoff is implemented. test: `tests/test_example.py::test_example`",
                 "",
                 "## Task Mapping",
                 "`kind: framing`",

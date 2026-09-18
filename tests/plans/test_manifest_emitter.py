@@ -80,7 +80,7 @@ def test_canonical_derivation_preserves_acceptance_order_and_reviewed_routing(
 
         **Acceptance:**
         - 1.1.1 — First exact requirement. file: `src/contract.py`
-        - 1.1.2 — Second exact requirement. test: `tests/test_contract.py`
+        - 1.1.2 — Second exact requirement. test: `tests/test_contract.py::test_contract`
         """,
     )
     document = parse_plan(plan, parse_mode="draft")

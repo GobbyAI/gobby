@@ -732,3 +732,30 @@ def test_matrix_file_rejects_scope(tmp_path: Path) -> None:
             project_id="project",
             matrix_file=matrix,
         )
+
+
+def test_invalid_deferral_row_carries_validator_detail(tmp_path: Path) -> None:
+    """A rejected deferral keeps the validator's reason on the coverage row."""
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1", "dependencies": ["#999"]},
+            {
+                "ref": "#999",
+                "path_cache": "1.999",
+                "state": "ready",
+                "labels": [],
+                "validation_criteria": "Follow-up owns A1.1.",
+            },
+        ],
+    )
+
+    assert report.rows[0].status is CoverageStatus.invalid
+    assert report.rows[0].detail == "task labels do not include 'deferred-from:plan:A1'"

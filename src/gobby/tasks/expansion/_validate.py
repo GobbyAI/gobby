@@ -19,6 +19,7 @@ from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
     _clean_contract_section_title,
     _contract_phase_number,
+    validate_contract_manifest,
 )
 from gobby.tasks.task_types import VALID_TASK_TYPES
 
@@ -88,6 +89,18 @@ def validate_plan_file(
             "warnings": warnings,
             "symbol_validation": skipped_symbols,
         }
+    if plan_doc.manifest_entries:
+        # The compiler rejects a manifest-bearing plan on these same grounds, so
+        # preflight runs the identical check before anything is created.
+        try:
+            validate_contract_manifest(plan_doc)
+        except ValueError as exc:
+            return {
+                "valid": False,
+                "errors": [str(exc)],
+                "warnings": warnings,
+                "symbol_validation": skipped_symbols,
+            }
     semantic_lint = lint_plan_document(plan_doc, project_root=project_root)
     warnings.extend(semantic_lint.warnings)
     if not semantic_lint.valid:

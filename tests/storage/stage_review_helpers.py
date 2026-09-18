@@ -76,7 +76,7 @@ def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup
                 "Target: `src/example.py`",
                 "",
                 "**Acceptance:**",
-                "- 1.1.1 — Implemented. test: `tests/test_example.py`",
+                "- 1.1.1 — Implemented. test: `tests/test_example.py::test_example`",
                 "",
                 "## Task Mapping",
                 "`kind: framing`",

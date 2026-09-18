@@ -304,7 +304,7 @@ def _manifest_payload(report: object) -> dict[str, object]:
     }
 
 
-_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target")
+_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target", "detail")
 _PRESERVABLE_ROW_STATUSES = frozenset({"covered", "deferred"})
 
 
@@ -414,6 +414,7 @@ def _row_payload(row: object) -> dict[str, object]:
         "status": _value(_attr(row, "status")),
         "leaves": [_leaf_payload(leaf) for leaf in _iter_attr(row, "leaves")],
         "deferral_target": _attr(row, "deferral_target"),
+        "detail": _attr(row, "detail"),
     }
 
 

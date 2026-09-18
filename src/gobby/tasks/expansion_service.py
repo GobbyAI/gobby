@@ -55,7 +55,6 @@ class ExpansionService:
 
     validate_plan_file = _validate.validate_plan_file
     compile_plan_to_spec = _contract.compile_plan_to_spec
-    _validate_contract_manifest = _contract._validate_contract_manifest
     _contract_deferrals = _contract._contract_deferrals
     _ensure_contract_phase = _contract._ensure_contract_phase
     _build_contract_entry_work_task = _contract._build_contract_entry_work_task

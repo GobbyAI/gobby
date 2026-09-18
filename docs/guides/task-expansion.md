@@ -316,7 +316,7 @@ and replace bare Targets with indexed symbols when they already exist.
 **Acceptance:**
 
 - A1.1 - User model exists. file: `src/models/user.py`.
-- A1.2 - Model behavior is covered. test: `tests/models/test_user.py`.
+- A1.2 - Model behavior is covered. test: `tests/models/test_user.py::test_user_model`.
 
 ## A2: Add Authentication (depends: A1)
 `kind: deliverable`

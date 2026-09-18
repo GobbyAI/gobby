@@ -107,6 +107,9 @@ class CoverageRow:
     leaves: tuple[CoverageRowLeaf, ...] = ()
     deferral_target: str | None = None
     evidence: tuple[EvidenceRow, ...] = ()
+    # Validator explanation for the status, so consumers report why a row failed
+    # instead of restating the status.
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -408,6 +411,7 @@ def _evaluate_item(
             ),
             deferral_target=deferral_result.task_ref,
             evidence=evidence,
+            detail=deferral_result.detail,
         )
 
     return CoverageRow(
@@ -474,6 +478,7 @@ def _row_from_manifest(raw: object, *, evidence: tuple[EvidenceRow, ...]) -> Cov
         leaves=tuple(_leaf_from_manifest(value) for value in _sequence(raw.get("leaves"))),
         deferral_target=_optional_string(raw.get("deferral_target")),
         evidence=evidence,
+        detail=str(raw.get("detail") or ""),
     )
 
 
