@@ -11,6 +11,55 @@ class InjectionTrackingMixin:
 
     db: Any
 
+    def _filter_and_track_new_memories(
+        self,
+        memories: list[Any],
+        platform_session_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """Filter already-injected surfaced memory ids."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        new_memories: list[dict[str, Any]] = []
+        if not memories:
+            return new_memories
+
+        from gobby.hooks.receipt_effects import (
+            stage_append_set_variables,
+            staged_append_set_values,
+        )
+
+        sv_mgr = SessionVariableManager(self.db) if platform_session_id else None
+        already: set[str] = set()
+        if sv_mgr is not None and platform_session_id:
+            try:
+                existing_vars = sv_mgr.get_variables(platform_session_id)
+                already = set(existing_vars.get("injected_memory_ids", []) or [])
+            except Exception as exc:  # Tracking failures never block workflow injection.
+                logger.debug("Failed to read injected_memory_ids for dedup: %s", exc)
+        already |= staged_append_set_values("injected_memory_ids")
+
+        seen: set[str] = set()
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            memory_id = memory.get("id")
+            if not isinstance(memory_id, str) or not memory_id:
+                continue
+            if memory_id in seen or memory_id in already:
+                continue
+            seen.add(memory_id)
+            new_memories.append(memory)
+
+        new_ids = [memory["id"] for memory in new_memories]
+        if new_ids and platform_session_id:
+            stage_append_set_variables(
+                platform_session_id,
+                "injected_memory_ids",
+                new_ids,
+            )
+
+        return new_memories
+
     def _filter_and_track_new_review_lessons(
         self,
         lessons: list[Any],

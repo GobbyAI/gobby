@@ -409,6 +409,21 @@
     },
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/memory/search.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/memory_surface.py",
+        "symbol": "register_memory_surface_tools.surface_memories"
+      },
+      "verification": [
+        "source-audit",
+        "core-memory"
+      ],
+      "audience": "agent",
+      "server": "gobby-memory",
+      "tool": "surface_memories"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/memory/dream.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/memory_dream.py",

@@ -29,6 +29,7 @@ from gobby.mcp_proxy.tools.memory_scope import (
     memory_owned_by_current_project,
     resolve_current_memory_id,
 )
+from gobby.mcp_proxy.tools.memory_surface import register_memory_surface_tools
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
 from gobby.memory.manager import MemoryManager
 from gobby.memory.scoring import undecay
@@ -142,6 +143,11 @@ def create_memory_registry(
         registry,
         _memory_manager,
         task_manager=task_manager,
+        session_manager=session_manager,
+    )
+    register_memory_surface_tools(
+        registry,
+        _memory_manager,
         session_manager=session_manager,
     )
 
