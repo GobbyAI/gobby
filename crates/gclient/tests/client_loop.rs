@@ -8764,6 +8764,14 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
     );
     result.expect("live loop exits cleanly");
     assert_eq!(
+        workspace_ops(&mock, "tab.close")
+            .iter()
+            .map(|op| op["tab"].clone())
+            .collect::<Vec<_>>(),
+        [json!("mock-tab-1")],
+        "the follow-up tab.close names the tab the daemon already closed"
+    );
+    assert_eq!(
         chrome
             .status_message
             .as_deref()
@@ -8810,6 +8818,12 @@ async fn an_unknown_pane_close_stays_quiet() {
         driver
     );
     result.expect("live loop exits cleanly");
+    let kills = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(
+        kills[0].get("terminal_id"),
+        Some(&json!("terminal-gobby")),
+        "the cycle landed on the owned pane, whose terminal the close kills"
+    );
     assert_eq!(
         chrome
             .status_message
