@@ -10,6 +10,7 @@ from gobby.workflows.engine.injection_tracking import InjectionTrackingMixin
 _MEMORY_RESULT_FORMATTERS = {
     ("gobby-review-learning", "recall_review_lessons_for_files"): "review_file",
     ("gobby-review-learning", "recall_review_lessons_by_class"): "review_class",
+    ("gobby-memory", "surface_memories"): "memory_index",
 }
 
 
@@ -54,6 +55,24 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
             return None, new_ids
         return format_review_lesson_guidance(new_lessons, scope_label=scope_label), new_ids
 
+    def _format_memory_index_result(
+        self,
+        result: dict[str, Any],
+        platform_session_id: str | None,
+    ) -> str | None:
+        """Inline pipeline for surfaced memory results."""
+        from gobby.memory.surface_format import format_memory_index
+
+        if _is_empty_inject_payload(result):
+            return None
+        memories = result.get("memories") or []
+        if not memories:
+            return None
+        new_memories = self._filter_and_track_new_memories(memories, platform_session_id)
+        if not new_memories:
+            return None
+        return format_memory_index(str(result.get("trigger") or "turn"), new_memories)
+
     def _format_memory_backed_result(
         self,
         *,
@@ -69,6 +88,9 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         formatter = _MEMORY_RESULT_FORMATTERS.get((server, tool))
         if formatter is None:
             return False, None, []
+        if formatter == "memory_index":
+            # The index stages its own ids, so no review-lesson ids travel back.
+            return True, self._format_memory_index_result(result, platform_session_id), []
         scope_label = "matched lesson class" if formatter == "review_class" else "matched file"
         formatted, new_ids = self._format_review_lessons_result(
             result,

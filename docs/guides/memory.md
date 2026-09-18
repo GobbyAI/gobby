@@ -221,6 +221,7 @@ for the authoritative signature before calling a tool.
 | `rebuild_knowledge_graph` | Extract entities and relationships into FalkorDB. |
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
 | `review_task_memories` | Search memories related to a task after it closes and record that closure's memory review. |
+| `surface_memories` | Search memories related to a block of text and return the ranked hits as a compact index; review lessons excluded, fails open to an empty result. |
 | `restore_memories` | Restore the project memory backup into the hub database without deleting absent or newer rows. |
 | `backup_memories` | Back up current live project memories to the machine-local project backup path. |
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
