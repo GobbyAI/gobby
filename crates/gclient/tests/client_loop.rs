@@ -948,6 +948,16 @@ async fn focus_moves_control_and_settles_pending_input_once() {
 /// to a gobby-owned terminal: the external pane holds the lease, so closing
 /// the tab releases it and kills only the gobby-owned terminal.
 async fn mixed_ownership_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+    mixed_ownership_loop_with(mock, false).await
+}
+
+/// `mixed_ownership_loop`, plus a second tab (`mock-tab-4`) holding one
+/// more gobby-owned shell when `spare_tab`, so closing the first tab leaves
+/// a tab for the window to show.
+async fn mixed_ownership_loop_with(
+    mock: &MockDaemon,
+    spare_tab: bool,
+) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mock.use_unique_attachment_ids();
     let external = json!({
         "terminal_id": "terminal-mine",
@@ -961,23 +971,38 @@ async fn mixed_ownership_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, temp
         "state": "live",
         "ownership": "gobby"
     });
+    let spare = json!({
+        "terminal_id": "terminal-spare",
+        "backend": "native",
+        "state": "live",
+        "ownership": "gobby"
+    });
+    let mut items = vec![owned, external.clone()];
+    let mut survivors = vec![external];
+    let mut tabs: Vec<(&[&str], &str)> =
+        vec![(&["terminal-gobby", "terminal-mine"], "terminal-mine")];
+    if spare_tab {
+        items.push(spare.clone());
+        survivors.push(spare);
+        tabs.push((&["terminal-spare"], "terminal-spare"));
+    }
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [owned, external],
+            "items": items,
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         }),
     );
-    // The relist after a kill lists only the survivor.
+    // The relist after a kill lists only the survivors.
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [external],
+            "items": survivors,
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
         }),
@@ -986,12 +1011,10 @@ async fn mixed_ownership_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, temp
         .await
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
-    let home = pin_tabs(
-        mock,
-        &mut workspace,
-        "project-1",
-        &["terminal-gobby", "terminal-mine"],
-    );
+    let home = tempfile::tempdir().expect("gobby home");
+    mock.seed_workspace("project-1", &tabs);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
     (workspace, home)
 }
 
@@ -8731,11 +8754,13 @@ async fn local_tabs_stay_behind_the_projected_daemon_tabs() {
 
 /// The daemon reaps a killed terminal's pane and closes the emptied tab
 /// itself, so the client's follow-up `tab.close` is refused `not_found`.
-/// That refusal is the daemon saying "done": it never reaches the status line.
+/// That refusal is the daemon saying "done": it never reaches the status
+/// line, and the `tab.closed` event that preceded it took the tab out of
+/// the model and the bar, which moved to the spare tab.
 #[tokio::test]
 async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
     let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let (mut workspace, _home) = mixed_ownership_loop_with(&mock, true).await;
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.prefs.confirm_close = false;
@@ -8747,7 +8772,14 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
         wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
-        settle_live_event().await;
+        // The spare tab takes the focus once the loop applies the daemon's
+        // `tab.closed` event; the focus hint it sends says the loop got there.
+        wait_until(|| {
+            workspace_ops(&mock, "workspace.set_focus_hints")
+                .iter()
+                .any(|op| op["tab"] == "mock-tab-4")
+        })
+        .await;
         drop(input_tx);
     };
 
@@ -8770,6 +8802,21 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
             .collect::<Vec<_>>(),
         [json!("mock-tab-1")],
         "the follow-up tab.close names the tab the daemon already closed"
+    );
+    let model = workspace.workspace_model().expect("attached workspace");
+    assert!(
+        model.tab("mock-tab-1").is_none() && model.tab("mock-tab-4").is_some(),
+        "the daemon's tab.closed event took the reaped tab out of the model"
+    );
+    assert_eq!(
+        chrome
+            .tabs()
+            .tabs
+            .iter()
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>(),
+        ["mock-tab-4"],
+        "the reaped tab left the bar and the spare tab shows"
     );
     assert_eq!(
         chrome
