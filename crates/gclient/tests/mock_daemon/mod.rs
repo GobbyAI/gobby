@@ -774,7 +774,14 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             }
         }
         "terminal_kill" => {
-            let refusal = state.lock().expect("mock state").kill_refusals.pop_front();
+            let mut state = state.lock().expect("mock state");
+            let refusal = state.kill_refusals.pop_front();
+            if refusal.is_none() {
+                if let Some(terminal_id) = request.get("terminal_id").and_then(Value::as_str) {
+                    let events = state.workspace.reap_terminal(terminal_id);
+                    state.pending_workspace_events.extend(events);
+                }
+            }
             Some(json!({
                 "type": "terminal_kill_result",
                 "request_id": request.get("request_id"),
@@ -858,6 +865,18 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                     "reason": reason,
                 }));
             }
+            if !state.workspace.knows(request) {
+                let id = ["pane", "tab"]
+                    .iter()
+                    .find_map(|key| request.get(*key).and_then(Value::as_str))
+                    .unwrap_or_default();
+                return Some(json!({
+                    "type": "workspace_error",
+                    "request_id": request.get("request_id"),
+                    "code": "not_found",
+                    "reason": format!("No workspace, tab, or pane has id {id}"),
+                }));
+            }
             let events = state.workspace.apply(request);
             state.pending_workspace_events.extend(events);
             Some(json!({
@@ -877,7 +896,7 @@ fn websocket_events_before_reply(
     reply: Option<&Value>,
 ) -> Vec<Value> {
     let request_type = request.get("type").and_then(Value::as_str);
-    if request_type == Some("workspace_op") {
+    if matches!(request_type, Some("workspace_op" | "terminal_kill")) {
         return state
             .lock()
             .expect("mock state")

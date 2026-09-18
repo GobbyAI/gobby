@@ -340,6 +340,36 @@ impl WorkspaceSim {
         self.tabs.iter().position(|tab| tab["id"] == tab_id)
     }
 
+    /// Whether `op` names rows this workspace has: a close or focus-hint
+    /// op on an unknown id is refused `not_found`, as the daemon does.
+    pub fn knows(&self, op: &Value) -> bool {
+        let has_tab = |id: &Value| id.is_null() || self.tabs.iter().any(|tab| &tab["id"] == id);
+        let has_pane = |id: &Value| id.is_null() || self.panes.iter().any(|pane| &pane["id"] == id);
+        match op.get("op").and_then(Value::as_str) {
+            Some("pane.close") => op.get("pane").is_none_or(has_pane),
+            Some("tab.close") => op.get("tab").is_none_or(has_tab),
+            Some("workspace.set_focus_hints") => {
+                op.get("tab").is_none_or(has_tab) && op.get("pane").is_none_or(has_pane)
+            }
+            _ => true,
+        }
+    }
+
+    /// The daemon's reaping: a killed terminal's panes leave their tabs,
+    /// and an emptied tab closes. Returns the events, in order.
+    pub fn reap_terminal(&mut self, terminal_id: &str) -> Vec<Value> {
+        let panes: Vec<String> = self
+            .panes
+            .iter()
+            .filter(|pane| pane["terminal_id"] == terminal_id)
+            .filter_map(|pane| pane["id"].as_str().map(str::to_string))
+            .collect();
+        panes
+            .into_iter()
+            .flat_map(|pane| self.apply(&json!({"op": "pane.close", "pane": pane})))
+            .collect()
+    }
+
     fn take_pane(&mut self, pane_id: &str) -> Vec<Value> {
         let (removed, kept): (Vec<Value>, Vec<Value>) = std::mem::take(&mut self.panes)
             .into_iter()

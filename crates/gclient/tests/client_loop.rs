@@ -7589,6 +7589,8 @@ async fn new_project_dialog_inits_and_focuses() {
         send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
         wait_for_http_requests(&mock, "POST", "/api/projects/init", 2).await;
         wait_for_websocket_requests(&mock, "terminal_create", 2).await;
+        // The shell lands on the bar only after its placement round trip.
+        wait_until(|| workspace_ops(&mock, "tab.create").len() == 2).await;
         settle_live_event().await;
         drop(input_tx);
     };
@@ -8723,6 +8725,93 @@ async fn local_tabs_stay_behind_the_projected_daemon_tabs() {
     assert_eq!(
         shown_terminals(&workspace, &chrome),
         ["terminal-a1", "terminal-local"]
+    );
+    mock.shutdown().await;
+}
+
+/// The daemon reaps a killed terminal's pane and closes the emptied tab
+/// itself, so the client's follow-up `tab.close` is refused `not_found`.
+/// That refusal is the daemon saying "done": it never reaches the status line.
+#[tokio::test]
+async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        chrome
+            .status_message
+            .as_deref()
+            .filter(|message| message.contains("has id")),
+        None,
+        "a not_found refusal of the follow-up tab.close is not an error"
+    );
+    mock.shutdown().await;
+}
+
+/// Only `not_found` is tolerated on a close: any other refusal of the same
+/// op still tells the user why the layout did not change.
+#[tokio::test]
+async fn a_busy_refusal_of_a_pane_close_still_shows() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // Enqueued after the startup focus hint, so the refusal meets the close.
+        mock.enqueue_workspace_refusal("busy", "another window is moving the workspace");
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_until(|| !workspace_ops(&mock, "pane.close").is_empty()).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        chrome.status_message.as_deref(),
+        Some("another window is moving the workspace"),
+        "a busy refusal of pane.close reaches the status line"
     );
     mock.shutdown().await;
 }

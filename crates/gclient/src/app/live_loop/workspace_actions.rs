@@ -6,7 +6,7 @@
 
 use gobby_terminal::layout;
 
-use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::Tab;
 use crate::ui::dialogs::RenameKind;
@@ -21,14 +21,27 @@ pub(super) type ShownFocus = (String, String, Option<String>);
 
 /// Send `op`; `true` when the daemon accepted it. A refusal lands on the
 /// status line and the layout stays as the daemon has it; any other
-/// failure propagates.
+/// failure propagates. A close or focus hint refused `not_found` is done:
+/// the daemon reaps a killed terminal's pane and closes an emptied tab
+/// itself, and the client's follow-up names a row that is already gone.
 pub(super) async fn send_workspace_op(
     workspace: &Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     op: WorkspaceOp,
 ) -> Result<bool, FrameError> {
+    let idempotent = matches!(
+        op,
+        WorkspaceOp::PaneClose { .. }
+            | WorkspaceOp::TabClose { .. }
+            | WorkspaceOp::WorkspaceSetFocusHints { .. }
+    );
     match workspace.daemon().workspace_op(op).await {
         Ok(_) => Ok(true),
+        Err(DaemonError::Workspace(error))
+            if idempotent && error.code == WorkspaceErrorCode::NotFound =>
+        {
+            Ok(true)
+        }
         Err(DaemonError::Workspace(error)) => {
             chrome.status_message = Some(error.reason);
             Ok(false)
