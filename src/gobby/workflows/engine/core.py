@@ -47,6 +47,11 @@ from gobby.workflows.definitions import (
 )
 from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine.block_batching import (
+    clear_block_scopes,
+    close_response_batch,
+    register_blocked_attempt,
+)
 from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
     format_consecutive_tool_block_reason,
@@ -377,21 +382,29 @@ class RuleEngine(
                 # Auto-track consecutive retries after a blocked BEFORE_TOOL.
                 # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
                 # tool_block_pending is reserved for real tool execution failures.
-                if is_before_tool and variables.get("_last_blocked_tool"):
+                # State is scoped to the agent context named by the payload so
+                # concurrent subagents sharing one session id keep separate budgets.
+                block_state = evaluation.block_state
+                if is_before_tool and block_state.get("_last_blocked_tool"):
                     if _is_pipeline_direct_mcp_event(event):
                         # Synthetic pipeline MCP events clear block state so the next real user tool starts from 0.
-                        variables["consecutive_tool_blocks"] = 0
-                        clear_blocked_tool_recovery_state(variables)
+                        block_state["consecutive_tool_blocks"] = 0
+                        clear_blocked_tool_recovery_state(block_state)
                     else:
                         tool_name = _get_tool_identity(event.data)
-                        last_blocked = variables.get("_last_blocked_tool", "")
+                        last_blocked = block_state.get("_last_blocked_tool", "")
                         if tool_name == last_blocked:
-                            if is_blocked_tool_recovery_remediation(variables, event.data):
-                                variables["consecutive_tool_blocks"] = 0
-                                clear_blocked_tool_recovery_state(variables)
+                            if is_blocked_tool_recovery_remediation(block_state, event.data):
+                                block_state["consecutive_tool_blocks"] = 0
+                                clear_blocked_tool_recovery_state(block_state)
                             else:
-                                count = variables.get("consecutive_tool_blocks", 0) + 1
-                                variables["consecutive_tool_blocks"] = count
+                                # Every sibling of one assistant response repeats the
+                                # same denial before the agent can read any of them,
+                                # so the whole batch buys one remediation attempt.
+                                count = register_blocked_attempt(
+                                    block_state,
+                                    source=event.source,
+                                )
                                 max_attempts = int(
                                     variables.get("max_consecutive_blocked_tool_attempts", 5)
                                 )
@@ -402,7 +415,7 @@ class RuleEngine(
                                         reason=format_consecutive_tool_block_reason(
                                             tool_name=tool_name,
                                             total_attempts=total_attempts,
-                                            variables=variables,
+                                            variables=block_state,
                                         ),
                                     )
                                     return await self._finalize_block_response(
@@ -414,15 +427,21 @@ class RuleEngine(
                                     )
                         else:
                             # Different tool — reset counter, let it through to rule evaluation
-                            variables["consecutive_tool_blocks"] = 0
+                            block_state["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):
                         variables["edit_write_pending"] = True
 
+                elif raw_event_value == HookEventType.POST_TOOL_BATCH.value:
+                    # This agent context's response closed its tool batch, so the
+                    # next denial of the same tool is a fresh remediation attempt.
+                    close_response_batch(block_state)
+
                 elif is_turn_start:
                     variables["consecutive_tool_blocks"] = 0
                     clear_blocked_tool_recovery_state(variables)
+                    clear_block_scopes(variables)
                     variables["tool_block_pending"] = False
                     variables["stop_attempts"] = 0
                     variables["_block_reasons_shown"] = []

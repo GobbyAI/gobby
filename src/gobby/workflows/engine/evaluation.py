@@ -25,6 +25,7 @@ from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine.block_batching import agent_context_key, block_scope
 from gobby.workflows.engine.blocked_tool_recovery import (
     CONSECUTIVE_TOOL_BLOCK_RULE,
     block_reason_signature,
@@ -66,6 +67,11 @@ class EvaluationContext:
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
     proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
     staged_variable_updates: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def block_state(self) -> dict[str, Any]:
+        """Blocked-tool state owned by the agent context that issued this event."""
+        return block_scope(self.variables, agent_context_key(self.event.data))
 
 
 @dataclass(frozen=True)
@@ -217,8 +223,9 @@ class EvaluationMixin:
         had_pending_failure = variables.get("tool_block_pending", False)
 
         variables["tool_block_pending"] = False
-        clear_blocked_tool_recovery_state(variables)
-        variables["consecutive_tool_blocks"] = 0
+        block_state = block_scope(variables, agent_context_key(event.data))
+        clear_blocked_tool_recovery_state(block_state)
+        block_state["consecutive_tool_blocks"] = 0
 
         if variables.get("edit_write_pending"):
             if _is_write_like_event_data(event.data) or not had_pending_failure:
@@ -294,21 +301,23 @@ class EvaluationMixin:
                     reason=audit_reason,
                     tool_name=blocked_tool_name,
                 )
+            block_state = evaluation.block_state
             if evaluation.is_before_tool and resolved_rule_name != CONSECUTIVE_TOOL_BLOCK_RULE:
                 remember_blocked_tool_recovery_state(
-                    evaluation.variables,
+                    block_state,
                     tool_name=blocked_tool_name,
                     rule_name=resolved_rule_name,
                     reason=response.reason,
                 )
-            # Verbose-once: collapse repeat identical blocks within a turn.
+            # Verbose-once: collapse repeat identical blocks within a turn, per
+            # agent context so a subagent's first block still reads in full.
             # Dynamic reasons from the same rule still render in full.
             # Cleared on TURN_START.
             # Stored as list[str] because session variables are JSON-persisted.
-            shown = evaluation.variables.get("_block_reasons_shown")
+            shown = block_state.get("_block_reasons_shown")
             if not isinstance(shown, list):
                 shown = []
-                evaluation.variables["_block_reasons_shown"] = shown
+                block_state["_block_reasons_shown"] = shown
             block_signature = block_reason_signature(resolved_rule_name, response.reason)
             if block_signature in shown:
                 response.reason = _repeat_block_reason(resolved_rule_name, response.reason)
