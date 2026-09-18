@@ -7,7 +7,9 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
+from gobby.storage.tasks._automation import has_hold_label
 from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
+from gobby.tasks.criteria_contract import normalized_validation_criteria
 from gobby.utils.datetime import utc_now
 
 _LEGACY_VALIDATION_CRITERIA = (
@@ -169,7 +171,7 @@ def _close_eligible_ancestors(
         parent = conn.execute(
             """
             SELECT id, seq_num, title, task_type, project_id, closed_at,
-                   claimed_by_session_id
+                   claimed_by_session_id, labels, validation_criteria
               FROM tasks
              WHERE id = %s
              FOR UPDATE
@@ -183,6 +185,17 @@ def _close_eligible_ancestors(
             # leaf gates: linked commit, clean attribution, validation, review.
             # Closing it here skips every gate and drops the claim — found-work
             # child #21046 took its worked parent #20969 and epic #20964 that way.
+            return
+        if has_hold_label(parent) or (
+            parent["task_type"] != "epic"
+            and normalized_validation_criteria(parent["validation_criteria"]) is not None
+        ):
+            # A hold label or parent-owned criteria are this parent's own close
+            # gates: an open owner decision, a clean window to wait for, a plan
+            # still to be written, or acceptance evidence nobody has verified.
+            # Auto-closing on the last child (#22421) removed such parents from
+            # open lists while that work was unresolved; they close through the
+            # gates that check it.
             return
         open_child = conn.execute(
             """

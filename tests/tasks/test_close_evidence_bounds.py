@@ -472,6 +472,7 @@ def test_agentic_review_launch_payload_serializes_the_record_once() -> None:
 
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["a" * 40, "b" * 40],
         changes_summary="Deduplicated the close payload sections.",

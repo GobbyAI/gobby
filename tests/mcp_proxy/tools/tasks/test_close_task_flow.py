@@ -985,6 +985,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
             "diff_sha": "diff-sha",
             "test_bodies_sha": "test-bodies-sha",
             "stable_facts": {},
+            "criterion_count": 1,
             "criteria_review_duration_ms": 4.25,
         }
     )

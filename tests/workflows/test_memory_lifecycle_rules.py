@@ -13,6 +13,7 @@ Active memory-lifecycle rules:
 - review-closed-task-memories-before-handoff: acknowledged block on before_tool set_handoff
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
+- surface-memories-on-turn-start: inline surface_memories call once per parent turn_start
 - surface-memories-before-spawn: inline surface_memories on before_tool spawn_agent
 - surface-memories-before-claiming-create: inline surface_memories on a claiming create_task
 - surface-memories-after-claim: inline surface_memories on after_tool claim_task
@@ -57,6 +58,7 @@ MEMORY_RULES = {
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
     *SURFACE_RULES,
+    "surface-memories-on-turn-start",
 }
 
 REMOVED_HELPER_RULES = {
@@ -1280,3 +1282,85 @@ class TestToolIntentSurfacing:
         assert result.decision == "allow"
         assert surface_calls == []
         assert result.context is None
+
+
+# ============================================================================
+# surface-memories-on-turn-start
+# ============================================================================
+
+_TURN_SURFACE_TEXT = "{{ event.data.get('prompt') or variables.get('_current_user_prompt') or '' }}"
+
+
+def _turn_start_variables(**overrides: Any) -> dict[str, Any]:
+    variables: dict[str, Any] = {"is_spawned_agent": False, "parent_turn_seq": 8}
+    variables.update(overrides)
+    return variables
+
+
+class TestTurnStartSurfacing:
+    """Surface one memory index per parent turn from the prompt or the last message."""
+
+    def test_rule_contract(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("surface-memories-on-turn-start")
+        assert row is not None
+        assert row.enabled is True
+        assert row.priority == 12
+
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.event.value == "turn_start"
+        call, guard = body.resolved_effects
+        assert call.type == "mcp_call"
+        assert (call.server, call.tool) == ("gobby-memory", "surface_memories")
+        assert call.arguments == {"text": _TURN_SURFACE_TEXT, "trigger": "turn"}
+        assert call.background is False
+        assert call.inject_result is True
+        assert call.block_on_failure is False
+        assert guard.type == "set_variable"
+        assert guard.variable == "_memory_surface_turn_seq"
+        assert guard.value == "{{ variables.get('parent_turn_seq') }}"
+        # The guard rides the receipt so an undelivered index is surfaced again.
+        assert getattr(guard, "delivery", None) == "on_receipt"
+
+    @pytest.mark.parametrize(
+        ("variables", "fires"),
+        [
+            pytest.param(_turn_start_variables(), True, id="first-parent-turn"),
+            pytest.param(
+                _turn_start_variables(_memory_surface_turn_seq=8),
+                False,
+                id="already-surfaced-this-turn",
+            ),
+            pytest.param(
+                _turn_start_variables(_memory_surface_turn_seq=7),
+                True,
+                id="next-turn-rearms",
+            ),
+            pytest.param(
+                _turn_start_variables(is_spawned_agent=True),
+                False,
+                id="spawned-agent",
+            ),
+            pytest.param(
+                _turn_start_variables(parent_turn_seq=None),
+                False,
+                id="no-parent-turn-seq",
+            ),
+        ],
+    )
+    def test_fires_once_per_parent_turn(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        variables: dict[str, Any],
+        fires: bool,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("surface-memories-on-turn-start")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+
+        evaluator = SafeExpressionEvaluator({"variables": variables}, {})
+
+        assert evaluator.evaluate(body.when) is fires

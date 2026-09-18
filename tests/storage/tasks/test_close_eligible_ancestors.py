@@ -9,6 +9,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._automation import HOLD_LABELS
 from gobby.storage.tasks._transitions import claim_task
 from gobby.utils.machine_id import get_machine_id
 from tests.storage.tasks._stage_test_helpers import (
@@ -102,10 +103,10 @@ def _create(
     title: str,
     **kwargs: Any,
 ) -> Task:
+    kwargs.setdefault("validation_criteria", "Observable completion.")
     return manager.create_task(
         project_id,
         title=title,
-        validation_criteria="Observable completion.",
         **kwargs,
     )
 
@@ -180,3 +181,71 @@ def test_claimed_parent_survives_its_last_child(temp_db: HubDatabase, tmp_path: 
     reloaded = manager.get_task(parent.id)
     assert reloaded is not None
     assert reloaded.claimed_by_session_id == owner.id
+
+
+@pytest.mark.parametrize("hold_label", sorted(HOLD_LABELS))
+def test_hold_label_parent_survives_its_last_child(
+    temp_db: HubDatabase, tmp_path: Path, hold_label: str
+) -> None:
+    """A hold label marks unresolved owner action a parent still owes (#22421).
+
+    Auto-closing the parent on its last child's close removed the open owner
+    decision from open lists; the parent closes through its own gates instead.
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    epic = _create(manager, project_id, "Epic", task_type="epic")
+    parent = _create(
+        manager,
+        project_id,
+        "Held parent",
+        parent_task_id=epic.id,
+        labels=[hold_label],
+    )
+    leaf = _create(manager, project_id, "Only leaf", parent_task_id=parent.id)
+
+    closed_ancestors: list[str] = []
+    manager.close_task(leaf.id, closed_ancestors=closed_ancestors)
+
+    assert closed_ancestors == []
+    assert _open(manager, parent.id)
+    assert _open(manager, epic.id)
+
+
+def test_hold_label_epic_survives_its_last_child(temp_db: HubDatabase, tmp_path: Path) -> None:
+    """An epic's own criteria never gate auto-close, but its hold label does."""
+    manager, project_id = _manager(temp_db, tmp_path)
+    epic = _create(manager, project_id, "Held epic", task_type="epic", labels=["needs-decision"])
+    leaf = _create(manager, project_id, "Only leaf", parent_task_id=epic.id)
+
+    closed_ancestors: list[str] = []
+    manager.close_task(leaf.id, closed_ancestors=closed_ancestors)
+
+    assert closed_ancestors == []
+    assert _open(manager, epic.id)
+
+
+def test_criteria_owning_parent_survives_its_last_child(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """A non-epic parent owns acceptance criteria only its own close gates verify.
+
+    The ancestor walk never checks them, so it leaves the parent for the close
+    flow that does (#22421).
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    epic = _create(manager, project_id, "Epic", task_type="epic")
+    parent = _create(
+        manager,
+        project_id,
+        "Decision owner",
+        parent_task_id=epic.id,
+        validation_criteria="The owner explicitly accepts the delivered phase.",
+    )
+    leaf = _create(manager, project_id, "Only leaf", parent_task_id=parent.id)
+
+    closed_ancestors: list[str] = []
+    manager.close_task(leaf.id, closed_ancestors=closed_ancestors)
+
+    assert closed_ancestors == []
+    assert _open(manager, parent.id)
+    assert _open(manager, epic.id)

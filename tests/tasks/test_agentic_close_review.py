@@ -27,6 +27,7 @@ pytestmark = pytest.mark.unit
 def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
@@ -48,12 +49,30 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     assert "validation_commands=" not in prompt
 
 
+def test_prompt_names_the_normalized_criterion_count_and_index_list() -> None:
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        criterion_count=4,
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+    )
+
+    assert "criterion_count=4" in prompt
+    assert "criterion_indexes=[1, 2, 3, 4]" in prompt
+    assert "nested bullet" in prompt
+    assert "exactly once" in prompt
+
+
 @pytest.mark.parametrize(
     "reason", ["duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"]
 )
 def test_no_work_review_judges_disposition_instead_of_implementation(reason: str) -> None:
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=[],
         changes_summary="The user superseded the wiki with complete retirement in epic #21771.",
@@ -76,6 +95,7 @@ def test_no_work_review_judges_disposition_instead_of_implementation(reason: str
 def test_agent_close_prompt_marks_live_criteria_pending_external() -> None:
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
@@ -93,6 +113,7 @@ def test_agent_close_prompt_marks_live_criteria_pending_external() -> None:
 def test_non_spawned_caller_prompt_forbids_pending_external() -> None:
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
@@ -107,6 +128,7 @@ def test_non_spawned_caller_prompt_forbids_pending_external() -> None:
 
     no_work = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
@@ -151,6 +173,7 @@ def test_launch_prompt_carries_gate10_validation_runs() -> None:
 
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
@@ -178,6 +201,7 @@ def test_launch_prompt_renders_prior_requirements() -> None:
 
     prompt = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
@@ -194,6 +218,7 @@ def test_launch_prompt_renders_prior_requirements() -> None:
 
     prompt_without_prior = build_agentic_review_prompt(
         review_id="review",
+        criterion_count=2,
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",

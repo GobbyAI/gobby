@@ -60,6 +60,14 @@ async def test_ordinary_review_detaches_without_awaiting_provider(
 
 
 @pytest.mark.asyncio
+async def test_detached_review_reports_the_normalized_criterion_count() -> None:
+    result = await _evaluate(criteria="- A top\n  - A nested one\n  - A nested two\n- B top")
+
+    assert result.error_type == "agentic_review_required"
+    assert result.extra["criterion_count"] == 4
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["valid", "invalid"])
 async def test_matching_submitted_verdict_uses_shared_accounting(
     monkeypatch: pytest.MonkeyPatch,

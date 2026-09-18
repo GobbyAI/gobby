@@ -96,7 +96,16 @@ The gate activates when `enforce_tdd` is true or a claimed task requires TDD
 through its label, additional skill, validation criteria, or session policy.
 It covers every hand-maintained source extension used by the monolith guard:
 Python, TypeScript/JavaScript, CSS, Rust, and shell. Test-convention paths in any
-language are recognized by one shared classifier.
+language are recognized by one shared classifier. For Rust, that includes
+`src/<module>/tests.rs` module-test files.
+
+A Rust Edit or Write is also test writing when it touches only `#[cfg(test)]`
+code: the gate compares the file before and after the change with every
+cfg(test) item cut out, so introducing a cfg(test) item and editing inside an
+existing one both count, while a change that also rewrites production text
+stays a production write. The comparison reads the file from an absolute path;
+a relative path or a patch-text payload carries no readable before/after pair,
+so those changes stay production writes.
 
 Claim refresh derives `claimed_task_requires_tdd` and the ordered,
 deduplicated `claimed_task_acceptance_test_paths` from current task metadata.

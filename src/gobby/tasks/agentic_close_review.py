@@ -67,6 +67,7 @@ def build_agentic_review_prompt(
     changes_summary: str,
     review_fingerprint: str,
     evidence_fingerprint: str,
+    criterion_count: int,
     closure_reason: str = "completed",
     validation_commands: Mapping[str, object] | None = None,
     prior_requirements: str | None = None,
@@ -77,6 +78,11 @@ def build_agentic_review_prompt(
     ``validation_commands`` is gate 10's transcript-derived run record. The
     validator has no other access to it; without it the validator re-derives
     its own evidence standard and asks for receipts gate 10 already holds.
+
+    ``criterion_count`` is the normalized criterion count the verdict parser
+    enforces. The validator reads the task's raw criteria text, which splits
+    into more criteria than its visible numbering suggests whenever it carries
+    nested bullets, so the exact index list travels with the prompt (#22373).
     """
     prompt = (
         "Perform the read-only task-close review. "
@@ -85,7 +91,13 @@ def build_agentic_review_prompt(
         f"changes_summary={json.dumps(changes_summary)}; "
         f"closure_reason={json.dumps(closure_reason)}; "
         f"review_fingerprint={review_fingerprint}; "
-        f"deterministic_evidence_fingerprint={evidence_fingerprint}. "
+        f"deterministic_evidence_fingerprint={evidence_fingerprint}; "
+        f"criterion_count={criterion_count}; "
+        f"criterion_indexes={json.dumps(list(range(1, criterion_count + 1)))}. "
+        "The task's validation criteria normalize to exactly those criterion indexes, "
+        "including every criterion produced from a nested bullet. Report each index in "
+        "criterion_indexes exactly once; a verdict whose index set differs is rejected as "
+        "malformed and must be resubmitted. "
     )
     if closure_reason in NO_WORK_CLOSE_REASONS:
         prompt += (

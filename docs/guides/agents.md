@@ -28,10 +28,10 @@ complete `prompts.agent` preamble.
 Bundled `memory-lifecycle` templates provide shared policy for personas and spawned
 agents; inspect installed enabled rows and selectors before assuming enforcement.
 Agent definitions do not need to duplicate that policy. In task work, the
-`surface-memories-*` rules inject a bounded memory index at a spawn, a claim, and
-a handoff read, before editing starts. During planning,
+`surface-memories-*` rules inject a bounded memory index at a parent turn start,
+a spawn, a claim, and a handoff read, before editing starts. During planning,
 `guard-plan-memory-writes` keeps provisional findings in plan evidence. After
-closure, `review-closed-task-memories-before-compact` and
+closure, `review-closed-task-memories-before-handoff` and
 `review-closed-task-memories-on-stop` request one bounded review for the
 closure batch.
 

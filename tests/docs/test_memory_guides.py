@@ -20,10 +20,11 @@ def test_memory_guide_matches_search_and_tool_contracts() -> None:
     normalized = " ".join(guide.split())
     mcp_section = guide.split("## MCP Tools", 1)[1].split("### Common Calls", 1)[0]
 
-    # Surfacing is bounded to the four tool intents; everything else stays a
-    # deliberate agent search.
-    assert "Automatic surfacing is bounded to the four tool intents" in normalized
-    assert "Everywhere else agents search on demand." in normalized
+    # Surfacing is bounded to the turn start and the four tool intents;
+    # everything else stays a deliberate agent search.
+    assert "Automatic surfacing is bounded to the five moments" in normalized
+    assert "pushes one ranked memory index per parent turn" in normalized
+    assert "Everything beyond those indexes is the agent's own search." in normalized
     assert "p10 `0.62`, p50 `0.69`, and p90 `0.75`" in normalized
     assert "`review_task_memories`" in mcp_section
     assert "`bootstrap_session_title`" not in mcp_section

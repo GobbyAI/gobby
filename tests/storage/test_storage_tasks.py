@@ -1094,12 +1094,10 @@ class TestLocalTaskManager:
         )
         assert task.commits is None or task.commits == []
 
-        # Mock normalize_commit_sha to return the input (simulating valid SHA)
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "abc123d"  # Normalized short form
-            updated = task_manager.link_commit(task.id, "abc123def456")
+        # Storage trusts the caller-supplied canonical SHA and stores it verbatim.
+        updated = task_manager.link_commit(task.id, "abc123def456")
 
-        assert updated.commits == ["abc123d"]
+        assert updated.commits == ["abc123def456"]
 
     def test_link_commit_appends_to_existing(self, task_manager, project_id) -> None:
         """Test linking adds to existing commits array."""
@@ -1109,14 +1107,11 @@ class TestLocalTaskManager:
             validation_criteria=VALIDATION_CRITERIA,
         )
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "commit1"
-            task_manager.link_commit(task.id, "commit1")
-            mock_normalize.return_value = "commit2"
-            updated = task_manager.link_commit(task.id, "commit2")
+        task_manager.link_commit(task.id, "abc123d")
+        updated = task_manager.link_commit(task.id, "def4567")
 
-        assert "commit1" in updated.commits
-        assert "commit2" in updated.commits
+        assert "abc123d" in updated.commits
+        assert "def4567" in updated.commits
         assert len(updated.commits) == 2
 
     def test_link_commit_ignores_duplicate(self, task_manager, project_id) -> None:
@@ -1127,12 +1122,10 @@ class TestLocalTaskManager:
             validation_criteria=VALIDATION_CRITERIA,
         )
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "abc1234"
-            task_manager.link_commit(task.id, "abc123")
-            updated = task_manager.link_commit(task.id, "abc123")
+        task_manager.link_commit(task.id, "abc123d")
+        updated = task_manager.link_commit(task.id, "abc123d")
 
-        assert updated.commits == ["abc1234"]
+        assert updated.commits == ["abc123d"]
 
     def test_link_commit_invalid_task(self, task_manager) -> None:
         """Test linking commit to non-existent task raises error."""
@@ -1162,15 +1155,11 @@ class TestLocalTaskManager:
             validation_criteria=VALIDATION_CRITERIA,
         )
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "commit1"
-            task_manager.link_commit(task.id, "commit1")
-            mock_normalize.return_value = "commit2"
-            task_manager.link_commit(task.id, "commit2")
-            mock_normalize.return_value = "commit1"
-            updated = task_manager.unlink_commit(task.id, "commit1")
+        task_manager.link_commit(task.id, "abc123d")
+        task_manager.link_commit(task.id, "def4567")
+        updated = task_manager.unlink_commit(task.id, "abc123d")
 
-        assert updated.commits == ["commit2"]
+        assert updated.commits == ["def4567"]
 
     def test_unlink_commit_handles_nonexistent(self, task_manager, project_id) -> None:
         """Test unlinking non-existent commit is a no-op."""
@@ -1180,33 +1169,27 @@ class TestLocalTaskManager:
             validation_criteria=VALIDATION_CRITERIA,
         )
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "commit1"
-            task_manager.link_commit(task.id, "commit1")
-            mock_normalize.return_value = "nonexist"  # Different normalized value
-            # Should not raise, just return unchanged
-            updated = task_manager.unlink_commit(task.id, "nonexistent")
+        task_manager.link_commit(task.id, "abc123d")
+        # A well-formed SHA that was never linked matches nothing.
+        updated = task_manager.unlink_commit(task.id, "ffff9999")
 
-        assert updated.commits == ["commit1"]
+        assert updated.commits == ["abc123d"]
 
-    def test_unlink_commit_requires_normalized_sha(self, task_manager, project_id) -> None:
-        """Test unlinking requires successful SHA normalization."""
+    def test_unlink_commit_ignores_noncanonical_sha(self, task_manager, project_id) -> None:
+        """Test unlinking never matches a value that cannot be a stored SHA."""
         task = task_manager.create_task(
             project_id,
             "Task with commits",
             validation_criteria=VALIDATION_CRITERIA,
         )
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "abc1234"
-            task_manager.link_commit(task.id, "abc1234")
+        task_manager.link_commit(task.id, "abc123d")
 
-            # Simulate normalize failing - should NOT remove anything
-            mock_normalize.return_value = None
-            updated = task_manager.unlink_commit(task.id, "abc1234")
+        # Link validation stores only canonical hex SHAs, so a non-SHA value
+        # matches nothing and removes nothing.
+        updated = task_manager.unlink_commit(task.id, "not-a-canonical-sha")
 
-        # Commit should still be present since normalize returned None
-        assert updated.commits == ["abc1234"]
+        assert updated.commits == ["abc123d"]
 
     def test_unlink_commit_from_empty_task(self, task_manager, project_id) -> None:
         """Test unlinking from task with no commits is a no-op."""
@@ -1231,14 +1214,12 @@ class TestLocalTaskManager:
         """Test that commits array persists through other updates."""
         task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "commit1"
-            task_manager.link_commit(task.id, "commit1")
+        task_manager.link_commit(task.id, "abc123d")
 
         # Update another field
         updated = task_manager.update_task(task.id, title="Updated Title")
 
-        assert updated.commits == ["commit1"]
+        assert updated.commits == ["abc123d"]
         assert updated.title == "Updated Title"
 
     # =========================================================================

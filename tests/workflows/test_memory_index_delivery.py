@@ -24,9 +24,7 @@ EXTERNAL_SESSION_ID = "11111111-1111-4111-8111-111111111112"
 PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222223"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
-LESSON_CONTENT = (
-    "Codex installs a matcherless native SessionEnd hook: ghook --gobby-owned"
-)
+LESSON_CONTENT = "Codex installs a matcherless native SessionEnd hook: ghook --gobby-owned"
 LESSON_RATIONALE = "changing Codex hooks or agent termination"
 
 
