@@ -6,6 +6,7 @@ mod attention;
 mod live;
 mod live_attach;
 mod live_loop;
+mod live_workspace;
 mod pane;
 mod persistence;
 pub mod project_tabs;
@@ -32,6 +33,7 @@ pub use live_loop::projects::{
     submit_new_project,
 };
 pub use live_loop::run_live_loop;
+pub use live_loop::sync_live_chrome;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
 pub use persistence::{apply_sidebar_snapshot, sidebar_snapshot};
 pub use viewer_state::{PaneInterner, ViewerState};
@@ -40,7 +42,7 @@ pub use workspace_ops::WorkspaceModel;
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
     Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon, RosterEntry,
-    ScriptedDaemon, SidebarRows, Snapshot, TerminalRow, WorkspaceEvent,
+    ScriptedDaemon, SidebarRows, Snapshot, TerminalRow,
 };
 use crate::frame_source::{
     AttachLocator, FrameDelivery, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource,
@@ -114,6 +116,12 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     shutdown_started: bool,
     /// The attached daemon workspace, once `workspace_attach` replied.
     workspace_model: Option<WorkspaceModel>,
+    /// Terminals whose `tab.create` or `pane.split` op is in flight: the
+    /// daemon's event places them, and this window follows it there.
+    pending_placements: HashSet<String>,
+    /// `(tab, pane)` of the panes pending placements landed in, drained by
+    /// the chrome sync that focuses them.
+    placed_panes: Vec<(String, String)>,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -193,6 +201,8 @@ impl Workspace {
             exit_reason: None,
             shutdown_started: false,
             workspace_model: None,
+            pending_placements: HashSet::new(),
+            placed_panes: Vec::new(),
         }
     }
 
@@ -864,23 +874,6 @@ impl<D: Daemon> Workspace<D> {
             .iter()
             .copied()
             .find(|id| self.panes[id].terminal_id == terminal_id)
-    }
-
-    /// The attached daemon workspace, once its snapshot arrived.
-    pub fn workspace_model(&self) -> Option<&WorkspaceModel> {
-        self.workspace_model.as_ref()
-    }
-
-    /// Replace the workspace model with a fresh `workspace_attach` snapshot.
-    pub fn apply_workspace_snapshot(&mut self, snapshot: crate::daemon::WorkspaceSnapshot) {
-        self.workspace_model = Some(WorkspaceModel::from_snapshot(snapshot));
-    }
-
-    /// Apply a `workspace_event`; `true` when the model changed.
-    pub fn apply_workspace_event(&mut self, event: &WorkspaceEvent) -> bool {
-        self.workspace_model
-            .as_mut()
-            .is_some_and(|model| model.apply(event))
     }
 
     pub fn pane_by_attachment(&self, attachment_id: &str) -> Option<&Pane> {

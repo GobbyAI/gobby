@@ -170,7 +170,9 @@ fn apply_scripted_mouse_outcome(
         | MouseOutcome::Ignore
         | MouseOutcome::Spawn { .. }
         | MouseOutcome::OpenLink(_)
-        | MouseOutcome::Confirm(_) => {}
+        | MouseOutcome::Confirm(_)
+        | MouseOutcome::MoveTab { .. }
+        | MouseOutcome::ResizeSplit { .. } => {}
         MouseOutcome::Focus { pane, observe_only } => {
             scripted_focus(workspace, chrome, pane, observe_only)?;
         }

@@ -1,7 +1,7 @@
 //! Button presses, drags and releases: what each means on a chrome region.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};
-use gobby_terminal::layout::{self, ScrollMetrics};
+use gobby_terminal::layout::{self, Node, ScrollMetrics};
 use ratatui::layout::{Direction, Rect};
 
 use crate::app::{ControlState, PaneId};
@@ -444,9 +444,21 @@ pub(super) fn up<W: WorkspaceView>(
             index, moved: true, ..
         }) => {
             if let Hit::Tab(target) = hit {
-                let set = chrome.tabs_mut();
-                let count = set.tabs.len();
-                if target != index && index < count && target < count {
+                let tabs = &chrome.tabs().tabs;
+                if target != index && index < tabs.len() && target < tabs.len() {
+                    if !tabs[index].is_local() {
+                        // The daemon orders its tabs: take the position of
+                        // the tab now at `target` in the workspace order.
+                        let position = ws
+                            .workspace_model()
+                            .and_then(|model| model.tab(&tabs[target].id))
+                            .map_or(target as u32, |row| row.position);
+                        return MouseOutcome::MoveTab {
+                            tab: tabs[index].id.clone(),
+                            position,
+                        };
+                    }
+                    let set = chrome.tabs_mut();
                     move_tab(&mut set.tabs, index, target);
                     chrome.activate_tab(target);
                 }
@@ -473,11 +485,36 @@ pub(super) fn up<W: WorkspaceView>(
         Some(MouseGesture::Forwarding { slot, strip }) => {
             forward::captured(ws, chrome, slot, strip, mouse)
         }
+        Some(MouseGesture::SplitDrag { border }) => {
+            // The drag moved the layout; a daemon tab now sends the ratio it
+            // reached, named through a pane directly under the split.
+            let Some(tab) = chrome.active_tab().filter(|tab| !tab.is_local()) else {
+                return MouseOutcome::Handled;
+            };
+            let Some(split) = chrome.view.split_borders.get(border) else {
+                return MouseOutcome::Handled;
+            };
+            let Some(Node::Split {
+                ratio,
+                first,
+                second,
+                ..
+            }) = tab.layout.node_at(&split.path)
+            else {
+                return MouseOutcome::Handled;
+            };
+            match (first.as_ref(), second.as_ref()) {
+                (Node::Pane(slot), _) | (_, Node::Pane(slot)) => MouseOutcome::ResizeSplit {
+                    slot: *slot,
+                    ratio: *ratio,
+                },
+                _ => MouseOutcome::Handled,
+            }
+        }
         Some(
             MouseGesture::TabDrag { .. }
             | MouseGesture::ProjectDrag { .. }
             | MouseGesture::SidebarScrollbarDrag { .. }
-            | MouseGesture::SplitDrag { .. }
             | MouseGesture::ScrollbarDrag { .. },
         ) => MouseOutcome::Handled,
         _ => MouseOutcome::Ignore,

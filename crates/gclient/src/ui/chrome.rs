@@ -4,7 +4,7 @@
 
 use crate::app::project_tabs::{first_slot, ProjectTabs, TabSet};
 use crate::app::sidebar_model::{agent_row_state, pane_state, AgentEntry, SidebarModel};
-use crate::app::viewer_state::{local_tab_id, ViewerState};
+use crate::app::viewer_state::{local_tab_id, ViewerState, LOCAL_TAB_PREFIX};
 use crate::app::workspace_ops::WorkspaceModel;
 use crate::app::{
     short_terminal_id, ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace,
@@ -354,6 +354,12 @@ impl Tab {
     /// The first slot in layout order; the one a fresh tab shows.
     pub fn first_slot(&self) -> layout::PaneId {
         first_slot(self.layout.root())
+    }
+
+    /// A tab opened without the daemon: never the target of a workspace op,
+    /// and never replaced by the model's projection.
+    pub fn is_local(&self) -> bool {
+        self.id.starts_with(LOCAL_TAB_PREFIX)
     }
 
     pub fn slot_for(&self, pane: PaneId) -> Option<layout::PaneId> {
@@ -813,6 +819,11 @@ impl Chrome {
             tab.id = row.id.clone();
             tab.worktree_id = row.worktree_id.clone();
             tabs.push(tab);
+        }
+        // Tabs a scripted path opened never came from the model, so it
+        // cannot end them: they stay after the daemon's rows.
+        if let Some(set) = self.project_tabs.sets.get_mut(project_id) {
+            tabs.extend(set.tabs.drain(..).filter(Tab::is_local));
         }
         let active = self
             .viewer

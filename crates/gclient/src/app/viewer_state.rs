@@ -15,11 +15,14 @@ use crate::ui::chrome::Tab;
 /// A daemon tab id, or a `local_tab_id` for a tab a scripted path opened.
 pub type TabId = String;
 
+/// Prefix of every `local_tab_id`.
+pub const LOCAL_TAB_PREFIX: &str = "local-";
+
 /// The id of a tab opened without the daemon (scripted and parity paths);
 /// the daemon issues uuids, so the two never meet.
 pub fn local_tab_id() -> TabId {
     static NEXT: AtomicU64 = AtomicU64::new(1);
-    format!("local-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    format!("{LOCAL_TAB_PREFIX}{}", NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
 /// Layout slots for daemon pane ids, minted with `layout::PaneId::alloc` on
@@ -65,6 +68,8 @@ pub struct ViewerState {
     /// The tab this window shows for each project.
     pub active_tab: BTreeMap<String, TabId>,
     pub panes: PaneInterner,
+    /// The `(project, model generation)` last projected onto the chrome.
+    pub applied: Option<(String, u64)>,
 }
 
 impl ViewerState {

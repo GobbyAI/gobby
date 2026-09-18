@@ -337,6 +337,13 @@ pub fn render_status_line<W: WorkspaceView>(
                 None => pane.display_name().to_string(),
             };
             spans.push(Span::styled(format!(" │ {name}"), base.fg(p.text)));
+            if let Some(pane_ref) = chrome
+                .focus_slot()
+                .and_then(|slot| chrome.viewer.panes.daemon_id(slot))
+                .and_then(|pane_id| ws.workspace_model()?.pane_ref(pane_id))
+            {
+                spans.push(Span::styled(format!(" │ {pane_ref}"), base.fg(p.subtext0)));
+            }
             if let Some(transport) = pane.transport() {
                 spans.push(Span::styled(
                     format!(" │ {}", transport_label(transport)),

@@ -38,6 +38,8 @@ impl Workspace<LiveDaemon> {
             exit_reason: None,
             shutdown_started: false,
             workspace_model: None,
+            pending_placements: HashSet::new(),
+            placed_panes: Vec::new(),
         }
     }
 
@@ -384,6 +386,7 @@ impl Workspace<LiveDaemon> {
                 .clone()
                 .unwrap_or(DaemonError::Unavailable { retry_after: None }));
         }
+        self.attach_live_workspace().await?;
         self.fetch_roster().await?;
         self.fetch_attention().await?;
         self.fetch_sidebar_rows().await?;
@@ -424,6 +427,7 @@ impl Workspace<LiveDaemon> {
                         .clone()
                         .unwrap_or(DaemonError::Unavailable { retry_after: None }));
                 }
+                self.attach_live_workspace().await?;
                 self.fetch_roster().await?;
                 self.fetch_attention().await?;
                 self.fetch_sidebar_rows().await?;
@@ -443,6 +447,7 @@ impl Workspace<LiveDaemon> {
                     .clone()
                     .unwrap_or(DaemonError::Unavailable { retry_after: None }));
             }
+            self.open_unresolved_terminals().await;
             self.attach_ready_panes().await?;
             return Ok(());
         }
@@ -572,8 +577,12 @@ impl Workspace<LiveDaemon> {
             DaemonEvent::Output(_)
             | DaemonEvent::Frame(_)
             | DaemonEvent::AttachHistory(_)
-            | DaemonEvent::ScrollOffsetApplied(_)
-            | DaemonEvent::Workspace(_) => {}
+            | DaemonEvent::ScrollOffsetApplied(_) => {}
+            DaemonEvent::Workspace(event) => {
+                if self.apply_live_workspace_event(&event) {
+                    self.open_unresolved_terminals().await;
+                }
+            }
         }
         Ok(())
     }

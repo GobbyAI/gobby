@@ -11,7 +11,6 @@ use gobby_client::daemon::{
     ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow, SourceStatus, SpawnOutcome,
     SpawnRequest, SubscribeSnapshot, TerminalRow, WorktreeRow, WsMessage, WsReply,
 };
-use gobby_client::persist::{save_snapshot, LayoutNode, TabSnapshot, WorkspaceSnapshot};
 use gobby_client::teardown::{
     shutdown, ModeBackend, RecordingBackend, ShutdownWorkspace, TerminalGuard,
 };
@@ -37,30 +36,20 @@ use tracing_subscriber::Layer;
 /// Save a one-pane snapshot for `project` and point the workspace at it, so
 /// the loop shows `terminal_id` once the roster arrives. Keep the returned
 /// home alive for the loop's lifetime.
+/// Seed the mock's daemon workspace with one tab showing `terminal_id` for
+/// `project` and give the workspace a Gobby home, so the loop projects that
+/// tab instead of spawning a shell. Keep the returned home alive for the
+/// loop's lifetime.
 fn pin_tab(
+    mock: &MockDaemon,
     workspace: &mut Workspace<LiveDaemon>,
     project: &str,
     terminal_id: &str,
 ) -> tempfile::TempDir {
     let home = tempfile::tempdir().expect("gobby home");
-    let snapshot = WorkspaceSnapshot {
-        project_id: project.to_string(),
-        tabs: vec![TabSnapshot {
-            title: terminal_id.to_string(),
-            layout: LayoutNode::Pane {
-                terminal_id: terminal_id.to_string(),
-            },
-            focused: Some(terminal_id.to_string()),
-            worktree_id: None,
-        }],
-        active_tab: 0,
-        focused_terminal_id: Some(terminal_id.to_string()),
-    };
-    save_snapshot(home.path(), &snapshot).expect("save the pinned snapshot");
+    mock.seed_workspace(project, &[(&[terminal_id], terminal_id)]);
     workspace.set_gobby_home(home.path().to_path_buf());
-    workspace
-        .restore_project(project)
-        .expect("restore the pinned snapshot");
+    workspace.select_project(project);
     home
 }
 
@@ -730,7 +719,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
     let initial_generation = daemon.generation();
     let observer = daemon.clone();
     let mut workspace = Workspace::live(daemon);
-    let _home = pin_tab(&mut workspace, "project-1", "terminal-shutdown");
+    let _home = pin_tab(&mock, &mut workspace, "project-1", "terminal-shutdown");
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
@@ -893,7 +882,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
         mock.fail_next_websocket();
     }
     let mut workspace = Workspace::live(daemon);
-    let _home = pin_tab(&mut workspace, "project-1", "terminal-exit");
+    let _home = pin_tab(&mock, &mut workspace, "project-1", "terminal-exit");
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);

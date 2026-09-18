@@ -862,20 +862,21 @@ async fn live_attention_subscribe_first_no_regression() {
         .await
         .expect("subscribe-first reconciliation");
     let mut handshake_sequences = Vec::new();
+    let mut other_events = Vec::new();
     for _ in 0..2 {
-        if let DaemonEvent::Attention { seq, .. } =
-            timeout(Duration::from_secs(1), during_roster.recv())
-                .await
-                .expect("attention handshake event deadline")
-                .expect("attention handshake event")
+        match timeout(Duration::from_secs(1), during_roster.recv())
+            .await
+            .expect("attention handshake event deadline")
+            .expect("attention handshake event")
         {
-            handshake_sequences.push(seq);
+            DaemonEvent::Attention { seq, .. } => handshake_sequences.push(seq),
+            other => other_events.push(format!("{other:?}")),
         }
     }
     assert_eq!(
         handshake_sequences,
         vec![2, 4],
-        "attention broadcasts arrive before and during the roster GET"
+        "attention broadcasts arrive before and during the roster GET; other events: {other_events:?}"
     );
     workspace
         .drain_live_events()

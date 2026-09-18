@@ -210,6 +210,19 @@ impl TileLayout {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9))
     }
 
+    /// The node at `path` (`false` = first child at each split); `None`
+    /// when the path leaves the tree at a pane.
+    pub fn node_at(&self, path: &[bool]) -> Option<&Node> {
+        let mut node = &self.root;
+        for &take_second in path {
+            let Node::Split { first, second, .. } = node else {
+                return None;
+            };
+            node = if take_second { second } else { first };
+        }
+        Some(node)
+    }
+
     /// Adjust the nearest split in the given direction for `pane_id`, falling
     /// back to the opposite edge. `delta` is positive to grow, negative to
     /// shrink. Returns whether any ratio changed.

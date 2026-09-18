@@ -80,7 +80,7 @@ pub enum Placement {
 }
 
 /// What the loop does with a mouse event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MouseOutcome {
     /// Consumed by chrome; nothing else sees it.
     Handled,
@@ -122,6 +122,12 @@ pub enum MouseOutcome {
     /// The confirm-close dialog's `close` button was clicked: close
     /// `target`, exactly as Enter in the dialog does.
     Confirm(CloseTarget),
+    /// A tab drag ended on another tab of a daemon tab bar: the daemon
+    /// orders its tabs, so ask it to move `tab` to `position`.
+    MoveTab { tab: String, position: u32 },
+    /// A split-border drag ended on a daemon tab: send the ratio it
+    /// reached through `slot`, a pane directly under the split.
+    ResizeSplit { slot: layout::PaneId, ratio: f32 },
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }

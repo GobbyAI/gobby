@@ -5,8 +5,10 @@
 
 use std::collections::BTreeMap;
 
+use super::Workspace;
 use crate::daemon::{
-    PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind, WorkspaceRow, WorkspaceSnapshot,
+    Daemon, PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind, WorkspaceRow,
+    WorkspaceSnapshot,
 };
 
 /// The attached workspace's rows, keyed by daemon id.
@@ -90,6 +92,17 @@ impl WorkspaceModel {
         self.generation
     }
 
+    /// Continue `previous`'s generation count, so a viewer that projected
+    /// the old model sees this one as newer.
+    pub fn succeed(&mut self, previous: &WorkspaceModel) {
+        self.generation = previous.generation + 1;
+    }
+
+    /// Every pane row.
+    pub fn panes(&self) -> impl Iterator<Item = &PaneRow> {
+        self.panes.values()
+    }
+
     pub fn tab(&self, tab_id: &str) -> Option<&TabRow> {
         self.tabs.get(tab_id)
     }
@@ -118,5 +131,28 @@ impl WorkspaceModel {
             "n{node}:w{}:t{}:p{}",
             self.workspace.reference, tab.reference, pane.reference
         ))
+    }
+}
+
+impl<D: Daemon> Workspace<D> {
+    /// The attached daemon workspace, once its snapshot arrived.
+    pub fn workspace_model(&self) -> Option<&WorkspaceModel> {
+        self.workspace_model.as_ref()
+    }
+
+    /// Replace the workspace model with a fresh `workspace_attach` snapshot.
+    pub fn apply_workspace_snapshot(&mut self, snapshot: WorkspaceSnapshot) {
+        let mut model = WorkspaceModel::from_snapshot(snapshot);
+        if let Some(previous) = &self.workspace_model {
+            model.succeed(previous);
+        }
+        self.workspace_model = Some(model);
+    }
+
+    /// Apply a `workspace_event`; `true` when the model changed.
+    pub fn apply_workspace_event(&mut self, event: &WorkspaceEvent) -> bool {
+        self.workspace_model
+            .as_mut()
+            .is_some_and(|model| model.apply(event))
     }
 }

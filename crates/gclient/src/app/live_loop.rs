@@ -29,20 +29,21 @@ use super::sidebar_model::SidebarModel;
 use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel};
 
 mod actions;
+pub use actions::sync_live_chrome;
 mod control;
 pub(super) mod menu;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
 pub(super) mod projects;
+mod workspace_actions;
 
-use actions::{
-    apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action, sync_live_chrome,
-};
+use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
 use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
 use projects::{persist_if_changed, restore_focused, save_client_session};
+use workspace_actions::send_focus_hints_if_changed;
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -197,6 +198,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut sidebar_error_shown = false;
     let mut last_snapshot = None;
+    let mut last_focus_hints = None;
 
     // Draw once before the first select: input outranks the render tick, so
     // the earliest event, a click included, would otherwise route against an
@@ -388,6 +390,11 @@ pub async fn run_live_loop<B: Backend>(
             }
         }
         if let Err(error) = persist_if_changed(workspace, chrome, &mut last_snapshot) {
+            chrome.status_message = Some(error.to_string());
+        }
+        if let Err(error) =
+            send_focus_hints_if_changed(workspace, chrome, &mut last_focus_hints).await
+        {
             chrome.status_message = Some(error.to_string());
         }
         // Every shown live pane carries the geometry of its slot: the pass

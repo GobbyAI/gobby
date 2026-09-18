@@ -408,6 +408,8 @@ fn daemon_event(value: Value) -> Result<Option<DaemonEvent>, DaemonError> {
         "terminal_attach_history" => Some(DaemonEvent::AttachHistory(value)),
         "terminal_scroll_offset_applied" => Some(DaemonEvent::ScrollOffsetApplied(value)),
         "terminal_resize_result" => Some(DaemonEvent::Message(value)),
+        // Replies to `workspace_attach` and `workspace_op` settle their waiters.
+        "workspace_snapshot" | "workspace_op" => None,
         "workspace_event" => Some(DaemonEvent::Workspace(Box::new(
             serde_json::from_value(value).map_err(protocol_error)?,
         ))),

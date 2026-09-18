@@ -6,8 +6,8 @@ use futures_util::FutureExt;
 use gobby_client::daemon::{
     encode_message, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, KillOutcome,
     LayoutAxis, LiveDaemon, SpawnOutcome, SpawnRequest, WorkspaceError, WorkspaceErrorCode,
-    WorkspaceEvent, WorkspaceOp, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE, SUBSCRIBED_EVENTS,
-    TERMINAL_WS_SAFE_INTEGER_MAX,
+    WorkspaceEvent, WorkspaceEventKind, WorkspaceOp, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE,
+    SUBSCRIBED_EVENTS, TERMINAL_WS_SAFE_INTEGER_MAX,
 };
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
@@ -2440,6 +2440,20 @@ async fn workspace_attach_op_and_event_round_trip() {
         include_str!("../../../tests/fixtures/terminal_ws_golden/workspace_op.json"),
     );
 
+    // The mock applied the split and published its own `pane.added` before
+    // the reply: a new pane in the split pane's tab.
+    let applied = next_workspace_event(&mut events).await;
+    assert_eq!(applied.kind, WorkspaceEventKind::PaneAdded);
+    assert_eq!(applied.workspace_id, ATTACHED_WORKSPACE);
+    assert_eq!(
+        applied
+            .panes
+            .iter()
+            .map(|pane| pane.tab_id.as_str())
+            .collect::<Vec<_>>(),
+        ["eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"]
+    );
+
     mock.send_event_and_wait(workspace_event(OTHER_WORKSPACE, 1))
         .await;
     mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 1))
@@ -2510,6 +2524,8 @@ async fn workspace_attach_op_and_event_round_trip() {
         .workspace_op(split)
         .await
         .expect("workspace op after reconnect");
+    let reapplied = next_workspace_event(&mut events).await;
+    assert_eq!(reapplied.kind, WorkspaceEventKind::PaneAdded);
     mock.send_event_and_wait(workspace_event(OTHER_WORKSPACE, 3))
         .await;
     mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 3))
