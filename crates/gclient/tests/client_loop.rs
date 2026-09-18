@@ -4349,10 +4349,11 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
 }
 
 /// 2.4.2: a wheel notch over a pane that reports no mouse scrolls its
-/// scrollback three rows a notch through `SetScrollOffset`, clamped to the
-/// depth the daemon reported; the scrollbar track jumps and the thumb drags
-/// to the offsets the scrollbar math gives; a pane on its alternate screen
-/// gets arrow keys instead (herdr alternate-scroll).
+/// scrollback three rows a notch through `SetScrollOffset`, bootstrapped by
+/// sending the first notch before any ceiling is known and clamped to the
+/// depth the daemon then reports; the scrollbar track jumps and the thumb
+/// drags to the offsets the scrollbar math gives; a pane on its alternate
+/// screen gets arrow keys instead (herdr alternate-scroll).
 #[tokio::test]
 async fn wheel_and_scrollbar_drive_scrollback() {
     const MAX_ROWS: u32 = 10;
@@ -4386,33 +4387,18 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         .expect("roster pane");
     let attachment = workspace.pane(pane).attachment_id().to_string();
 
-    // The daemon reports the scrollback depth before the loop's first draw,
-    // so the scrollbar lane is in the hit map from the start.
-    mock.send_event_and_wait(json!({
-        "type": "terminal_scroll_offset_applied",
-        "terminal_id": "terminal-scroll",
-        "attachment_id": attachment,
-        "applied_rows": 0,
-        "max_rows": MAX_ROWS,
-    }))
-    .await;
-    let applied = workspace
-        .recv_pane_frame(pane)
-        .await
-        .expect("scroll offset applied reaches the pane");
-    assert!(
-        matches!(
-            applied,
-            ServerMessage::ScrollOffsetApplied {
-                applied_rows: 0,
-                max_rows: MAX_ROWS
-            }
-        ),
-        "unexpected pane message: {applied:?}"
+    // The daemon only reports a scrollback depth in answer to a request, so an
+    // attached pane starts out knowing no ceiling at all.
+    assert_eq!(
+        workspace.pane(pane).max_scroll,
+        0,
+        "a freshly attached pane has not learned its scrollback depth"
     );
 
     // Mirror the loop's one-pane chrome to learn where the content and the
-    // scrollbar lane are drawn.
+    // scrollbar lane are drawn. Both rects are fixed by the layout rather than
+    // the scroll state, so the lane can be sized from the depth the daemon is
+    // about to report.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
     probe.open_pane(pane, "terminal-scroll");
@@ -4452,7 +4438,38 @@ async fn wheel_and_scrollbar_drive_scrollback() {
                 .collect()
         };
         let (column, row) = content;
-        for _ in 0..5 {
+
+        // Bootstrap: with no ceiling learned yet the first notch must still go
+        // out, because that request is what teaches the client the depth.
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollUp,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 1).await;
+        assert_eq!(
+            offsets(),
+            vec![3],
+            "a pane that knows no ceiling sends its first notch unclamped"
+        );
+
+        // The daemon answers that request with the real depth. Input outranks
+        // frames in the loop's biased select, so let it drain before the next
+        // notch depends on the ceiling.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_scroll_offset_applied",
+            "terminal_id": "terminal-scroll",
+            "attachment_id": attachment,
+            "applied_rows": 3,
+            "max_rows": MAX_ROWS,
+        }))
+        .await;
+        settle_live_event().await;
+
+        for _ in 0..4 {
             send_mouse(
                 &input_tx,
                 MouseEventKind::ScrollUp,
@@ -4638,6 +4655,95 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         u64::from(workspace.pane(pane).scroll_offset()),
         dragged,
         "the pane mirrors the last offset it asked for"
+    );
+    mock.shutdown().await;
+}
+
+/// A tmux-backed pane has no daemon-side scrollback to ask for: the daemon
+/// skips the host verb for it and would answer with the client's own number,
+/// so the notch is consumed rather than pretending to scroll.
+#[tokio::test]
+async fn wheel_over_a_tmux_pane_asks_the_daemon_for_nothing() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": "terminal-tmux", "backend": "tmux", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane = workspace
+        .pane_for_terminal("terminal-tmux")
+        .expect("roster pane");
+
+    // Mirror the loop's one-pane chrome and confirm the notch's cell really
+    // lands on the pane, so an empty request log means the wheel was consumed
+    // rather than never routed.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(pane, "terminal-tmux");
+    probe.compute_view(&workspace, area);
+    let inner = probe.view.pane_infos[0].inner_rect;
+    let (column, row) = (inner.x + 1, inner.y + 1);
+    assert!(
+        matches!(hit_test(&probe.view, column, row), Hit::Pane { .. }),
+        "the notch lands on the pane"
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    // The loop draws its hit map before its first select and reads input ahead
+    // of the closed channel, so one notch then a drop is deterministic.
+    let driver = async {
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollUp,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        websocket_requests(&mock, "terminal_set_scroll_offset").is_empty(),
+        "a tmux pane never asks the daemon to scroll"
+    );
+    assert_eq!(
+        workspace.pane(pane).scroll_offset(),
+        0,
+        "the pane stays at the live edge"
     );
     mock.shutdown().await;
 }

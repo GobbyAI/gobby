@@ -26,10 +26,13 @@ use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LIN
 /// Over a pane that was not reported to, its border or its scrollbar, the
 /// notch goes by the pane's modes (herdr `forward_pane_wheel`): an
 /// alternate-screen pane gets `MOUSE_SCROLL_LINES` arrow keys, up or down
-/// (herdr alternate-scroll), delivered where a key would be; any other pane
-/// scrolls its scrollback `MOUSE_SCROLL_LINES` rows, up into history and down
-/// toward the live edge, clamped to the depth the daemon reported, and a
-/// notch that would not move it is consumed. Focus never moves: in gclient
+/// (herdr alternate-scroll), delivered where a key would be; any other
+/// native pane scrolls its scrollback `MOUSE_SCROLL_LINES` rows, up into
+/// history and down toward the live edge, clamped to the depth the daemon
+/// has confirmed so far, and a notch that would not move it is consumed. A
+/// tmux pane has no daemon-side scroll offset — the daemon skips the host
+/// verb for it and would answer with the client's own number — so its notch
+/// is consumed rather than pretending to scroll. Focus never moves: in gclient
 /// focus takes the lease, and a scroll is not a claim on the pane. A slot
 /// whose pane has left the roster is stale until the next chrome sync and is
 /// left alone.
@@ -125,10 +128,13 @@ pub(super) fn wheel<W: WorkspaceView>(
                     bytes: key.repeat(MOUSE_SCROLL_LINES),
                 };
             }
+            if state.backend != "native" {
+                return MouseOutcome::Handled;
+            }
             let step = MOUSE_SCROLL_LINES as u32;
             let current = state.scroll_offset;
             let next = if up {
-                current.saturating_add(step).min(state.max_scroll)
+                clamp_scroll_rows(state.max_scroll, current.saturating_add(step))
             } else {
                 current.saturating_sub(step)
             };
@@ -139,5 +145,21 @@ pub(super) fn wheel<W: WorkspaceView>(
             }
         }
         _ => MouseOutcome::Ignore,
+    }
+}
+
+/// Clamp a requested scroll offset against the last ceiling the daemon
+/// confirmed, the way the web's `clampScrollRows` does.
+///
+/// `max_scroll` is zero both before the first `ScrollOffsetApplied` and when
+/// the host holds no scrollback at all, so a zero ceiling means unknown, not
+/// empty: send what was asked and let the reply decide. Clamping against an
+/// unknown ceiling deadlocks the wheel, because the request that would teach
+/// gclient the depth is the one the clamp suppresses.
+fn clamp_scroll_rows(max_scroll: u32, requested: u32) -> u32 {
+    if max_scroll > 0 {
+        requested.min(max_scroll)
+    } else {
+        requested
     }
 }

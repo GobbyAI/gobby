@@ -833,17 +833,16 @@ enum LiveExitCause {
     Sigint,
     Sigterm,
     Sighup,
-    DaemonLoss,
+    QuitDuringDaemonLoss,
 }
 
 impl LiveExitCause {
     fn reason(self) -> &'static str {
         match self {
-            Self::Quit => "quit",
+            Self::Quit | Self::QuitDuringDaemonLoss => "quit",
             Self::Sigint => "SIGINT",
             Self::Sigterm => "SIGTERM",
             Self::Sighup => "SIGHUP",
-            Self::DaemonLoss => "Daemon unavailable.",
         }
     }
 }
@@ -861,7 +860,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
             "snapshot": {"daemon_epoch": "epoch-exit", "seq": 1}
         }),
     );
-    if matches!(cause, LiveExitCause::DaemonLoss) {
+    if matches!(cause, LiveExitCause::QuitDuringDaemonLoss) {
         for _ in 0..3 {
             mock.enqueue(
                 "GET",
@@ -874,7 +873,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     let daemon = LiveDaemon::connect(mock.url(), "exit-token")
         .await
         .expect("connect exit daemon");
-    if matches!(cause, LiveExitCause::DaemonLoss) {
+    if matches!(cause, LiveExitCause::QuitDuringDaemonLoss) {
         mock.fail_next_websocket();
         mock.fail_next_websocket();
     }
@@ -898,7 +897,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
             LiveExitCause::Sigint => send_process_signal("-INT"),
             LiveExitCause::Sigterm => send_process_signal("-TERM"),
             LiveExitCause::Sighup => send_process_signal("-HUP"),
-            LiveExitCause::DaemonLoss => {
+            LiveExitCause::QuitDuringDaemonLoss => {
                 mock.drop_websockets();
                 timeout(Duration::from_secs(1), async {
                     while mock.websocket_handshakes() < 2 {
@@ -931,6 +930,11 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
                     }
                 }
                 tokio::time::resume();
+                // The supervisor never gives up, so the outage is not an exit:
+                // the quit key is, and it has to come out clean through a dead
+                // socket with leases the client can no longer release.
+                send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+                send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
             }
         }
     };
@@ -1103,7 +1107,7 @@ async fn every_exit_cause_uses_one_shutdown_seam() {
         LiveExitCause::Sigint,
         LiveExitCause::Sigterm,
         LiveExitCause::Sighup,
-        LiveExitCause::DaemonLoss,
+        LiveExitCause::QuitDuringDaemonLoss,
     ] {
         assert_live_exit_trace(cause, Arc::clone(&trace)).await;
         assert_eq!(
