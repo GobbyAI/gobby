@@ -2,11 +2,12 @@
 //! tab set and rebuilt into one on restore.
 
 use super::project_tabs::TabSet;
+use super::viewer_state::ViewerState;
 use super::Workspace;
 use crate::daemon::Daemon;
 use crate::frame_source::FrameError;
 use crate::persist::{load_snapshot, save_snapshot, SidebarSnapshot, WorkspaceSnapshot};
-use crate::ui::chrome::{SidebarState, Tab};
+use crate::ui::chrome::SidebarState;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,11 @@ impl Workspace {
     /// Select the project and rebuild its tab set from the snapshot, opening
     /// a pane for each saved terminal the daemon still has. Vanished
     /// terminals drop out and the snapshot is rewritten without them.
-    pub fn restore_project(&mut self, project_id: &str) -> Result<TabSet, FrameError> {
+    pub fn restore_project(
+        &mut self,
+        project_id: &str,
+        viewer: &mut ViewerState,
+    ) -> Result<TabSet, FrameError> {
         self.ensure_requests_allowed()
             .map_err(|error| FrameError::Other(error.to_string()))?;
         self.select_project(project_id);
@@ -26,15 +31,23 @@ impl Workspace {
                 self.open_terminal(&terminal_id, "native", "epoch-a")?;
             }
         }
-        let tabs =
-            TabSet::from_snapshot(&snapshot, |terminal_id| self.pane_for_terminal(terminal_id));
+        let tabs = TabSet::from_snapshot(
+            &snapshot,
+            |terminal_id| self.pane_for_terminal(terminal_id),
+            viewer,
+            project_id,
+        );
         self.focus = snapshot
             .focused_terminal_id
             .as_deref()
             .and_then(|terminal_id| self.pane_for_terminal(terminal_id))
-            .or_else(|| tabs.active().and_then(Tab::focused_pane));
+            .or_else(|| {
+                tabs.tabs
+                    .get(viewer.active_index(project_id, &tabs.tabs))
+                    .and_then(|tab| viewer.focused_pane(tab))
+            });
         self.roster_ids = live;
-        self.persist_workspace(&tabs)?;
+        self.persist_workspace(&tabs, viewer)?;
         Ok(tabs)
     }
 }
@@ -162,16 +175,28 @@ impl<D: Daemon> Workspace<D> {
 
     /// The focused project's snapshot of `tabs`, once a Gobby home and a
     /// project are set.
-    pub fn workspace_snapshot(&self, tabs: &TabSet) -> Option<WorkspaceSnapshot> {
+    pub fn workspace_snapshot(
+        &self,
+        tabs: &TabSet,
+        viewer: &ViewerState,
+    ) -> Option<WorkspaceSnapshot> {
         let project_id = self.project_id.as_deref()?;
         self.gobby_home.as_ref()?;
-        Some(tabs.snapshot(project_id, |pane| {
-            self.panes.get(&pane).map(|pane| pane.terminal_id.clone())
-        }))
+        Some(tabs.snapshot(
+            project_id,
+            |pane| self.panes.get(&pane).map(|pane| pane.terminal_id.clone()),
+            viewer,
+        ))
     }
 
-    pub fn persist_workspace(&self, tabs: &TabSet) -> io::Result<Option<PathBuf>> {
-        let (Some(home), Some(snapshot)) = (&self.gobby_home, self.workspace_snapshot(tabs)) else {
+    pub fn persist_workspace(
+        &self,
+        tabs: &TabSet,
+        viewer: &ViewerState,
+    ) -> io::Result<Option<PathBuf>> {
+        let (Some(home), Some(snapshot)) =
+            (&self.gobby_home, self.workspace_snapshot(tabs, viewer))
+        else {
             return Ok(None);
         };
         save_snapshot(home, &snapshot).map(Some)

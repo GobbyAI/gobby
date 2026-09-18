@@ -9,6 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+use std::collections::BTreeSet;
 
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
@@ -36,8 +37,8 @@ fn tab_is_auto_named(tab: &Tab) -> bool {
 }
 
 /// herdr `tab_width`: the chrome label plus padding, never under `MIN_TAB_WIDTH`.
-pub fn tab_width(tabs: &[Tab], tab_idx: usize) -> u16 {
-    display_width_u16(&tab_chrome_label(tabs, tab_idx))
+pub fn tab_width(tabs: &[Tab], tab_idx: usize, zoomed: &BTreeSet<String>) -> u16 {
+    display_width_u16(&tab_chrome_label(tabs, tab_idx, zoomed))
         .saturating_add(4)
         .max(MIN_TAB_WIDTH)
 }
@@ -54,16 +55,24 @@ pub fn tab_display_name(tabs: &[Tab], tab_idx: usize) -> Option<String> {
     })
 }
 
-fn tab_chrome_label(tabs: &[Tab], tab_idx: usize) -> String {
+fn tab_chrome_label(tabs: &[Tab], tab_idx: usize, zoomed: &BTreeSet<String>) -> String {
     let name = tab_display_name(tabs, tab_idx).unwrap_or_else(|| (tab_idx + 1).to_string());
-    if tabs.get(tab_idx).is_some_and(|tab| tab.zoomed) {
+    if tabs
+        .get(tab_idx)
+        .is_some_and(|tab| zoomed.contains(&tab.id))
+    {
         format!("{name} Z")
     } else {
         name
     }
 }
 
-fn layout_tab_hit_areas(tabs: &[Tab], area: Rect, scroll: usize) -> Vec<Rect> {
+fn layout_tab_hit_areas(
+    tabs: &[Tab],
+    zoomed: &BTreeSet<String>,
+    area: Rect,
+    scroll: usize,
+) -> Vec<Rect> {
     let mut rects = vec![Rect::default(); tabs.len()];
     if area.width == 0 || area.height == 0 {
         return rects;
@@ -75,7 +84,7 @@ fn layout_tab_hit_areas(tabs: &[Tab], area: Rect, scroll: usize) -> Vec<Rect> {
         if x >= right {
             break;
         }
-        let desired = tab_width(tabs, idx);
+        let desired = tab_width(tabs, idx, zoomed);
         let remaining = right.saturating_sub(x);
         let width = desired.min(remaining).max(1);
         *rect = Rect::new(x, area.y, width, 1);
@@ -84,13 +93,18 @@ fn layout_tab_hit_areas(tabs: &[Tab], area: Rect, scroll: usize) -> Vec<Rect> {
     rects
 }
 
-fn centered_tab_scroll(tabs: &[Tab], active_tab: usize, area: Rect) -> usize {
+fn centered_tab_scroll(
+    tabs: &[Tab],
+    zoomed: &BTreeSet<String>,
+    active_tab: usize,
+    area: Rect,
+) -> usize {
     let mut best_scroll = active_tab;
     let mut best_distance = u16::MAX;
     let viewport_center = area.x.saturating_mul(2).saturating_add(area.width);
 
     for scroll in 0..=active_tab {
-        let rects = layout_tab_hit_areas(tabs, area, scroll);
+        let rects = layout_tab_hit_areas(tabs, zoomed, area, scroll);
         let Some(active_rect) = rects.get(active_tab).copied() else {
             continue;
         };
@@ -121,10 +135,10 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-fn max_tab_scroll(tabs: &[Tab], area: Rect) -> usize {
+fn max_tab_scroll(tabs: &[Tab], zoomed: &BTreeSet<String>, area: Rect) -> usize {
     (0..tabs.len())
         .find(|&scroll| {
-            layout_tab_hit_areas(tabs, area, scroll)
+            layout_tab_hit_areas(tabs, zoomed, area, scroll)
                 .last()
                 .is_some_and(|rect| rect.width > 0)
         })
@@ -133,6 +147,7 @@ fn max_tab_scroll(tabs: &[Tab], area: Rect) -> usize {
 
 fn compute_tab_bar_view(
     tabs: &[Tab],
+    zoomed: &BTreeSet<String>,
     active_tab: usize,
     area: Rect,
     current_scroll: usize,
@@ -149,7 +164,7 @@ fn compute_tab_bar_view(
         area.width.saturating_sub(NEW_TAB_WIDTH),
         area.height,
     );
-    let all_tabs = layout_tab_hit_areas(tabs, all_tabs_area, 0);
+    let all_tabs = layout_tab_hit_areas(tabs, zoomed, all_tabs_area, 0);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
         let new_tab_x = trailing_tab_controls_x(&all_tabs, area.x);
@@ -179,13 +194,13 @@ fn compute_tab_bar_view(
         area.height,
     );
 
-    let max_scroll = max_tab_scroll(tabs, tab_area);
+    let max_scroll = max_tab_scroll(tabs, zoomed, tab_area);
     let scroll = if follow_active {
-        centered_tab_scroll(tabs, active_tab, tab_area).min(max_scroll)
+        centered_tab_scroll(tabs, zoomed, active_tab, tab_area).min(max_scroll)
     } else {
         current_scroll.min(max_scroll)
     };
-    let tab_hit_areas = layout_tab_hit_areas(tabs, tab_area, scroll);
+    let tab_hit_areas = layout_tab_hit_areas(tabs, zoomed, tab_area, scroll);
     let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
     let right_hit_area = Rect::new(
         trailing_x,
@@ -230,7 +245,8 @@ pub fn render_tab_bar<W: WorkspaceView>(
     let p = &chrome.palette;
     let view = compute_tab_bar_view(
         tabs,
-        chrome.tabs().active_tab,
+        &chrome.viewer.zoomed,
+        chrome.active_index(),
         area,
         chrome.tab_scroll,
         chrome.tab_scroll_follow_active,
@@ -283,7 +299,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         if rect.width == 0 {
             continue;
         }
-        let active = idx == chrome.tabs().active_tab;
+        let active = idx == chrome.active_index();
         let style = if active {
             let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
             if tab_is_auto_named(tab) {
@@ -307,7 +323,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
             style
         };
         let width = rect.width as usize;
-        let name = tab_chrome_label(tabs, idx);
+        let name = tab_chrome_label(tabs, idx, &chrome.viewer.zoomed);
         let text = format!(" {:width$}", name, width = width.saturating_sub(1));
         frame.render_widget(Paragraph::new(text).style(style), rect);
     }
@@ -409,8 +425,9 @@ mod tests {
     #[test]
     fn overflowing_tabs_get_scroll_arrows_and_follow_the_active_tab() {
         let mut chrome = chrome_with_tabs(&["one", "two", "three", "four", "five", "six"]);
-        chrome.tabs_mut().active_tab = 5;
-        chrome.tabs_mut().tabs[5].zoomed = true;
+        chrome.activate_tab(5);
+        let sixth = chrome.tabs().tabs[5].id.clone();
+        chrome.viewer.zoomed.insert(sixth);
         let (hits, text) = draw(&chrome, 46);
         assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 3, 1)));
         assert!(hits.scroll_right.is_some() && hits.new_tab.is_some());

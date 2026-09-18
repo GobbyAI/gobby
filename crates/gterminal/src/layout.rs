@@ -89,10 +89,10 @@ pub enum Node {
     },
 }
 
-/// BSP tiling layout. Tracks a tree of splits and a focused pane.
+/// BSP tiling layout: a tree of splits. Focus belongs to the viewer and is
+/// passed to every method that depends on it.
 pub struct TileLayout {
     root: Node,
-    focus: PaneId,
 }
 
 impl TileLayout {
@@ -103,24 +103,20 @@ impl TileLayout {
         (
             Self {
                 root: Node::Pane(root_id),
-                focus: root_id,
             },
             root_id,
         )
-    }
-
-    pub fn focused(&self) -> PaneId {
-        self.focus
     }
 
     pub fn pane_count(&self) -> usize {
         count_panes(&self.root)
     }
 
-    /// Compute rects for all panes given the available area.
-    pub fn panes(&self, area: Rect) -> Vec<PaneInfo> {
+    /// Compute rects for all panes given the available area; `focus` marks the
+    /// viewer's focused pane.
+    pub fn panes(&self, area: Rect, focus: PaneId) -> Vec<PaneInfo> {
         let mut result = Vec::new();
-        collect_panes(&self.root, area, self.focus, &mut result);
+        collect_panes(&self.root, area, focus, &mut result);
         result
     }
 
@@ -131,18 +127,23 @@ impl TileLayout {
         result
     }
 
-    /// Split the focused pane. Returns the new pane's id.
-    pub fn split_focused(&mut self, direction: Direction) -> PaneId {
-        self.split_focused_with_ratio(direction, 0.5)
+    /// Split `focus`. Returns the new pane's id; the caller decides whether to
+    /// focus it.
+    pub fn split_focused(&mut self, focus: PaneId, direction: Direction) -> PaneId {
+        self.split_focused_with_ratio(focus, direction, 0.5)
     }
 
-    /// Split the focused pane with a custom first-child ratio.
-    pub fn split_focused_with_ratio(&mut self, direction: Direction, ratio: f32) -> PaneId {
+    /// Split `focus` with a custom first-child ratio.
+    pub fn split_focused_with_ratio(
+        &mut self,
+        focus: PaneId,
+        direction: Direction,
+        ratio: f32,
+    ) -> PaneId {
         let new_id = PaneId::alloc();
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
-        self.root = split_at(old, self.focus, direction, new_id, valid_split_ratio(ratio));
-        self.focus = new_id;
+        self.root = split_at(old, focus, direction, new_id, valid_split_ratio(ratio));
         new_id
     }
 
@@ -166,38 +167,28 @@ impl TileLayout {
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         self.root = split_at(old, target, direction, moved, valid_split_ratio(ratio));
-        self.focus = moved;
         true
     }
 
-    /// Close the focused pane. Returns false if it's the last pane.
-    pub fn close_focused(&mut self) -> bool {
-        if self.pane_count() <= 1 {
-            return false;
-        }
-        let target = self.focus;
+    /// Close `focus`. Returns the pane that takes the focus next, or `None`
+    /// when `focus` is the last pane or not in the layout.
+    pub fn close_focused(&mut self, focus: PaneId) -> Option<PaneId> {
         let ids = self.pane_ids();
-        let pos = ids.iter().position(|id| *id == target).unwrap();
-        let new_focus = if pos + 1 < ids.len() {
+        if ids.len() <= 1 {
+            return None;
+        }
+        let pos = ids.iter().position(|id| *id == focus)?;
+        let next = if pos + 1 < ids.len() {
             ids[pos + 1]
         } else {
             ids[pos - 1]
         };
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
-        if let Some(new_root) = remove_pane(old, target) {
-            self.root = new_root;
-            self.focus = new_focus;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn focus_pane(&mut self, id: PaneId) {
-        if self.pane_ids().contains(&id) {
-            self.focus = id;
-        }
+        // `focus` is a known leaf of a tree with more than one pane, so the
+        // removal always leaves a root behind.
+        self.root = remove_pane(old, focus)?;
+        Some(next)
     }
 
     /// Swap two pane ids in the layout tree while preserving split shape and
@@ -219,13 +210,34 @@ impl TileLayout {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9))
     }
 
-    /// Adjust the nearest split in the given direction for the focused pane.
-    /// `delta` is positive to grow, negative to shrink.
-    pub fn resize_focused(&mut self, nav: NavDirection, delta: f32, area: Rect) {
-        let panes = self.panes(area);
+    /// The node at `path` (`false` = first child at each split); `None`
+    /// when the path leaves the tree at a pane.
+    pub fn node_at(&self, path: &[bool]) -> Option<&Node> {
+        let mut node = &self.root;
+        for &take_second in path {
+            let Node::Split { first, second, .. } = node else {
+                return None;
+            };
+            node = if take_second { second } else { first };
+        }
+        Some(node)
+    }
+
+    /// Adjust the nearest split in the given direction for `pane_id`, falling
+    /// back to the opposite edge. `delta` is positive to grow, negative to
+    /// shrink. Returns whether any ratio changed.
+    pub fn resize_pane(
+        &mut self,
+        pane_id: PaneId,
+        nav: NavDirection,
+        delta: f32,
+        area: Rect,
+    ) -> bool {
+        let panes = self.panes(area, pane_id);
         let Some(focused) = panes.iter().find(|p| p.is_focused) else {
-            return;
+            return false;
         };
+        let before = split_ratios(&self.root);
         let focused_rect = focused.rect;
         let splits = self.splits(area);
 
@@ -245,23 +257,6 @@ impl TileLayout {
             let adj = if grows { delta } else { -delta };
             self.set_ratio_at(&path, current_ratio + adj);
         }
-    }
-
-    pub fn resize_pane(
-        &mut self,
-        pane_id: PaneId,
-        nav: NavDirection,
-        delta: f32,
-        area: Rect,
-    ) -> bool {
-        if !self.pane_ids().contains(&pane_id) {
-            return false;
-        }
-        let before = split_ratios(&self.root);
-        let previous_focus = self.focus;
-        self.focus = pane_id;
-        self.resize_focused(nav, delta, area);
-        self.focus = previous_focus;
         split_ratios(&self.root) != before
     }
 
@@ -277,9 +272,8 @@ impl TileLayout {
     }
 
     /// Reconstruct a layout from a saved tree.
-    /// Reconstruct a layout from a saved tree.
-    pub fn from_saved(root: Node, focus: PaneId) -> Self {
-        Self { root, focus }
+    pub fn from_saved(root: Node) -> Self {
+        Self { root }
     }
 }
 

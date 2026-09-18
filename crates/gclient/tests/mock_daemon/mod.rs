@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 
+mod workspace;
+
+pub use workspace::WorkspaceSim;
+
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
@@ -62,10 +66,16 @@ struct MockState {
     write_outcomes: VecDeque<(String, Option<String>)>,
     /// Reasons the next `terminal_kill` replies refuse with, in order.
     kill_refusals: VecDeque<String>,
+    /// `(code, reason)` the next `workspace_op` replies refuse with, in order.
+    workspace_refusals: VecDeque<(String, String)>,
     detach_replies: VecDeque<(bool, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
     proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
     activity: Vec<String>,
+    /// The daemon workspace `workspace_attach` serves and `workspace_op` moves.
+    workspace: WorkspaceSim,
+    /// Events the last `workspace_op` published, sent before its reply.
+    pending_workspace_events: VecDeque<Value>,
 }
 
 #[derive(Debug)]
@@ -101,9 +111,12 @@ impl MockDaemon {
             take_control_replies: VecDeque::new(),
             write_outcomes: VecDeque::new(),
             kill_refusals: VecDeque::new(),
+            workspace_refusals: VecDeque::new(),
             detach_replies: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
             proxy_finalizations_before_reply: VecDeque::new(),
+            workspace: WorkspaceSim::from_fixture(),
+            pending_workspace_events: VecDeque::new(),
             activity: Vec::new(),
         }));
         let (events, _) = broadcast::channel(2048);
@@ -219,6 +232,19 @@ impl MockDaemon {
         self.state.lock().expect("mock state").spawn_refusal = Some(reason.to_string());
     }
 
+    /// Seed the daemon workspace with `project`'s tabs (`WorkspaceSim::seed`).
+    pub fn seed_workspace(
+        &self,
+        project: &str,
+        tabs: &[(&[&str], &str)],
+    ) -> Vec<(String, Vec<String>)> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .seed(project, tabs)
+    }
+
     pub fn enqueue_spawn_events_before_reply(&self, events: Vec<Value>) {
         self.state
             .lock()
@@ -283,6 +309,16 @@ impl MockDaemon {
             .expect("mock state")
             .kill_refusals
             .push_back(reason.to_string());
+    }
+
+    /// The next `workspace_op` replies `workspace_error` with `code` and
+    /// `reason` instead of moving the workspace.
+    pub fn enqueue_workspace_refusal(&self, code: &str, reason: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace_refusals
+            .push_back((code.to_string(), reason.to_string()));
     }
 
     pub fn enqueue_detach_reply(&self, success: bool, reason: Option<&str>) {
@@ -805,20 +841,32 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "type": "subscribe_success",
             "events": request.get("events").cloned().unwrap_or_else(|| json!([])),
         })),
-        "workspace_attach" => {
-            let mut snapshot: Value = serde_json::from_str(include_str!(
-                "../../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
-            ))
-            .expect("workspace snapshot fixture");
-            snapshot["request_id"] = request.get("request_id").cloned().unwrap_or(Value::Null);
-            Some(snapshot)
+        "workspace_attach" => Some(
+            state
+                .lock()
+                .expect("mock state")
+                .workspace
+                .attach_reply(request.get("request_id")),
+        ),
+        "workspace_op" => {
+            let mut state = state.lock().expect("mock state");
+            if let Some((code, reason)) = state.workspace_refusals.pop_front() {
+                return Some(json!({
+                    "type": "workspace_error",
+                    "request_id": request.get("request_id"),
+                    "code": code,
+                    "reason": reason,
+                }));
+            }
+            let events = state.workspace.apply(request);
+            state.pending_workspace_events.extend(events);
+            Some(json!({
+                "type": "workspace_op",
+                "request_id": request.get("request_id"),
+                "op": request.get("op"),
+                "result": null,
+            }))
         }
-        "workspace_op" => Some(json!({
-            "type": "workspace_op",
-            "request_id": request.get("request_id"),
-            "op": request.get("op"),
-            "result": null,
-        })),
         _ => None,
     }
 }
@@ -829,6 +877,14 @@ fn websocket_events_before_reply(
     reply: Option<&Value>,
 ) -> Vec<Value> {
     let request_type = request.get("type").and_then(Value::as_str);
+    if request_type == Some("workspace_op") {
+        return state
+            .lock()
+            .expect("mock state")
+            .pending_workspace_events
+            .drain(..)
+            .collect();
+    }
     let succeeded = reply
         .and_then(|value| value.get("success"))
         .and_then(Value::as_bool)

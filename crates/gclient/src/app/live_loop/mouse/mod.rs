@@ -10,7 +10,6 @@
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
-use crate::ui::chrome::Tab;
 use crate::ui::dialogs::{CloseTarget, Dialog};
 use crate::ui::hit::{hit_test, Hit, SidebarSection};
 use crate::ui::settings::SettingsRow;
@@ -81,7 +80,7 @@ pub enum Placement {
 }
 
 /// What the loop does with a mouse event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MouseOutcome {
     /// Consumed by chrome; nothing else sees it.
     Handled,
@@ -123,6 +122,12 @@ pub enum MouseOutcome {
     /// The confirm-close dialog's `close` button was clicked: close
     /// `target`, exactly as Enter in the dialog does.
     Confirm(CloseTarget),
+    /// A tab drag ended on another tab of a daemon tab bar: the daemon
+    /// orders its tabs, so ask it to move `tab` to `position`.
+    MoveTab { tab: String, position: u32 },
+    /// A split-border drag ended on a daemon tab: send the ratio it
+    /// reached through `slot`, a pane directly under the split.
+    ResizeSplit { slot: layout::PaneId, ratio: f32 },
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -290,7 +295,7 @@ fn settings_mouse<W: WorkspaceView>(
 /// Focus the active tab's focused pane. A tab whose slots have all gone is
 /// still activated; there is just nothing to focus.
 fn focus_active_tab(chrome: &Chrome, observe_only: bool) -> MouseOutcome {
-    match chrome.active_tab().and_then(Tab::focused_pane) {
+    match chrome.focused_pane() {
         Some(pane) => MouseOutcome::Focus { pane, observe_only },
         None => MouseOutcome::Handled,
     }

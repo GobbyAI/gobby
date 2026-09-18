@@ -508,8 +508,10 @@ fn resize_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
         _ => return ModalOutcome::Consumed,
     };
     let area = live_layout_area(chrome);
-    if let Some(tab) = chrome.active_tab_mut() {
-        tab.layout.resize_focused(direction, RESIZE_STEP, area);
+    if let Some(focus) = chrome.focus_slot() {
+        if let Some(tab) = chrome.active_tab_mut() {
+            tab.layout.resize_pane(focus, direction, RESIZE_STEP, area);
+        }
     }
     ModalOutcome::Consumed
 }

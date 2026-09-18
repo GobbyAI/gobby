@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon};
+use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::persist::{save_session, save_snapshot, ClientSession, WorkspaceSnapshot};
 use crate::ui::chrome::{attention_pane, Tab};
@@ -16,7 +16,6 @@ use crate::ui::sidebar_rows::project_label;
 use crate::ui::{Chrome, Mode};
 
 use super::super::persistence::sidebar_snapshot;
-use super::super::project_tabs::TabSet;
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{
@@ -27,6 +26,7 @@ use super::control::focus_live_pane;
 use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
+use super::workspace_actions::{place_live_terminal, send_workspace_op};
 
 /// Make `project_id` the focused project: its roster replaces the current
 /// one and its tab set the tab bar. The outgoing set is saved first, so the
@@ -40,16 +40,16 @@ pub async fn focus_project(
         return Ok(());
     }
     if let Some(current) = workspace.project_id() {
-        chrome.project_tabs.focus(current);
+        chrome.focus_project(current);
     }
-    workspace.persist_workspace(chrome.tabs())?;
+    workspace.persist_workspace(chrome.tabs(), &chrome.viewer)?;
     workspace.restore_project(project_id)?;
     workspace.fetch_roster().await?;
     workspace.attach_ready_panes().await?;
     // The new project's sessions and runs arrive from a background
     // refetch; the switch itself never waits on git status.
     workspace.request_focused_sessions();
-    chrome.project_tabs.focus(project_id);
+    chrome.focus_project(project_id);
     chrome.sidebar.expanded_project = Some(project_id.to_owned());
     sync_live_chrome(workspace, chrome);
     save_client_session(workspace, chrome)?;
@@ -82,7 +82,8 @@ pub async fn open_agent_in_new_tab(
         return Ok(());
     };
     if !chrome.focus_pane(pane) {
-        chrome.open_tab(pane, workspace.pane(pane).display_name());
+        let terminal_id = workspace.pane(pane).terminal_id.clone();
+        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None).await?;
     }
     focus_live_pane(workspace, pane).await
 }
@@ -98,7 +99,8 @@ pub(super) async fn reveal_agent(
         return Ok(None);
     };
     if !chrome.focus_pane(pane) {
-        chrome.open_tab(pane, workspace.pane(pane).display_name());
+        let terminal_id = workspace.pane(pane).terminal_id.clone();
+        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None).await?;
     }
     Ok(Some(pane))
 }
@@ -111,7 +113,9 @@ pub(super) async fn focus_terminal(
     terminal_id: &str,
 ) -> Result<(), FrameError> {
     let pane = terminal_pane(workspace, terminal_id).await?;
-    chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+    if !chrome.focus_pane(pane) {
+        place_live_terminal(workspace, chrome, Placement::SplitRight, terminal_id, None).await?;
+    }
     focus_live_pane(workspace, pane).await
 }
 
@@ -195,7 +199,8 @@ pub async fn open_worktree(
     }
     let before = chrome.tabs().tabs.len();
     let cwd = Some(path.to_string_lossy().into_owned());
-    spawn_live_shell(workspace, chrome, Placement::Tab, cwd).await?;
+    let worktree = Some(worktree_id.to_owned());
+    spawn_live_shell(workspace, chrome, Placement::Tab, cwd, worktree).await?;
     if chrome.tabs().tabs.len() > before {
         if let Some(tab) = chrome.active_tab_mut() {
             tab.worktree_id = Some(worktree_id.to_owned());
@@ -204,29 +209,21 @@ pub async fn open_worktree(
     Ok(())
 }
 
-/// Fill the focused project's tab bar when it is empty: from its snapshot
-/// when one was read, else with one shell. A workspace whose snapshot store
-/// was never consulted (no Gobby home) is left alone.
+/// Fill the focused project's tab bar when it is empty. The daemon's tabs
+/// were projected by the chrome sync, so an empty bar means the workspace
+/// has none for the project, and one shell opens its first tab. A
+/// workspace with no Gobby home (nothing to restore) is left alone.
 pub(super) async fn restore_focused(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
     if let Some(project) = workspace.project_id() {
-        chrome.project_tabs.focus(project);
+        chrome.focus_project(project);
     }
-    if !chrome.tabs().tabs.is_empty() {
+    if !chrome.tabs().tabs.is_empty() || workspace.gobby_home().is_none() {
         return Ok(());
     }
-    let Some(snapshot) = workspace.saved_snapshot() else {
-        return Ok(());
-    };
-    *chrome.tabs_mut() = TabSet::from_snapshot(snapshot, |terminal_id| {
-        workspace.pane_for_terminal(terminal_id)
-    });
-    if chrome.tabs().tabs.is_empty() {
-        spawn_live_terminal(workspace, chrome, Placement::Tab).await?;
-    }
-    Ok(())
+    spawn_live_terminal(workspace, chrome, Placement::Tab).await
 }
 
 /// Write the focused project's snapshot when it differs from the last one
@@ -236,7 +233,7 @@ pub(super) fn persist_if_changed(
     chrome: &Chrome,
     last: &mut Option<WorkspaceSnapshot>,
 ) -> std::io::Result<()> {
-    let Some(snapshot) = workspace.workspace_snapshot(chrome.tabs()) else {
+    let Some(snapshot) = workspace.workspace_snapshot(chrome.tabs(), &chrome.viewer) else {
         return Ok(());
     };
     if last.as_ref() == Some(&snapshot) {
@@ -424,6 +421,15 @@ pub async fn remove_worktree(
     if live > 0 {
         set_dialog_error(chrome, format!("{} still live", plural(live, "terminal")));
         return Ok(());
+    }
+    // The worktree's terminals are gone: its daemon tabs go with them.
+    let tabs: Vec<String> = tagged_tabs(chrome, &project_id, worktree_id)
+        .iter()
+        .filter(|tab| !tab.is_local())
+        .map(|tab| tab.id.clone())
+        .collect();
+    for tab in tabs {
+        send_workspace_op(workspace, chrome, WorkspaceOp::TabClose { tab, node: None }).await?;
     }
     match workspace.daemon().delete_worktree(worktree_id).await {
         Ok(()) => {

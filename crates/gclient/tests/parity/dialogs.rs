@@ -356,11 +356,9 @@ fn modal_workspace() -> Workspace {
 }
 
 fn pane_rects(chrome: &Chrome, area: Rect) -> Vec<Rect> {
-    chrome
-        .active_tab()
-        .expect("active tab")
-        .layout
-        .panes(area)
+    let tab = chrome.active_tab().expect("active tab");
+    tab.layout
+        .panes(area, chrome.tab_focus(tab))
         .into_iter()
         .map(|pane| pane.rect)
         .collect()

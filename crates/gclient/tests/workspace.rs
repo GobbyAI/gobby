@@ -4,21 +4,26 @@ mod mock_daemon;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use gobby_client::daemon::LiveDaemon;
+use gobby_client::app::ViewerState;
+use gobby_client::daemon::{
+    LayoutAxis, LayoutNode, LiveDaemon, WorkspaceEvent, WorkspaceEventKind, WorkspaceSnapshot,
+};
 use gobby_client::frame_source::{
     AttachLocator, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
     UnixSocketFrameSource,
 };
 use gobby_client::ui::{render_workspace_with, Chrome};
 use gobby_client::Workspace;
+use gobby_terminal::layout::{self, TileLayout};
 use gobby_terminal::protocol::{
     read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
     PaneLocator, PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
 use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
+use ratatui::layout::{Direction, Rect};
 use ratatui::Terminal;
 use serde_json::json;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use tokio::net::UnixStream;
@@ -628,4 +633,225 @@ async fn frame_modes_follow_the_latest_frame() {
         .expect("latest frame without modes");
     assert_eq!(latest, &without_modes);
     assert_eq!(latest.modes.mouse_tracking(), MouseTracking::Off);
+}
+
+// ---- plan gclient-workspaces 4.2.2 / 4.2.3: viewer-local state over a daemon layout ----
+
+const WS_PROJECT: &str = "33333333-3333-4333-8333-333333333333";
+const WS_TAB_FIRST: &str = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const WS_TAB_SECOND: &str = "tab-2222-2222-4222-8222-222222222222";
+const WS_TERMINAL_A: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const WS_TERMINAL_B: &str = "22222222-2222-4222-8222-222222222222";
+
+/// The golden snapshot plus a second tab whose one pane names a terminal the
+/// roster has not delivered.
+fn two_tab_snapshot() -> WorkspaceSnapshot {
+    let mut snapshot: WorkspaceSnapshot = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
+    ))
+    .expect("workspace snapshot fixture");
+    let mut second = snapshot.tabs[0].clone();
+    second.id = WS_TAB_SECOND.into();
+    second.reference = 2;
+    second.position = 1;
+    second.title = Some("second".into());
+    second.focused_pane_id = Some("pane-3".into());
+    second.layout = LayoutNode::Pane {
+        pane_id: "pane-3".into(),
+    };
+    snapshot.tabs.push(second);
+    let mut pane = snapshot.panes[0].clone();
+    pane.id = "pane-3".into();
+    pane.tab_id = WS_TAB_SECOND.into();
+    pane.reference = 1;
+    pane.terminal_id = Some("33333333-3333-4333-8333-333333333333".into());
+    snapshot.panes.push(pane);
+    snapshot
+}
+
+/// A `pane.added` on the first tab: a third pane, split under the second, on
+/// a terminal the roster has not delivered.
+fn pane_added_event(snapshot: &WorkspaceSnapshot) -> WorkspaceEvent {
+    let mut tab = snapshot.tabs[0].clone();
+    let LayoutNode::Split {
+        axis,
+        ratio,
+        children,
+    } = tab.layout.clone()
+    else {
+        panic!("the fixture tab is a split");
+    };
+    let [first, second] = *children;
+    tab.layout = LayoutNode::Split {
+        axis,
+        ratio,
+        children: Box::new([
+            first,
+            LayoutNode::Split {
+                axis: LayoutAxis::Vertical,
+                ratio: 0.5,
+                children: Box::new([
+                    second,
+                    LayoutNode::Pane {
+                        pane_id: "pane-4".into(),
+                    },
+                ]),
+            },
+        ]),
+    };
+    let mut pane = snapshot.panes[0].clone();
+    pane.id = "pane-4".into();
+    pane.reference = 3;
+    pane.terminal_id = Some("44444444-4444-4444-8444-444444444444".into());
+    WorkspaceEvent {
+        kind: WorkspaceEventKind::PaneAdded,
+        workspace_id: snapshot.workspace.id.clone(),
+        project_id: Some(WS_PROJECT.into()),
+        workspace: None,
+        tabs: vec![tab],
+        panes: vec![pane],
+        daemon_epoch: snapshot.snapshot.daemon_epoch.clone(),
+        seq: snapshot.snapshot.seq + 1,
+        timestamp: "2026-01-01T00:00:01+00:00".into(),
+    }
+}
+
+fn tab_ids(chrome: &Chrome) -> Vec<String> {
+    chrome
+        .tabs()
+        .tabs
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect()
+}
+
+/// The daemon pane ids behind the active tab's slots, in layout order.
+fn daemon_panes(chrome: &Chrome) -> Vec<String> {
+    let tab = chrome.active_tab().expect("active tab");
+    tab.layout
+        .pane_ids()
+        .into_iter()
+        .map(|slot| {
+            chrome
+                .viewer
+                .panes
+                .daemon_id(slot)
+                .expect("interned slot")
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn two_viewers_share_layout_and_keep_their_own_focus() {
+    let mut ws = Workspace::scripted();
+    let a = ws
+        .open_terminal(WS_TERMINAL_A, "native", "epoch-a")
+        .expect("open a");
+    let b = ws
+        .open_terminal(WS_TERMINAL_B, "native", "epoch-b")
+        .expect("open b");
+    let snapshot = two_tab_snapshot();
+    let event = pane_added_event(&snapshot);
+    ws.apply_workspace_snapshot(snapshot);
+
+    let mut left = Chrome::dark();
+    let mut right = Chrome::dark();
+    for chrome in [&mut left, &mut right] {
+        chrome.focus_project(WS_PROJECT);
+        let unresolved = chrome.project_workspace(&ws, WS_PROJECT);
+        assert_eq!(
+            unresolved,
+            vec!["33333333-3333-4333-8333-333333333333".to_string()],
+            "the second tab's terminal is not on the roster yet"
+        );
+    }
+
+    // Both windows show the daemon's tabs and panes, and seed focus from the row hints.
+    assert_eq!(tab_ids(&left), vec![WS_TAB_FIRST, WS_TAB_SECOND]);
+    assert_eq!(tab_ids(&right), tab_ids(&left));
+    assert_eq!(daemon_panes(&left), daemon_panes(&right));
+    assert_eq!(
+        left.active_tab().map(|tab| tab.id.as_str()),
+        Some(WS_TAB_FIRST)
+    );
+    assert_eq!(
+        left.focused_pane(),
+        Some(b),
+        "focused_pane_id names terminal b"
+    );
+    assert_eq!(right.focused_pane(), Some(b));
+    let second = &left.tabs().tabs[1];
+    assert_eq!(second.layout.pane_count(), 1);
+    assert!(second.slots.is_empty(), "an unresolved slot renders empty");
+
+    // Focus, zoom, and the active tab belong to each window.
+    assert!(left.focus_pane(a));
+    left.toggle_zoom();
+    assert!(right.activate_tab(1));
+    assert_eq!(left.focused_pane(), Some(a));
+    assert_eq!(
+        right.focused_pane(),
+        None,
+        "the second tab's only slot has no terminal yet"
+    );
+    assert!(left.is_zoomed());
+    assert!(!right.is_zoomed());
+    assert_eq!(
+        left.active_tab().map(|tab| tab.id.as_str()),
+        Some(WS_TAB_FIRST)
+    );
+    assert_eq!(
+        right.active_tab().map(|tab| tab.id.as_str()),
+        Some(WS_TAB_SECOND)
+    );
+
+    // A daemon event re-projects both windows; the layout is shared, the viewer state kept.
+    assert!(ws.apply_workspace_event(&event));
+    for chrome in [&mut left, &mut right] {
+        chrome.project_workspace(&ws, WS_PROJECT);
+        assert_eq!(chrome.tabs().tabs[0].layout.pane_count(), 3);
+    }
+    assert_eq!(left.focused_pane(), Some(a));
+    assert!(left.is_zoomed());
+    assert_eq!(
+        right.active_tab().map(|tab| tab.id.as_str()),
+        Some(WS_TAB_SECOND)
+    );
+    right.activate_tab(0);
+    assert_eq!(right.focused_pane(), Some(b));
+    assert_eq!(daemon_panes(&left), daemon_panes(&right));
+    assert_eq!(
+        daemon_panes(&left).last().map(String::as_str),
+        Some("pane-4")
+    );
+}
+
+#[test]
+fn pane_ids_are_interned_without_collision() {
+    let (mut layout, root) = TileLayout::new();
+    let mut left = ViewerState::default();
+    let mut right = ViewerState::default();
+
+    let left_one = left.panes.intern("pane-1");
+    let right_one = right.panes.intern("pane-1");
+    assert_eq!(
+        left.panes.intern("pane-1"),
+        left_one,
+        "interning is stable per window"
+    );
+    assert_eq!(left.panes.slot("pane-1"), Some(left_one));
+    assert_eq!(left.panes.daemon_id(left_one), Some("pane-1"));
+    assert_eq!(left.panes.slot("pane-9"), None);
+
+    let split = layout.split_focused(root, Direction::Horizontal);
+    let left_two = left.panes.intern("pane-2");
+    let minted: HashSet<layout::PaneId> = [root, split, left_one, right_one, left_two]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        minted.len(),
+        5,
+        "interned ids never collide with layout-allocated ones"
+    );
 }
