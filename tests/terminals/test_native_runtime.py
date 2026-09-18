@@ -440,6 +440,36 @@ async def test_terminate_host_id_requires_matching_epoch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminate_reaps_an_orphan_whose_host_epoch_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, host = _runtime()
+    reaped: list[tuple[dict[str, Any], float]] = []
+
+    def record_reap(process: Any, *, grace_seconds: float, now: float | None = None) -> None:
+        reaped.append((dict(process), grace_seconds))
+
+    monkeypatch.setattr("gobby.terminals.native_runtime.reap_recorded_process", record_reap)
+
+    orphan = _native_terminal(host)
+    orphan.host_epoch = "epoch-before-respawn"
+    orphan.process = {"pgid": 4242, "start_time": 17.0}
+    await runtime.terminate(orphan, 0.25)
+
+    unrecorded = _native_terminal(host)
+    unrecorded.host_epoch = None
+    unrecorded.process = None
+    await runtime.terminate(unrecorded, 0.25)
+
+    assert reaped == [({"pgid": 4242, "start_time": 17.0}, 0.25)]
+    assert host.kills == []
+
+    await runtime.terminate(_native_terminal(host), 0.25)
+    assert host.kills == ["ht-1"]
+    assert len(reaped) == 1
+
+
+@pytest.mark.asyncio
 async def test_snapshot_metadata_survives_the_adapter() -> None:
     runtime, host = _runtime()
     terminal = _native_terminal(host)

@@ -13,6 +13,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from gobby.terminals.host_client import HostEpochChangedError
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.test_terminal_ws_golden import TERMINAL_ID, _server
@@ -57,6 +58,32 @@ async def test_kill_orphaned_row_marks_exited_and_broadcasts() -> None:
         "success": True,
         "terminal_id": TERMINAL_ID,
         "request_id": "kill-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_kill_answers_a_runtime_failure_instead_of_dropping_the_reply() -> None:
+    server, manager, runtime = _server(backend="native")
+    manager.row.state = "orphaned"
+
+    async def terminate(row: Any, grace_seconds: float) -> None:
+        raise HostEpochChangedError("host_epoch_changed")
+
+    cast(Any, runtime).terminate = terminate
+    broadcast = AsyncMock()
+    cast(Any, server).broadcast_tmux_session_event = broadcast
+
+    reply = await _kill(server, TERMINAL_ID)
+
+    assert manager.row.state == "orphaned"
+    broadcast.assert_not_awaited()
+    assert reply == {
+        "type": "terminal_kill_result",
+        "success": False,
+        "terminal_id": TERMINAL_ID,
+        "request_id": "kill-1",
+        "code": "kill_failed",
+        "reason": "host_epoch_changed",
     }
 
 

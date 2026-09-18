@@ -28,6 +28,7 @@ from gobby.terminals.host_client import (
     encode_control_line,
 )
 from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
+from gobby.terminals.host_reap import reap_recorded_process
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.runtime import (
@@ -694,6 +695,17 @@ class NativeTerminalRuntime:
             await self._client.resize(self._host_id(terminal), rows, cols)
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        # An orphan's host epoch is gone: no host can address its PTY any more,
+        # and the failed epoch check used to escape terminal_kill, so the
+        # destroy-orphans dialog never worked (#22530). Reap the recorded
+        # process group instead and let the caller mark the row exited.
+        current_epoch = str(getattr(self._client, "host_epoch", "") or "")
+        if not terminal.host_epoch or terminal.host_epoch != current_epoch:
+            if terminal.process:
+                await asyncio.to_thread(
+                    reap_recorded_process, terminal.process, grace_seconds=grace_seconds
+                )
+            return
         expected_epoch = self._require_current_epoch(terminal.host_epoch)
         host_terminal_id = self._host_id(terminal)
         grace_ms = max(0, int(grace_seconds * 1000)) or 50

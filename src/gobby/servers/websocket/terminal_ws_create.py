@@ -169,13 +169,20 @@ class TerminalCreateMixin:
             else manager.get(terminal_id)
         )
         transitioned = None
+        failure: str | None = None
         if (
             row is not None
             and manager is not None
             and getattr(self, "terminal_runtime_registry", None) is not None
             and row.state in {"live", "orphaned"}
         ):
-            transitioned = await kill_terminal(manager, self.terminal_runtime_registry, row)
+            # A runtime failure must still answer the request: an escaped
+            # exception left the client waiting on a reply that never came.
+            try:
+                transitioned = await kill_terminal(manager, self.terminal_runtime_registry, row)
+            except Exception as exc:
+                logger.warning("terminal_kill failed for %s", row.id, exc_info=True)
+                failure = str(exc) or type(exc).__name__
             if transitioned is not None:
                 await self.broadcast_tmux_session_event("killed", terminal_id=row.id)
         payload: dict[str, Any] = {
@@ -184,6 +191,8 @@ class TerminalCreateMixin:
             "terminal_id": terminal_id,
             "request_id": data.get("request_id"),
         }
-        if transitioned is None:
+        if failure is not None:
+            payload.update(code="kill_failed", reason=failure)
+        elif transitioned is None:
             payload.update(code="terminal_not_live", reason="terminal is not live")
         await self._send_json(websocket, payload)
