@@ -8774,6 +8774,53 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
     mock.shutdown().await;
 }
 
+/// A `pane.close` the daemon already did (it reaped the killed pane) is
+/// refused `not_found`; that is not an error either.
+#[tokio::test]
+async fn an_unknown_pane_close_stays_quiet() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // The fixture focuses the external pane; cycle to the owned one.
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        wait_until(|| workspace_ops(&mock, "pane.close").len() == 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        chrome
+            .status_message
+            .as_deref()
+            .filter(|message| message.contains("has id")),
+        None,
+        "a not_found refusal of the follow-up pane.close is not an error"
+    );
+    mock.shutdown().await;
+}
+
 /// Only `not_found` is tolerated on a close: any other refusal of the same
 /// op still tells the user why the layout did not change.
 #[tokio::test]
