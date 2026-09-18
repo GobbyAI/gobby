@@ -56,6 +56,9 @@ writing, analysis, image generation, maintenance, merge work, and default
 interactive use. Inspect installed rows for effective enablement and overrides.
 Retired bundled agents are removed from this tree; sync
 soft-deletes existing installed bundled rows when their YAML no longer exists.
+That removal is reversible: sync records it on the row, so returning the YAML
+restores the row on the next sync even when its content is unchanged. A row you
+delete yourself stays deleted across syncs.
 
 Use these tools to inspect or change definitions:
 

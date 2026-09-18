@@ -36,6 +36,7 @@ from gobby.utils.json_helpers import json_dumps
 
 _TABLE = "agent_definitions"
 _WHAT = "Agent definition"
+SYNC_ORPHAN_TAG = "sync-orphan"
 _STEP_BODY_KEYS = ("steps", "step_variables", "exit_condition", "step_workflow")
 _UPDATE_FIELDS = frozenset({"name", "description", "enabled", "definition_json", "tags"})
 _SYNC_FIELDS = _UPDATE_FIELDS
@@ -415,10 +416,32 @@ class AgentDefinitionManager:
             touch_revision(txn, "agents")
         return self.get(definition_id)
 
-    def delete(self, definition_id: str) -> bool:
+    def delete(self, definition_id: str, *, sync_orphan: bool = False) -> bool:
+        """Soft-delete a definition, recording which kind of deletion removed it.
+
+        A sweep deletion (``sync_orphan=True``, from the bundled-template orphan
+        sweep) is reversible: sync restores the row when its template returns. A
+        deliberate deletion clears the marker and stays sticky across syncs.
+        """
         with self.db.transaction() as txn:
+            current = txn.execute(
+                "SELECT tags FROM agent_definitions "
+                "WHERE id = %s AND deleted_at IS NULL FOR UPDATE",
+                (definition_id,),
+            ).fetchone()
+            if current is None:
+                return False
             deleted = soft_delete_definition(txn, _TABLE, definition_id)
             if deleted:
+                tags = decode_json_list(current["tags"]) or []
+                desired = [tag for tag in tags if tag != SYNC_ORPHAN_TAG]
+                if sync_orphan:
+                    desired.append(SYNC_ORPHAN_TAG)
+                if desired != tags:
+                    txn.execute(
+                        "UPDATE agent_definitions SET tags = %s WHERE id = %s",
+                        (encode_json_list(desired), definition_id),
+                    )
                 touch_revision(txn, "agents")
         return deleted
 

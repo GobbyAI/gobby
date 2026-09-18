@@ -13,6 +13,7 @@ from gobby.storage.definitions import (
     get_definitions_revision,
     register_revision_listener,
 )
+from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
 _PROJECT = str(uuid4())
@@ -147,6 +148,29 @@ def test_hard_delete_cascades_child(definition_db: PostgresHubDatabase) -> None:
         (child_id,),
     )
     assert leftover == {"n": 0}
+
+
+def test_delete_records_which_deletion_removed_the_row(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    manager = _mgr(definition_db)
+    created = manager.upsert_with_steps(
+        "coder", _body(), _STEPS, source="installed", tags=["gobby"]
+    )
+
+    assert manager.delete(created.id, sync_orphan=True) is True
+    swept = manager.get(created.id, include_deleted=True)
+    assert swept.tags == ["gobby", SYNC_ORPHAN_TAG]
+
+    manager.restore(created.id)
+    assert manager.delete(created.id) is True
+    deliberate = manager.get(created.id, include_deleted=True)
+    assert deliberate.tags == ["gobby"]
+
+    # An already-deleted row is left untouched.
+    assert manager.delete(created.id, sync_orphan=True) is False
+    unchanged = manager.get(created.id, include_deleted=True)
+    assert unchanged.tags == ["gobby"]
 
 
 def test_soft_delete_restore_preserves_child(definition_db: PostgresHubDatabase) -> None:
