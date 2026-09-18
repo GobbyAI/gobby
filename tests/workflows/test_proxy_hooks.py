@@ -666,6 +666,153 @@ async def test_rtk_rewrite_that_detaches_the_shell_context_falls_back(
     assert response.modified_input is None
 
 
+@pytest.mark.parametrize(
+    ("command", "rewrite"),
+    [
+        pytest.param(
+            "npx vitest run tests/workflows/x.test.ts",
+            "rtk vitest tests/workflows/x.test.ts",
+            id="npx-vitest-run",
+        ),
+        pytest.param(
+            "pnpm exec vitest run tests/workflows/x.test.ts",
+            "rtk vitest tests/workflows/x.test.ts",
+            id="pnpm-exec-vitest-run",
+        ),
+        pytest.param(
+            "npm exec vitest run tests/workflows/x.test.ts",
+            "rtk vitest tests/workflows/x.test.ts",
+            id="npm-exec-vitest-run",
+        ),
+        pytest.param("npx tsc --noEmit", "rtk tsc --noEmit", id="npx-tsc"),
+        pytest.param(
+            "cd web && npx vitest run src/hooks",
+            "cd web && rtk vitest src/hooks",
+            id="cd-prefixed-npx-vitest-run",
+        ),
+        pytest.param(
+            "GOBBY_TEST_PROTECT=1 npx vitest run tests/workflows/x.test.ts",
+            "GOBBY_TEST_PROTECT=1 rtk vitest tests/workflows/x.test.ts",
+            id="env-prefixed-npx-vitest-run",
+        ),
+        pytest.param(
+            "npx tsc --noEmit && npx vitest run tests/workflows/x.test.ts",
+            "npx rtk tsc --noEmit && rtk vitest tests/workflows/x.test.ts",
+            id="second-segment-launcher-dropped",
+        ),
+    ],
+)
+async def test_rtk_rewrite_that_drops_a_package_manager_launcher_falls_back(
+    command: str,
+    rewrite: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_RTK_MODE", "keep_context")
+    monkeypatch.setenv("FAKE_RTK_REWRITE", rewrite)
+    _create_rule(manager, "proxy-launcher", [_proxy_effect()], priority=10)
+
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+
+    assert response.modified_input is None
+
+
+@pytest.mark.parametrize(
+    ("command", "rewrite"),
+    [
+        pytest.param(
+            "npx vitest run tests/workflows/x.test.ts",
+            "npx rtk vitest tests/workflows/x.test.ts",
+            id="npx-vitest-run",
+        ),
+        pytest.param(
+            "cd web && npx vitest run src/hooks",
+            "cd web && npx rtk vitest src/hooks",
+            id="cd-prefixed-npx-vitest-run",
+        ),
+        pytest.param(
+            "GOBBY_TEST_PROTECT=1 npx vitest run tests/workflows/x.test.ts",
+            "GOBBY_TEST_PROTECT=1 npx rtk vitest tests/workflows/x.test.ts",
+            id="env-prefixed-npx-vitest-run",
+        ),
+        pytest.param(
+            "npx tsc --noEmit && npx vitest run tests/workflows/x.test.ts",
+            "npx rtk tsc --noEmit && npx rtk vitest tests/workflows/x.test.ts",
+            id="every-segment-keeps-its-launcher",
+        ),
+        # RTK 0.49.0 wraps a launcher it does not special-case, so the launcher
+        # survives inside the wrapper rather than ahead of it.
+        pytest.param(
+            "bunx vitest run tests/x.test.ts",
+            "rtk bunx vitest run tests/x.test.ts",
+            id="bunx-wrapped-by-rtk",
+        ),
+        pytest.param(
+            "npx vitest run tests/x.test.ts",
+            "rtk npx vitest run tests/x.test.ts",
+            id="npx-wrapped-by-rtk",
+        ),
+        pytest.param(
+            "pnpm install",
+            "rtk pnpm install",
+            id="pnpm-install-wrapped-by-rtk",
+        ),
+        pytest.param(
+            "pnpm vitest run tests/x.test.ts",
+            "pnpm rtk vitest tests/x.test.ts",
+            id="pnpm",
+        ),
+        pytest.param(
+            "pnpm exec vitest run tests/x.test.ts",
+            "pnpm exec rtk vitest tests/x.test.ts",
+            id="pnpm-exec",
+        ),
+        pytest.param(
+            "pnpm dlx some-cli --check",
+            "pnpm dlx rtk some-cli --check",
+            id="pnpm-dlx",
+        ),
+        pytest.param(
+            "npm exec tsc --noEmit",
+            "npm exec rtk tsc --noEmit",
+            id="npm-exec",
+        ),
+        pytest.param(
+            "yarn vitest run tests/x.test.ts",
+            "yarn rtk vitest tests/x.test.ts",
+            id="yarn",
+        ),
+        pytest.param(
+            "yarn dlx some-cli --check",
+            "yarn dlx rtk some-cli --check",
+            id="yarn-dlx",
+        ),
+        pytest.param(
+            "bun x vitest run tests/x.test.ts",
+            "rtk bun x vitest run tests/x.test.ts",
+            id="bun-x-wrapped-by-rtk",
+        ),
+    ],
+)
+async def test_rtk_rewrite_that_keeps_a_package_manager_launcher_applies(
+    command: str,
+    rewrite: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_RTK_MODE", "keep_context")
+    monkeypatch.setenv("FAKE_RTK_REWRITE", rewrite)
+    _create_rule(manager, "proxy-launcher", [_proxy_effect()], priority=10)
+
+    response = await RuleEngine(db).evaluate(_event(command), SESSION_ID, {})
+
+    assert response.modified_input == {"command": rewrite}
+
+
 @pytest.mark.parametrize("command", ["git add -A", "git commit -m wip"])
 async def test_claude_git_stays_bare_in_linked_worktree(
     command: str,

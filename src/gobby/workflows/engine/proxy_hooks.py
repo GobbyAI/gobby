@@ -35,6 +35,23 @@ _SHELL_CONTEXT_PREFIX = re.compile(
     r"|cd(?:[ \t][^;&|]*|$)"
     r")"
 )
+# Shell separators that bound the command segments whose leading executable a
+# rewrite must preserve.
+_SHELL_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|&()\n]")
+# Package-manager launchers that resolve the wrapped executable from the
+# project instead of a global install. RTK drops the launcher when it rewrites
+# the wrapped command, which lets the shell select a globally installed
+# executable (a global Vitest instead of ``node_modules/.bin/vitest``).
+_PACKAGE_MANAGER_LAUNCHER = re.compile(
+    r"^\s*("
+    r"npx"
+    r"|bunx"
+    r"|pnpm(?:[ \t]+(?:exec|dlx))?"
+    r"|npm[ \t]+exec"
+    r"|yarn(?:[ \t]+dlx)?"
+    r"|bun[ \t]+x"
+    r")(?=[ \t]|$)"
+)
 _RTK_DIAGNOSTIC_PREFIX = re.compile(r"^\s*(?:\[rtk\s*:|rtk(?:\s+error)?\s*:)", re.IGNORECASE)
 _RTK_UNSUPPORTED_JQ_REWRITE = re.compile(r"(?:^|\s)rtk\s+(?:\S*/)?jq(?:\s|$)")
 _RTK_GIT_REWRITE = re.compile(r"(?:^|[\s;&|(])rtk\s+(?:\S*/)?git(?:\s|$)")
@@ -57,6 +74,28 @@ def _detaches_shell_context(command: str, transformed: str) -> bool:
     ``cd`` would run the command in a different environment or directory.
     """
     return _shell_context(transformed) != _shell_context(command)
+
+
+def _drops_package_manager_launcher(command: str, transformed: str) -> bool:
+    """Report a rewrite that removes a segment's package-manager launcher.
+
+    ``npx vitest run tests/x.test.ts`` must keep its launcher: the launcher
+    is what resolves the project-local binary, so a rewrite that drops it (a
+    bare ``rtk vitest``, even after a leading ``cd`` or environment assignment)
+    can select a globally installed executable instead.
+    """
+    rewritten_segments = _SHELL_SEGMENT_SPLIT.split(transformed)
+    for index, segment in enumerate(_SHELL_SEGMENT_SPLIT.split(command)):
+        context = _SHELL_CONTEXT_PREFIX.match(segment)
+        remainder = segment[context.end() :] if context else segment
+        launcher = _PACKAGE_MANAGER_LAUNCHER.match(remainder)
+        if launcher is None:
+            continue
+        rewritten = rewritten_segments[index] if index < len(rewritten_segments) else ""
+        kept = re.search(rf"(?:^|[ \t]){re.escape(launcher.group(1))}(?=[ \t]|$)", rewritten)
+        if kept is None:
+            return True
+    return False
 
 
 def _is_plausible_rewrite(command: str) -> bool:
@@ -334,6 +373,13 @@ class ProxyHooksMixin:
                 "proxy_hook[%s]: RTK detached the shell context, keeping %s",
                 invocation.row.name,
                 _shell_context(command),
+            )
+            return False
+        if _drops_package_manager_launcher(command, transformed):
+            logger.debug(
+                "proxy_hook[%s]: RTK dropped a package-manager launcher, keeping %s",
+                invocation.row.name,
+                command,
             )
             return False
         if _is_refused_worktree_git_rewrite(event, transformed):
