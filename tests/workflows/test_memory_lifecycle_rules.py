@@ -9,7 +9,6 @@ Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
-- remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
 - review-closed-task-memories-before-handoff: acknowledged block on before_tool set_handoff
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
@@ -53,7 +52,6 @@ MEMORY_RULES = {
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "check-memory-guidance-on-initial-stop",
-    "remind-memory-guidance-on-later-turns",
     "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
@@ -71,6 +69,7 @@ REMOVED_HELPER_RULES = {
     "require-memory-recall-before-turn-end",
     "spawn-memory-recall-helper",
     "load-memory-guidance-on-initial-turn",
+    "remind-memory-guidance-on-later-turns",
 }
 
 
@@ -384,59 +383,6 @@ class TestLayeredMemoryGuidance:
             },
         )
         assert evaluator.evaluate(block_when) is False
-
-    def test_later_reminder_is_parent_only_and_deduplicated_per_turn(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("remind-memory-guidance-on-later-turns")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.resolved_effects[0].template == (
-            "Memory reminder: search `gobby-memory` before touching unfamiliar code; "
-            "record durable knowledge with a rationale. Most turns need no memory write.\n"
-        )
-        assert getattr(body.resolved_effects[0], "delivery", None) == "on_receipt"
-        assert body.resolved_effects[1].type == "set_variable"
-        assert body.resolved_effects[1].variable == "_memory_reminder_turn_seq"
-        assert getattr(body.resolved_effects[1], "delivery", None) == "on_receipt"
-
-        first = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": False,
-                    "_memory_initial_stop_checked": True,
-                    "parent_turn_seq": 8,
-                }
-            },
-            {},
-        )
-        duplicate = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": False,
-                    "_memory_initial_stop_checked": True,
-                    "parent_turn_seq": 8,
-                    "_memory_reminder_turn_seq": 8,
-                }
-            },
-            {},
-        )
-        spawned = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": True,
-                    "_memory_initial_stop_checked": True,
-                    "parent_turn_seq": 8,
-                }
-            },
-            {},
-        )
-
-        assert body.when is not None
-        assert first.evaluate(body.when) is True
-        assert duplicate.evaluate(body.when) is False
-        assert spawned.evaluate(body.when) is False
 
     @pytest.mark.asyncio
     async def test_first_turn_end_blocks_once_and_consumes_gate(self, db: HubDatabase) -> None:

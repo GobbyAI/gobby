@@ -6,7 +6,9 @@ Data source note (2026-08-26, #21009/#21011): automatic prompt-time recall
 retired; rows with that caller are the archived injection cohort. The live
 cohort is agent-driven search — `mcp_proxy.memory.search_memories` and
 `mcp_proxy.memory.review_task_memories` requests (§2, §3.1) — and the search
-tool writes delivery outcomes for the hits it returns (§5.1).
+tool writes delivery outcomes for the hits it returns (§5.1). Rule-driven
+surfacing (`surface_memories`) logs its requests under caller `memory.surface`,
+which is not shadow-eligible, so they are never judged or fit.
 Owners: memory subsystem
 Consumers: #17193 (retrospective judge + ablation calibration), #17195 (digest
 forward labels), #17196 (hub tables + injection-outcome capture), #17197

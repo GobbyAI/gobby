@@ -13,8 +13,8 @@ ROOT = (
 def test_memory_skill_is_search_first() -> None:
     content = " ".join((ROOT / "overview.md").read_text().split())
     assert (
-        "Search the task subject before editing claimed work, before unfamiliar subsystem work, and before capture"
-        in content
+        "search the task subject before editing claimed work, before unfamiliar subsystem work,"
+        " before characterizing provider or runtime behavior, and before capture" in content
     )
     assert "never read or write provider-native memory files" in content
     assert "Most turns and completed tasks need no memory write" in content
@@ -23,6 +23,17 @@ def test_memory_skill_is_search_first() -> None:
     assert "`similarity` includes temporal decay" in search
     assert "`min_score` filters `undecayed_similarity`" in search
     assert "Treat hits as evidence, not authority" in search
+
+
+def test_memory_skill_describes_the_pushed_index() -> None:
+    content = " ".join((ROOT / "overview.md").read_text().split())
+    assert "Gobby may push a `<memory-index>` of ranked one-line hits" in content
+    assert "Each line ends in a `when:` clause drawn from the memory's rationale" in content
+    assert "with `get_memory` before acting, even when the code is familiar" in content
+    assert "Write the rationale as the `when:` clause a future session would match" in content
+    search = " ".join((ROOT / "search.md").read_text().split())
+    assert "The closing `when:` clause is the lead of the memory's rationale" in search
+    assert "it never replaces your own search" in search
 
 
 def test_memory_skill_reviews_after_task_close() -> None:

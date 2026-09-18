@@ -4,10 +4,18 @@ Load when prior project knowledge could change the work, or when capturing,
 reviewing, or maintaining durable knowledge. Use `gobby-memory` for persistent
 agent memory; never read or write provider-native memory files.
 
-Search the task subject before editing claimed work, before unfamiliar subsystem
-work, and before capture. Most turns and completed tasks need no memory write.
+At turn start, before `spawn_agent`, on task claim, and on handoff resume,
+Gobby may push a `<memory-index>` of ranked one-line hits. Each line ends in a
+`when:` clause drawn from the memory's rationale. Fetch any hit whose clause
+matches your situation with `get_memory` before acting, even when the code is
+familiar: the payoff is usually a prior decision or observed runtime behavior.
+
+Beyond the index, search the task subject before editing claimed work, before
+unfamiliar subsystem work, before characterizing provider or runtime behavior,
+and before capture. Most turns and completed tasks need no memory write.
 Memory is for facts, preferences, relationships, and finalized rationale that
-would take meaningful work to rediscover in an unrelated future session.
+would take meaningful work to rediscover in an unrelated future session. Write
+the rationale as the `when:` clause a future session would match.
 
 Discover tool names with `list_tools` only when unknown; fetch a known tool's
 schema before its first unleased call. Pass caller identity through the proxy's
@@ -36,4 +44,4 @@ concluding that knowledge is absent.
 
 Guide: [Memory system](../../../../../../../../docs/guides/memory.md).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-18_

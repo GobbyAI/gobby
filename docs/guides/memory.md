@@ -193,7 +193,8 @@ Recall telemetry maintenance lives under `gobby memory recall-signals`:
 subcommand's `--help` for required input paths, cohort selectors, and output
 options. Backfills and cohort supersession mutate telemetry. Filter by caller,
 label provenance, and dates when evaluating results; historical automatic recall
-is a different cohort from current explicit agent search.
+(`memory.recall`) and rule-driven surfacing (`memory.surface`) are separate
+cohorts from explicit agent search.
 
 ## MCP Tools
 
@@ -562,7 +563,7 @@ sequenceDiagram
 
     User->>RuleEngine: turn_start(prompt)
     RuleEngine->>Memory: surface_memories(prompt or last assistant message)
-    RuleEngine-->>Agent: ranked memory index, plus the skill or reminder
+    RuleEngine-->>Agent: ranked memory index, plus the memory skill in a new context epoch
     Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
     RuleEngine-->>Agent: post-close review request on turn_end or before set_handoff (when tasks closed)
@@ -582,7 +583,6 @@ Current bundled memory rules:
 | Rule | Event | Behavior |
 | --- | --- | --- |
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until `gobby:references/memory/overview.md` is loaded or its fetch failed. |
-| `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `judge-shadow-relevance-on-response` | `turn_end` | Judges pending shadow-memory recall candidates in the background. |
@@ -602,16 +602,35 @@ above read it.
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
 
-## Retrieval Is Agent-Driven
+## Retrieval: Pushed Index and Agent Search
+
+Memory reaches an agent two ways: a pushed index and the agent's own search.
 
 Automatic surfacing is bounded to the five moments in the rule table above:
 `surface-memories-on-turn-start` pushes one ranked memory index per parent turn,
 and the four tool-intent rules push one at an agent spawn, a claiming
-`create_task`, a successful `claim_task`, and a handoff read. Everything beyond
-those indexes is the agent's own search. Call `search_memories` after claiming
-unfamiliar work and whenever prior project knowledge could change the
-implementation. Judge each hit by its `similarity`, `type`, `rationale`, and
-content; search results are evidence, not authority.
+`create_task`, a successful `claim_task`, and a handoff read. Each index is a
+`<memory-index trigger="...">` block of up to five hits, one line per hit: rank,
+short ID, type, the searches that found it, its last-updated date, and the lead
+of its content. A hit with a rationale ends in `| when:` and the rationale's
+lead, so the line says when the memory applies. The index carries no scores;
+the live score band is too narrow to read. Surfacing searches with caller
+`memory.surface`, excludes review lessons, and injects nothing when the search
+fails or finds no hit.
+
+Fetch any hit whose `when:` clause matches the situation with `get_memory`
+before acting, even when the code is familiar: what pays off is usually a prior
+decision or an observed runtime behavior rather than code.
+
+Everything beyond those indexes is the agent's own search. Call
+`search_memories` after claiming unfamiliar work, before characterizing provider
+or runtime behavior, before recording a finding, and whenever prior project
+knowledge could change the implementation. Judge each hit by its `similarity`,
+`type`, `rationale`, and content; search results are evidence, not authority.
+
+The index prints each rationale as the `when:` clause, so write a rationale as
+the situation in which a future session needs the memory. Most turns need no
+memory write.
 
 Rule-delivered review lessons and surfaced memory indexes are deduplicated for
 one context epoch through
@@ -711,4 +730,4 @@ gobby memory rebuild-graph --wait
 - [MCP Tools](./mcp-tools.md) - Progressive discovery and internal MCP tool usage.
 - [Workflow Rules](./workflow-rules.md) - Semantic lifecycle events and rule effects.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-18_

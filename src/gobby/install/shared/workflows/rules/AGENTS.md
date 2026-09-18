@@ -12,7 +12,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `task-enforcement` | `task-enforcement/` | 18 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, and enforce valid task transitions |
 | `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 7 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
-| `memory-lifecycle` | `memory-lifecycle/` | 13 | Shadow relevance judging, initial-load recovery, reminders, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
+| `memory-lifecycle` | `memory-lifecycle/` | 12 | Shadow relevance judging, initial-load recovery, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey through feedback, once per epoch for task closures no submission has covered |
 | `context-handoff` | `context-handoff/` | 14 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |

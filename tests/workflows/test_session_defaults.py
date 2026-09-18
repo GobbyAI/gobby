@@ -218,7 +218,6 @@ variables:
             "enforce_tool_schema_check",
             "auto_inject_handoff",
             "_memory_initial_stop_checked",
-            "_memory_reminder_turn_seq",
             "_memory_pending_task_reviews",
             "_memory_task_review_records",
             "plan_memory_write_nudge_fired",
