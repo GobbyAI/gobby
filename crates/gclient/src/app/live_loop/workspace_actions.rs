@@ -311,6 +311,18 @@ fn shown_focus(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Option<Sho
     Some((project, tab.id.clone(), pane))
 }
 
+/// The focus the daemon stores for the workspace, in the shape this window
+/// sends, or `None` when the row names no project or no tab it still has.
+/// The loop starts its memo from it: a window that opens on the stored focus
+/// has nothing new to report.
+pub(super) fn stored_focus(workspace: &Workspace<LiveDaemon>) -> Option<ShownFocus> {
+    let model = workspace.workspace_model()?;
+    let project = model.workspace.focused_project_id.clone()?;
+    let tab_id = model.workspace.focused_tab_id.clone()?;
+    let pane = model.tab(&tab_id)?.focused_pane_id.clone();
+    Some((project, tab_id, pane))
+}
+
 /// Send the focus hints when the shown focus moved since `last`, so the
 /// next window on this workspace opens where this one left off. Focus,
 /// zoom and the active tab stay this window's; only the hint travels.

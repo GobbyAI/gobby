@@ -43,7 +43,7 @@ use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_l
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
 use projects::restore_focused;
-use workspace_actions::send_focus_hints_if_changed;
+use workspace_actions::{send_focus_hints_if_changed, stored_focus};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -197,7 +197,9 @@ pub async fn run_live_loop<B: Backend>(
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut sidebar_error_shown = false;
-    let mut last_focus_hints = None;
+    // The memo starts on the daemon's stored focus: the window opened on it,
+    // so the first iteration reports nothing unless it shows otherwise.
+    let mut last_focus_hints = stored_focus(workspace);
 
     // Draw once before the first select: input outranks the render tick, so
     // the earliest event, a click included, would otherwise route against an

@@ -8832,6 +8832,56 @@ async fn closing_a_tab_the_daemon_already_reaped_stays_quiet() {
     mock.shutdown().await;
 }
 
+/// A window that opens on the daemon's stored focus reports nothing: the
+/// hint it would send is the snapshot's own, and echoing it would only
+/// ripple a `focus_hints` event to every other window. The first real
+/// change, the spare tab under prefix+n, still goes out once.
+#[tokio::test]
+async fn startup_sends_no_focus_hint_for_the_snapshot_focus() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop_with(&mock, true).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_chord(&input_tx, KeyCode::Char('n'), KeyModifiers::NONE).await;
+        // The hint naming the spare tab says the loop applied the switch;
+        // a startup echo would already be on record ahead of it.
+        wait_until(|| {
+            workspace_ops(&mock, "workspace.set_focus_hints")
+                .iter()
+                .any(|op| op["tab"] == "mock-tab-4")
+        })
+        .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let hints: Vec<(Value, Value)> = workspace_ops(&mock, "workspace.set_focus_hints")
+        .iter()
+        .map(|op| (op["tab"].clone(), op["pane"].clone()))
+        .collect();
+    assert_eq!(
+        hints,
+        [(json!("mock-tab-4"), json!("mock-pane-5"))],
+        "only the tab switch reports a focus; the snapshot's own is never echoed"
+    );
+    mock.shutdown().await;
+}
+
 /// A `pane.close` the daemon already did (it reaped the killed pane) is
 /// refused `not_found`; that is not an error either.
 #[tokio::test]
