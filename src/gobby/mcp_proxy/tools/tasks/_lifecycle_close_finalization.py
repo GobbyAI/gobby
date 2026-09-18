@@ -39,7 +39,7 @@ from gobby.storage.tasks import Task, TaskHasOpenChildrenError, TaskStaleStateEr
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
-    foreign_owned_dirty_paths,
+    foreign_owned_dirty_paths_async,
 )
 from gobby.workflows.task_dirty_state import (
     committable_task_paths_async as _committable_task_paths,
@@ -107,10 +107,13 @@ async def _linked_commit_clean_proof_paths(
     project_id: str,
     repo_path: str,
 ) -> frozenset[str]:
-    """Exclude paths currently attributed to another active task owner."""
+    """Exclude paths another active task owner still holds uncommitted.
+
+    A foreign entry for a path that is clean here names committed work, so it is
+    released as stale and the path stays in this task's clean proof.
+    """
     try:
-        foreign_owned = await asyncio.to_thread(
-            foreign_owned_dirty_paths,
+        foreign_owned = await foreign_owned_dirty_paths_async(
             ctx.task_manager.db,
             session_id=owner_session_id,
             project_id=project_id,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import AsyncIterator
+from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,8 +20,13 @@ from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
+    TaskCleanProof,
+    ValidationResult,
+    evaluate_task_clean_proof,
+)
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult
@@ -193,7 +199,7 @@ def _create_foreign_attribution(
     external_id: str,
     path: str,
     expired: bool,
-) -> None:
+) -> tuple[Session, Task]:
     session = harness.session_manager.register(
         external_id=external_id,
         machine_id=require_machine_id(),
@@ -212,6 +218,22 @@ def _create_foreign_attribution(
     _attribute_path(harness, session_id=session.id, task=task, path=path)
     if expired:
         harness.session_manager.update_status(session.id, "expired")
+    return session, task
+
+
+@asynccontextmanager
+async def _recorded_clean_proof_paths() -> AsyncIterator[list[frozenset[str]]]:
+    """Record every path set close finalization asks Git to prove clean."""
+    proof_sets: list[frozenset[str]] = []
+
+    async def spy_evaluate(
+        ctx: RegistryContext, *, edited_paths: AbstractSet[str], repo_path: str
+    ) -> TaskCleanProof:
+        proof_sets.append(frozenset(edited_paths))
+        return await evaluate_task_clean_proof(ctx, edited_paths=edited_paths, repo_path=repo_path)
+
+    with patch.object(close_finalization, "evaluate_task_clean_proof", spy_evaluate):
+        yield proof_sets
 
 
 def _valid_review() -> ValidationResult:
@@ -355,6 +377,50 @@ async def test_released_target_path_reedited_by_foreign_task_does_not_block_clos
     assert result["closed"] is True
     assert result["clean_proof"] == {"status": "clean"}
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_stale_clean_foreign_entry_stays_in_clean_proof_and_releases(
+    close_harness: CloseHarness,
+) -> None:
+    """A clean foreign-named linked path is released and still proven clean (#22471)."""
+    foreign_session, foreign_task = _create_foreign_attribution(
+        close_harness,
+        external_id="stale-clean-foreign-owner",
+        path="target.py",
+        expired=False,
+    )
+    async with _recorded_clean_proof_paths() as proof_sets:
+        result = await _close_task(close_harness)
+
+    assert result["closed"] is True
+    assert result["clean_proof"] == {"status": "clean"}
+    assert frozenset({"target.py"}) in proof_sets
+    foreign_vars = close_harness.variable_manager.get_variables(foreign_session.id)
+    assert foreign_vars.get("task_edited_files", {}).get(foreign_task.id) is None
+    assert foreign_vars.get("task_edited_file_checkouts", {}).get(foreign_task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_dirty_foreign_entry_stays_dropped_from_clean_proof(
+    close_harness: CloseHarness,
+) -> None:
+    """Real uncommitted foreign dirt keeps its entry and stays out of the proof."""
+    foreign_session, foreign_task = _create_foreign_attribution(
+        close_harness,
+        external_id="dirty-foreign-owner",
+        path="target.py",
+        expired=False,
+    )
+    (close_harness.repo_path / "target.py").write_text('VALUE = "foreign dirt"\n', encoding="utf-8")
+    async with _recorded_clean_proof_paths() as proof_sets:
+        result = await _close_task(close_harness)
+
+    assert result["closed"] is True
+    assert result["clean_proof"] == {"status": "clean"}
+    assert frozenset({"target.py"}) not in proof_sets
+    foreign_vars = close_harness.variable_manager.get_variables(foreign_session.id)
+    assert foreign_vars["task_edited_files"][foreign_task.id] == ["target.py"]
 
 
 @pytest.mark.asyncio

@@ -209,7 +209,7 @@ async def test_foreign_task_and_worktree_ownership_are_refused(tmp_path: Path) -
                     "foreign.py",
                     True,
                     False,
-                    (ForeignPathOwner("foreign.py", "#99", "#99"),),
+                    (ForeignPathOwner("foreign.py", "#99", "#99", "session-99", "task-99"),),
                 )
             ],
             {"foreign.py"},
