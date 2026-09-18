@@ -2,11 +2,14 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
-use crate::app::project_tabs::{ProjectTabs, TabSet};
+use crate::app::project_tabs::{first_slot, ProjectTabs, TabSet};
 use crate::app::sidebar_model::{agent_row_state, pane_state, AgentEntry, SidebarModel};
+use crate::app::viewer_state::{local_tab_id, ViewerState};
+use crate::app::workspace_ops::WorkspaceModel;
 use crate::app::{
     short_terminal_id, ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace,
 };
+use crate::daemon::{LayoutAxis, LayoutNode};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
@@ -19,7 +22,7 @@ use crate::ui::settings::{ClientPrefs, SettingsState};
 use crate::ui::sidebar::{self, agent_label};
 use crate::ui::sidebar_rows;
 use crate::ui::status::Toast;
-use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
+use gobby_terminal::layout::{self, Node, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::collections::{BTreeMap, HashMap};
@@ -51,6 +54,8 @@ pub trait WorkspaceView {
     fn pane(&self, id: PaneId) -> &Pane;
     fn daemon_ready(&self) -> bool;
     fn gobby_home(&self) -> Option<&Path>;
+    /// The attached daemon workspace, once its snapshot arrived.
+    fn workspace_model(&self) -> Option<&WorkspaceModel>;
 }
 
 // Inherent methods win over trait methods in method-call syntax, so these
@@ -91,6 +96,10 @@ impl WorkspaceView for Workspace {
 
     fn gobby_home(&self) -> Option<&Path> {
         self.gobby_home()
+    }
+
+    fn workspace_model(&self) -> Option<&WorkspaceModel> {
+        self.workspace_model()
     }
 }
 
@@ -308,12 +317,12 @@ impl SidebarState {
 
 /// One tab: a BSP layout whose slots map to workspace panes.
 pub struct Tab {
+    /// The daemon tab id, or a `local_tab_id` for a tab a scripted path
+    /// opened. Focus and zoom live on `Chrome::viewer`, keyed by it.
+    pub id: String,
     pub title: String,
     pub layout: TileLayout,
-    /// The slot this window focuses inside `layout`.
-    pub focus: layout::PaneId,
     pub slots: HashMap<layout::PaneId, PaneId>,
-    pub zoomed: bool,
     /// The worktree this tab's shell was opened in, when a worktree row
     /// opened it; a second click on that row reveals this tab.
     pub worktree_id: Option<String>,
@@ -324,14 +333,7 @@ impl Tab {
         let (layout, slot) = TileLayout::new();
         let mut slots = HashMap::new();
         slots.insert(slot, first);
-        Self {
-            title: title.into(),
-            layout,
-            focus: slot,
-            slots,
-            zoomed: false,
-            worktree_id: None,
-        }
+        Self::with_layout(title, layout, slots)
     }
 
     /// A tab over a rebuilt layout whose slots are already mapped.
@@ -339,20 +341,19 @@ impl Tab {
         title: impl Into<String>,
         layout: TileLayout,
         slots: HashMap<layout::PaneId, PaneId>,
-        focus: layout::PaneId,
     ) -> Self {
         Self {
+            id: local_tab_id(),
             title: title.into(),
             layout,
-            focus,
             slots,
-            zoomed: false,
             worktree_id: None,
         }
     }
 
-    pub fn focused_pane(&self) -> Option<PaneId> {
-        self.slots.get(&self.focus).copied()
+    /// The first slot in layout order; the one a fresh tab shows.
+    pub fn first_slot(&self) -> layout::PaneId {
+        first_slot(self.layout.root())
     }
 
     pub fn slot_for(&self, pane: PaneId) -> Option<layout::PaneId> {
@@ -461,6 +462,8 @@ pub struct Chrome {
     pub sidebar: SidebarState,
     /// Every project's tabs; the focused project's set is the tab bar.
     pub project_tabs: ProjectTabs,
+    /// This window's focus, zoom, and active tab over the daemon layout.
+    pub viewer: ViewerState,
     pub tab_scroll: usize,
     pub tab_scroll_follow_active: bool,
     pub navigator: NavigatorState,
@@ -511,6 +514,7 @@ impl Chrome {
             mode: Mode::Terminal,
             sidebar: SidebarState::default(),
             project_tabs: ProjectTabs::default(),
+            viewer: ViewerState::default(),
             tab_scroll: 0,
             tab_scroll_follow_active: true,
             navigator: NavigatorState::default(),
@@ -561,17 +565,106 @@ impl Chrome {
         self.project_tabs.set_mut()
     }
 
+    /// The index of this window's active tab in the focused project's set.
+    pub fn active_index(&self) -> usize {
+        self.viewer
+            .active_index(self.project_tabs.key(), &self.tabs().tabs)
+    }
+
     pub fn active_tab(&self) -> Option<&Tab> {
-        self.tabs().active()
+        self.tabs().tabs.get(self.active_index())
     }
 
     pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs_mut().active_mut()
+        let index = self.active_index();
+        self.tabs_mut().tabs.get_mut(index)
+    }
+
+    /// Show tab `index`, remembering it for this project; out of range is
+    /// refused.
+    pub fn activate_tab(&mut self, index: usize) -> bool {
+        if index >= self.tabs().tabs.len() {
+            return false;
+        }
+        self.set_active_index(index);
+        self.tab_scroll_follow_active = true;
+        true
+    }
+
+    fn set_active_index(&mut self, index: usize) {
+        let project = self.project_tabs.key().to_string();
+        match self.tabs().tabs.get(index) {
+            Some(tab) => {
+                let id = tab.id.clone();
+                self.viewer.active_tab.insert(project, id);
+            }
+            None => {
+                self.viewer.active_tab.remove(&project);
+            }
+        }
+    }
+
+    /// Show `project_id`'s tab set. The first focus of all adopts the
+    /// anonymous set, so its active-tab hint moves to the project with it.
+    pub fn focus_project(&mut self, project_id: &str) {
+        if self.project_tabs.focused.is_none() {
+            if let Some(id) = self.viewer.active_tab.remove(self.project_tabs.key()) {
+                self.viewer.active_tab.insert(project_id.to_string(), id);
+            }
+        }
+        self.project_tabs.focus(project_id);
+    }
+
+    /// After tabs were removed: keep the active tab when it survived, else
+    /// show the tab now at `index`, clamped to the last one.
+    pub fn settle_active_index(&mut self, index: usize) {
+        let tabs = &self.tabs().tabs;
+        let survived = self
+            .viewer
+            .active_tab
+            .get(self.project_tabs.key())
+            .is_some_and(|id| tabs.iter().any(|tab| &tab.id == id));
+        if !survived {
+            self.set_active_index(index.min(tabs.len().saturating_sub(1)));
+        }
+    }
+
+    /// The slot this window focuses in `tab`.
+    pub fn tab_focus(&self, tab: &Tab) -> layout::PaneId {
+        self.viewer.focus_of(tab)
+    }
+
+    /// The focused slot of the active tab.
+    pub fn focus_slot(&self) -> Option<layout::PaneId> {
+        self.active_tab().map(|tab| self.viewer.focus_of(tab))
+    }
+
+    /// Focus `slot` in the active tab.
+    pub fn set_focus_slot(&mut self, slot: layout::PaneId) {
+        if let Some(id) = self.active_tab().map(|tab| tab.id.clone()) {
+            self.viewer.focus.insert(id, slot);
+        }
+    }
+
+    /// Whether this window shows the active tab zoomed to its focused slot.
+    pub fn is_zoomed(&self) -> bool {
+        self.active_tab()
+            .is_some_and(|tab| self.viewer.is_zoomed(tab))
+    }
+
+    pub fn toggle_zoom(&mut self) {
+        let Some(id) = self.active_tab().map(|tab| tab.id.clone()) else {
+            return;
+        };
+        if !self.viewer.zoomed.remove(&id) {
+            self.viewer.zoomed.insert(id);
+        }
     }
 
     /// Focused workspace pane in the active tab.
     pub fn focused_pane(&self) -> Option<PaneId> {
-        self.active_tab().and_then(Tab::focused_pane)
+        self.active_tab()
+            .and_then(|tab| self.viewer.focused_pane(tab))
     }
 
     /// Workspace pane shown in a layout slot of the active tab.
@@ -593,41 +686,50 @@ impl Chrome {
     }
 
     fn open_split(&mut self, pane: PaneId, title: &str, direction: Direction) -> layout::PaneId {
-        let set = self.tabs_mut();
-        if set.tabs.is_empty() {
+        if self.tabs().tabs.is_empty() {
             let tab = Tab::new(title, pane);
-            let slot = tab.focus;
-            set.tabs.push(tab);
-            set.active_tab = 0;
+            let slot = tab.first_slot();
+            self.push_tab(tab);
             return slot;
         }
-        let tab = &mut set.tabs[set.active_tab];
-        let slot = tab.layout.split_focused(tab.focus, direction);
+        let index = self.active_index();
+        let focus = self.tab_focus(&self.tabs().tabs[index]);
+        let tab = &mut self.tabs_mut().tabs[index];
+        let slot = tab.layout.split_focused(focus, direction);
         tab.slots.insert(slot, pane);
-        tab.focus = slot;
+        let id = tab.id.clone();
+        self.viewer.focus.insert(id, slot);
         slot
     }
 
     /// Open `pane` in a fresh tab and make it active.
     pub fn open_tab(&mut self, pane: PaneId, title: &str) {
+        self.push_tab(Tab::new(title, pane));
+    }
+
+    fn push_tab(&mut self, tab: Tab) {
         let set = self.tabs_mut();
-        set.tabs.push(Tab::new(title, pane));
-        set.active_tab = set.tabs.len() - 1;
+        set.tabs.push(tab);
+        let last = set.tabs.len() - 1;
+        self.set_active_index(last);
     }
 
     /// Close the focused slot; drops the tab when it was the last slot.
     pub fn close_focused(&mut self) -> Option<PaneId> {
-        let set = self.tabs_mut();
-        let tab = set.tabs.get_mut(set.active_tab)?;
-        let slot = tab.focus;
-        let pane = tab.slots.remove(&slot);
-        match tab.layout.close_focused(slot) {
-            Some(next) => tab.focus = next,
+        let index = self.active_index();
+        let focus = self.tab_focus(self.tabs().tabs.get(index)?);
+        let tab = &mut self.tabs_mut().tabs[index];
+        let pane = tab.slots.remove(&focus);
+        match tab.layout.close_focused(focus) {
+            Some(next) => {
+                let id = tab.id.clone();
+                self.viewer.focus.insert(id, next);
+            }
             None => {
-                set.tabs.remove(set.active_tab);
-                if set.active_tab > 0 && set.active_tab >= set.tabs.len() {
-                    set.active_tab = set.tabs.len().saturating_sub(1);
-                }
+                let tab = self.tabs_mut().tabs.remove(index);
+                self.viewer.focus.remove(&tab.id);
+                self.viewer.zoomed.remove(&tab.id);
+                self.settle_active_index(index);
             }
         }
         pane
@@ -647,16 +749,87 @@ impl Chrome {
             return false;
         };
         let previous = self.focused_pane();
-        let set = self.tabs_mut();
-        if index != set.active_tab {
-            set.active_tab = index;
+        if index != self.active_index() {
+            self.set_active_index(index);
             self.tab_scroll_follow_active = true;
         }
-        self.tabs_mut().tabs[index].focus = slot;
+        let id = self.tabs().tabs[index].id.clone();
+        self.viewer.focus.insert(id, slot);
         if previous != Some(pane) {
             self.last_focused = previous;
         }
         true
+    }
+
+    /// Rebuild `project_id`'s tab set from the daemon workspace through this
+    /// window's viewer state. Returns the terminal ids of slots no roster pane
+    /// backs yet; they render empty until the roster delivers them.
+    pub fn project_workspace<W: WorkspaceView>(&mut self, ws: &W, project_id: &str) -> Vec<String> {
+        let Some(model) = ws.workspace_model() else {
+            return Vec::new();
+        };
+        let mut unresolved = Vec::new();
+        let mut tabs = Vec::new();
+        for row in model.tabs_for_project(project_id) {
+            let mut slots = HashMap::new();
+            let mut first_terminal = None;
+            let root = project_node(&row.layout, &mut |pane_id: &str| {
+                let slot = self.viewer.panes.intern(pane_id);
+                if let Some(terminal_id) = model
+                    .pane(pane_id)
+                    .and_then(|pane| pane.terminal_id.as_deref())
+                {
+                    first_terminal.get_or_insert_with(|| terminal_id.to_string());
+                    match ws.pane_for_terminal(terminal_id) {
+                        Some(pane) => {
+                            slots.insert(slot, pane);
+                        }
+                        None => unresolved.push(terminal_id.to_string()),
+                    }
+                }
+                slot
+            });
+            let layout = TileLayout::from_saved(root);
+            let focus = self
+                .viewer
+                .focus
+                .get(&row.id)
+                .copied()
+                .filter(|slot| layout.pane_ids().contains(slot))
+                .or_else(|| {
+                    row.focused_pane_id
+                        .as_deref()
+                        .and_then(|pane_id| self.viewer.panes.slot(pane_id))
+                        .filter(|slot| layout.pane_ids().contains(slot))
+                })
+                .unwrap_or_else(|| first_slot(layout.root()));
+            self.viewer.focus.insert(row.id.clone(), focus);
+            let title = row.title.clone().unwrap_or_else(|| {
+                first_terminal
+                    .as_deref()
+                    .map_or_else(String::new, |terminal_id| terminal_label(ws, terminal_id))
+            });
+            let mut tab = Tab::with_layout(title, layout, slots);
+            tab.id = row.id.clone();
+            tab.worktree_id = row.worktree_id.clone();
+            tabs.push(tab);
+        }
+        let active = self
+            .viewer
+            .active_tab
+            .get(project_id)
+            .or(model.workspace.focused_tab_id.as_ref())
+            .and_then(|id| tabs.iter().position(|tab| &tab.id == id))
+            .unwrap_or(0);
+        if let Some(tab) = tabs.get(active) {
+            self.viewer
+                .active_tab
+                .insert(project_id.to_string(), tab.id.clone());
+        }
+        self.project_tabs
+            .sets
+            .insert(project_id.to_string(), TabSet { tabs });
+        unresolved
     }
 
     /// Bring `pane` on screen the way a roster click does: focus it where a
@@ -712,7 +885,13 @@ impl Chrome {
             (None, content)
         };
         let (mut pane_infos, split_borders) = match self.active_tab() {
-            Some(tab) => pane_layout::pane_geometry(tab, terminal_area, &self.prefs),
+            Some(tab) => pane_layout::pane_geometry(
+                tab,
+                self.viewer.focus_of(tab),
+                self.viewer.is_zoomed(tab),
+                terminal_area,
+                &self.prefs,
+            ),
             None => (Vec::new(), Vec::new()),
         };
         // herdr resolved the scrollbar lane in `compute_view`, so hit tests
@@ -764,5 +943,25 @@ impl Chrome {
             sidebar_section_rects,
             ..ViewState::default()
         };
+    }
+}
+
+/// The layout tree of a daemon tab; every leaf is interned through `slot_of`.
+fn project_node(node: &LayoutNode, slot_of: &mut impl FnMut(&str) -> layout::PaneId) -> Node {
+    match node {
+        LayoutNode::Pane { pane_id } => Node::Pane(slot_of(pane_id)),
+        LayoutNode::Split {
+            axis,
+            ratio,
+            children,
+        } => Node::Split {
+            direction: match axis {
+                LayoutAxis::Horizontal => Direction::Horizontal,
+                LayoutAxis::Vertical => Direction::Vertical,
+            },
+            ratio: *ratio as f32,
+            first: Box::new(project_node(&children[0], slot_of)),
+            second: Box::new(project_node(&children[1], slot_of)),
+        },
     }
 }

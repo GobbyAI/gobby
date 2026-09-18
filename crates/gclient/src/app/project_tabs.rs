@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use gobby_terminal::layout::{self, Node, TileLayout};
 use ratatui::layout::Direction;
 
+use super::viewer_state::ViewerState;
 use super::PaneId;
 use crate::persist::{LayoutNode, SplitAxis, TabSnapshot, WorkspaceSnapshot};
 use crate::ui::chrome::Tab;
@@ -15,24 +16,16 @@ use crate::ui::chrome::Tab;
 #[derive(Default)]
 pub struct TabSet {
     pub tabs: Vec<Tab>,
-    pub active_tab: usize,
 }
 
 impl TabSet {
-    pub fn active(&self) -> Option<&Tab> {
-        self.tabs.get(self.active_tab)
-    }
-
-    pub fn active_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs.get_mut(self.active_tab)
-    }
-
     /// The snapshot of this set; `terminal_of` names a pane's terminal, and
     /// a slot it cannot name saves as an empty leaf.
     pub fn snapshot(
         &self,
         project_id: &str,
         terminal_of: impl Fn(PaneId) -> Option<String>,
+        viewer: &ViewerState,
     ) -> WorkspaceSnapshot {
         let tabs = self
             .tabs
@@ -40,18 +33,20 @@ impl TabSet {
             .map(|tab| TabSnapshot {
                 title: tab.title.clone(),
                 layout: save_node(tab.layout.root(), &tab.slots, &terminal_of),
-                focused: tab.focused_pane().and_then(&terminal_of),
+                focused: viewer.focused_pane(tab).and_then(&terminal_of),
                 worktree_id: tab.worktree_id.clone(),
             })
             .collect();
+        let active_tab = viewer.active_index(project_id, &self.tabs);
         WorkspaceSnapshot {
             project_id: project_id.to_string(),
             focused_terminal_id: self
-                .active()
-                .and_then(Tab::focused_pane)
+                .tabs
+                .get(active_tab)
+                .and_then(|tab| viewer.focused_pane(tab))
                 .and_then(&terminal_of),
             tabs,
-            active_tab: self.active_tab,
+            active_tab,
         }
     }
 
@@ -62,11 +57,14 @@ impl TabSet {
     pub fn from_snapshot(
         snapshot: &WorkspaceSnapshot,
         resolve: impl Fn(&str) -> Option<PaneId>,
+        viewer: &mut ViewerState,
+        project: &str,
     ) -> Self {
         let mut set = Self::default();
+        let mut active = 0;
         for (index, saved) in snapshot.tabs.iter().enumerate() {
             if index == snapshot.active_tab {
-                set.active_tab = set.tabs.len();
+                active = set.tabs.len();
             }
             let mut slots = HashMap::new();
             let Some(root) = load_node(&saved.layout, &resolve, &mut slots) else {
@@ -78,12 +76,16 @@ impl TabSet {
                 .and_then(&resolve)
                 .and_then(|pane| slots.iter().find(|(_, app)| **app == pane))
                 .map_or_else(|| first_slot(&root), |(slot, _)| *slot);
-            let mut tab =
-                Tab::with_layout(&saved.title, TileLayout::from_saved(root), slots, focus);
+            let mut tab = Tab::with_layout(&saved.title, TileLayout::from_saved(root), slots);
             tab.worktree_id = saved.worktree_id.clone();
+            viewer.focus.insert(tab.id.clone(), focus);
             set.tabs.push(tab);
         }
-        set.active_tab = set.active_tab.min(set.tabs.len().saturating_sub(1));
+        if let Some(tab) = set.tabs.get(active.min(set.tabs.len().saturating_sub(1))) {
+            viewer
+                .active_tab
+                .insert(project.to_string(), tab.id.clone());
+        }
         set
     }
 }
@@ -158,7 +160,7 @@ fn load_node(
     }
 }
 
-fn first_slot(node: &Node) -> layout::PaneId {
+pub(crate) fn first_slot(node: &Node) -> layout::PaneId {
     match node {
         Node::Pane(slot) => *slot,
         Node::Split { first, .. } => first_slot(first),
@@ -186,7 +188,7 @@ impl Default for ProjectTabs {
 }
 
 impl ProjectTabs {
-    fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &str {
         self.focused.as_deref().unwrap_or(ANONYMOUS)
     }
 

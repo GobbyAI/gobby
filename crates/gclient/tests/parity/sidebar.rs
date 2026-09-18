@@ -214,6 +214,10 @@ impl WorkspaceView for Board {
         None
     }
 
+    fn workspace_model(&self) -> Option<&gobby_client::app::WorkspaceModel> {
+        None
+    }
+
     fn project_id(&self) -> Option<&str> {
         None
     }
@@ -1282,7 +1286,7 @@ fn agent_row_click_routes_explicit_activation() {
     let mut chrome = chrome();
     chrome.open_tab(pane(&ws, 0), "0");
     chrome.open_tab(pane(&ws, 1), "1");
-    chrome.tabs_mut().active_tab = 0;
+    chrome.activate_tab(0);
     let area = Rect::new(0, 0, 80, 40);
     draw_with_hits(&ws, &mut chrome, area);
 
@@ -1292,7 +1296,7 @@ fn agent_row_click_routes_explicit_activation() {
         MouseOutcome::FocusAgent("run:term-1".to_string())
     );
     assert_eq!(
-        chrome.tabs().active_tab,
+        chrome.active_index(),
         0,
         "activation is deferred to the async action layer"
     );
@@ -1310,7 +1314,7 @@ fn agent_row_click_routes_explicit_activation() {
         2,
         "the pointer layer does not open tabs"
     );
-    assert_eq!(chrome.tabs().active_tab, 0);
+    assert_eq!(chrome.active_index(), 0);
     assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
 }
 
@@ -1871,7 +1875,7 @@ fn project_board() -> (Workspace, Chrome, Rect) {
     let mut chrome = chrome();
     chrome.sidebar.all_projects = true;
     chrome.sidebar.toggle_group("proj-alpha");
-    chrome.project_tabs.focus("proj-alpha");
+    chrome.focus_project("proj-alpha");
     chrome.open_tab(pane(&ws, 0), "0");
     let area = Rect::new(0, 0, 80, 40);
     draw_with_hits(&ws, &mut chrome, area);
@@ -1915,7 +1919,7 @@ mod project_rows_focus_toggle_and_reorder {
             MouseOutcome::Handled
         );
         assert_eq!(chrome.gesture, None);
-        chrome.project_tabs.focus("proj-alpha");
+        chrome.focus_project("proj-alpha");
         assert_eq!(chrome.tabs().tabs.len(), 1, "alpha's tab set survives");
     }
 

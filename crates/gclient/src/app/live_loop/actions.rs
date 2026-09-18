@@ -4,6 +4,7 @@
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 
+use crate::app::ViewerState;
 use crate::copy_mode::copy_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
@@ -41,7 +42,9 @@ use super::projects::{
 /// Panes are never opened here: the tab bar is restored from the snapshot or
 /// seeded by `projects::restore_focused`, and grows only by user action.
 pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
-    let set = chrome.tabs_mut();
+    let index = chrome.active_index();
+    let viewer = &mut chrome.viewer;
+    let set = chrome.project_tabs.set_mut();
     for tab in &mut set.tabs {
         let stale: Vec<_> = tab
             .slots
@@ -49,25 +52,23 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
             .filter_map(|(slot, pane_id)| (!workspace.panes.contains_key(pane_id)).then_some(*slot))
             .collect();
         for slot in stale {
-            close_slot(tab, slot);
+            close_slot(tab, viewer, slot);
         }
     }
     set.tabs.retain(|tab| !tab.slots.is_empty());
-    if set.active_tab >= set.tabs.len() {
-        set.active_tab = set.tabs.len().saturating_sub(1);
-    }
+    chrome.settle_active_index(index);
 }
 
 /// Drop `slot` from `tab`. The layout keeps its last pane (it refuses to
 /// close it), so an emptied tab is left for `sync_live_chrome` to reap.
-fn close_slot(tab: &mut Tab, slot: layout::PaneId) {
+fn close_slot(tab: &mut Tab, viewer: &mut ViewerState, slot: layout::PaneId) {
     tab.slots.remove(&slot);
     if tab.slots.is_empty() {
         return;
     }
     if let Some(next) = tab.layout.close_focused(slot) {
-        if tab.focus == slot {
-            tab.focus = next;
+        if viewer.focus_of(tab) == slot {
+            viewer.focus.insert(tab.id.clone(), next);
         }
     }
 }
@@ -278,7 +279,7 @@ async fn focus_menu_target(
             chrome.focus_pane(*pane);
             observe_live_pane(workspace, *pane).await?;
         }
-        ContextMenuKind::Tab(index) if *index != chrome.tabs().active_tab => {
+        ContextMenuKind::Tab(index) if *index != chrome.active_index() => {
             activate_live_tab(workspace, chrome, *index).await?;
         }
         ContextMenuKind::Worktree(worktree_id) => {
@@ -408,11 +409,7 @@ pub(super) async fn handle_live_action(
                 chrome.sidebar.toggle_group(&project_id);
             }
         }
-        Action::Zoom => {
-            if let Some(tab) = chrome.active_tab_mut() {
-                tab.zoomed = !tab.zoomed;
-            }
-        }
+        Action::Zoom => chrome.toggle_zoom(),
         Action::ToggleSidebar => chrome.sidebar.collapsed = !chrome.sidebar.collapsed,
         Action::RenameTab => {
             if let Some(title) = chrome.active_tab().map(|tab| tab.title.clone()) {
@@ -548,7 +545,9 @@ fn live_neighbour_slots(
     direction: NavDirection,
 ) -> Option<(layout::PaneId, layout::PaneId)> {
     let tab = chrome.active_tab()?;
-    let panes = tab.layout.panes(live_layout_area(chrome), tab.focus);
+    let panes = tab
+        .layout
+        .panes(live_layout_area(chrome), chrome.tab_focus(tab));
     let focused = panes.iter().find(|pane| pane.is_focused)?;
     let neighbour = find_in_direction(focused, direction, &panes)?;
     Some((focused.id, neighbour))
@@ -597,7 +596,7 @@ async fn activate_relative_live_tab(
     if len == 0 {
         return Ok(());
     }
-    let next = (chrome.tabs().active_tab as isize + delta).rem_euclid(len as isize) as usize;
+    let next = (chrome.active_index() as isize + delta).rem_euclid(len as isize) as usize;
     activate_live_tab(workspace, chrome, next).await
 }
 
@@ -612,7 +611,7 @@ pub(super) async fn activate_live_tab(
         .tabs()
         .tabs
         .get(index)
-        .and_then(|tab| tab.focused_pane())
+        .and_then(|tab| chrome.viewer.focused_pane(tab))
     {
         focus_live_shown_pane(workspace, chrome, pane_id).await?;
     }
@@ -667,8 +666,10 @@ pub(super) async fn close_live_tab(
     for (slot, pane_id) in slots {
         if workspace.pane(pane_id).external {
             release_live_control(workspace, pane_id).await?;
-            if let Some(tab) = chrome.active_tab_mut() {
-                close_slot(tab, slot);
+            let index = chrome.active_index();
+            let viewer = &mut chrome.viewer;
+            if let Some(tab) = chrome.project_tabs.set_mut().tabs.get_mut(index) {
+                close_slot(tab, viewer, slot);
             }
         } else {
             // A killed pane leaves the roster and `sync_live_chrome` reaps

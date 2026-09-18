@@ -1,5 +1,6 @@
 //! Atomic workspace snapshot persistence and restore.
 
+use gobby_client::app::ViewerState;
 use gobby_client::persist::{
     load_snapshot, save_snapshot, LayoutNode, SplitAxis, TabSnapshot, WorkspaceSnapshot,
 };
@@ -68,7 +69,9 @@ fn workspace_round_trip_and_corrupt_file() {
     let mut ws = Workspace::scripted();
     ws.set_gobby_home(home);
     ws.daemon_mut().set_live_terminals(vec!["live-1".into()]);
-    let tabs = ws.restore_project("proj-1").expect("restore");
+    let tabs = ws
+        .restore_project("proj-1", &mut ViewerState::default())
+        .expect("restore");
     assert_eq!(
         tabs.tabs.len(),
         1,
@@ -103,7 +106,8 @@ fn snapshot_restores_tab_layouts() {
     ws.set_gobby_home(home.clone());
     ws.daemon_mut()
         .set_live_terminals(vec!["live-1".into(), "live-2".into(), "live-3".into()]);
-    let tabs = ws.restore_project("proj").expect("restore");
+    let mut viewer = ViewerState::default();
+    let tabs = ws.restore_project("proj", &mut viewer).expect("restore");
     assert_eq!(tabs.tabs.len(), 2, "the tab holding only dead-2 is dropped");
     assert_eq!(
         tabs.tabs[0].layout.pane_count(),
@@ -115,8 +119,8 @@ fn snapshot_restores_tab_layouts() {
         2,
         "the live split stays intact"
     );
-    assert_eq!(tabs.active_tab, 1);
-    let focused = tabs.tabs[1].focused_pane().expect("focused slot");
+    assert_eq!(viewer.active_index("proj", &tabs.tabs), 1);
+    let focused = viewer.focused_pane(&tabs.tabs[1]).expect("focused slot");
     assert_eq!(ws.pane(focused).terminal_id, "live-3");
     assert_eq!(ws.focused_terminal_id(), Some("live-3"));
     assert_eq!(ws.pane_count(), 3);
@@ -222,7 +226,8 @@ fn workspace_persists_the_tab_set_it_is_given() {
     let mut chrome = Chrome::dark();
     chrome.open_pane(pane_a, "a");
     chrome.open_pane_below(pane_b, "b");
-    ws.persist_workspace(chrome.tabs()).expect("persist");
+    ws.persist_workspace(chrome.tabs(), &chrome.viewer)
+        .expect("persist");
     let saved = load_snapshot(&home, "proj-mutations").unwrap();
     assert_eq!(saved.tabs.len(), 1);
     assert!(

@@ -37,6 +37,7 @@ impl Workspace<LiveDaemon> {
             status_message: None,
             exit_reason: None,
             shutdown_started: false,
+            workspace_model: None,
         }
     }
 

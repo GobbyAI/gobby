@@ -214,7 +214,7 @@ fn apply_scripted_mouse_outcome(
 /// the chrome swaps to the project's tab set.
 fn scripted_focus_project(workspace: &mut Workspace, chrome: &mut Chrome, project_id: &str) {
     workspace.select_project(project_id);
-    chrome.project_tabs.focus(project_id);
+    chrome.focus_project(project_id);
 }
 
 /// The scripted loop's action effects are chrome-only. Returns true on `Quit`.
@@ -269,12 +269,12 @@ fn apply_scripted_menu_action(
         ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(pane) => {
             scripted_focus(workspace, chrome, pane, true)?;
         }
-        ContextMenuKind::Tab(index) if index != chrome.tabs().active_tab => {
+        ContextMenuKind::Tab(index) if index != chrome.active_index() => {
             if let Some(pane) = chrome
                 .tabs()
                 .tabs
                 .get(index)
-                .and_then(|tab| tab.focused_pane())
+                .and_then(|tab| chrome.viewer.focused_pane(tab))
             {
                 scripted_focus(workspace, chrome, pane, false)?;
             }

@@ -156,12 +156,14 @@ pub fn apply_pane_chrome(
 /// renderer resolves it per pane from live scroll metrics.
 pub fn pane_geometry(
     tab: &Tab,
+    focus: PaneId,
+    zoomed: bool,
     area: Rect,
     prefs: &ClientPrefs,
 ) -> (Vec<PaneInfo>, Vec<SplitBorder>) {
     let multi_pane = tab.layout.pane_count() > 1;
 
-    if tab.zoomed {
+    if zoomed {
         let borders = if multi_pane && prefs.pane_borders {
             Borders::ALL
         } else {
@@ -169,7 +171,7 @@ pub fn pane_geometry(
         };
         let pane_inner = pane_inner_rect(area, borders);
         let info = PaneInfo {
-            id: tab.focus,
+            id: focus,
             rect: area,
             inner_rect: stable_terminal_inner_rect(pane_inner, prefs.pane_scrollbars),
             scrollbar_rect: None,
@@ -180,7 +182,7 @@ pub fn pane_geometry(
     }
 
     let mut pane_infos = apply_pane_chrome(
-        tab.layout.panes(area, tab.focus),
+        tab.layout.panes(area, focus),
         prefs.pane_borders,
         prefs.pane_gaps,
     );
@@ -198,18 +200,26 @@ mod tests {
     use crate::app::PaneId as AppPaneId;
     use ratatui::layout::Direction;
 
-    fn two_pane_tab() -> Tab {
+    /// A tab split in two; the focus is the second (new) slot.
+    fn two_pane_tab() -> (Tab, PaneId) {
         let mut tab = Tab::new("t", AppPaneId(1));
-        let slot = tab.layout.split_focused(tab.focus, Direction::Horizontal);
+        let slot = tab
+            .layout
+            .split_focused(tab.first_slot(), Direction::Horizontal);
         tab.slots.insert(slot, AppPaneId(2));
-        tab.focus = slot;
-        tab
+        (tab, slot)
     }
 
     #[test]
     fn gapped_split_keeps_independent_bordered_panes() {
-        let tab = two_pane_tab();
-        let (infos, splits) = pane_geometry(&tab, Rect::new(0, 0, 80, 24), &ClientPrefs::default());
+        let (tab, focus) = two_pane_tab();
+        let (infos, splits) = pane_geometry(
+            &tab,
+            focus,
+            false,
+            Rect::new(0, 0, 80, 24),
+            &ClientPrefs::default(),
+        );
         assert_eq!(infos.len(), 2);
         assert_eq!(splits.len(), 1);
         assert!(infos.iter().all(|info| info.borders == Borders::ALL));
@@ -219,24 +229,24 @@ mod tests {
 
     #[test]
     fn shared_divider_without_gaps_drops_the_inner_border() {
-        let tab = two_pane_tab();
+        let (tab, focus) = two_pane_tab();
         let prefs = ClientPrefs {
             pane_gaps: false,
             ..ClientPrefs::default()
         };
-        let (infos, _) = pane_geometry(&tab, Rect::new(0, 0, 80, 24), &prefs);
+        let (infos, _) = pane_geometry(&tab, focus, false, Rect::new(0, 0, 80, 24), &prefs);
         assert!(!infos[0].borders.contains(Borders::RIGHT));
         assert_eq!(infos[1].borders, Borders::ALL);
     }
 
     #[test]
     fn borderless_gaps_shrink_the_left_pane_by_one_cell() {
-        let tab = two_pane_tab();
+        let (tab, focus) = two_pane_tab();
         let prefs = ClientPrefs {
             pane_borders: false,
             ..ClientPrefs::default()
         };
-        let (infos, _) = pane_geometry(&tab, Rect::new(0, 0, 80, 24), &prefs);
+        let (infos, _) = pane_geometry(&tab, focus, false, Rect::new(0, 0, 80, 24), &prefs);
         assert_eq!(infos[0].rect.width, 39);
         assert_eq!(infos[1].rect.width, 40);
         assert!(infos.iter().all(|info| info.borders.is_empty()));
@@ -244,14 +254,13 @@ mod tests {
 
     #[test]
     fn zoomed_tab_shows_only_the_focused_pane() {
-        let mut tab = two_pane_tab();
-        tab.zoomed = true;
+        let (tab, focus) = two_pane_tab();
         let area = Rect::new(0, 0, 80, 24);
-        let (infos, splits) = pane_geometry(&tab, area, &ClientPrefs::default());
+        let (infos, splits) = pane_geometry(&tab, focus, true, area, &ClientPrefs::default());
         assert_eq!(infos.len(), 1);
         assert!(splits.is_empty());
         assert_eq!(infos[0].rect, area);
-        assert_eq!(infos[0].id, tab.focus);
+        assert_eq!(infos[0].id, focus);
         let metrics = metrics_for(0, 5, infos[0].inner_rect.height);
         let gutter = scrollbar_gutter(content_inner(area), true, metrics).unwrap();
         assert_eq!(gutter, Rect::new(78, 1, 1, 22));

@@ -40,16 +40,16 @@ pub async fn focus_project(
         return Ok(());
     }
     if let Some(current) = workspace.project_id() {
-        chrome.project_tabs.focus(current);
+        chrome.focus_project(current);
     }
-    workspace.persist_workspace(chrome.tabs())?;
+    workspace.persist_workspace(chrome.tabs(), &chrome.viewer)?;
     workspace.restore_project(project_id)?;
     workspace.fetch_roster().await?;
     workspace.attach_ready_panes().await?;
     // The new project's sessions and runs arrive from a background
     // refetch; the switch itself never waits on git status.
     workspace.request_focused_sessions();
-    chrome.project_tabs.focus(project_id);
+    chrome.focus_project(project_id);
     chrome.sidebar.expanded_project = Some(project_id.to_owned());
     sync_live_chrome(workspace, chrome);
     save_client_session(workspace, chrome)?;
@@ -212,7 +212,7 @@ pub(super) async fn restore_focused(
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
     if let Some(project) = workspace.project_id() {
-        chrome.project_tabs.focus(project);
+        chrome.focus_project(project);
     }
     if !chrome.tabs().tabs.is_empty() {
         return Ok(());
@@ -220,9 +220,13 @@ pub(super) async fn restore_focused(
     let Some(snapshot) = workspace.saved_snapshot() else {
         return Ok(());
     };
-    *chrome.tabs_mut() = TabSet::from_snapshot(snapshot, |terminal_id| {
-        workspace.pane_for_terminal(terminal_id)
-    });
+    let set = TabSet::from_snapshot(
+        snapshot,
+        |terminal_id| workspace.pane_for_terminal(terminal_id),
+        &mut chrome.viewer,
+        chrome.project_tabs.key(),
+    );
+    *chrome.tabs_mut() = set;
     if chrome.tabs().tabs.is_empty() {
         spawn_live_terminal(workspace, chrome, Placement::Tab).await?;
     }
@@ -236,7 +240,7 @@ pub(super) fn persist_if_changed(
     chrome: &Chrome,
     last: &mut Option<WorkspaceSnapshot>,
 ) -> std::io::Result<()> {
-    let Some(snapshot) = workspace.workspace_snapshot(chrome.tabs()) else {
+    let Some(snapshot) = workspace.workspace_snapshot(chrome.tabs(), &chrome.viewer) else {
         return Ok(());
     };
     if last.as_ref() == Some(&snapshot) {

@@ -191,8 +191,10 @@ pub fn apply_local_menu_action<D: Daemon>(
 
 /// Exchange `pane`'s slot with the focused slot of the active tab.
 fn swap_with_focused(chrome: &mut Chrome, pane: PaneId) {
+    let Some(focused) = chrome.focus_slot() else {
+        return;
+    };
     if let Some(tab) = chrome.active_tab_mut() {
-        let focused = tab.focus;
         if let Some(slot) = tab.slot_for(pane).filter(|slot| *slot != focused) {
             tab.layout.swap_panes(focused, slot);
         }
@@ -206,7 +208,7 @@ fn swap_with_focused(chrome: &mut Chrome, pane: PaneId) {
 /// right-click passthrough flip, close.
 fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
     let state = ws.pane(pane);
-    let zoomed = chrome.active_tab().is_some_and(|tab| tab.zoomed);
+    let zoomed = chrome.is_zoomed();
     let mut items = vec![item("rename pane", MenuAction::Act(Action::RenamePane))];
     if state.label.is_some() {
         items.push(item("clear pane name", MenuAction::ClearPaneName(pane)));
@@ -494,7 +496,7 @@ mod tests {
             entry_id: entry_id.clone(),
             ..Default::default()
         });
-        chrome.active_tab_mut().expect("active tab").zoomed = true;
+        chrome.toggle_zoom();
         let menu = build_menu(&ws, &chrome, ContextMenuKind::Pane(focused), (10, 5));
         assert_eq!(
             labels(&menu),

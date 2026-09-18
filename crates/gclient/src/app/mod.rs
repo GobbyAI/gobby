@@ -11,6 +11,8 @@ mod persistence;
 pub mod project_tabs;
 pub mod run_loop;
 pub mod sidebar_model;
+pub mod viewer_state;
+pub mod workspace_ops;
 
 pub use attach::AttachState;
 pub use live::{SidebarFetch, SidebarFetchFuture};
@@ -32,11 +34,13 @@ pub use live_loop::projects::{
 pub use live_loop::run_live_loop;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
 pub use persistence::{apply_sidebar_snapshot, sidebar_snapshot};
+pub use viewer_state::{PaneInterner, ViewerState};
+pub use workspace_ops::WorkspaceModel;
 
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
     Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon, RosterEntry,
-    ScriptedDaemon, SidebarRows, Snapshot, TerminalRow,
+    ScriptedDaemon, SidebarRows, Snapshot, TerminalRow, WorkspaceEvent,
 };
 use crate::frame_source::{
     AttachLocator, FrameDelivery, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource,
@@ -108,6 +112,8 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     status_message: Option<String>,
     exit_reason: Option<String>,
     shutdown_started: bool,
+    /// The attached daemon workspace, once `workspace_attach` replied.
+    workspace_model: Option<WorkspaceModel>,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -186,6 +192,7 @@ impl Workspace {
             status_message: None,
             exit_reason: None,
             shutdown_started: false,
+            workspace_model: None,
         }
     }
 
@@ -857,6 +864,23 @@ impl<D: Daemon> Workspace<D> {
             .iter()
             .copied()
             .find(|id| self.panes[id].terminal_id == terminal_id)
+    }
+
+    /// The attached daemon workspace, once its snapshot arrived.
+    pub fn workspace_model(&self) -> Option<&WorkspaceModel> {
+        self.workspace_model.as_ref()
+    }
+
+    /// Replace the workspace model with a fresh `workspace_attach` snapshot.
+    pub fn apply_workspace_snapshot(&mut self, snapshot: crate::daemon::WorkspaceSnapshot) {
+        self.workspace_model = Some(WorkspaceModel::from_snapshot(snapshot));
+    }
+
+    /// Apply a `workspace_event`; `true` when the model changed.
+    pub fn apply_workspace_event(&mut self, event: &WorkspaceEvent) -> bool {
+        self.workspace_model
+            .as_mut()
+            .is_some_and(|model| model.apply(event))
     }
 
     pub fn pane_by_attachment(&self, attachment_id: &str) -> Option<&Pane> {

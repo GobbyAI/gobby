@@ -1227,7 +1227,7 @@ async fn saved_roster_order_restores_on_the_next_start() {
         chrome.open_tab(pane, &terminal_id);
     }
     first
-        .persist_workspace(chrome.tabs())
+        .persist_workspace(chrome.tabs(), &chrome.viewer)
         .expect("save the tab set");
     drop(first);
 

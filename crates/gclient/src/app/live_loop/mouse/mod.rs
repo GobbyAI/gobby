@@ -10,7 +10,6 @@
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
-use crate::ui::chrome::Tab;
 use crate::ui::dialogs::{CloseTarget, Dialog};
 use crate::ui::hit::{hit_test, Hit, SidebarSection};
 use crate::ui::settings::SettingsRow;
@@ -290,7 +289,7 @@ fn settings_mouse<W: WorkspaceView>(
 /// Focus the active tab's focused pane. A tab whose slots have all gone is
 /// still activated; there is just nothing to focus.
 fn focus_active_tab(chrome: &Chrome, observe_only: bool) -> MouseOutcome {
-    match chrome.active_tab().and_then(Tab::focused_pane) {
+    match chrome.focused_pane() {
         Some(pane) => MouseOutcome::Focus { pane, observe_only },
         None => MouseOutcome::Handled,
     }

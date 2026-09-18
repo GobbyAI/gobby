@@ -97,7 +97,7 @@ fn chrome_for(ws: &Workspace, kind: ThemeKind) -> Chrome {
     chrome.open_pane(alpha, "alpha");
     chrome.open_pane(beta, "alpha");
     chrome.open_tab(alpha, "second");
-    chrome.tabs_mut().active_tab = 0;
+    chrome.activate_tab(0);
     // Splitting focuses the new pane; the assertions below name term-alpha.
     assert!(chrome.focus_pane(alpha));
     chrome

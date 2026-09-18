@@ -35,7 +35,7 @@ use gobby_client::persist::{
 use gobby_client::prefs::{prefs_path, save_prefs};
 use gobby_client::startup::{initial_project, Ready};
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
-use gobby_client::ui::chrome::{Mode, Tab};
+use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
 use gobby_client::ui::keymap::{default_prefix, Keymap, HERDR_PREFIX};
@@ -4932,7 +4932,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
     chrome.open_pane(pane_a, "a");
     chrome.open_pane(pane_b, "b");
     chrome.open_tab(pane_c, "c");
-    chrome.tabs_mut().active_tab = 0;
+    chrome.activate_tab(0);
     chrome.focus_pane(pane_a);
     chrome.toast = Some(Toast {
         kind: ToastKind::Info,
@@ -5036,12 +5036,12 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "the toast target and the attention jump cross tabs"
     );
     let tab = &chrome.tabs().tabs[0];
-    assert!(tab.zoomed, "zoom toggles the active tab");
+    assert!(chrome.is_zoomed(), "zoom toggles the active tab");
     let area = Rect::new(0, 0, 120, 40);
     let rect_of = |pane| {
         let slot = tab.slot_for(pane).expect("pane shown in the first tab");
         tab.layout
-            .panes(area, tab.focus)
+            .panes(area, chrome.tab_focus(tab))
             .into_iter()
             .find(|info| info.id == slot)
             .expect("slot geometry")
@@ -5061,7 +5061,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         chrome.toast.is_none(),
         "the notification target clears the toast"
     );
-    assert_eq!(chrome.tabs().active_tab, 0);
+    assert_eq!(chrome.active_index(), 0);
     assert!(
         chrome.dialog.is_none(),
         "the attention jump reveals the terminal and opens no prompt: {:?}",
@@ -5411,7 +5411,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
     let rect_of = |pane| {
         let slot = tab.slot_for(pane).expect("pane shown in the tab");
         tab.layout
-            .panes(area, tab.focus)
+            .panes(area, chrome.tab_focus(tab))
             .into_iter()
             .find(|info| info.id == slot)
             .expect("slot geometry")
@@ -6036,7 +6036,7 @@ fn shown_terminals(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Vec<St
         .tabs()
         .tabs
         .iter()
-        .filter_map(Tab::focused_pane)
+        .filter_map(|tab| chrome.viewer.focused_pane(tab))
         .map(|pane| workspace.pane(pane).terminal_id.clone())
         .collect()
 }
@@ -6310,7 +6310,7 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
     assert_eq!(shown_count, 1, "{path:?} keeps one pane slot");
     if matches!(path, ExplicitActivation::SidebarClick) {
         assert_eq!(chrome.tabs().tabs.len(), 2, "the opened pane gets a tab");
-        assert_eq!(chrome.tabs().active_tab, 1, "the opened tab is active");
+        assert_eq!(chrome.active_index(), 1, "the opened tab is active");
     }
     let attaches = websocket_requests(&mock, "terminal_attach")
         .into_iter()
@@ -6402,7 +6402,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     let mut probe = Chrome::dark();
     probe.open_pane(shown, SHOWN);
     probe.open_tab(tabbed, TABBED);
-    probe.tabs_mut().active_tab = 0;
+    probe.activate_tab(0);
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
     let mut hits = None;
@@ -6425,7 +6425,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
     let mut chrome = Chrome::dark();
     chrome.open_pane(shown, SHOWN);
     chrome.open_tab(tabbed, TABBED);
-    chrome.tabs_mut().active_tab = 0;
+    chrome.activate_tab(0);
     let (input_tx, input_rx) = mpsc::channel(32);
     let driver = async {
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
@@ -6469,11 +6469,7 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
         .collect();
     assert_eq!(&targets[before..], [TABBED]);
     assert_eq!(chrome.tabs().tabs.len(), 2, "no duplicate tab opens");
-    assert_eq!(
-        chrome.tabs().active_tab,
-        1,
-        "the existing tab becomes active"
-    );
+    assert_eq!(chrome.active_index(), 1, "the existing tab becomes active");
     assert_eq!(chrome.focused_pane(), Some(tabbed));
     mock.shutdown().await;
 }
@@ -6563,7 +6559,7 @@ async fn tab_sets_follow_the_focused_project() {
         shown_terminals(&workspace, &chrome),
         ["terminal-a1", "terminal-a2"]
     );
-    assert_eq!(chrome.tabs().active_tab, 1);
+    assert_eq!(chrome.active_index(), 1);
     assert_eq!(websocket_requests(&mock, "terminal_create").len(), 1);
     let parked = load_snapshot(home.path(), "project-2").expect("project-2 snapshot");
     assert_eq!(parked.terminal_ids(), [SPAWNED, "terminal-b1"]);
@@ -7248,7 +7244,7 @@ async fn worktree_flows_round_trip_the_daemon() {
         .await
         .expect("subscribe-first reconcile");
     let mut chrome = Chrome::dark();
-    chrome.project_tabs.focus("project-1");
+    chrome.focus_project("project-1");
 
     // New worktree: the dialog defaults the base to the project's branch;
     // the submit posts the client role and opens a shell tab tagged with
@@ -7823,13 +7819,13 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         shown_terminals(&workspace, &chrome)
     );
     assert_eq!(
-        tabs[0].focused_pane(),
+        chrome.viewer.focused_pane(&tabs[0]),
         Some(agent),
         "open in new tab holds the agent's pane"
     );
     assert_eq!(tabs[1].worktree_id.as_deref(), Some("wt-2"));
     assert_eq!(
-        chrome.tabs().active_tab,
+        chrome.active_index(),
         1,
         "the worktree shell tab opened last"
     );

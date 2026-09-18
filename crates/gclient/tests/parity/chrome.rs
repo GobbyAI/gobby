@@ -243,8 +243,11 @@ fn tab_view(ws: &Workspace, chrome: &Chrome, area: Rect) -> TabView {
 /// herdr `TerminalRuntime::current_size()` for a background tab: the rows and
 /// columns its pane would be given in this chrome's terminal area.
 fn runtime_size(chrome: &Chrome, tab_idx: usize) -> (u16, u16) {
+    let tab = &chrome.tabs().tabs[tab_idx];
     let (infos, _) = pane_layout::pane_geometry(
-        &chrome.tabs().tabs[tab_idx],
+        tab,
+        chrome.tab_focus(tab),
+        chrome.viewer.is_zoomed(tab),
         chrome.view.terminal_area,
         &chrome.prefs,
     );
@@ -573,7 +576,7 @@ parity_tests! {
                     let mut two_tab_workspace = chrome_for(&two_ws, "two");
                     two_tab_workspace.prefs.hide_tab_bar_when_single_tab = true;
                     let background_tab = add_tab(&mut two_tab_workspace, "logs");
-                    two_tab_workspace.tabs_mut().active_tab = 0;
+                    two_tab_workspace.activate_tab(0);
                     two_tab_workspace.mode = Mode::Terminal;
                     one_tab_workspace.mode = Mode::Terminal;
 
@@ -793,7 +796,7 @@ parity_tests! {
             for name in ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"] {
                 add_tab(&mut chrome, name);
             }
-            chrome.tabs_mut().active_tab = 0;
+            chrome.activate_tab(0);
             chrome.mode = Mode::Terminal;
             chrome.tab_scroll_follow_active = false;
             chrome.tab_scroll = 2;
@@ -835,7 +838,7 @@ parity_tests! {
             ] {
                 add_tab(&mut chrome, name);
             }
-            chrome.tabs_mut().active_tab = 0;
+            chrome.activate_tab(0);
             chrome.mode = Mode::Terminal;
             chrome.tab_scroll_follow_active = false;
             chrome.tab_scroll = usize::MAX;
@@ -1168,7 +1171,7 @@ switch_project = "ctrl+1..9"
                     let right = ws.pane_for_terminal("right").expect("right pane");
                     let mut chrome = chrome_for(&ws, "left");
                     add_tab(&mut chrome, "logs");
-                    chrome.tabs_mut().active_tab = 0;
+                    chrome.activate_tab(0);
                     chrome.open_pane(right, "");
                     chrome.mode = Mode::Terminal;
 
@@ -1301,7 +1304,7 @@ fn rendered_hits_match_drawn_cells() {
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
     }
-    chrome.tabs_mut().active_tab = chrome.tabs().tabs.len() - 1;
+    chrome.activate_tab(chrome.tabs().tabs.len() - 1);
     let terminal = render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 24));
     let view = &chrome.view;
 

@@ -26,7 +26,7 @@ use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
 use super::sidebar_model::SidebarModel;
-use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace};
+use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel};
 
 mod actions;
 mod control;
@@ -81,6 +81,10 @@ impl WorkspaceView for Workspace<LiveDaemon> {
 
     fn gobby_home(&self) -> Option<&Path> {
         self.gobby_home()
+    }
+
+    fn workspace_model(&self) -> Option<&WorkspaceModel> {
+        Workspace::<LiveDaemon>::workspace_model(self)
     }
 }
 

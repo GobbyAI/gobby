@@ -59,14 +59,12 @@ pub(super) fn wheel<W: WorkspaceView>(
     let row = mouse.row;
     match hit {
         Hit::Tab(_) | Hit::TabScrollLeft | Hit::TabScrollRight | Hit::NewTab | Hit::TabBarEmpty => {
-            let set = chrome.tabs_mut();
-            let count = set.tabs.len();
+            let count = chrome.tabs().tabs.len();
             if count == 0 {
                 return MouseOutcome::Handled;
             }
             let step = if up { count - 1 } else { 1 };
-            set.active_tab = (set.active_tab + step) % count;
-            chrome.tab_scroll_follow_active = true;
+            chrome.activate_tab((chrome.active_index() + step) % count);
             focus_active_tab(chrome, false)
         }
         Hit::Machine(_)

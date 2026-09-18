@@ -155,8 +155,7 @@ pub(super) fn down<W: WorkspaceView>(
         }
         _ if button != MouseButton::Left => MouseOutcome::Ignore,
         Hit::Tab(index) => {
-            chrome.tabs_mut().active_tab = index;
-            chrome.tab_scroll_follow_active = true;
+            chrome.activate_tab(index);
             chrome.gesture = Some(MouseGesture::TabDrag {
                 index,
                 origin_col: mouse.column,
@@ -180,7 +179,7 @@ pub(super) fn down<W: WorkspaceView>(
         Hit::Project(project_id) => {
             // The tab set swaps at once so the frame after the press shows
             // the project's tabs; the live loop's focus swap is idempotent.
-            chrome.project_tabs.focus(&project_id);
+            chrome.focus_project(&project_id);
             chrome.gesture = Some(MouseGesture::ProjectDrag {
                 project_id: project_id.clone(),
                 origin_row: mouse.row,
@@ -449,7 +448,7 @@ pub(super) fn up<W: WorkspaceView>(
                 let count = set.tabs.len();
                 if target != index && index < count && target < count {
                     move_tab(&mut set.tabs, index, target);
-                    set.active_tab = target;
+                    chrome.activate_tab(target);
                 }
             }
             MouseOutcome::Handled
