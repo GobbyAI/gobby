@@ -20,10 +20,14 @@ def test_memory_guide_matches_search_and_tool_contracts() -> None:
     normalized = " ".join(guide.split())
     mcp_section = guide.split("## MCP Tools", 1)[1].split("### Common Calls", 1)[0]
 
-    # Surfacing is bounded to the turn start and the four tool intents;
-    # everything else stays a deliberate agent search.
+    # Surfacing is bounded to the turn start and the four tool intents and
+    # ends each index line in a `when:` clause; everything else stays a
+    # deliberate agent search.
+    assert "## Retrieval: Pushed Index and Agent Search" in guide
     assert "Automatic surfacing is bounded to the five moments" in normalized
     assert "pushes one ranked memory index per parent turn" in normalized
+    assert "A hit with a rationale ends in `| when:`" in normalized
+    assert "before acting, even when the code is familiar" in normalized
     assert "Everything beyond those indexes is the agent's own search." in normalized
     assert "p10 `0.62`, p50 `0.69`, and p90 `0.75`" in normalized
     assert "`review_task_memories`" in mcp_section
@@ -39,7 +43,7 @@ def test_memory_guide_matches_search_and_tool_contracts() -> None:
 def test_memory_guide_lists_every_bundled_lifecycle_rule() -> None:
     guide = _text(MEMORY_GUIDE)
     rule_table = guide.split("Current bundled memory rules:", 1)[1].split(
-        "## Retrieval Is Agent-Driven", 1
+        "## Retrieval: Pushed Index and Agent Search", 1
     )[0]
     rule_names = {
         name

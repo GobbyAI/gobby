@@ -27,25 +27,3 @@ rules:
           )
         acknowledge_variable: _memory_initial_stop_checked
         reason: '{{ skill_fetch_directive("gobby:references/memory/overview.md") }}'
-
-  remind-memory-guidance-on-later-turns:
-    description: "Inject concise memory judgment on later parent-user prompts"
-    event: turn_start
-    enabled: true
-    priority: 11
-    when: >
-      not variables.get('is_spawned_agent')
-      and variables.get('_memory_initial_stop_checked')
-      and variables.get('parent_turn_seq') is not none
-      and variables.get('_memory_reminder_turn_seq')
-          != variables.get('parent_turn_seq')
-    effects:
-      - type: inject_context
-        delivery: on_receipt
-        template: >
-          Memory reminder: search `gobby-memory` before touching unfamiliar code;
-          record durable knowledge with a rationale. Most turns need no memory write.
-      - type: set_variable
-        delivery: on_receipt
-        variable: _memory_reminder_turn_seq
-        value: "{{ variables.get('parent_turn_seq') }}"

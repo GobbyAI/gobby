@@ -96,6 +96,16 @@ how the system behaves so you can work with it instead of being surprised by it.
     invoking something a hook, gate, or rule keeps asking for, say so in text on
     that turn and ask — silently carrying a denial forward as an unstated rule
     hides the conflict from the one person who can resolve it.
+14. Memory is pushed as an index; read it and pull what applies. At turn start,
+    before `spawn_agent`, on task claim, and on handoff resume, Gobby may inject a
+    `<memory-index>` of ranked one-line hits. Each line ends in a `when:` clause.
+    Fetch any hit whose clause matches your situation with `gobby-memory:get_memory`
+    before acting, even when the code is familiar: what pays off is usually a prior
+    decision or an observed runtime behavior rather than code. Search yourself with
+    `gobby-memory:search_memories` before characterizing provider or runtime
+    behavior and before recording a finding. Record durable knowledge with a
+    rationale written as the `when:` clause a future session would match; most
+    turns need no write.
 
 ## Session Handoff
 

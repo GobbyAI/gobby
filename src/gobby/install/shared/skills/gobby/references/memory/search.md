@@ -1,6 +1,14 @@
 # Recall and navigate memory
 
 Load at task claim, before unfamiliar subsystem work, or before capture.
+
+A pushed `<memory-index>` lists up to five ranked hits, one per line: short ID,
+type, the searches that found it, last-updated date, and content lead. The
+closing `when:` clause is the lead of the memory's rationale; it says when the
+memory applies. The index carries no scores. Fetch a hit whose clause matches
+with `get_memory(memory_id=...)` before acting on it. The index is bounded to
+its trigger moments, so it never replaces your own search.
+
 Discover with `gobby-memory:search_memories`; use a subject query and inspect
 content and rationale. Refine with type or `tags_all`, `tags_any`, `tags_none`
 filters. `list_memories` browses the scoped live set; `get_memory` retrieves a
@@ -27,4 +35,4 @@ diagnostic, not a replacement for reading and judging search hits yourself.
 
 Guide: [Search](../../../../../../../../docs/guides/memory.md#search).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-18_
