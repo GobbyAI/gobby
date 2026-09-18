@@ -13,8 +13,11 @@ Active memory-lifecycle rules:
 - review-closed-task-memories-before-handoff: acknowledged block on before_tool set_handoff
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
-- search-memories-on-claim: inject_context on after_tool claim_task/create_task claims
 - surface-memories-on-turn-start: inline surface_memories call once per parent turn_start
+- surface-memories-before-spawn: inline surface_memories on before_tool spawn_agent
+- surface-memories-before-claiming-create: inline surface_memories on a claiming create_task
+- surface-memories-after-claim: inline surface_memories on after_tool claim_task
+- surface-memories-after-handoff: inline surface_memories on after_tool get_handoff
 
 """
 
@@ -23,6 +26,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -37,6 +41,13 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+SURFACE_RULES = (
+    "surface-memories-before-spawn",
+    "surface-memories-before-claiming-create",
+    "surface-memories-after-claim",
+    "surface-memories-after-handoff",
+)
+
 MEMORY_RULES = {
     "judge-shadow-relevance-on-response",
     "reset-memory-tracking-on-start",
@@ -46,11 +57,12 @@ MEMORY_RULES = {
     "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
-    "search-memories-on-claim",
+    *SURFACE_RULES,
     "surface-memories-on-turn-start",
 }
 
 REMOVED_HELPER_RULES = {
+    "search-memories-on-claim",
     "bootstrap-session-title-on-prompt",
     "cancel-stale-memory-recall-helpers",
     "memory-capture-nudge",
@@ -940,111 +952,286 @@ class TestGuardPlanMemoryWritesEngine:
 
 
 # ---------------------------------------------------------------------------
-# search-memories-on-claim through the engine
+# surface-memories-on-tool-intent through the engine
 # ---------------------------------------------------------------------------
 
-_CLAIM_SESSION_ID = "6f3a1f62-4d1e-4a4b-9a8e-3f7c2b1d0e55"
-_CLAIM_TASK_ID = "33333333-3333-4333-8333-333333330043"
-_CLAIM_NUDGE = "Task claimed. Before editing, search project memory for its subject:"
+_SURFACE_SESSION_ID = "6f3a1f62-4d1e-4a4b-9a8e-3f7c2b1d0e55"
+_SURFACE_TASK_ID = "33333333-3333-4333-8333-333333330043"
+_SURFACE_PROMPT = "Repair the Codex SessionEnd hook so agent runs end cleanly"
+_SURFACE_TITLE = "Fix session cleanup on missing transcripts"
+_SURFACE_HANDOFF = "Current state: the delivery formatter routes surfaced memories."
 
 
-def _task_tool_event(tool_name: str, arguments: dict[str, Any], tool_output: Any) -> HookEvent:
+def _proxy_tool_event(
+    event_type: HookEventType,
+    server: str,
+    tool: str,
+    arguments: dict[str, Any],
+    tool_output: Any = None,
+) -> HookEvent:
+    data: dict[str, Any] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": server,
+            "tool_name": tool,
+            "arguments": arguments,
+        },
+        "mcp_server": server,
+        "mcp_tool": tool,
+    }
+    if tool_output is not None:
+        data["tool_output"] = tool_output
     return HookEvent(
-        event_type=HookEventType.AFTER_TOOL,
-        session_id=_CLAIM_SESSION_ID,
+        event_type=event_type,
+        session_id=_SURFACE_SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-tasks",
-                "tool_name": tool_name,
-                "arguments": arguments,
-            },
-            "mcp_server": "gobby-tasks",
-            "mcp_tool": tool_name,
-            "tool_output": tool_output,
-        },
-        metadata={"_platform_session_id": _CLAIM_SESSION_ID},
+        data=data,
+        metadata={"_platform_session_id": _SURFACE_SESSION_ID},
     )
 
 
+def _surface_hit() -> dict[str, Any]:
+    # A fresh id per call: the index dedupes against ids staged earlier in the
+    # process, so a shared id would silence every injection after the first.
+    return {
+        "id": str(uuid4()),
+        "type": "pattern",
+        "search_via": "semantic",
+        "updated_at": "2026-09-16T10:00:00+00:00",
+        "content": "Promotion signs each staged binary; read sha256 from ~/.gobby/bin/",
+        "rationale": "verifying an installed Rust binary",
+    }
+
+
 @pytest.fixture
-def claim_engine(db: HubDatabase) -> RuleEngine:
+def surface_calls() -> list[dict[str, Any]]:
+    return []
+
+
+@pytest.fixture
+def surface_engine(db: HubDatabase, surface_calls: list[dict[str, Any]]) -> RuleEngine:
     _sync_bundled(db)
     with db.transaction() as conn:
         conn.execute("UPDATE rule_definitions SET enabled = FALSE")
         conn.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-            ("search-memories-on-claim",),
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = ANY(%s)",
+            (list(SURFACE_RULES),),
         )
-    return RuleEngine(db)
+
+    async def dispatcher(
+        server: str, tool: str, args: dict[str, Any], event: HookEvent
+    ) -> dict[str, Any]:
+        surface_calls.append({"server": server, "tool": tool, "args": args})
+        return {
+            "success": True,
+            "result": {
+                "trigger": args.get("trigger"),
+                "count": 1,
+                "memories": [_surface_hit()],
+            },
+        }
+
+    return RuleEngine(db, mcp_dispatcher=dispatcher)
 
 
-class TestSearchMemoriesOnClaim:
-    def test_rule_contract(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
+class TestToolIntentSurfacing:
+    """Surfacing rules that read a tool's intent and inject a memory index."""
+
+    @pytest.mark.parametrize(
+        ("rule_name", "event_name"),
+        [
+            ("surface-memories-before-spawn", "before_tool"),
+            ("surface-memories-before-claiming-create", "before_tool"),
+            ("surface-memories-after-claim", "after_tool"),
+            ("surface-memories-after-handoff", "after_tool"),
+        ],
+    )
+    def test_rule_contract(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        rule_name: str,
+        event_name: str,
+    ) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("search-memories-on-claim")
+        row = manager.get_by_name(rule_name)
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
-        assert row.priority == 13
-        assert body.event.value == "after_tool"
-        assert "claimed_tasks" in (body.when or "")
-        assert [effect.type for effect in body.resolved_effects] == ["inject_context"]
-        assert "gobby-memory:search_memories" in (body.resolved_effects[0].template or "")
+        assert body.event.value == event_name
+        assert [effect.type for effect in body.resolved_effects] == ["mcp_call"]
+        effect = body.resolved_effects[0]
+        assert effect.server == "gobby-memory"
+        assert effect.tool == "surface_memories"
+        # Inline, non-blocking delivery: unasked-for context never fails the
+        # caller's tool call, and the index has to reach the same turn.
+        assert effect.background is False
+        assert effect.inject_result is True
+        assert effect.block_on_failure is False
+        assert effect.block_on_success is False
+
+    async def test_spawn_prompt_surfaces_under_the_spawn_trigger(
+        self, surface_engine: RuleEngine, surface_calls: list[dict[str, Any]]
+    ) -> None:
+        event = _proxy_tool_event(
+            HookEventType.BEFORE_TOOL,
+            "gobby-agents",
+            "spawn_agent",
+            {"prompt": _SURFACE_PROMPT, "agent_type": "backend-developer"},
+        )
+
+        result = await surface_engine.evaluate(event, _SURFACE_SESSION_ID, {})
+
+        assert result.decision == "allow"
+        assert surface_calls == [
+            {
+                "server": "gobby-memory",
+                "tool": "surface_memories",
+                "args": {"text": _SURFACE_PROMPT, "trigger": "spawn_agent"},
+            }
+        ]
+        assert result.context is not None
+        assert '<memory-index trigger="spawn_agent">' in result.context
+
+    async def test_claiming_create_surfaces_the_title_under_the_task_trigger(
+        self, surface_engine: RuleEngine, surface_calls: list[dict[str, Any]]
+    ) -> None:
+        event = _proxy_tool_event(
+            HookEventType.BEFORE_TOOL,
+            "gobby-tasks",
+            "create_task",
+            {"title": _SURFACE_TITLE, "claim": True},
+        )
+
+        result = await surface_engine.evaluate(event, _SURFACE_SESSION_ID, {})
+
+        assert result.decision == "allow"
+        assert surface_calls == [
+            {
+                "server": "gobby-memory",
+                "tool": "surface_memories",
+                "args": {"text": _SURFACE_TITLE, "trigger": "task"},
+            }
+        ]
+        assert result.context is not None
+        assert '<memory-index trigger="task">' in result.context
 
     @pytest.mark.parametrize(
         "tool_output",
         [
-            pytest.param({"success": True, "task_id": _CLAIM_TASK_ID}, id="bare-payload"),
             pytest.param(
-                {"success": True, "result": {"success": True, "task_id": _CLAIM_TASK_ID}},
+                {"success": True, "task_id": _SURFACE_TASK_ID, "title": _SURFACE_TITLE},
+                id="bare-payload",
+            ),
+            pytest.param(
+                {
+                    "success": True,
+                    "result": {
+                        "success": True,
+                        "task_id": _SURFACE_TASK_ID,
+                        "title": _SURFACE_TITLE,
+                    },
+                },
                 id="proxy-envelope",
             ),
         ],
     )
-    async def test_claim_task_nudges_a_search_with_the_title_placeholder(
-        self, claim_engine: RuleEngine, tool_output: dict[str, Any]
+    async def test_claim_surfaces_the_returned_title_under_the_task_trigger(
+        self,
+        surface_engine: RuleEngine,
+        surface_calls: list[dict[str, Any]],
+        tool_output: dict[str, Any],
     ) -> None:
-        variables: dict[str, Any] = {"claimed_tasks": {_CLAIM_TASK_ID: "#43"}}
-        event = _task_tool_event("claim_task", {"task_id": "#43"}, tool_output)
+        variables: dict[str, Any] = {"claimed_tasks": {_SURFACE_TASK_ID: "#43"}}
+        event = _proxy_tool_event(
+            HookEventType.AFTER_TOOL,
+            "gobby-tasks",
+            "claim_task",
+            {"task_id": "#43"},
+            tool_output,
+        )
 
-        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+        result = await surface_engine.evaluate(event, _SURFACE_SESSION_ID, variables)
 
         assert result.decision == "allow"
+        assert surface_calls == [
+            {
+                "server": "gobby-memory",
+                "tool": "surface_memories",
+                "args": {"text": _SURFACE_TITLE, "trigger": "task"},
+            }
+        ]
         assert result.context is not None
-        assert _CLAIM_NUDGE in result.context
-        assert '`gobby-memory:search_memories(query="<task title>")`' in result.context
-
-    async def test_create_task_with_claim_names_the_new_title_as_the_query(
-        self, claim_engine: RuleEngine
-    ) -> None:
-        variables: dict[str, Any] = {"claimed_tasks": {_CLAIM_TASK_ID: "#43"}}
-        event = _task_tool_event(
-            "create_task",
-            {"title": "Fix session cleanup on missing transcripts", "claim": True},
-            {"success": True, "result": {"id": _CLAIM_TASK_ID, "seq_num": 43, "ref": "#43"}},
-        )
-
-        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
-
-        assert result.context is not None
-        assert (
-            'search_memories(query="Fix session cleanup on missing transcripts")' in result.context
-        )
+        assert '<memory-index trigger="task">' in result.context
 
     @pytest.mark.parametrize(
-        ("tool_name", "arguments", "tool_output", "claimed"),
+        "tool_output",
         [
             pytest.param(
+                {"success": True, "found": True, "handoff": _SURFACE_HANDOFF},
+                id="bare-payload",
+            ),
+            pytest.param(
+                {
+                    "success": True,
+                    "result": {"success": True, "found": True, "handoff": _SURFACE_HANDOFF},
+                },
+                id="proxy-envelope",
+            ),
+        ],
+    )
+    async def test_handoff_text_surfaces_under_the_handoff_trigger(
+        self,
+        surface_engine: RuleEngine,
+        surface_calls: list[dict[str, Any]],
+        tool_output: dict[str, Any],
+    ) -> None:
+        event = _proxy_tool_event(
+            HookEventType.AFTER_TOOL,
+            "gobby-sessions",
+            "get_handoff",
+            {},
+            tool_output,
+        )
+
+        result = await surface_engine.evaluate(event, _SURFACE_SESSION_ID, {})
+
+        assert result.decision == "allow"
+        assert surface_calls == [
+            {
+                "server": "gobby-memory",
+                "tool": "surface_memories",
+                "args": {"text": _SURFACE_HANDOFF, "trigger": "handoff"},
+            }
+        ]
+        assert result.context is not None
+        assert '<memory-index trigger="handoff">' in result.context
+
+    @pytest.mark.parametrize(
+        ("event_type", "server", "tool", "arguments", "tool_output", "claimed"),
+        [
+            pytest.param(
+                HookEventType.BEFORE_TOOL,
+                "gobby-tasks",
                 "create_task",
-                {"title": "Unclaimed follow-up"},
-                {"success": True, "result": {"id": _CLAIM_TASK_ID, "seq_num": 43, "ref": "#43"}},
+                {"title": _SURFACE_TITLE},
+                None,
                 {},
                 id="create-without-claim",
             ),
             pytest.param(
+                HookEventType.BEFORE_TOOL,
+                "gobby-agents",
+                "spawn_agent",
+                {"agent_type": "backend-developer"},
+                None,
+                {},
+                id="spawn-without-prompt",
+            ),
+            pytest.param(
+                HookEventType.AFTER_TOOL,
+                "gobby-tasks",
                 "claim_task",
                 {"task_id": "#43"},
                 {
@@ -1056,29 +1243,45 @@ class TestSearchMemoriesOnClaim:
                 id="claim-conflict",
             ),
             pytest.param(
+                HookEventType.AFTER_TOOL,
+                "gobby-tasks",
                 "get_task",
                 {"task_id": "#43"},
-                {"success": True, "result": {"id": _CLAIM_TASK_ID, "ref": "#43"}},
-                {_CLAIM_TASK_ID: "#43"},
+                {"success": True, "result": {"id": _SURFACE_TASK_ID, "title": _SURFACE_TITLE}},
+                {_SURFACE_TASK_ID: "#43"},
                 id="non-claim-tool",
+            ),
+            pytest.param(
+                HookEventType.AFTER_TOOL,
+                "gobby-sessions",
+                "get_handoff",
+                {},
+                {"success": True, "found": False, "handoff": ""},
+                {},
+                id="handoff-absent",
             ),
         ],
     )
-    async def test_stays_silent_unless_the_returned_task_was_claimed(
+    async def test_stays_silent_without_a_surfacing_intent(
         self,
-        claim_engine: RuleEngine,
-        tool_name: str,
+        surface_engine: RuleEngine,
+        surface_calls: list[dict[str, Any]],
+        event_type: HookEventType,
+        server: str,
+        tool: str,
         arguments: dict[str, Any],
-        tool_output: dict[str, Any],
+        tool_output: Any,
         claimed: dict[str, str],
     ) -> None:
-        variables: dict[str, Any] = {"claimed_tasks": claimed}
-        event = _task_tool_event(tool_name, arguments, tool_output)
+        event = _proxy_tool_event(event_type, server, tool, arguments, tool_output)
 
-        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+        result = await surface_engine.evaluate(
+            event, _SURFACE_SESSION_ID, {"claimed_tasks": claimed}
+        )
 
         assert result.decision == "allow"
-        assert not (result.context and _CLAIM_NUDGE in result.context)
+        assert surface_calls == []
+        assert result.context is None
 
 
 # ============================================================================

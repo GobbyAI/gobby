@@ -1,0 +1,126 @@
+tags: [memory-lifecycle, memory, lifecycle, tasks, gobby, default]
+
+# Four surfacing rules, one per intent a tool announces. Each hands the text the
+# agent already wrote to `gobby-memory:surface_memories`, which ranks project
+# memories and returns a compact index; the delivery formatter drops ids already
+# injected in this context. Surfacing is unasked-for context, so no rule blocks
+# on the call's outcome: `background: false` with `inject_result: true` keeps the
+# index in the same turn as the intent, and `surface_memories` fails open to an
+# empty result.
+rules:
+  surface-memories-before-spawn:
+    description: "Surface memories for the spawn prompt before an agent is spawned"
+    event: before_tool
+    enabled: true
+    priority: 13
+    when: >
+      event.data.get('mcp_server') == 'gobby-agents'
+      and event.data.get('mcp_tool') == 'spawn_agent'
+      and bool(tool_input.get('prompt'))
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: surface_memories
+        arguments:
+          text: "{{ tool_input.get('prompt') }}"
+          trigger: spawn_agent
+        background: false
+        inject_result: true
+
+  surface-memories-before-claiming-create:
+    description: "Surface memories for a task title when create_task also claims it"
+    event: before_tool
+    enabled: true
+    priority: 13
+    # A create without `claim=true` is bookkeeping rather than work about to
+    # start, so only the claiming shape surfaces.
+    when: >
+      event.data.get('mcp_server') == 'gobby-tasks'
+      and event.data.get('mcp_tool') == 'create_task'
+      and bool(tool_input.get('claim'))
+      and bool(tool_input.get('title'))
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: surface_memories
+        arguments:
+          text: "{{ tool_input.get('title') }}"
+          trigger: task
+        background: false
+        inject_result: true
+
+  surface-memories-after-claim:
+    description: "Surface memories for the claimed task's subject after a successful claim"
+    # after_tool is required: the title only exists in the claim result, and the
+    # claimed_tasks variable the claim merges before returning is the proof the
+    # claim happened (a conflict or a closed task leaves the id out of it). The
+    # proxy wraps call_tool results as {success, result}; native MCP callers
+    # deliver the bare payload, so both shapes are read.
+    event: after_tool
+    enabled: true
+    priority: 13
+    when: >
+      event.data.get('mcp_server') == 'gobby-tasks'
+      and event.data.get('mcp_tool') == 'claim_task'
+      and isinstance(event.data.get('tool_output'), dict)
+      and (
+        (
+          event.data.get('tool_output', {}).get('task_id')
+            in (variables.get('claimed_tasks') or {})
+          and bool(event.data.get('tool_output', {}).get('title'))
+        )
+        or (
+          isinstance(event.data.get('tool_output', {}).get('result'), dict)
+          and event.data.get('tool_output', {}).get('result', {}).get('task_id')
+            in (variables.get('claimed_tasks') or {})
+          and bool(event.data.get('tool_output', {}).get('result', {}).get('title'))
+        )
+      )
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: surface_memories
+        arguments:
+          text: >-
+            {%- set output = event.data.get('tool_output') -%}
+            {%- set output = output if output is mapping else {} -%}
+            {%- set inner = output.get('result') -%}
+            {%- set inner = inner if inner is mapping else {} -%}
+            {{ output.get('title') or inner.get('title') or '' }}
+          trigger: task
+        background: false
+        inject_result: true
+
+  surface-memories-after-handoff:
+    description: "Surface memories for the handoff text a session just read"
+    # The handoff is the next session's brief, so it is the best statement of
+    # what that session is about to do. Both payload shapes are read for the
+    # same reason as the claim rule.
+    event: after_tool
+    enabled: true
+    priority: 13
+    when: >
+      event.data.get('mcp_server') == 'gobby-sessions'
+      and event.data.get('mcp_tool') == 'get_handoff'
+      and isinstance(event.data.get('tool_output'), dict)
+      and (
+        bool(event.data.get('tool_output', {}).get('handoff'))
+        or (
+          isinstance(event.data.get('tool_output', {}).get('result'), dict)
+          and bool(event.data.get('tool_output', {}).get('result', {}).get('handoff'))
+        )
+      )
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: surface_memories
+        arguments:
+          text: >-
+            {%- set output = event.data.get('tool_output') -%}
+            {%- set output = output if output is mapping else {} -%}
+            {%- set inner = output.get('result') -%}
+            {%- set inner = inner if inner is mapping else {} -%}
+            {{ output.get('handoff') or inner.get('handoff') or '' }}
+          trigger: handoff
+        background: false
+        inject_result: true

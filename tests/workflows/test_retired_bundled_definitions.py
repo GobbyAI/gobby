@@ -65,6 +65,7 @@ RETIRED_RULES = {
     "no-npx",
     "require-memory-review-before-status",
     "require-clean-tree-before-status",
+    "search-memories-on-claim",
 }
 MONOLITH_RULES = {
     "require-decompose-monolith-before-threshold-write",

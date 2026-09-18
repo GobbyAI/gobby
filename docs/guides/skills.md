@@ -14,7 +14,12 @@ install tree, and exposes skills through both CLI commands and the
 Installed rules and agent requirements can request skill loads. Inspect their
 current rows before claiming that a rule is active. A load supplies instructions;
 it does not perform the operations they describe or grant permission to do so.
-Memory retrieval, for example, remains an explicit `gobby-memory` operation.
+The bundled `memory-lifecycle` rules are the example: the `surface-memories-*`
+rules push a ranked memory index at a parent turn start and at spawn, claim, and
+handoff intents, `guard-plan-memory-writes` keeps plan evidence out of durable
+memory, and the `review-closed-task-memories-*` gates request one post-close
+review. None of them loads a skill, and memory retrieval beyond the pushed index
+remains an explicit `gobby-memory` operation.
 
 Gobby uses these scopes:
 
