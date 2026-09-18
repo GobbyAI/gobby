@@ -2,18 +2,22 @@
 
 Single-row model: templates live on disk only. The DB holds installed rows
 directly. Installed rows are overwritten when the template changes
-(preserving the user's enabled toggle). Soft-deleted rows are restored only
-when a managed bundled definition reappears with different content.
+(preserving the user's enabled toggle). The orphan sweep marks the rows it
+removes with ``SYNC_ORPHAN_TAG``, so a returning template restores them even
+when their content is unchanged; a deliberate deletion carries no marker and
+stays sticky across syncs.
 """
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
+from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
 from gobby.storage.definitions.agents import parent_body as agent_parent_body
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
@@ -32,6 +36,20 @@ _DISCOVERY_PLACEHOLDER_AGENTS = frozenset(
         "product-manager",
     }
 )
+
+# One-time repair: the sweep removed these rows in one batch on 2026-09-06
+# before it recorded its origin, so they carry no marker and no sync can tell
+# them apart from a deliberate deletion. The cutoff bounds the repair to that
+# batch; every sweep deletion since marks itself.
+_PRE_MARKER_SWEPT_AGENTS = frozenset(
+    {
+        "analyst",
+        "researcher",
+        "architect",
+        "product-manager",
+    }
+)
+_PRE_MARKER_SWEEP_CUTOFF = datetime(2026, 9, 7, tzinfo=UTC)
 
 
 def _is_legacy_discovery_placeholder(name: str, definition_json: str, enabled: bool) -> bool:
@@ -53,6 +71,24 @@ def _is_sync_managed_bundled_agent(existing: AgentDefinitionRow) -> bool:
 def _definition_json_equal(existing_json: Any, desired_json: Any) -> bool:
     """Compare definition JSON semantically across text and Postgres JSONB formats."""
     return json_equal(existing_json, desired_json)
+
+
+def _was_swept_before_marker(existing: AgentDefinitionRow) -> bool:
+    """Return whether this row predates the sweep marker and was swept away."""
+    return (
+        existing.name in _PRE_MARKER_SWEPT_AGENTS
+        and existing.deleted_at is not None
+        and existing.deleted_at < _PRE_MARKER_SWEEP_CUTOFF
+    )
+
+
+def _should_restore_swept_row(existing: AgentDefinitionRow, parent_body: dict[str, Any]) -> bool:
+    """Return whether a soft-deleted managed row is a removal sync may undo."""
+    if SYNC_ORPHAN_TAG in (existing.tags or []):
+        return True
+    if not _definition_json_equal(agent_parent_body(existing.definition_json), parent_body):
+        return True
+    return _was_swept_before_marker(existing)
 
 
 def _build_agent_update_fields(
@@ -96,7 +132,8 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     Creates installed rows directly from template files. Installed rows are
     overwritten when the template changes (preserving the user's enabled toggle,
     except for legacy disabled discovery placeholders that are upgraded to real
-    enabled agents).
+    enabled agents). Rows the orphan sweep removed are restored once their
+    template returns; deliberately deleted rows stay deleted.
 
     Args:
         db: Database connection
@@ -168,9 +205,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     continue
 
                 if existing.deleted_at is not None:
-                    if not _definition_json_equal(
-                        agent_parent_body(existing.definition_json), parent_body
-                    ):
+                    if _should_restore_swept_row(existing, parent_body):
                         manager.upsert_from_sync(
                             name,
                             parent_body,
@@ -247,7 +282,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     for row in orphan_rows:
         existing = manager.get(str(row["id"]))
         if existing.name not in on_disk and _is_sync_managed_bundled_agent(existing):
-            manager.delete(existing.id)
+            manager.delete(existing.id, sync_orphan=True)
             logger.debug("Soft-deleted orphaned bundled agent: %s", existing.name)
             result["orphaned"] += 1
 

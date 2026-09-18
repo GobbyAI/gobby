@@ -1,6 +1,7 @@
 """Tests for sync_bundled_agents."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -10,6 +11,7 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -491,6 +493,157 @@ class TestSyncBundledAgents:
             result = sync_bundled_agents(db)
             assert result["skipped"] == 1
             assert result["synced"] == 0
+
+    def test_sync_restores_swept_agent_when_template_returns(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """An orphan-sweep removal is undone once the template is back on disk."""
+        db = definition_db
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = agents_dir / "test-agent.yaml"
+        template = (
+            "name: test-agent\ndescription: A test agent\nprovider: claude\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+        )
+        agent_yaml.write_text(template)
+
+        mgr = _mgr(db)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            agent_yaml.unlink()
+            sweep = sync_bundled_agents(db)
+            assert sweep["orphaned"] == 1
+
+            swept = mgr.get_by_name("test-agent", include_deleted=True)
+            assert swept is not None
+            assert swept.deleted_at is not None
+            assert SYNC_ORPHAN_TAG in (swept.tags or [])
+
+            # Identical body: only the recorded sweep origin can restore it.
+            agent_yaml.write_text(template)
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        restored = mgr.get_by_name("test-agent")
+        assert restored is not None
+        assert restored.enabled is True
+        assert restored.tags == ["gobby"]
+
+    def test_sync_keeps_deliberate_delete_sticky_after_a_sweep_restore(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """A deliberate delete clears the sweep origin, so later syncs leave it deleted."""
+        db = definition_db
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = agents_dir / "test-agent.yaml"
+        template = (
+            "name: test-agent\ndescription: A test agent\nprovider: claude\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+        )
+        agent_yaml.write_text(template)
+
+        mgr = _mgr(db)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            agent_yaml.unlink()
+            sync_bundled_agents(db)
+            agent_yaml.write_text(template)
+            sync_bundled_agents(db)
+
+            live = mgr.get_by_name("test-agent")
+            assert live is not None
+            mgr.delete(live.id)
+
+            first = sync_bundled_agents(db)
+            second = sync_bundled_agents(db)
+
+        assert first["skipped"] == 1
+        assert first["updated"] == 0
+        assert second["skipped"] == 1
+        deleted = mgr.get_by_name("test-agent", include_deleted=True)
+        assert deleted is not None
+        assert deleted.deleted_at is not None
+        assert SYNC_ORPHAN_TAG not in (deleted.tags or [])
+
+    def test_sync_repairs_agents_swept_before_the_origin_marker(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """The four rows swept in the 2026-09-06 batch return with unchanged bodies."""
+        db = definition_db
+        names = ("analyst", "architect", "product-manager", "researcher")
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        for name in names:
+            (agents_dir / f"{name}.yaml").write_text(
+                f"name: {name}\ndescription: Bundled {name}\nenabled: true\n"
+                "provider: claude\nmode: interactive\nprompts:\n"
+                "  agent: Run the assigned task.\nworkflows:\n"
+                "  rule_selectors:\n    include: []\n"
+            )
+
+        mgr = _mgr(db)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            # Sync first so each stored body matches its template exactly, then
+            # soft-delete without a marker and backdate to the sweep batch.
+            created = sync_bundled_agents(db)
+            assert created["synced"] == len(names)
+            for name in names:
+                live = mgr.get_by_name(name)
+                assert live is not None
+                mgr.delete(live.id)
+                db.execute(
+                    "UPDATE agent_definitions SET deleted_at = %s WHERE id = %s",
+                    (datetime(2026, 9, 6, 4, 5, 13, tzinfo=UTC), live.id),
+                )
+                assert mgr.get_by_name(name) is None
+
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == len(names)
+        for name in names:
+            repaired = mgr.get_by_name(name)
+            assert repaired is not None, name
+            assert repaired.enabled is True
+            assert repaired.tags == ["gobby"]
+
+    def test_sync_does_not_repair_deletions_after_the_sweep_batch(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """A repaired name deleted after the sweep batch keeps its sticky deletion."""
+        db = definition_db
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "researcher.yaml").write_text(
+            "name: researcher\ndescription: Bundled researcher\nenabled: true\n"
+            "provider: claude\nmode: interactive\nprompts:\n"
+            "  agent: Run the assigned task.\nworkflows:\n"
+            "  rule_selectors:\n    include: []\n"
+        )
+
+        mgr = _mgr(db)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            live = mgr.get_by_name("researcher")
+            assert live is not None
+            mgr.delete(live.id)
+
+            result = sync_bundled_agents(db)
+
+        assert result["skipped"] == 1
+        assert result["updated"] == 0
+        assert mgr.get_by_name("researcher") is None
 
     @pytest.mark.unit
     def test_sync_reports_unmanaged_shadow_row_loudly(
