@@ -16,6 +16,7 @@ from gobby.tasks.command_equivalence import (
     parse_validation_shell,
     scope_difference,
 )
+from gobby.tasks.criteria_contract import external_criterion_ranges
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -59,6 +60,12 @@ _CRITERION_COMMAND_PREFIXES = frozenset(
         "yarn",
         "zsh",
     }
+)
+_DAEMON_LIFECYCLE_SUBCOMMANDS = frozenset({"start", "stop", "restart", "cutover"})
+_GOBBY_OPTIONS_WITH_VALUES = frozenset({"--config"})
+DAEMON_LIFECYCLE_COMMAND_REASON = (
+    "daemon lifecycle commands (start/stop/restart/cutover) mutate the live daemon, "
+    "so they never register as mandatory criterion commands; the coordinator runs them"
 )
 
 
@@ -119,6 +126,8 @@ def criterion_command_records(
         if _command_is_excluded(criteria, match):
             continue
         command = match.group(1).strip()
+        if _daemon_lifecycle_command(command):
+            continue
         equivalence = classify_validation_command_equivalence(command)
         core = equivalence.core_command
         if not _looks_like_criterion_command(command, core, observed_cores):
@@ -195,7 +204,32 @@ def criterion_command_records(
     return records
 
 
+def _daemon_lifecycle_command(command: str) -> bool:
+    """Whether a command span starts, stops, restarts, or cuts over the daemon.
+
+    Launchers, environment assignments, and ``cd`` prefixes may precede the
+    ``gobby`` token, so every token of every segment is a candidate.
+    """
+    for segment in parse_shell_command(command).segments:
+        for index, token in enumerate(segment):
+            if posixpath.basename(token).casefold() != "gobby":
+                continue
+            arguments = segment[index + 1 :]
+            while arguments and arguments[0].startswith("-"):
+                consumed = 2 if arguments[0] in _GOBBY_OPTIONS_WITH_VALUES else 1
+                arguments = arguments[consumed:]
+            if arguments and arguments[0].casefold() in _DAEMON_LIFECYCLE_SUBCOMMANDS:
+                return True
+    return False
+
+
 def _command_is_excluded(criteria: str, match: re.Match[str]) -> bool:
+    # Live: criteria are coordinator-owned, so their command spans are never mandatory.
+    if any(
+        start <= match.start() and match.end() <= end
+        for start, end in external_criterion_ranges(criteria)
+    ):
+        return True
     # Mask command contents so dots/semicolons inside shell arguments are not
     # mistaken for prose clause boundaries. Never let another clause negate this one.
     masked = _CRITERIA_CODE_SPAN_RE.sub(lambda span: " " * len(span.group()), criteria)
@@ -262,6 +296,19 @@ def authored_criterion_commands(criteria: str) -> list[str]:
     return commands
 
 
+def excluded_daemon_lifecycle_commands(criteria: str) -> list[str]:
+    """Daemon lifecycle spans that will not register as criterion commands."""
+    excluded: list[str] = []
+    seen: set[str] = set()
+    for match in _CRITERIA_CODE_SPAN_RE.finditer(criteria):
+        command = match.group(1).strip()
+        if not command or command in seen or not _daemon_lifecycle_command(command):
+            continue
+        seen.add(command)
+        excluded.append(command)
+    return excluded
+
+
 def malformed_criterion_command_findings(criteria: str) -> tuple[str, ...]:
     """Reject command-shaped spans that cannot be an exact close command."""
     findings: list[str] = []
@@ -281,12 +328,16 @@ def malformed_criterion_command_findings(criteria: str) -> tuple[str, ...]:
 def criterion_command_authoring_payload(criteria: str) -> dict[str, object]:
     """Explain stored exact-command close spans so they are not silent."""
     commands = authored_criterion_commands(criteria)
-    if not commands:
-        return {}
-    return {
-        "criterion_commands": commands,
-        "criterion_command_contract": CRITERION_COMMAND_CONTRACT,
-    }
+    payload: dict[str, object] = {}
+    if commands:
+        payload["criterion_commands"] = commands
+        payload["criterion_command_contract"] = CRITERION_COMMAND_CONTRACT
+    excluded = excluded_daemon_lifecycle_commands(criteria)
+    if excluded:
+        payload["excluded_criterion_commands"] = [
+            {"command": command, "reason": DAEMON_LIFECYCLE_COMMAND_REASON} for command in excluded
+        ]
+    return payload
 
 
 def _command_shaped_spans(criteria: str) -> list[str]:
@@ -295,7 +346,9 @@ def _command_shaped_spans(criteria: str) -> list[str]:
         if _command_is_excluded(criteria, match):
             continue
         command = match.group(1).strip()
-        if command and (_is_command_shaped_span(command) or _full_suite_runner(command)):
+        if not command or _daemon_lifecycle_command(command):
+            continue
+        if _is_command_shaped_span(command) or _full_suite_runner(command):
             spans.append(command)
     return spans
 

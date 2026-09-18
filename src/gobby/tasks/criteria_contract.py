@@ -169,6 +169,15 @@ _OPERATIONAL_HINTS = {
 
 
 @dataclass(frozen=True, slots=True)
+class CriterionSpan:
+    """One criterion's text and the range it occupies in the criteria value."""
+
+    text: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
 class _OperationalRequirement:
     action: str
     subjects: frozenset[str]
@@ -186,20 +195,21 @@ def normalized_validation_criteria(value: str | None) -> str | None:
     return normalized or None
 
 
-def _split_inline_numbered_criteria(value: str) -> tuple[str, ...] | None:
+def _inline_numbered_criterion_spans(value: str, offset: int) -> tuple[CriterionSpan, ...] | None:
     matches = list(_INLINE_NUMBERED_ITEM_RE.finditer(value))
     if len(matches) < 2 or matches[0].start() != 0:
         return None
     if [int(match.group("number")) for match in matches] != list(range(1, len(matches) + 1)):
         return None
 
-    items = tuple(
-        value[
-            match.end() : matches[index + 1].start() if index + 1 < len(matches) else None
-        ].strip()
-        for index, match in enumerate(matches)
-    )
-    return items if all(items) else None
+    spans: list[CriterionSpan] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(value)
+        text = value[match.end() : end].strip()
+        if not text:
+            return None
+        spans.append(CriterionSpan(text=text, start=match.end() + offset, end=end + offset))
+    return tuple(spans)
 
 
 def require_validation_criteria(task_type: str, value: str | None) -> str | None:
@@ -213,49 +223,79 @@ def require_validation_criteria(task_type: str, value: str | None) -> str | None
     return normalized
 
 
-def split_validation_criteria(value: str | None) -> tuple[str, ...]:
-    """Split free-text criteria into stable, distinct criterion strings."""
+def criterion_spans(value: str | None) -> tuple[CriterionSpan, ...]:
+    """Split free-text criteria into criteria that keep their original ranges.
+
+    A criterion owns its continuation lines, so a wrapped list item or paragraph
+    is one span covering every line it was written across.
+    """
     normalized = normalized_validation_criteria(value)
-    if normalized is None:
+    if normalized is None or value is None:
         return ()
+    offset = len(value) - len(value.lstrip())
 
-    lines = normalized.splitlines()
+    lines = normalized.split("\n")
     if len(lines) == 1:
-        inline_items = _split_inline_numbered_criteria(normalized)
-        if inline_items is not None:
-            return inline_items
+        inline_spans = _inline_numbered_criterion_spans(normalized, offset)
+        if inline_spans is not None:
+            return inline_spans
 
-    items: list[str] = []
+    spans: list[CriterionSpan] = []
     current: list[str] = []
+    start = 0
+    end = 0
     saw_list_marker = False
+    position = 0
+
+    def span(lines_so_far: list[str], first: int, last: int) -> CriterionSpan:
+        return CriterionSpan(text=" ".join(lines_so_far), start=first + offset, end=last + offset)
 
     for raw_line in lines:
+        line_start = position
+        position += len(raw_line) + 1
         line = raw_line.strip()
         if not line:
             if current:
-                items.append(" ".join(current))
+                spans.append(span(current, start, end))
                 current = []
             continue
         match = _LIST_ITEM_RE.match(raw_line)
         if match is not None:
             if not saw_list_marker:
-                items = []
+                spans = []
                 current = []
             saw_list_marker = True
             if current:
-                items.append(" ".join(current))
+                spans.append(span(current, start, end))
             current = [match.group("text").strip()]
-            continue
-        current.append(line)
+            start = line_start
+        else:
+            if not current:
+                start = line_start
+            current.append(line)
+        end = line_start + len(raw_line)
 
     if current:
-        items.append(" ".join(current))
+        spans.append(span(current, start, end))
 
-    if saw_list_marker:
-        return tuple(item for item in items if item)
+    items = tuple(item for item in spans if item.text)
+    if saw_list_marker or items:
+        return items
+    return (CriterionSpan(text=normalized, start=offset, end=offset + len(normalized)),)
 
-    paragraphs = tuple(item for item in items if item)
-    return paragraphs or (normalized,)
+
+def split_validation_criteria(value: str | None) -> tuple[str, ...]:
+    """Split free-text criteria into stable, distinct criterion strings."""
+    return tuple(span.text for span in criterion_spans(value))
+
+
+def external_criterion_ranges(value: str | None) -> tuple[tuple[int, int], ...]:
+    """Ranges of coordinator-owned ``Live:`` criteria in the original criteria text."""
+    return tuple(
+        (span.start, span.end)
+        for span in criterion_spans(value)
+        if is_external_criterion(span.text)
+    )
 
 
 def is_external_criterion(criterion: str) -> bool:

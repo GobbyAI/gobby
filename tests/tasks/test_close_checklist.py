@@ -191,6 +191,64 @@ def test_excluded_occurrence_does_not_hide_a_later_required_occurrence() -> None
     assert "Run `cargo test` clean" in gate.message
 
 
+@pytest.mark.parametrize(
+    "span",
+    [
+        "gobby start",
+        "gobby start --verbose",
+        "gobby stop",
+        "gobby restart",
+        "gobby restart --wait",
+        "gobby cutover",
+        "uv run gobby restart",
+        "uv run gobby restart --wait",
+        "uv run gobby cutover --allow-dirty",
+        "uv run --frozen gobby restart --wait",
+        "GOBBY_ALLOW_WORKTREE_DAEMON=1 gobby start",
+    ],
+)
+def test_daemon_lifecycle_criterion_spans_never_block_close(span: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        validation_criteria=f"The coordinator runs `{span}` after the merge.",
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["criterion_commands"] == []
+    assert gate.details["criterion_command_gaps"] == []
+
+
+def test_live_criteria_produce_no_mandatory_criterion_commands() -> None:
+    criteria = (
+        "- Focused tests pass.\n"
+        "- Live: `gobby restart` succeeds after the merge.\n"
+        "- Live: `uv run pytest tests/smoke.py` passes."
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        validation_criteria=criteria,
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["criterion_commands"] == []
+    assert gate.details["criterion_command_gaps"] == []
+
+
+def test_non_lifecycle_gobby_criterion_command_still_blocks_close() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        validation_criteria="Run `gobby test-types audit tests/` clean.",
+    )
+    assert gate.status == "failed"
+    assert [record["command"] for record in gate.details["criterion_commands"]] == [
+        "gobby test-types audit tests/"
+    ]
+
+
 def test_all_unmet_criteria_report_observed_wrappers_scope_and_stale_edits() -> None:
     gate = evaluate_validation_commands(
         task_category="code",
