@@ -705,4 +705,57 @@ mod tests {
         );
         menu_opened(&mut chrome, focused);
     }
+
+    /// The other half of the tmux scroll contract.
+    ///
+    /// `wheel_over_a_tmux_pane_asks_the_daemon_for_nothing` proves the
+    /// negative -- no host scroll verb is sent for a pane the daemon holds no
+    /// offset for. This proves the positive: tmux turns mouse tracking on in
+    /// the PTY it hands its client (`set -g mouse on` makes it emit DECSET
+    /// 1000/1002/1006), so the notch leaves gclient as an SGR wheel report
+    /// addressed to that pane, which is what drives tmux copy mode into
+    /// scrollback. Without the forward the pane would look right while
+    /// scrolling nothing.
+    #[test]
+    fn a_wheel_notch_over_a_tracking_tmux_pane_is_reported_to_its_attach_client() {
+        let mut ws = Workspace::scripted();
+        let pane = ws
+            .open_terminal("term-tmux", "tmux", "epoch")
+            .expect("open term-tmux");
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(pane, "tmux");
+        chrome.compute_view(&ws, Rect::new(0, 0, 100, 30));
+        track_mouse(&mut ws, pane);
+        let info = chrome
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| chrome.pane_for_slot(info.id) == Some(pane))
+            .expect("pane drawn");
+        let (col, row) = (info.inner_rect.x + 1, info.inner_rect.y + 1);
+
+        let up = event(MouseEventKind::ScrollUp, col, row, KeyModifiers::NONE);
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &up),
+            MouseOutcome::Write {
+                pane,
+                bytes: b"\x1b[<64;2;2M".to_vec(),
+            },
+            "a notch over a tracking tmux pane is forwarded, not swallowed"
+        );
+
+        // Shift is the documented bypass, and a tmux pane has no daemon-side
+        // scrollback to fall back to, so the notch is consumed there.
+        let shifted = event(MouseEventKind::ScrollUp, col, row, KeyModifiers::SHIFT);
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &shifted),
+            MouseOutcome::Handled,
+            "shift+wheel bypasses the forward and finds no host scrollback"
+        );
+        assert_eq!(
+            ws.pane(pane).scroll_offset,
+            0,
+            "and it never moves a tmux pane off the live edge"
+        );
+    }
 }
