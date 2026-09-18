@@ -211,6 +211,7 @@ class _Harness:
                 "diff_sha": "a" * 64,
                 "test_bodies_sha": "b" * 64,
                 "stable_facts": {"commit_shas": ["abc"]},
+                "criterion_count": 1,
             }
         )
         if ready:

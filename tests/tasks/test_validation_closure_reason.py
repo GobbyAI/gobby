@@ -25,7 +25,11 @@ _TEMPLATE_PATH = (
 def _validator() -> tuple[TaskValidator, MagicMock]:
     llm_service = MagicMock(spec=LLMService)
     llm_service.call_json_feature = AsyncMock(
-        return_value={"status": "valid", "criteria": [], "feedback": "Complete."}
+        return_value={
+            "status": "valid",
+            "criteria": [{"index": 1, "satisfied": True, "gap": None}],
+            "feedback": "Complete.",
+        }
     )
     validator = TaskValidator(
         TaskValidationConfig(),

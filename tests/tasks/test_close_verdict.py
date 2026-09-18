@@ -175,59 +175,123 @@ def test_fuzzy_text_matches_when_index_is_missing() -> None:
         {
             "status": "invalid",
             "criteria": [
+                {"index": 1, "satisfied": True},
                 {
                     "criterion": "close prompt remains bounded",
                     "satisfied": False,
                     "gap": "Prompt exceeds the limit.",
-                }
+                },
             ],
             "feedback": "One gap.",
         },
         CRITERIA,
     )
 
-    assert verdict.criteria[0].satisfied is False
-    assert verdict.criteria[0].gap == "One gap."
+    assert verdict.criteria[0].satisfied is True
+    assert verdict.criteria[1].satisfied is False
     assert verdict.criteria[1].gap == "Prompt exceeds the limit."
 
 
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    [
-        ("valid", [True, True]),
-        ("invalid", [False, False]),
-    ],
-)
-def test_missing_entries_inherit_overall_status(status: str, expected: list[bool]) -> None:
-    verdict = parse_close_verdict(
-        {"status": status, "criteria": [], "feedback": "overall"}, CRITERIA
-    )
+def test_text_only_entry_matching_no_criterion_is_rejected() -> None:
+    with pytest.raises(CloseVerdictParseError, match="matching no criterion"):
+        parse_close_verdict(
+            {
+                "status": "valid",
+                "criteria": [
+                    {"index": 1, "satisfied": True},
+                    {"index": 2, "satisfied": True},
+                    {"criterion": "zzzz qqqq vvvv", "satisfied": True},
+                ],
+                "feedback": "ok",
+            },
+            CRITERIA,
+        )
 
-    assert [entry.satisfied for entry in verdict.criteria] == expected
+
+@pytest.mark.parametrize("status", ["valid", "invalid"])
+def test_missing_index_is_rejected(status: str) -> None:
+    with pytest.raises(CloseVerdictParseError, match="every criterion index exactly once"):
+        parse_close_verdict(
+            {
+                "status": status,
+                "criteria": [{"index": 1, "satisfied": True, "gap": None}],
+                "feedback": "overall",
+            },
+            CRITERIA,
+        )
 
 
-def test_extra_entries_are_ignored() -> None:
-    verdict = parse_close_verdict(
-        {
-            "status": "valid",
-            "criteria": [
-                {"index": 1, "satisfied": True},
-                {"index": 2, "satisfied": True},
-                {"index": 999, "satisfied": False, "gap": "invented"},
-            ],
-        },
-        CRITERIA,
-    )
+@pytest.mark.parametrize("status", ["valid", "invalid"])
+def test_duplicate_index_is_rejected(status: str) -> None:
+    with pytest.raises(CloseVerdictParseError, match=r"received \[1, 1\]"):
+        parse_close_verdict(
+            {
+                "status": status,
+                "criteria": [
+                    {"index": 1, "satisfied": True, "gap": None},
+                    {"index": 1, "satisfied": True, "gap": None},
+                ],
+                "feedback": "overall",
+            },
+            CRITERIA,
+        )
 
-    assert len(verdict.criteria) == 2
-    assert verdict.valid is True
+
+@pytest.mark.parametrize("status", ["valid", "invalid"])
+def test_extra_index_is_rejected(status: str) -> None:
+    with pytest.raises(CloseVerdictParseError, match=r"received \[1, 2, 999\]"):
+        parse_close_verdict(
+            {
+                "status": status,
+                "criteria": [
+                    {"index": 1, "satisfied": True, "gap": None},
+                    {"index": 2, "satisfied": True, "gap": None},
+                    {"index": 999, "satisfied": False, "gap": "invented"},
+                ],
+                "feedback": "overall",
+            },
+            CRITERIA,
+        )
+
+
+def test_rejection_names_expected_and_received_index_sets() -> None:
+    with pytest.raises(CloseVerdictParseError) as excinfo:
+        parse_close_verdict(
+            {
+                "status": "valid",
+                "criteria": [{"index": 2, "satisfied": True, "gap": None}],
+                "feedback": "overall",
+            },
+            CRITERIA,
+        )
+
+    assert "expected [1, 2]" in str(excinfo.value)
+    assert "received [2]" in str(excinfo.value)
+
+
+def test_nested_bullet_criteria_require_every_normalized_index() -> None:
+    criteria = split_validation_criteria("- A top\n  - A nested one\n  - A nested two\n- B top")
+    assert len(criteria) == 4
+
+    with pytest.raises(CloseVerdictParseError, match=r"expected \[1, 2, 3, 4\]"):
+        parse_close_verdict(
+            {
+                "status": "valid",
+                "criteria": [{"index": 1, "satisfied": True, "gap": None}],
+                "feedback": "Everything looks done.",
+            },
+            criteria,
+        )
 
 
 def test_contradictory_item_does_not_demote_overall_status() -> None:
     verdict = parse_close_verdict(
         {
             "status": "valid",
-            "criteria": [{"index": 1, "satisfied": False, "gap": "model contradiction"}],
+            "criteria": [
+                {"index": 1, "satisfied": False, "gap": "model contradiction"},
+                {"index": 2, "satisfied": True, "gap": None},
+            ],
         },
         CRITERIA,
     )
@@ -238,7 +302,9 @@ def test_contradictory_item_does_not_demote_overall_status() -> None:
 
 def test_json_code_fence_and_surrounding_text_are_tolerated() -> None:
     verdict = parse_close_verdict(
-        'Result:\n```json\n{"status":"VALID","criteria":[],"feedback":"ok"}\n```',
+        'Result:\n```json\n{"status":"VALID","criteria":'
+        '[{"index":1,"satisfied":true,"gap":null},'
+        '{"index":2,"satisfied":true,"gap":null}],"feedback":"ok"}\n```',
         CRITERIA,
     )
 

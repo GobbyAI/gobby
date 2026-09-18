@@ -124,6 +124,30 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert "Do not poll agent runs or re-call close_task." in result["message"]
     assert "Oversized" not in result["message"]
     assert result["criteria_review_duration_ms"] == 4.25
+    # The validator judges the normalized criteria, so the launch names them.
+    assert result["criterion_count"] == 3
+    assert result["criterion_indexes"] == [1, 2, 3]
+    assert "criterion_count=3" in launch_args["prompt"]
+    assert "criterion_indexes=[1, 2, 3]" in launch_args["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_launch_is_refused_without_a_normalized_criterion_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock())
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    del evaluation.extra["criterion_count"]
+
+    result = await launch_close_review(
+        _ctx(registry=registry), evaluation=evaluation, close_arguments=_arguments()
+    )
+
+    registry.call.assert_not_awaited()
+    assert result["error"] == "agentic_review_required"
+    assert "validator_run_id" not in result
 
 
 @pytest.mark.asyncio
@@ -380,6 +404,7 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
             "diff_sha": "a" * 64,
             "test_bodies_sha": "b" * 64,
             "stable_facts": {"commit_shas": ["def"]},
+            "criterion_count": 1,
         }
     )
     registry = SimpleNamespace(
@@ -1272,6 +1297,7 @@ def _evaluation(*, ready: bool = False) -> CloseEvaluation:
             "diff_sha": "diff",
             "test_bodies_sha": "tests",
             "stable_facts": {},
+            "criterion_count": 3,
             "criteria_review_duration_ms": 4.25,
         }
     )
