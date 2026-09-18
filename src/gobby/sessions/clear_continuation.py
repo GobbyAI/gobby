@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
@@ -777,9 +777,25 @@ def schedule_handoff_continuation(
     *,
     loop: Any | None = None,
     delay_seconds: float | None = None,
+    db: HubDatabase | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+    on_send_failure: Callable[[], None] | None = None,
 ) -> bool:
-    """Schedule delivery of the continue prompt to the successor terminal."""
-    kwargs: dict[str, Any] = {"loop": loop}
+    """Schedule delivery of the continue prompt to the successor terminal.
+
+    The pane routes like compaction delivery: the session's live terminals row
+    through ``terminal_manager`` and ``terminal_runtime_registry`` first (a
+    native, gclient-hosted pane carries no tmux identity), else the tmux
+    target in its terminal context.
+    """
+    kwargs: dict[str, Any] = {
+        "loop": loop,
+        "db": db,
+        "terminal_manager": terminal_manager,
+        "terminal_runtime_registry": terminal_runtime_registry,
+        "on_send_failure": on_send_failure,
+    }
     if delay_seconds is not None:
         kwargs["delay_seconds"] = delay_seconds
     return schedule_handoff_compact_continuation(session, prompt, **kwargs)

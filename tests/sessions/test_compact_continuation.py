@@ -37,7 +37,7 @@ from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.terminals.pane_io import TmuxPaneIO
-from gobby.terminals.runtime import SnapshotMode
+from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -897,3 +897,52 @@ class TestPullPromptFallback:
             "attempt_id": "attempt-9",
             "compact_continuation": True,
         }
+
+
+async def test_schedule_continuation_resolves_native_terminal_without_tmux() -> None:
+    """A gclient-hosted successor has no tmux identity; its live terminals row routes the pull."""
+    session = SimpleNamespace(
+        id=SESSION_ID,
+        source="claude",
+        terminal_context={"gobby_terminal_id": "term-1", "tmux_pane": None, "tmux_session": None},
+    )
+    prompt = "Continue the task."
+    terminal = SimpleNamespace(id="term-1", backend="native")
+    writes: list[tuple[object, ...]] = []
+
+    class NativeRuntime:
+        async def write_key(self, _terminal: object, key: str) -> Delivered:
+            writes.append(("key", key))
+            return Delivered()
+
+        async def write_text(self, _terminal: object, text: str, submit: bool) -> Delivered:
+            writes.append(("text", text, submit))
+            return Delivered()
+
+    runtime = NativeRuntime()
+    terminal_manager = SimpleNamespace(
+        get_live_for_session=lambda session_id: terminal if session_id == SESSION_ID else None
+    )
+    registry = SimpleNamespace(resolve=lambda backend: runtime if backend == "native" else None)
+
+    # Without the runtime collaborators only a tmux target can be typed into.
+    assert not schedule_handoff_compact_continuation(session, prompt, delay_seconds=0)
+
+    with patch(
+        "gobby.sessions.compact_continuation.HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        0.0,
+    ):
+        assert schedule_handoff_compact_continuation(
+            session,
+            prompt,
+            delay_seconds=0,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=registry,
+        )
+        task = next(iter(_HANDOFF_COMPACT_CONTINUATION_TASKS))
+        await task
+        await drain_asyncio_tasks()
+
+    assert ("text", prompt, True) in writes
+    assert writes[-1] == ("key", "enter")
+    assert not _HANDOFF_COMPACT_CONTINUATION_TASKS

@@ -6,7 +6,7 @@ import asyncio
 from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -304,6 +304,9 @@ async def test_codex_clear_types_continuation_once_thread_end_banner_appears() -
         session,
         build_handoff_continue_prompt(),
         delay_seconds=_terminal_clear._CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+        db=ANY,
+        terminal_manager=None,
+        terminal_runtime_registry=None,
     )
     restore.assert_not_called()
 
@@ -333,6 +336,9 @@ async def test_codex_clear_without_thread_end_banner_types_continuation_once() -
         session,
         build_handoff_continue_prompt(),
         delay_seconds=_terminal_clear._CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+        db=ANY,
+        terminal_manager=None,
+        terminal_runtime_registry=None,
     )
     acknowledgment.assert_awaited_once()
     restore.assert_not_called()
@@ -363,6 +369,9 @@ async def test_codex_clear_stale_thread_end_banner_does_not_block_continuation()
         session,
         build_handoff_continue_prompt(),
         delay_seconds=_terminal_clear._CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+        db=ANY,
+        terminal_manager=None,
+        terminal_runtime_registry=None,
     )
     acknowledgment.assert_awaited_once()
     restore.assert_not_called()
@@ -569,3 +578,48 @@ async def test_pending_attempt_timeout_stays_pending() -> None:
     assert result["attempt_restored"] is False
     assert result["attempt_id"] == "attempt-9"
     send_command.assert_not_awaited()
+
+
+async def test_codex_clear_continuation_forwards_terminal_runtime() -> None:
+    """A native (gclient-hosted) Codex pane has no tmux identity; the pull routes via the runtime."""
+    session = _terminal_session(terminal_context={"gobby_terminal_id": "term-1"})
+    pane = _Pane(_IDLE_PANE)
+    pane.backend = "native"
+    schedule = MagicMock(return_value=True)
+    acknowledgment = AsyncMock(return_value=("successor-1", "successor_binding"))
+    db = MagicMock(name="db")
+    terminal_manager = MagicMock(name="terminal_manager")
+    registry = MagicMock(name="terminal_runtime_registry")
+    agent_run_manager = MagicMock()
+    agent_run_manager.get_by_session.return_value = None
+
+    with ExitStack() as stack:
+        for patcher in _clear_patches(
+            session,
+            _clear_that_leaves_the_pane(),
+            pane=pane,
+            acknowledgment=acknowledgment,
+            restore_failed_attempt=MagicMock(return_value=True),
+            schedule_continuation=schedule,
+        ):
+            stack.enter_context(patcher)
+        result = await _terminal_clear.deliver_staged_clear_session(
+            session.id,
+            "a" * 32,
+            session_manager=MagicMock(),
+            db=db,
+            agent_run_manager=agent_run_manager,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=registry,
+        )
+
+    assert result["success"] is True
+    assert (result["cli"], result["via"]) == ("codex", "native")
+    schedule.assert_called_once_with(
+        session,
+        build_handoff_continue_prompt(),
+        delay_seconds=_terminal_clear._CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+        db=db,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=registry,
+    )

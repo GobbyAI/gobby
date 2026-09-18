@@ -42,6 +42,7 @@ __all__ = [
     "HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
     "HANDOFF_COMPACT_CONTINUE_VARIABLE",
+    "persist_pull_prompt_message",
 ]
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ def _composer_reader(
     return IdleDetector(DetectionManifestRegistry(db), cli_source).composer_read
 
 
-def _persist_pull_prompt_message(
+def persist_pull_prompt_message(
     db: HubDatabase,
     session_id: str,
     prompt: str,
@@ -345,7 +346,7 @@ def consume_and_schedule_handoff_compact_continuation(
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
         on_send_failure=partial(
-            _persist_pull_prompt_message,
+            persist_pull_prompt_message,
             db,
             target_session_id,
             prompt,
@@ -584,7 +585,7 @@ async def _continue_after_codex_compaction_ready(
                 delay_seconds=0,
                 cli_source="codex",
                 on_send_failure=partial(
-                    _persist_pull_prompt_message, db, pending_session_id, prompt, attempt_id
+                    persist_pull_prompt_message, db, pending_session_id, prompt, attempt_id
                 ),
                 composer_read=_composer_reader(db, "codex"),
             )

@@ -28,10 +28,12 @@ from gobby.sessions.clear_continuation import (
 )
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
+    build_handoff_continue_prompt,
     consume_pending_handoff,
 )
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import (
@@ -681,3 +683,41 @@ def test_next_clear_takes_over_a_bound_but_unpulled_successor(
     consumed = consume_pending_handoff(temp_db, newcomer_id)
     assert consumed is not None
     assert consumed.session_id == staged.predecessor_id
+
+
+def test_schedule_clear_continuation_forwards_terminal_runtime(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A native (gclient-hosted) successor resolves its pane through the handler's runtime."""
+    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="clear-native", pane="%103")
+    successor_id = staged.register("succ-ext")
+    handler = _handler(staged.sessions)
+    handler.terminal_manager = MagicMock(name="terminal_manager")
+    handler._terminal_runtime_registry = MagicMock(name="terminal_runtime_registry")
+    schedule = MagicMock(return_value=False)
+
+    with patch("gobby.terminals.discovery.seed_external_terminal"):
+        _activate_clear_successor(
+            staged,
+            handler,
+            successor_id,
+            staged.resolution(),
+            overrides={"schedule_handoff_continuation": schedule},
+        )
+
+    schedule.assert_called_once()
+    session_arg, prompt = schedule.call_args.args
+    assert session_arg.id == successor_id
+    assert prompt == build_handoff_continue_prompt()
+    kwargs = schedule.call_args.kwargs
+    assert kwargs["db"] is staged.sessions.db
+    assert kwargs["terminal_manager"] is handler.terminal_manager
+    assert kwargs["terminal_runtime_registry"] is handler._terminal_runtime_registry
+    # No pane resolved, so the pull prompt rides the successor's next turn; a send
+    # failure after scheduling queues it through the same callback.
+    kwargs["on_send_failure"]()
+    queued = InterSessionMessageManager(temp_db).get_undelivered_messages(successor_id)
+    assert [(m.content, m.message_type) for m in queued] == [
+        (prompt, "handoff_continuation"),
+        (prompt, "handoff_continuation"),
+    ]

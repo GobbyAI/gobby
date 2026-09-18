@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from typing import Any
 
 import psycopg
@@ -17,6 +18,7 @@ from gobby.sessions.clear_continuation import (
     schedule_handoff_continuation,
     take_clear_handoff_marker,
 )
+from gobby.sessions.compact_continuation import persist_pull_prompt_message
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     build_handoff_continue_prompt,
@@ -241,15 +243,36 @@ def _bind_clear_successor(
     return True
 
 
-def _schedule_clear_continuation(handler: Any, session_obj: Any, successor_id: str) -> None:
-    """Type the get_handoff pull prompt into the successor pane."""
+def _schedule_clear_continuation(
+    handler: Any,
+    session_obj: Any,
+    successor_id: str,
+    attempt_id: str | None,
+) -> None:
+    """Type the get_handoff pull prompt into the successor pane.
+
+    The pane resolves through the handler's terminal manager and runtime
+    registry, so a native (gclient-hosted) successor with no tmux identity is
+    reached. When no pane resolves or typing fails, the prompt is queued as a
+    self-addressed message so the operator's next submit still pulls the handoff.
+    """
     try:
         prompt = build_handoff_continue_prompt()
-        schedule_handoff_continuation(
+        db = handler._session_manager.db
+        queue_pull_prompt = partial(
+            persist_pull_prompt_message, db, successor_id, prompt, attempt_id
+        )
+        scheduled = schedule_handoff_continuation(
             session_obj,
             prompt,
             loop=getattr(handler._session_coordinator, "_event_loop", None),
+            db=db,
+            terminal_manager=getattr(handler, "terminal_manager", None),
+            terminal_runtime_registry=getattr(handler, "_terminal_runtime_registry", None),
+            on_send_failure=queue_pull_prompt,
         )
+        if not scheduled:
+            queue_pull_prompt()
     except Exception as exc:
         handler.logger.warning(
             "Failed to schedule clear continuation for successor %s: %s",
@@ -357,7 +380,12 @@ def activate_materialized_session(
         if bound and session_source == "clear" and cli_source != "codex":
             successor_id = getattr(session_obj, "id", None)
             if isinstance(successor_id, str):
-                _schedule_clear_continuation(handler, session_obj, successor_id)
+                _schedule_clear_continuation(
+                    handler,
+                    session_obj,
+                    successor_id,
+                    getattr(resolution, "clear_attempt_id", None),
+                )
         if handler._session_manager is not None:
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:

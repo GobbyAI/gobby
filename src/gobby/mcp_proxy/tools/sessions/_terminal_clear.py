@@ -88,7 +88,14 @@ def _error(message: str, error_code: str) -> dict[str, Any]:
     return {"success": False, "error": message, "error_code": error_code}
 
 
-def _pending_timeout(session_id: str, attempt_id: str, *, reused_attempt: bool) -> dict[str, Any]:
+def _pending_timeout(
+    session_id: str,
+    attempt_id: str,
+    *,
+    reused_attempt: bool,
+    cli: str | None = None,
+    via: str | None = None,
+) -> dict[str, Any]:
     """Ack timeout after a delivered /clear: the attempt stays staged for the successor."""
     failure = _error(
         "timed out waiting for clear-session acknowledgment",
@@ -102,6 +109,8 @@ def _pending_timeout(session_id: str, attempt_id: str, *, reused_attempt: bool) 
             "attempt_restored": False,
             "attempt_pending": True,
             "reused_attempt": reused_attempt,
+            "cli": cli,
+            "via": via,
             "guidance": _PENDING_ATTEMPT_GUIDANCE,
         }
     )
@@ -114,6 +123,8 @@ def _acknowledged(
     acknowledgment: tuple[str, str],
     *,
     reused_attempt: bool,
+    cli: str | None = None,
+    via: str | None = None,
 ) -> dict[str, Any]:
     acknowledged_session_id, acknowledged_by = acknowledgment
     success: dict[str, Any] = {
@@ -124,6 +135,8 @@ def _acknowledged(
         "command_sent": True,
         "acknowledged_by": acknowledged_by,
         "reused_attempt": reused_attempt,
+        "cli": cli,
+        "via": via,
     }
     if acknowledged_by == "successor_binding":
         success["successor_id"] = acknowledged_session_id
@@ -493,6 +506,7 @@ async def deliver_staged_clear_session(
     if error or session is None or resolved_session_id is None:
         return _error(error or f"Session {session_id} not found", "session_not_found")
     source = getattr(session, "source", None)
+    cli_source = source if isinstance(source, str) else None
     pane, error = _resolve_pane_io(
         resolved_session_id,
         session_manager,
@@ -503,6 +517,7 @@ async def deliver_staged_clear_session(
     if error:
         return failed(error, "terminal_target_unavailable")
     assert pane is not None
+    via = pane.backend
     observe_interrupt, observer_error = _interrupt_observer(source, session)
     if observer_error is not None:
         return failed(observer_error, _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE)
@@ -524,11 +539,11 @@ async def deliver_staged_clear_session(
             pane,
             CLEAR_COMMAND,
             resolved_session_id,
-            cli_source=source if isinstance(source, str) else None,
+            cli_source=cli_source,
             mark_continuation_pending=lambda: True,
             clear_continuation_pending=lambda: True,
             observe_interrupt=observe_interrupt,
-            composer_read=composer_reader(db, source if isinstance(source, str) else None),
+            composer_read=composer_reader(db, cli_source),
         )
     except Exception as exc:
         logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)
@@ -560,8 +575,13 @@ async def deliver_staged_clear_session(
             session,
             build_handoff_continue_prompt(),
             delay_seconds=_CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+            db=db,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
         ):
-            return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
+            return _pending_timeout(
+                resolved_session_id, attempt_id, reused_attempt=False, cli=cli_source, via=via
+            )
         logger.info(
             "Scheduled Codex clear continuation for session %s after thread %s ended",
             resolved_session_id,
@@ -577,12 +597,16 @@ async def deliver_staged_clear_session(
         baseline_ids=pane_baseline_ids,
     )
     if acknowledgment is None:
-        return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
+        return _pending_timeout(
+            resolved_session_id, attempt_id, reused_attempt=False, cli=cli_source, via=via
+        )
     return _acknowledged(
         resolved_session_id,
         attempt_id,
         acknowledgment,
         reused_attempt=False,
+        cli=cli_source,
+        via=via,
     )
 
 
