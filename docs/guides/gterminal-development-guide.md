@@ -121,11 +121,20 @@ or proxied pane stay on the control socket behind the daemon's lease checks.
 Full shapes and refusal codes:
 [granted input](../contracts/gterm-protocols.md#granted-input).
 
-Editing this path, note that `deliver_native` compiles to a no-op without the
-`vt-engine` feature, which is not on by default. A `gterm` built with plain
-`cargo build -p gobby-terminal` accepts input, reports success, and delivers
-nothing. Build and install it the way `gobby install` does, with
-`--features vt-engine` (Zig 0.16 on `PATH`).
+Editing this path, note that the trap lives in the build, not in the code. The
+`gterm` binary carries `required-features = ["vt-engine"]`, so a plain
+`cargo build -p gobby-terminal` builds the library alone, emits no `gterm`, exits
+0, and leaves the installed binary untouched: a green build that changed nothing.
+Name the binary and the feature, the way `gobby install` does, with Zig 0.16 on
+`PATH`:
+
+```bash
+cargo build --release -p gobby-terminal --features vt-engine --bin gterm
+```
+
+The library still compiles featureless, because `gclient` depends on it that way.
+Nothing can reach a PTY in that build, so `deliver_native` refuses with
+`terminal_gone` rather than reporting a delivery it did not make.
 
 Logs: `~/.gobby/logs/gterm.log` (host) and `~/.gobby/logs/gclient.log` (TUI).
 
@@ -244,7 +253,11 @@ erase a recorded leak. Unrelated hosts, including the daemon host under
    and fail when a required gated target (`embed`, `host_lifecycle`,
    `control_protocol`, `frame_protocol`, `frame_producer`) is missing,
    skipped, or executes zero tests. `gobby-client` is clippy'd and
-   tested separately with its default feature set.
+   tested separately with its default feature set. Run these in a debug
+   profile: the gate's fault injection is `#[cfg(debug_assertions)]`, so
+   `--release` compiles it out and the tests that depend on an injected
+   fault (`commit_wait_does_not_block_other_requests` among them) fail
+   because the child they expected to hang runs normally instead.
 4. `uv run python -m gobby.guard_set_g 4`
 5. `uv run python -m gobby.guard_set_g 5`
 6. `uv run python -m gobby.guard_set_g 6`

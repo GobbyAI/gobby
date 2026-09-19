@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -17,12 +16,10 @@ use super::{
 };
 use crate::host::config::HostConfig;
 use crate::host::helpers::push_terminal_ansi;
-use crate::host::state::{
-    Attachment, CommitState, HostState, Identity, ObserverBind, TerminalSlot,
-};
+use crate::host::state::{insert_native_slot, Attachment, HostState};
 use crate::host::{control, frames};
 use crate::protocol::{
-    CellData, FrameData, ObservationState, PaneModes, RenderEncoding, ServerMessage, TerminalFrame,
+    CellData, FrameData, PaneModes, RenderEncoding, ServerMessage, TerminalFrame,
     DELTA_QUEUE_BYTES, MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 
@@ -607,59 +604,6 @@ async fn write_outbound_distinguishes_disconnect_from_peer_error() {
     drop(tx);
     let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
     assert_eq!(errored, ControlClose::Overflow);
-}
-
-/// A committed native slot with no child: `resize` only needs the slot's
-/// bookkeeping, so this runs with and without `vt-engine`.
-async fn insert_native_slot(state: &HostState, host_terminal_id: &str, rows: u16, cols: u16) {
-    let identity = Identity {
-        terminal_id: format!("term-{host_terminal_id}"),
-        spawn_key: format!("spawn-{host_terminal_id}"),
-    };
-    let slot = TerminalSlot {
-        identity: identity.clone(),
-        host_terminal_id: host_terminal_id.to_owned(),
-        commit_state: CommitState::Committed,
-        pgid: 0,
-        start_time: 0.0,
-        title: String::new(),
-        rows,
-        cols,
-        last_seq: 0,
-        observation_state: ObservationState::Live,
-        observation_reason: None,
-        observation_generation: 1,
-        fingerprint: 0,
-        reservation_id: String::new(),
-        reserve_key: String::new(),
-        reserve_generation: 0,
-        observer_bind: ObserverBind::None,
-        commit_deadline: None,
-        #[cfg(feature = "vt-engine")]
-        child: None,
-        #[cfg(feature = "vt-engine")]
-        written_bytes: 0,
-        #[cfg(feature = "vt-engine")]
-        dropped_bytes: 0,
-        #[cfg(feature = "vt-engine")]
-        total_bytes: 0,
-        #[cfg(feature = "vt-engine")]
-        truncated: false,
-        user_attachments: HashSet::new(),
-        input_grant: None,
-        locator: None,
-        tmux_history_bytes: 0,
-        history: None,
-        last_frame: None,
-        #[cfg(feature = "vt-engine")]
-        observer_generation: 1,
-        consecutive_failures: 0,
-    };
-    let mut inner = state.inner.lock().await;
-    inner
-        .by_host_id
-        .insert(host_terminal_id.to_owned(), identity.clone());
-    inner.terminals.insert(identity, slot);
 }
 
 /// A frame of the attachment's viewport, as the frame pass renders one, with

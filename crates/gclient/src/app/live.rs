@@ -670,6 +670,31 @@ fn is_cursor_error(error: &DaemonError) -> bool {
     detail.contains("cursor_stale") || detail.contains("invalid cursor")
 }
 
+/// Keeps one sidebar row query's failure from ending the refetch: the error is
+/// logged, remembered for the caller's banner, and reported as an absent row.
+fn optional<T>(
+    result: Result<T, DaemonError>,
+    what: &'static str,
+    project: Option<&str>,
+    failure: &mut Option<DaemonError>,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            // The project belongs in the line: which one went sick is what a
+            // stale row is diagnosed from.
+            tracing::debug!(
+                %what,
+                project = project.unwrap_or(""),
+                %error,
+                "sidebar row refresh failed"
+            );
+            failure.get_or_insert(error);
+            None
+        }
+    }
+}
+
 /// Rows one background sidebar refetch produced; `apply_sidebar_fetch`
 /// installs them.
 #[derive(Debug, Default)]
@@ -715,36 +740,59 @@ impl SidebarRequest {
             seq: self.seq,
             ..SidebarFetch::default()
         };
+        // No row query starves another. Each records its own failure and the
+        // refetch fails only when it gathered nothing at all, so a daemon that is
+        // really gone still raises the banner while one sick project cannot empty
+        // the sidebar. The roster runs first because it names the panes a person
+        // can reach, and it must never wait behind a project's git status.
+        let mut failure = None;
+        let mut gathered = false;
+        if self.roster {
+            if let Some(roster) = optional(
+                daemon.attention_roster().await,
+                "attention roster",
+                None,
+                &mut failure,
+            ) {
+                fetch.roster = Some(roster);
+                gathered = true;
+            }
+        }
         let mut checked_out = self.checked_out;
         if self.projects {
-            let projects = daemon.projects().await?;
-            checked_out = projects
-                .iter()
-                .filter(|row| row.checkout.is_some())
-                .map(|row| row.id.clone())
-                .collect();
-            fetch.projects = Some(projects);
+            // A project list this refetch could not read leaves the caller's
+            // known checkouts standing in for it.
+            if let Some(projects) =
+                optional(daemon.projects().await, "projects", None, &mut failure)
+            {
+                checked_out = projects
+                    .iter()
+                    .filter(|row| row.checkout.is_some())
+                    .map(|row| row.id.clone())
+                    .collect();
+                fetch.projects = Some(projects);
+                gathered = true;
+            }
         }
         for project in self.project_rows {
             if !checked_out.contains(&project) {
                 continue;
             }
-            let status = daemon
-                .source_status(&project)
-                .await
-                .inspect_err(|error| {
-                    tracing::debug!(%project, %error, "source status refresh failed");
-                })
-                .ok();
-            let worktrees = daemon
-                .worktrees(&project)
-                .await
-                .inspect_err(|error| {
-                    tracing::debug!(%project, %error, "worktree refresh failed");
-                })
-                .ok();
+            let status = optional(
+                daemon.source_status(&project).await,
+                "source status",
+                Some(&project),
+                &mut failure,
+            );
+            let worktrees = optional(
+                daemon.worktrees(&project).await,
+                "worktrees",
+                Some(&project),
+                &mut failure,
+            );
             if status.is_some() || worktrees.is_some() {
                 fetch.project_rows.push((project, status, worktrees));
+                gathered = true;
             }
         }
         if self.sessions || !self.session_rows.is_empty() {
@@ -756,15 +804,32 @@ impl SidebarRequest {
                 projects.retain(|project| self.session_rows.contains(project));
             }
             for project in projects {
-                let sessions = daemon.sessions(&project).await?;
-                let runs = daemon.agent_runs(&project).await?;
+                // A project whose rows this refetch could not read keeps the ones
+                // it already has, and the rest of the sidebar still refreshes.
+                let Some(sessions) = optional(
+                    daemon.sessions(&project).await,
+                    "sessions",
+                    Some(&project),
+                    &mut failure,
+                ) else {
+                    continue;
+                };
+                let Some(runs) = optional(
+                    daemon.agent_runs(&project).await,
+                    "agent runs",
+                    Some(&project),
+                    &mut failure,
+                ) else {
+                    continue;
+                };
                 fetch.sessions.push((project, sessions, runs));
+                gathered = true;
             }
         }
-        if self.roster {
-            fetch.roster = Some(daemon.attention_roster().await?);
+        match failure {
+            Some(error) if !gathered => Err(error),
+            _ => Ok(fetch),
         }
-        Ok(fetch)
     }
 }
 

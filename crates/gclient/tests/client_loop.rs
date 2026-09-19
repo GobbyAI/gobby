@@ -6760,6 +6760,111 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
     mock.shutdown().await;
 }
 
+#[tokio::test]
+async fn one_failing_project_query_does_not_starve_the_roster() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "GET",
+        "/api/source-control/status?",
+        200,
+        json!({"current_branch": "0.5.0", "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/sessions?project_id=project-1",
+        503,
+        json!({"detail": "sessions unavailable"}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1",
+            "seq": 1,
+            "entries": [sidebar_roster_entry("run:a", "run-a", "terminal-a")],
+        }),
+    );
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("one project's failing sessions call is not a failed reconcile");
+
+    assert!(workspace.daemon_ready());
+    assert_eq!(
+        workspace.attention_entry_ids(),
+        ["run:a"],
+        "the roster names the panes a person can reach, so it never waits behind \
+         another query"
+    );
+    assert_eq!(
+        workspace.sidebar().agents[0].terminal_id,
+        "terminal-a",
+        "the sidebar still followed the roster"
+    );
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("0.5.0"),
+        "the rows that did arrive still landed"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_refetch_that_gathered_nothing_reports_the_failure() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    let worktrees_path = "/api/source-control/worktrees?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    mock.enqueue("GET", status_path, 503, json!({"detail": "git is busy"}));
+    mock.enqueue("GET", worktrees_path, 503, json!({"detail": "git is busy"}));
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed");
+
+    // Row failures stay quiet while anything else arrives; a refetch that
+    // gathered nothing at all is the one the banner is for.
+    let error = job.await.expect_err("nothing arrived");
+    assert!(
+        matches!(error, DaemonError::Unavailable { .. }),
+        "{error:?}"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
 /// 2.1.3: a `worktree_event` or `project_event` on the live socket refetches
 /// the affected project's status and worktrees once per drain however many
 /// events asked, a `session_event` refetches the attention roster, and an
