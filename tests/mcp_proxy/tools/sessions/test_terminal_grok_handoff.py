@@ -158,7 +158,7 @@ async def test_settled_grok_turn_is_compacted_without_an_interrupt_key(tmp_path:
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*_DRAIN, "enter"]
+    assert pane.keys == [*_DRAIN, "enter", "enter"]
     assert pane.typed == ["/compact"]
 
 
@@ -183,7 +183,7 @@ async def test_live_grok_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*_DRAIN, "enter"]
+    assert pane.keys == [*_DRAIN, "enter", "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == ["/compact"]
 
@@ -203,7 +203,7 @@ async def test_live_grok_turn_is_interrupted_and_confirmed_before_compact(
     assert pane.first_ctrl_c_at - started >= wait
     assert result["compacted"] is True
     assert result["interrupted"] is True
-    assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "enter"]
     assert "escape" not in pane.keys
     assert pane.typed == ["/compact"]
 
@@ -255,7 +255,7 @@ async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter", "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == ["/compact"]
 

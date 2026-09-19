@@ -150,9 +150,7 @@ class TestParallelBatchCounting:
 
         for _ in range(3):
             for index in range(5):
-                assert (
-                    await _sibling_denial(engine, variables, file_path=f"a{index}.py") == "allow"
-                )
+                assert await _sibling_denial(engine, variables, file_path=f"a{index}.py") == "allow"
                 variables.update(_blocked_state())
             await _close_batch(engine, variables)
 

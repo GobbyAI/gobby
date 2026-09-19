@@ -1,4 +1,5 @@
-"""PaneIO adapters over the terminal runtime and raw tmux, plus the composer drain."""
+"""PaneIO adapters over the terminal runtime and raw tmux, the composer drain, and
+the verified-submit ladder every daemon-driven injection presses Enter through."""
 
 from __future__ import annotations
 
@@ -6,8 +7,17 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
 from gobby.terminals.composer import composer_clear_sequence
-from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO, clear_composer
+from gobby.terminals.pane_io import (
+    TEXT_NOT_SUBMITTED_ERROR_CODE,
+    PaneIO,
+    RuntimePaneIO,
+    SubmitResult,
+    TmuxPaneIO,
+    clear_composer,
+    submit_text,
+)
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -206,3 +216,95 @@ async def test_clear_composer_stops_at_the_first_failed_key() -> None:
 
     assert await clear_composer(pane, "codex") == (False, "ctrl_k failed")
     assert pane.keys == ["ctrl_u", "ctrl_k"]
+
+
+#: Longer than COMPOSER_MATCH_CHARS, so a held draft matches on its first row only.
+_TEXT = "Call get_handoff() on gobby-sessions, then continue."
+
+
+class _ScriptedPane:
+    """PaneIO fake whose composer reads follow a script, one entry per probe.
+
+    The last entry repeats, so a one-entry script is a composer that never changes.
+    """
+
+    backend = "fake"
+    target = "pane"
+
+    def __init__(self, reads: list[ComposerRead]) -> None:
+        self._reads = reads
+        self._probes = 0
+        self.keys: list[str] = []
+        self.typed: list[str] = []
+
+    async def send_key(self, key: str) -> tuple[bool, str | None]:
+        self.keys.append(key)
+        return True, None
+
+    async def type_text(self, text: str) -> tuple[bool, str | None]:
+        self.typed.append(text)
+        return True, None
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        return None
+
+    def read(self, _snapshot: str | None) -> ComposerRead:
+        read = self._reads[min(self._probes, len(self._reads) - 1)]
+        self._probes += 1
+        return read
+
+
+async def _submit(pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch) -> SubmitResult:
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    return await submit_text(
+        cast(PaneIO, pane),
+        _TEXT,
+        "session-1",
+        label="the prompt",
+        cli_source="claude",
+        composer_read=pane.read,
+        verify_seconds=0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_empty_composer_after_the_first_enter_stops_the_ladder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pane = _ScriptedPane([ComposerRead("empty")])
+
+    assert (await _submit(pane, monkeypatch)).ok is True
+    assert pane.keys == ["enter"]
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_composer_never_proves_the_first_enter_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read that stranded a live pull prompt: no frame is not a submitted text."""
+    pane = _ScriptedPane([ComposerRead("unknown")])
+
+    result = await _submit(pane, monkeypatch)
+
+    assert result.ok is True
+    assert pane.keys == ["enter", "enter"]
+
+
+@pytest.mark.asyncio
+async def test_a_draft_that_survives_both_enters_is_retyped_then_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pane = _ScriptedPane([ComposerRead("draft", _TEXT)])
+
+    result = await _submit(pane, monkeypatch)
+
+    assert result.ok is False
+    assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
+    assert pane.typed == [_TEXT, _TEXT]
+    assert pane.keys == [
+        "enter",
+        "enter",
+        *composer_clear_sequence("claude"),
+        "enter",
+        "enter",
+    ]

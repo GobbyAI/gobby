@@ -309,11 +309,13 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
             attempt_id="current-attempt",
         )
 
-    # The paste is followed by a settle-tolerant second Enter (a no-op when the
-    # first Enter already submitted).
+    # The fake pane never draws a composer this manifest can classify, so the read
+    # is unreadable and the second Enter follows it -- a no-op once the first Enter
+    # submitted, and the recovery when a paste review gate swallowed it.
     assert tmux.sent_keys == [
         *_CODEX_DRAIN,
         ("%12", prompt, True),
+        ("%12", "Enter", False),
         ("%12", "Enter", False),
     ]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
@@ -484,6 +486,7 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
         *_CODEX_DRAIN,
         ("%12", prompt, True),
         ("%12", "Enter", False),
+        ("%12", "Enter", False),
     ]
 
 
@@ -526,6 +529,7 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
     assert tmux.sent_keys == [
         *_CODEX_DRAIN,
         ("%12", prompt, True),
+        ("%12", "Enter", False),
         ("%12", "Enter", False),
     ]
 
@@ -867,7 +871,10 @@ class _StickyComposerTmux(_FakeTmux):
 async def _send_pull_prompt(
     tmux: _FakeTmux, *, on_send_failure: Callable[[], None] | None = None
 ) -> bool:
-    with patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0):
+    with (
+        patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+        patch("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0),
+    ):
         return await _send_handoff_compact_continuation(
             TmuxPaneIO(tmux, "%12"),
             _PULL_PROMPT,
@@ -905,18 +912,31 @@ class TestPullPromptFallback:
         [
             _claude_frame("❯ the operator typed this"),
             _claude_frame("\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mthe tests\x1b[0m"),
-            None,
         ],
     )
     async def test_a_composer_that_is_not_our_prompt_counts_as_submitted(
-        self, composer_text: str | None
+        self, composer_text: str
     ) -> None:
-        """A foreign draft or an unreadable frame never proves we failed to submit."""
+        """A foreign draft is a positive read that our prompt went in: no second Enter."""
         tmux = _FakeTmux()
         tmux.composer_text = composer_text
 
         assert await _send_pull_prompt(tmux) is True
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_composer_still_gets_the_second_enter(self) -> None:
+        """A frame we cannot classify is not proof, so the recovery Enter still fires.
+
+        It stays a success because an unreadable frame is no evidence in either
+        direction -- the handoff that stranded its pull prompt was reported as
+        submitted on exactly this read (gobby#22550).
+        """
+        tmux = _FakeTmux()
+        tmux.composer_text = None
+
+        assert await _send_pull_prompt(tmux) is True
+        assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 2
 
     @pytest.mark.asyncio
     async def test_a_prompt_that_never_leaves_is_drained_then_reported(self) -> None:
