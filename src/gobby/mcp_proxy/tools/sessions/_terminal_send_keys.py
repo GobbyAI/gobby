@@ -36,7 +36,7 @@ def _resolve_tmux_target(
     agent_run_manager: LocalAgentRunManager,
 ) -> tuple[str | None, TmuxSessionManager | None, str | None]:
     """Resolve a session ID to a tmux target through this module's patchable facade."""
-    from gobby.mcp_proxy.tools.sessions._terminal_tmux import _resolve_tmux_target as resolve
+    from gobby.mcp_proxy.tools.sessions._terminal_tmux_target import _resolve_tmux_target as resolve
 
     return resolve(
         session_id,

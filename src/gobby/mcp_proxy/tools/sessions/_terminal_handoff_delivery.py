@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_pane_io,
     _send_terminal_compaction_command,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _CLI_COMPACT_COMMANDS,
     composer_reader,
 )

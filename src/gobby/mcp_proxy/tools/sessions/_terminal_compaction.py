@@ -1,4 +1,8 @@
-"""Pane resolution and command delivery for terminal handoff tools."""
+"""The handoff compaction sequence: interrupt, drain, submit, verify, watch.
+
+Backend-neutral by construction — every write and read goes through the ``PaneIO``
+protocol, so the same sequence drives a native (gterm) pane and a tmux one.
+"""
 
 from __future__ import annotations
 
@@ -10,15 +14,11 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
-from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.terminals.pane_io import PaneIO, SendResult, clear_composer
 from gobby.terminals.runtime import NamedKey
 
 if TYPE_CHECKING:
-    from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.sessions import SessionManager
 
 ComposerReader = Callable[[str | None], ComposerRead]
 
@@ -60,7 +60,15 @@ _CLI_COMPACT_CONFIRM_PROMPTS: dict[tuple[str, str], str] = {
 _COMPACTION_CONFIRM_SETTLE_SECONDS = 5.0
 _COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
+# The typed command and its Enter are two writes, and a CLI still redrawing an
+# interrupted turn reads them as one input chunk and takes the Enter as a literal
+# newline. Both writes still report Delivered, so the composer is read back: poll it
+# this long for the command to leave, and drain/retype this many times before failing.
+_SUBMIT_VERIFY_SETTLE_SECONDS = 2.0
+_SUBMIT_VERIFY_POLL_SECONDS = 0.1
+_SUBMIT_RETRIES = 1
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
+_COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
 _INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
@@ -212,13 +220,89 @@ async def _confirm_interrupt(
     )
 
 
-async def _submit_command(pane: PaneIO, command: str, session_id: str) -> SendResult:
-    """Type ``command`` into the drained composer and press Enter."""
-    ok, reason = await pane.type_text(command)
-    if not ok:
-        _log_pane_failure(pane, session_id, "typing compaction command", reason)
-        return False, reason
-    return await _send_pane_key(pane, "enter", session_id, action="submitting compaction command")
+async def _command_left_composer(
+    pane: PaneIO,
+    command: str,
+    composer_read: ComposerReader,
+    *,
+    window_seconds: float,
+    poll_seconds: float = _SUBMIT_VERIFY_POLL_SECONDS,
+) -> bool:
+    """Poll the composer until it stops holding ``command``.
+
+    Only a positive draft whose row starts with the command proves the CLI never
+    took it. ``empty`` says the Enter landed, and ``unknown`` — no frame, no
+    snapshot, a redraw the manifest cannot classify — proves nothing either way, so
+    it passes rather than report a delivered compaction as a failure.
+    """
+    elapsed = 0.0
+    while True:
+        read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        if read.state != "draft" or not read.line.startswith(command):
+            return True
+        if elapsed >= window_seconds:
+            return False
+        delay = min(poll_seconds, window_seconds - elapsed)
+        await asyncio.sleep(delay)
+        elapsed += delay
+
+
+async def _submit_command(
+    pane: PaneIO,
+    command: str,
+    session_id: str,
+    *,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+    verify_seconds: float,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Type ``command`` into the drained composer and press Enter until it submits.
+
+    A Delivered Enter is not a submitted command: the CLI can take it as a literal
+    newline and leave the command on screen. So the composer is read back, and a
+    command still sitting there is drained and retyped — the reads that detect the
+    failure are also what space the retry's writes apart — before the delivery fails
+    with ``command_not_submitted``. Without a ``composer_read`` (no provider) the
+    write outcome stays the only available evidence.
+    """
+    for attempt in range(1 + _SUBMIT_RETRIES):
+        if attempt:
+            logger.warning(
+                "Session %s still held %s in its composer after Enter; "
+                "draining and retyping (attempt %d of %d)",
+                session_id,
+                command,
+                attempt + 1,
+                1 + _SUBMIT_RETRIES,
+            )
+            cleared, clear_reason = await clear_composer(pane, cli_source)
+            if not cleared:
+                _log_pane_failure(pane, session_id, "clearing the composer", clear_reason)
+                return (
+                    False,
+                    f"composer could not be cleared before {command}: {clear_reason}",
+                    {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
+                )
+        ok, reason = await pane.type_text(command)
+        if not ok:
+            _log_pane_failure(pane, session_id, "typing compaction command", reason)
+            return False, reason, None
+        ok, reason = await _send_pane_key(
+            pane, "enter", session_id, action="submitting compaction command"
+        )
+        if not ok:
+            return False, reason, None
+        if composer_read is None:
+            return True, None, None
+        if await _command_left_composer(
+            pane, command, composer_read, window_seconds=verify_seconds
+        ):
+            return True, None, None
+    return (
+        False,
+        f"{command} was typed but stayed in the composer: the CLI never submitted it",
+        {"error_code": _COMMAND_NOT_SUBMITTED_ERROR_CODE, "continuation_pending": False},
+    )
 
 
 async def _interrupt_turn(
@@ -376,6 +460,9 @@ async def _send_terminal_compaction_command(
     the composer first: a positive operator draft refuses the whole delivery with
     ``composer_occupied`` before any key is sent, so the operator's draft and the
     live turn are both left alone; the agent retries once the draft is submitted.
+    It then reads the composer back after Enter, so a command the CLI typed but
+    never submitted fails with ``command_not_submitted`` instead of reporting
+    success on the strength of the write outcome.
     """
     continuation_pending = False
     if composer_read is not None:
@@ -398,6 +485,7 @@ async def _send_terminal_compaction_command(
     confirm_seconds = (
         _COMPACTION_CONFIRM_SETTLE_SECONDS if settle_seconds is None else settle_seconds
     )
+    verify_seconds = _SUBMIT_VERIFY_SETTLE_SECONDS if settle_seconds is None else settle_seconds
     settle_wait_seconds, settle_poll_seconds = _turn_settle_wait_budget(settle_seconds)
     if observe_interrupt is not None:
         continuation_pending = bool(mark_continuation_pending())
@@ -475,8 +563,16 @@ async def _send_terminal_compaction_command(
                 {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
             )
 
-        ok, reason = await _submit_command(pane, command, session_id)
+        ok, reason, submit_detail = await _submit_command(
+            pane,
+            command,
+            session_id,
+            cli_source=cli_source,
+            composer_read=composer_read,
+            verify_seconds=verify_seconds,
+        )
         if ok:
+            submit_detail = None
             ok, reason = await _confirm_compaction_prompt(
                 pane,
                 before_command,
@@ -488,7 +584,7 @@ async def _send_terminal_compaction_command(
         if not ok:
             if continuation_pending:
                 clear_continuation_pending()
-            return False, reason, False, None
+            return False, reason, False, submit_detail
 
         rejection = await _wait_for_compaction_rejection(
             pane, before_command, command, window_seconds=rejection_seconds
@@ -509,60 +605,3 @@ async def _send_terminal_compaction_command(
             session_id,
         )
     return True, None, continuation_pending, None if interrupt_sent else {"interrupted": False}
-
-
-def _resolve_tmux_target(
-    session_id: str,
-    session_manager: SessionManager,
-    agent_run_manager: LocalAgentRunManager,
-    *,
-    tmux_manager_factory: Callable[[dict[str, Any]], TmuxSessionManager],
-) -> tuple[str | None, TmuxSessionManager | None, str | None]:
-    """Resolve a session ID to a tmux target.
-
-    Returns:
-        (tmux_target, tmux_manager, error_message).
-    """
-    # Try agent run first (agent sessions have a terminals-row link)
-    agent_run = agent_run_manager.get_by_session(session_id)
-    if agent_run is not None:
-        if agent_run.status not in ("running", "pending"):
-            return None, None, f"Agent session is not running (status={agent_run.status})"
-        if not agent_run.terminal_id:
-            return None, None, "Agent session has no terminal (mode may be autonomous)"
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
-        from gobby.storage.terminals import TerminalManager
-
-        row = TerminalManager(agent_run_manager.db).get(agent_run.terminal_id)
-        if row is None or not row.session_name:
-            return None, None, "Agent session has no tmux target"
-        return row.session_name, TmuxSessionManager(), None
-
-    # Fallback: interactive CLI session with terminal_context
-    session = session_manager.get(session_id)
-    if session is None:
-        return None, None, f"Session {session_id} not found"
-
-    if session.terminal_context:
-        ctx = parse_terminal_context_value(session.terminal_context)
-        if ctx is None:
-            raw_type = type(session.terminal_context).__name__
-            return (
-                None,
-                None,
-                f"Session {session_id} has invalid terminal_context ({raw_type}); "
-                "expected object or JSON object",
-            )
-        # terminal_context may contain tmux_pane or tmux_session
-        tmux_target = ctx.get("tmux_pane") or ctx.get("tmux_session")
-        if tmux_target:
-            return tmux_target, tmux_manager_factory(ctx), None
-        keys = ", ".join(sorted(str(key) for key in ctx.keys())) or "none"
-        return (
-            None,
-            None,
-            f"Session {session_id} terminal_context has no tmux_pane or tmux_session "
-            f"(keys: {keys})",
-        )
-
-    return None, None, f"Session {session_id} has no tmux terminal"

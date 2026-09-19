@@ -3,22 +3,39 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions import _terminal
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
+    _COMMAND_NOT_SUBMITTED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
+    ComposerReader,
     _send_terminal_compaction_command,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
+    deliver_staged_compact_handoff,
 )
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO
 from gobby.terminals.runtime import SnapshotMode
+from tests.agents.detection_test_support import BundledDetectionRegistry
 
 pytestmark = pytest.mark.unit
 
 _SETTLE = 0.02
+_CLAUDE_READ = IdleDetector(BundledDetectionRegistry(), "claude").composer_read
+_DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
+_COMPACTION = "gobby.mcp_proxy.tools.sessions._terminal_compaction"
+_RULE = "─" * 40
+
+
+def _claude_frame(composer: str) -> str:
+    """One Claude screen whose composer row holds ``composer``."""
+    return "\n".join(["output", _RULE, f"❯ {composer}".rstrip(), _RULE, "  auto mode on"])
 
 
 class _ComposerPane:
@@ -52,12 +69,31 @@ class _ConfirmModalPane(_ComposerPane):
         return "output\n> "
 
 
+class _UnsubmittedPane(_ComposerPane):
+    """Claude pane that keeps the typed command after Enter, as a busy composer does.
+
+    The composer empties once ``recovers_after`` Enters have been sent, which models
+    the drain-and-retype recovery landing; ``None`` never submits.
+    """
+
+    def __init__(self, recovers_after: int | None = None) -> None:
+        super().__init__()
+        self.recovers_after = recovers_after
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        enters = self.keys.count("enter")
+        if not self.typed or (self.recovers_after is not None and enters >= self.recovers_after):
+            return _claude_frame("")
+        return _claude_frame(self.typed[-1])
+
+
 async def _send(
     pane: _ComposerPane,
     observe: Callable[[], bool | None],
     *,
     cli_source: str = "claude",
     command: str = "/clear",
+    composer_read: ComposerReader | None = None,
 ) -> tuple[tuple[bool, str | None, bool, dict[str, object] | None], MagicMock, MagicMock]:
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)
@@ -70,6 +106,7 @@ async def _send(
         clear_continuation_pending=clear,
         observe_interrupt=observe,
         settle_seconds=_SETTLE,
+        composer_read=composer_read,
     )
     return result, mark, clear
 
@@ -110,6 +147,93 @@ async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
     assert result == (True, None, True, None)
     assert pane.keys == ["escape", *composer_clear_sequence("droid"), *["enter"] * enters]
     assert pane.typed == [command]
+
+
+@pytest.mark.asyncio
+async def test_composer_emptying_after_enter_submits_once() -> None:
+    pane = _UnsubmittedPane(recovers_after=1)
+
+    result, _mark, _clear = await _send(
+        pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
+    )
+
+    assert result == (True, None, True, None)
+    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
+    assert pane.typed == ["/compact"]
+
+
+@pytest.mark.asyncio
+async def test_command_left_in_the_composer_is_retyped_then_submits() -> None:
+    pane = _UnsubmittedPane(recovers_after=2)
+
+    result, _mark, clear = await _send(
+        pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
+    )
+
+    assert result == (True, None, True, None)
+    assert pane.typed == ["/compact", "/compact"]
+    assert pane.keys == [
+        "escape",
+        *composer_clear_sequence("claude"),
+        "enter",
+        *composer_clear_sequence("claude"),
+        "enter",
+    ]
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_command_that_never_leaves_the_composer_fails_typed() -> None:
+    pane = _UnsubmittedPane()
+
+    result, _mark, clear = await _send(
+        pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
+    )
+
+    compacted, reason, continuation_pending, detail = result
+    assert compacted is False
+    assert continuation_pending is False
+    assert detail == {
+        "error_code": _COMMAND_NOT_SUBMITTED_ERROR_CODE,
+        "continuation_pending": False,
+    }
+    assert reason is not None and "/compact" in reason
+    assert pane.typed == ["/compact", "/compact"]
+    clear.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unsubmitted_command_records_no_handoff_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(f"{_COMPACTION}._SUBMIT_VERIFY_SETTLE_SECONDS", _SETTLE)
+    pane = _UnsubmittedPane()
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(id="session-1", source="claude")
+    record = MagicMock(return_value=True)
+
+    with (
+        patch(f"{_DELIVERY}._resolve_pane_io", return_value=(pane, None)),
+        patch(f"{_DELIVERY}._interrupt_observer", return_value=(None, None)),
+        patch(f"{_DELIVERY}._turn_settled_observer", return_value=None),
+        patch(f"{_DELIVERY}.composer_reader", return_value=_CLAUDE_READ),
+        patch(f"{_DELIVERY}.mark_handoff_compact_continuation_pending", return_value=True),
+        patch(f"{_DELIVERY}.clear_handoff_compact_continuation_pending", return_value=True),
+        patch(f"{_DELIVERY}.clear_queued_context"),
+        patch(f"{_DELIVERY}.record_handoff_delivery", record),
+    ):
+        result = await deliver_staged_compact_handoff(
+            "session-1",
+            "a" * 32,
+            "handoff-1",
+            session_manager=session_manager,
+            db=MagicMock(),
+            agent_run_manager=MagicMock(),
+        )
+
+    assert result["compacted"] is False
+    assert result["error_code"] == _COMMAND_NOT_SUBMITTED_ERROR_CODE
+    record.assert_not_called()
 
 
 @pytest.mark.asyncio

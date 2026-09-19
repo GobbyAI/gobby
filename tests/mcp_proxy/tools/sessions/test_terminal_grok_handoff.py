@@ -39,7 +39,7 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 ATTEMPT_ID = "a" * 32
 _DRAIN = composer_clear_sequence("grok")
 _DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
-_TMUX = "gobby.mcp_proxy.tools.sessions._terminal_tmux"
+_COMPACTION = "gobby.mcp_proxy.tools.sessions._terminal_compaction"
 _SETTLE_WAIT = 0.3
 
 
@@ -103,8 +103,8 @@ def _codex_rollout(tmp_path: Path, *payload_types: str) -> Path:
 
 
 def _patch_settle_wait(monkeypatch: pytest.MonkeyPatch, wait: float = _SETTLE_WAIT) -> float:
-    monkeypatch.setattr(f"{_TMUX}._TURN_SETTLE_WAIT_SECONDS", wait)
-    monkeypatch.setattr(f"{_TMUX}._TURN_SETTLE_POLL_SECONDS", 0.05)
+    monkeypatch.setattr(f"{_COMPACTION}._TURN_SETTLE_WAIT_SECONDS", wait)
+    monkeypatch.setattr(f"{_COMPACTION}._TURN_SETTLE_POLL_SECONDS", 0.05)
     return wait
 
 

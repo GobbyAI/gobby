@@ -36,7 +36,7 @@ _OWNED_CONSUMER_PATHS = _MONITOR_PATHS + (
     ROOT / "src/gobby/agents/watchdog/recovery.py",
     ROOT / "src/gobby/agents/lifecycle_reconciliation.py",
     ROOT / "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
-    ROOT / "src/gobby/mcp_proxy/tools/sessions/_terminal_tmux.py",
+    ROOT / "src/gobby/mcp_proxy/tools/sessions/_terminal_compaction.py",
     ROOT / "src/gobby/mcp_proxy/tools/sessions/_factory.py",
     ROOT / "src/gobby/mcp_proxy/registries.py",
     ROOT / "src/gobby/servers/http.py",
