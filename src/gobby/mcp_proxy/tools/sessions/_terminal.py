@@ -17,13 +17,7 @@ from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.mcp_proxy.tools.sessions._handoff import build_feedback_task_resolver
-from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
-    _authorize_send_keys_target as _authorize_send_keys_target,
-)
-from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
-    register_send_keys_tool,
-)
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
     _COMPACTION_REJECTION_CAPTURE_LINES,
@@ -39,11 +33,17 @@ from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _fresh_output_delta,
     _send_pane_key,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
-    _resolve_tmux_target as _resolve_tmux_target_impl,
-)
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _send_terminal_compaction_command as _send_terminal_compaction_command_impl,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
+    _authorize_send_keys_target as _authorize_send_keys_target,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
+    register_send_keys_tool,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_tmux_target import (
+    _resolve_tmux_target as _resolve_tmux_target_impl,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
     _TRANSCRIPT_TAIL_MAX_BYTES,

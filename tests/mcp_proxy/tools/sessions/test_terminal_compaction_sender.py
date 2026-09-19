@@ -10,14 +10,14 @@ import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions import _terminal
-from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
-    deliver_staged_compact_handoff,
-)
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMMAND_NOT_SUBMITTED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
     ComposerReader,
     _send_terminal_compaction_command,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
+    deliver_staged_compact_handoff,
 )
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 _SETTLE = 0.02
 _CLAUDE_READ = IdleDetector(BundledDetectionRegistry(), "claude").composer_read
 _DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
-_TMUX = "gobby.mcp_proxy.tools.sessions._terminal_tmux"
+_COMPACTION = "gobby.mcp_proxy.tools.sessions._terminal_compaction"
 _RULE = "─" * 40
 
 
@@ -206,7 +206,7 @@ async def test_command_that_never_leaves_the_composer_fails_typed() -> None:
 async def test_unsubmitted_command_records_no_handoff_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(f"{_TMUX}._SUBMIT_VERIFY_SETTLE_SECONDS", _SETTLE)
+    monkeypatch.setattr(f"{_COMPACTION}._SUBMIT_VERIFY_SETTLE_SECONDS", _SETTLE)
     pane = _UnsubmittedPane()
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(id="session-1", source="claude")

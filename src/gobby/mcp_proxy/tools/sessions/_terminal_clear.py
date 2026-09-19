@@ -20,7 +20,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_session_for_compaction,
     _send_terminal_compaction_command,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import composer_reader
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import composer_reader
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,

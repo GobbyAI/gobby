@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.agents.idle_detector import ComposerRead, ComposerState
-from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
     _COMPOSER_OCCUPIED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
