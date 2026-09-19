@@ -594,7 +594,7 @@ async def test_lease_mutations_linearize_with_dispatch() -> None:
             )
         )
         await runtime.started.wait()
-        assert f"ws:att-1:{mutation}" in _unresolved(store, terminal.id)
+        assert coordinator.lock_held(terminal.id)
 
         mutation_task: asyncio.Task[Any]
         if mutation == "takeover":
@@ -616,11 +616,11 @@ async def test_lease_mutations_linearize_with_dispatch() -> None:
 
         await _let_tasks_run()
         assert not mutation_task.done()
-        assert f"ws:att-1:{mutation}" in _unresolved(store, terminal.id)
+        assert coordinator.lock_held(terminal.id)
         hold.set()
         await write_task
         await mutation_task
-        assert f"ws:att-1:{mutation}" not in _unresolved(store, terminal.id)
+        assert not coordinator.lock_held(terminal.id)
 
     registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     attachment = await registry.attach("term-reuse", attachment_id="att-old")
