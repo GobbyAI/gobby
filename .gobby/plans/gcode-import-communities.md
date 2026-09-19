@@ -89,10 +89,14 @@ Decision record (confirmed with the user on 2026-09-10 and 2026-09-19):
   latest migration at `1ee3db66d3`, so it names 442. Task #22572 (gobby#13891, workspace
   ref re-basing) is landing its own `442_*.sql` concurrently. The number in this plan is
   the next free migration number when 3.1 lands, not a decision: the executor re-resolves
-  the file name, `MIGRATIONS`, `latest_version`, `cli_contract.rs`, and every "442" in
-  3.1 to that number in the same commit, and V1 records the substitution.
-- Hand-maintained `.rs`/`.py` files stay under 1,000 lines. Sizes on 2026-09-19 at
-  `7b6dc3bfd0`: `cli.rs` 827 (split in 4.1 before it grows), `graph_analytics.rs` 693,
+  every occurrence of the provisional number in this plan to that number in the same
+  commit as 3.1: the file name, `MIGRATIONS`, `latest_version`, `cli_contract.rs`, every
+  "442" in 3.1, the migration number 7.1 writes into `crates/CHANGELOG.md`, and Q1
+  step 3's "applies 442". V1 records the number actually used (3.1.7).
+- Hand-maintained production `.rs`/`.py` files stay under 1,000 lines. Sizes on 2026-09-19 at
+  `7b6dc3bfd0`: `cli.rs` 827 (split in 4.1 before it grows), `graph_analytics.rs` 693
+  (about 620 after 1.2: 1.1 moves the 161-line inline test module at :533-693 to
+  `crates/gcore/src/graph_analytics/tests.rs` before adding roughly 90 production lines),
   `contract.rs` 693, `db/queries.rs` 664 (new SQL goes to `crates/gcode/src/db/communities.rs`),
   `evidence/graph.rs` 673, `overlay.rs` 691, `pipeline.rs` 546, `crates/gcode/src/evidence/mod.rs` 476,
   `crates/gcode/src/evidence/contracts.rs` 405, `crates/gcode/src/commands/graph/view/mod.rs` 406, `render.rs` 332, `crates/gcode/src/commands/graph/view/mcg/identity.rs` 260,
@@ -117,9 +121,9 @@ Decision record (confirmed with the user on 2026-09-10 and 2026-09-19):
 - Shared-target chain (the validator requires a dependency path between any two
   deliverables that touch one file), generated from the Targets blocks on 2026-09-19 and
   re-derived whenever a Targets block changes:
-  `crates/gcore/src/graph_analytics.rs` 1.1 → 1.2;
+  `crates/gcore/src/graph_analytics.rs` and `crates/gcore/src/graph_analytics/tests.rs` 1.1 → 1.2;
   `crates/gcode/src/communities.rs` 2.1 → 2.2 → 2.3 → 3.2;
-  `crates/gcode/src/commands/graph/view/mcg.rs`, `crates/gcode/src/commands/graph/view/mcg/fetch.rs`,
+  `crates/gcode/src/commands/graph/view/mcg/fetch.rs` and
   `crates/gcode/src/commands/graph/view/mcg/tests.rs` 2.1 → 4.2 (via 3.2);
   `crates/gcode/src/commands/graph/view/tests.rs` 4.2 → 4.3;
   `crates/gcode/src/cli/graph_view.rs` 4.1 → 4.3;
@@ -130,8 +134,10 @@ Decision record (confirmed with the user on 2026-09-10 and 2026-09-19):
   `crates/gcode/security/managed_postgres_privileges.json` 3.1 → 3.2;
   `docs/contracts/gcode-cli.md` 4.3 → 5.2;
   `src/gobby/code_index/community_labeler.py` and `tests/code_index/test_community_labeler.py` 6.2 → 6.3.
-  `crates/gcode/src/commands/graph/view/render.rs`, `render_tests.rs`, and
-  `crates/gcode/src/graph/report/summary.rs` each have a single owner (4.2, 4.2, 1.2).
+  `crates/gcode/src/commands/graph/view/mcg.rs`, `crates/gcode/src/commands/graph/view/render.rs`,
+  `render_tests.rs`, and `crates/gcode/src/graph/report/summary.rs` each have a single
+  owner (4.2, 4.2, 4.2, 1.2); `mcg.rs` holds no identity reference today, so 2.1 does not
+  touch it and its `ImportIdentity` import arrives with 4.2's `label_communities`.
 - Consumer sweep evidence (`gcode grep -F`, 2026-09-19, `crates/` and `src/`):
   `McgIdentity` appears in `crates/gcode/src/commands/graph/view/mcg/identity.rs`, `crates/gcode/src/commands/graph/view/mcg/fetch.rs`, `crates/gcode/src/commands/graph/view/mcg/tests.rs`;
   `assign_leiden_communities` in `mcg.rs`, `crates/gcode/src/commands/graph/view/mcg/fetch.rs`, `crates/gcode/src/commands/graph/view/mcg/tests.rs`;
@@ -146,6 +152,11 @@ Decision record (confirmed with the user on 2026-09-10 and 2026-09-19):
   `read_active_imports` in `db/queries.rs`, `crates/gcode/src/commands/graph/view/mcg/fetch.rs`, `code_graph/tests.rs`,
   `queries_cas_tests.rs` (signature unchanged); `EvidenceOperation::` in
   `crates/gcode/src/evidence/mod.rs`, `crates/gcode/src/evidence/tests.rs`, `crates/gcode/src/commands/evidence.rs`, `crates/gcode/tests/evidence.rs`;
+  `EvidenceItem::` matches without a wildcard arm in `crates/gcode/src/evidence/search.rs:41-42`
+  (the search-lane eligibility retain; 5.1 adds the `Community` arm) and
+  `crates/gcode/src/evidence/contracts.rs:238` (`canonical_key`); constructor and pattern uses in
+  `crates/gcode/src/evidence/graph.rs`, `crates/gcode/src/evidence/read.rs`, `crates/gcode/src/evidence/mod.rs:345`,
+  `crates/gcode/src/evidence/tests.rs`, and `crates/gcode/tests/evidence.rs` need no arm of their own;
   `graph_report_keys` and `evidence_keys` in `crates/gcode/src/contract/schema.rs` and `contract.rs`;
   Python evidence operation literals at `src/gobby/ask/evidence.py:129`,
   `stage_runtime.py:730`, `interactive_evidence.py:16`, `src/gobby/mcp_proxy/tools/ask.py:108,300`.
@@ -196,7 +207,8 @@ centrality-only entry for the report.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the communities entry point and typed input error beside the existing analyze façade, plus inline tests
+- `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the communities entry point and typed input error beside the existing analyze façade, and move the inline test module to a #[path] sibling
+- `crates/gcore/src/graph_analytics/tests.rs`
 
 Research context: `analyze` (`graph_analytics.rs:78-95`) runs Tarjan bridges,
 centrality, god nodes, unexpected links, and hotspots; `PreparedGraph` (:127-133) and
@@ -206,8 +218,12 @@ is a private module whose items are `pub(super)` (`DEFAULT_GAMMA` :16,
 lexicographically smallest member id, so ordinal ids renumber on any membership change;
 that is why P2 remaps rather than reusing ordinals. `thiserror` is already a gcore
 dependency. Existing tests at :537-692 (`seeded_graph`, singleton and empty cases) are
-the fixtures to reuse. Rejected: exposing `PreparedGraph` publicly (its sanitizing
-constructor is what the typed error replaces).
+the fixtures to reuse. The inline `#[cfg(test)]` module (:533-693, 161 lines, four tests)
+moves to `crates/gcore/src/graph_analytics/tests.rs` under the `#[path]` idiom from the
+crates AGENTS guide (the directory already holds `leiden.rs`): inline test modules count
+toward the 1,000-line ceiling, and the two P1 leaves would otherwise land the file near
+900 lines, inside the decomposition hook's blocking band. Rejected: exposing
+`PreparedGraph` publicly (its sanitizing constructor is what the typed error replaces).
 
 ```rust
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -231,7 +247,8 @@ non-finite or non-positive weight. On success return
 `PreparedGraph::new(graph).communities().0`. Empty graph returns an empty vec; nodes
 without edges return one singleton community each, matching `analyze`.
 
-Tests (inline `#[cfg(test)]`): `communities_matches_analyze_partition_on_seeded_graph`,
+Tests (in `crates/gcore/src/graph_analytics/tests.rs`, beside the moved `seeded_graph`
+fixtures): `communities_matches_analyze_partition_on_seeded_graph`,
 `communities_rejects_unknown_endpoint`, `communities_rejects_invalid_weight` (NaN and
 0.0), `communities_rejects_duplicate_node`, `communities_rejects_self_loop`,
 `communities_empty_graph_is_empty`, `communities_without_edges_is_all_singletons`.
@@ -243,13 +260,15 @@ Verify: `cargo fmt -p gobby-core -- --check`, `cargo clippy -p gobby-core --feat
 
 - 1.1.1 - `communities(&AnalyticsGraph)` returns the same partition as `analyze` on the seeded graph and skips the other passes. symbol: `communities`. file: `crates/gcore/src/graph_analytics.rs`.
 - 1.1.2 - `GraphInputError` is returned for duplicate node, unknown endpoint, invalid weight, and self-loop instead of silent sanitizing. symbol: `GraphInputError`. file: `crates/gcore/src/graph_analytics.rs`.
-- 1.1.3 - Empty and edge-less graphs behave as `analyze` does. test: `crates/gcore/src/graph_analytics.rs::communities_without_edges_is_all_singletons`.
+- 1.1.3 - Empty and edge-less graphs behave as `analyze` does. test: `crates/gcore/src/graph_analytics/tests.rs::communities_without_edges_is_all_singletons`.
+- 1.1.4 - The pre-existing inline test module lives in `crates/gcore/src/graph_analytics/tests.rs` under `#[path]` and `crates/gcore/src/graph_analytics.rs` declares no `#[cfg(test)]` module. file: `crates/gcore/src/graph_analytics/tests.rs`.
 
 ### 1.2 Add `centrality()` and stop `graph report` from running Leiden twice [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the centrality entry point sharing the validation of communities, plus an inline parity test
+- `crates/gcore/src/graph_analytics.rs::*` — scope-reason: add the centrality entry point sharing the validation of communities
+- `crates/gcore/src/graph_analytics/tests.rs`
 - `crates/gcode/src/graph/report/summary.rs::*` — scope-reason: replace both analyze calls with centrality in gcore_hotspots_for_code_graph and gcore_incoming_call_hotspots
 - `docs/evidence/community-labels-2026-09/report-latency.md`
 
@@ -263,7 +282,8 @@ callers (still pays for Leiden once per report for nothing).
 
 `pub fn centrality(graph: &AnalyticsGraph) -> Result<Vec<CentralityScore>, GraphInputError>`
 validates exactly as `communities()` and returns `PreparedGraph::new(graph).centrality()`.
-Inline test `centrality_matches_analyze_centrality` on `seeded_graph()`. In `summary.rs`
+Test `centrality_matches_analyze_centrality` on `seeded_graph()` in
+`crates/gcore/src/graph_analytics/tests.rs`. In `summary.rs`
 map `GraphInputError` into the existing hotspot degradation path (the report already
 tolerates a missing analytics input); no output shape changes.
 
@@ -274,7 +294,7 @@ wall time of `gcode graph report` over five runs before and after this leaf) rec
 
 **Acceptance:**
 
-- 1.2.1 - `centrality(&AnalyticsGraph)` returns the same scores as `analyze(...).centrality` on the seeded graph. test: `crates/gcore/src/graph_analytics.rs::centrality_matches_analyze_centrality`.
+- 1.2.1 - `centrality(&AnalyticsGraph)` returns the same scores as `analyze(...).centrality` on the seeded graph. test: `crates/gcore/src/graph_analytics/tests.rs::centrality_matches_analyze_centrality`.
 - 1.2.2 - No `analyze` call remains in `crates/gcode/src/graph/report/summary.rs`; report hotspots and bridges are byte-identical before and after on the Gobby checkout. file: `crates/gcode/src/graph/report/summary.rs`.
 - 1.2.3 - `gcode graph report` median wall time over five runs is recorded before and after the `centrality()` swap with no regression. behavior: "median" in `docs/evidence/community-labels-2026-09/report-latency.md`.
 
@@ -295,7 +315,6 @@ Targets:
 - `crates/gcode/src/lib.rs::*` — scope-reason: declare the new communities module beside the other crate modules
 - `crates/gcode/src/commands/graph/view/mcg/identity.rs::*` — scope-reason: remove McgIdentity, providers_for, unique_provider, and from_resolution; keep the seed types
 - `crates/gcode/src/commands/graph/view/mcg/fetch.rs::*` — scope-reason: replace load_identity with communities::identity::load_project_imports on the connection run already opens
-- `crates/gcode/src/commands/graph/view/mcg.rs::*` — scope-reason: import ImportIdentity from its new module
 - `crates/gcode/src/commands/graph/view/mcg/tests.rs::*` — scope-reason: move the identity tests and the identity_from helper to communities/identity_tests.rs
 
 Research context: `McgIdentity` (`crates/gcode/src/commands/graph/view/mcg/identity.rs:19-23`) with `providers_for` (:138,
@@ -307,7 +326,13 @@ private), `unique_provider` (:150, `pub(super)`), and `from_resolution` (:162,
 `visibility::visible_tree`, reads `crate::db::read_active_imports(&mut conn, &ctx.project_id)`
 (queries module, lines 338-364, joins `code_imports` to this machine's
 `code_indexed_file_states`), builds the resolver with `build_import_resolution_context`,
-and calls `from_resolution`; it drops the rows after building the identity. gcode is a
+and calls `from_resolution`; it drops the rows after building the identity.
+`read_active_imports` filters `WHERE ci.project_id = $2` for one id while `visible_tree`
+under `ProjectIndexScope::Overlay` unions the overlay's files with every unshadowed parent
+file, so `load_identity`'s body alone leaves every parent-only file edgeless under an
+overlay context: latent in today's depth-bounded MCG view, and a persisted project-wide
+shred of singletons once the body feeds 2.2. `visibility::visible_project_ids(ctx)`
+(`crates/gcode/src/visibility.rs:36-47`) returns the overlay id first, then the parent. gcode is a
 library crate: `crates/gcode/src/lib.rs:2-45` declares modules (`mod db;`, `pub mod
 evidence;`, `mod commands;` …), so `mod communities;` is declared there. The index
 pipeline (3.2) must not depend on a command module, and it already holds a connection
@@ -325,7 +350,12 @@ pub(crate) struct ProjectImports { pub identity: ImportIdentity, pub rows: Vec<(
 pub(crate) fn load_project_imports(conn: &mut postgres::Client, ctx: &Context) -> anyhow::Result<ProjectImports>;
 ```
 
-Same body as `load_identity`, keeping `rows` as `(file_path, module_name)`. `crates/gcode/src/commands/graph/view/mcg/fetch.rs::run`
+The body follows `load_identity` with one change: import rows are read once per id in
+`visibility::visible_project_ids(ctx)` (`read_active_imports` keeps its single-project
+signature), and the pure `merge_visible_imports(overlay_rows, parent_rows, overlay_paths)`
+drops every parent row whose `file_path` the overlay shadows, mirroring `visible_tree`'s
+anti-join, so under an overlay context every visible file keeps its edges. `rows` stay
+`(file_path, module_name)`. `crates/gcode/src/commands/graph/view/mcg/fetch.rs::run`
 opens its connection as today and passes it. Identity tests move to
 `crates/gcode/src/communities/identity_tests.rs` via the `#[path]` test-file idiom from the crates AGENTS guide, including
 `mcg_identity_build_handles_twenty_thousand_rows` and the `identity_from` helper (keep a
@@ -338,6 +368,7 @@ Verify: `cargo nextest run -p gobby-code -E 'test(identity) | test(mcg)'`, `carg
 - 2.1.1 - `ImportIdentity` lives in `crates/gcode/src/communities/identity.rs` with `unique_provider` and `from_resolution` reachable crate-wide; `crates/gcode/src/commands/graph/view/mcg/identity.rs` keeps only seed resolution. symbol: `ImportIdentity`. file: `crates/gcode/src/communities/identity.rs`.
 - 2.1.2 - `load_project_imports(conn, ctx)` returns the identity and the import rows on a caller-supplied connection; `load_identity` is gone. symbol: `load_project_imports`. file: `crates/gcode/src/communities/identity.rs`.
 - 2.1.3 - The moved identity tests pass unchanged in their new file. test: `crates/gcode/src/communities/identity_tests.rs::mcg_identity_build_handles_twenty_thousand_rows`.
+- 2.1.4 - Under an overlay context `load_project_imports` returns import rows for every visible file, parent-only files included, with parent rows the overlay shadows by `file_path` dropped. test: `crates/gcode/src/communities/identity_tests.rs::overlay_partition_covers_parent_only_files`.
 
 ### 2.2 Build the partition: graph, Leiden, splits, cohesion, deterministic labels, signatures [category: code] (depends: 1.1, 2.1)
 `kind: deliverable`
@@ -511,11 +542,14 @@ carry-forward per new community: unmatched → deterministic label and candidate
 2.2; matched with equal signature → carry every label field, including
 `labeled_signature`, `label_confidence`, `label_model`, `labeled_at`, and
 `label_attempted_at`; matched with a changed signature and prior source `deterministic`
-→ recompute `label_deterministic` and write `labeled_signature`, `label_confidence`,
-`label_model`, `labeled_at`, and `label_attempted_at` as `None`, so a gate decision
-recorded against the old membership (6.3 stores a rejection as a deterministic label
-with the signature stamped) is reopened with no residue and the row re-enters the label
-queue; matched with a changed signature and prior source `model` → carry the model
+→ recompute `label_deterministic` and write the four gate-decision fields
+`labeled_signature`, `label_confidence`, `label_model`, and `labeled_at` as `None`, so a
+gate decision recorded against the old membership (6.3 stores a rejection as a
+deterministic label with the signature stamped) is reopened with no residue and the row
+re-enters the label queue, while `label_attempted_at` is carried unchanged: it is the
+daemon's failure cooloff (6.1, 6.2), and clearing it on every hook-triggered membership
+change would reset the backoff for exactly the communities whose generation keeps
+failing; matched with a changed signature and prior source `model` → carry the model
 label with its `labeled_signature`, confidence, and model, which the readers interpret
 as `label_stale`. `label_candidates` are always recomputed.
 
@@ -526,8 +560,9 @@ Tests in `remap_tests.rs`: `unchanged_partition_keeps_every_id`,
 the watermark), `renamed_files_keep_id_and_flip_signature`,
 `model_label_carries_with_stale_signature`, `deterministic_label_recomputes_on_change`,
 `gate_rejected_label_reopens_on_membership_change` (a prior deterministic row with
-`labeled_signature`, `label_confidence`, and `label_model` set comes back with all
-five bookkeeping fields `None` after a membership change),
+`labeled_signature`, `label_confidence`, `label_model`, and `label_attempted_at` set
+comes back with the four gate-decision fields `None` and `label_attempted_at` unchanged
+after a membership change),
 `watermark_is_monotone_across_runs`.
 
 Verify: `cargo nextest run -p gobby-code -E 'test(remap)'`.
@@ -537,7 +572,7 @@ Verify: `cargo nextest run -p gobby-code -E 'test(remap)'`.
 - 2.3.1 - `assign_ids` matches greedily by Jaccard, overlap, old id, new index and keeps an id on the larger child of a split and the larger parent of a merge. test: `crates/gcode/src/communities/remap_tests.rs::split_keeps_id_on_larger_child_and_issues_fresh_id`.
 - 2.3.2 - Unmatched communities take ids above the watermark and a retired id is never reissued. test: `crates/gcode/src/communities/remap_tests.rs::retired_ids_are_never_reissued`.
 - 2.3.3 - Label fields carry forward by the four-way rule and a model label with a changed signature is carried as stale. symbol: `assign_ids`. file: `crates/gcode/src/communities/remap.rs`.
-- 2.3.4 - A deterministic row whose membership changed comes back with `labeled_signature`, `label_confidence`, `label_model`, `labeled_at`, and `label_attempted_at` cleared. test: `crates/gcode/src/communities/remap_tests.rs::gate_rejected_label_reopens_on_membership_change`.
+- 2.3.4 - A deterministic row whose membership changed comes back with the four fields `labeled_signature`, `label_confidence`, `label_model`, and `labeled_at` cleared and `label_attempted_at` carried unchanged. test: `crates/gcode/src/communities/remap_tests.rs::gate_rejected_label_reopens_on_membership_change`.
 - 2.3.5 - `LabelSource` maps exactly to the text values `deterministic` and `model` and round-trips them. symbol: `LabelSource`. file: `crates/gcode/src/communities.rs`.
 - 2.3.6 - `LabelCarry` carries every label column the four-way rule assigns, including the recomputed `label_candidates`. symbol: `LabelCarry`. file: `crates/gcode/src/communities/remap.rs`.
 
@@ -598,7 +633,9 @@ per-project and issued by the remap watermark); a foreign key from `members` to
 membership is resolved in memory over the rows already read); an index over `members`
 (no specified query filters by member: 4.2, 4.3, and 5.1 scan the rows
 `read_for_context` returned, and a GIN rebuild on every replace would count against
-Q1.7's budget).
+Q1.7's budget); a `(machine_id, project_id, member_count DESC, community_id)` index
+(every reader loads all rows for the pair, which the primary key already serves as a
+prefix scan, and orders in memory; the label queue is served by `idx_cc_label_queue`).
 
 ```sql
 ALTER TABLE code_indexed_project_states
@@ -634,7 +671,6 @@ CREATE TABLE code_communities (
     CHECK (jsonb_typeof(boundary) = 'array'),
     CHECK (label_source = 'deterministic' OR (labeled_signature IS NOT NULL AND label_model IS NOT NULL))
 );
-CREATE INDEX idx_cc_project_size ON code_communities (machine_id, project_id, member_count DESC, community_id);
 CREATE INDEX idx_cc_label_queue ON code_communities (machine_id, project_id)
     WHERE labeled_signature IS DISTINCT FROM member_signature;
 ```
@@ -657,7 +693,8 @@ entry, and `community_id_watermark` and `partition_signature` on the
 Live: `uv run gobby restart` (plans and applies 442), then `uv run gobby cutover` for the
 coherent set, after a `global` announcement, before 3.2 starts: 3.2's refresh writes a
 table the installed binaries must already know. Record the `gdaemon schema plan` output
-before and after the apply (nothing pending afterwards) in `docs/evidence/community-labels-2026-09/schema-apply.md`.
+before and after the apply (nothing pending afterwards) in `docs/evidence/community-labels-2026-09/schema-apply.md`,
+with the line "landed as migration <N>" naming the number the substitution resolved to.
 
 Granularity: eighteen target files, three of them hand-maintained Rust. A schema change
 and its carriers cannot land partially (every carrier test fails until all agree), so
@@ -670,12 +707,13 @@ Verify: `cargo nextest run -p gobby-core --features postgres`, `cargo nextest ru
 
 **Acceptance:**
 
-- 3.1.1 - Migration 442 creates `code_communities` with the constraints, indexes, machine-scoped RLS policies, and GRANTs above, and adds `community_id_watermark` and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/442_add_code_communities.sql`.
-- 3.1.2 - `baseline.sql`, `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`, `schema_contract.rs`, `gdaemon` `cli_contract.rs`, `schema_expected_identity.json`, and the five goldens agree on latest version 442. file: `src/gobby/storage/schema_expected_identity.json`.
+- 3.1.1 - The new migration (442, or the next free number at landing) creates `code_communities` with the constraints, the `idx_cc_label_queue` index, machine-scoped RLS policies, and GRANTs above, and adds `community_id_watermark` and `partition_signature` to `code_indexed_project_states`. file: `crates/gcore/assets/schema/migrations/442_add_code_communities.sql`.
+- 3.1.2 - `baseline.sql`, `catalog.manifest.json`, `assets.rs::MIGRATIONS`, `crates/gcore/src/grant/bundle.rs`, `schema_contract.rs`, `gdaemon` `cli_contract.rs`, `schema_expected_identity.json`, and the five goldens agree on the new latest version (442, or the next free number at landing). file: `src/gobby/storage/schema_expected_identity.json`.
 - 3.1.3 - `GCODE_RLS_TABLES` lists twelve tables and the runner tests assert the machine-scoped predicates on `code_communities`. file: `crates/gcore/src/schema/runner_tests.rs`.
 - 3.1.4 - The privilege manifest grants `code_communities` to the gcode capability with the same scope declaration as `code_indexed_project_states`, and gcode's `schema.rs` contracts include the table and both new columns. file: `crates/gcode/security/managed_postgres_privileges.json`.
 - 3.1.5 - `uv run gobby restart` applies 442 on the live hub and `gdaemon schema plan` reports nothing pending afterwards, as recorded in the apply log. behavior: "nothing pending" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 - 3.1.6 - The managed-relation set assertion names `code_communities`. test: `tests/code_index/test_gcode_privilege_manifest.py::test_manifest_privileges_match_the_managed_relation_set`.
+- 3.1.7 - The migration number actually used replaces every occurrence of the provisional 442 named in Constraints in the same commit, and the apply log and V1 record it. behavior: "landed as migration" in `docs/evidence/community-labels-2026-09/schema-apply.md`.
 
 ### 3.2 Persist the partition at index time and expose the read API [category: code] (depends: 2.3, 3.1)
 `kind: deliverable`
@@ -685,7 +723,7 @@ Targets:
 - `crates/gcode/src/communities/refresh_tests.rs`
 - `crates/gcode/src/db/communities.rs`
 - `crates/gcode/src/db/mod.rs::*` — scope-reason: declare and re-export the communities query module
-- `crates/gcode/src/index/indexer/lifecycle.rs::*` — scope-reason: add refresh_communities beside refresh_project_stats and attach_projection_sync
+- `crates/gcode/src/index/indexer/lifecycle.rs::*` — scope-reason: add refresh_communities beside refresh_project_stats and attach_projection_sync, and delete this machine's code_communities rows inside invalidate's transaction
 - `crates/gcode/src/index/indexer/pipeline.rs::*` — scope-reason: call refresh_communities at both full and incremental completion sites
 - `crates/gcode/src/index/indexer/overlay.rs::*` — scope-reason: call refresh_communities at the overlay completion site under the overlay project id
 - `crates/gcode/src/index/indexer/types.rs::*` — scope-reason: add the CommunityRefreshFailed degradation and the optional communities report on IndexOutcome
@@ -713,10 +751,19 @@ and a test keeps it honest, so the new `crates/gcode/src/db/communities.rs` need
 the parent's; `visibility::visible_tree` already applies that rule. Rejected: refreshing
 only when the daemon asks (the hook per-file path would leave stale rows visible to the
 very next `graph view`); a partial refresh of touched communities (remap needs the full
-partition, and Leiden over ~7,000 nodes is sub-second in Rust).
+partition, and Leiden over ~7,000 nodes is sub-second in Rust). `invalidate`
+(`lifecycle.rs:29-52`, reached from `gcode invalidate` and from prune through
+`invalidate_project_locked` in `crates/gcode/src/commands/status/invalidate.rs:58-67`) deletes this
+machine's `code_indexed_file_states` and `code_indexed_project_states` rows in one
+transaction and never touches `code_indexed_projects`, so the table's `ON DELETE CASCADE`
+does not fire and, without a matching delete, `code_communities` rows would outlive the
+watermark that protects their ids. `project_lock_key` (`crates/gcode/src/index_lock.rs:583-595`)
+hashes only the project id, so an overlay run and its parent's run hold different
+advisory locks.
 
 `crates/gcode/src/db/communities.rs` (SQL only): `read_project_communities(conn, machine_id, project_id) -> Vec<StoredCommunity>`
-for the read paths, and the transaction-scoped pair `begin_replace(conn, machine_id,
+and `read_partition_signature(conn, machine_id, project_id) -> Option<String>` for the read
+paths, and the transaction-scoped pair `begin_replace(conn, machine_id,
 project_id) -> ReplaceTxn<'_>` and `ReplaceTxn::{commit, skip}`. `begin_replace` opens
 the transaction, runs `SELECT community_id_watermark, partition_signature FROM
 code_indexed_project_states … FOR UPDATE`, and reads the prior `code_communities` rows
@@ -729,31 +776,49 @@ never observe a half-replaced partition, and the daemon labeler's signature-guar
 `UPDATE` (6.1) can never land between the prior-row read and the `DELETE`. A label
 committed before the read is carried forward by 2.3; one issued after the read blocks
 on the row lock, matches zero rows once the replace commits, and leaves the row in the
-label queue for the next pass. Nothing is discarded silently.
+label queue for the next pass. Nothing is discarded silently. `invalidate` gains a third
+statement in its existing transaction, `DELETE FROM code_communities WHERE machine_id = $1
+AND project_id = $2`, so the rows and the watermark that guards their ids always die
+together; the next index run starts from an empty partition and a zero watermark, and
+an id may repeat an earlier one only because the whole history was deliberately
+discarded (Ask evidence ids also hash the member signature, so a reissued id never
+replays as the old community).
 
 `communities.rs`: `StoredCommunity` (every column plus `label_stale: bool` computed as
 `label_source == Model && labeled_signature != Some(member_signature)`),
 `refresh_project_communities(conn, ctx) -> anyhow::Result<CommunityRefreshReport>`, and
 `read_for_context(conn, ctx) -> Vec<StoredCommunity>` (overlay project first, parent
-fallback when the overlay has no rows). `read_for_context` is the one place the stale rule
+fallback when the overlay has no rows), `partition_refreshed(conn, ctx) -> bool` (true
+when `partition_signature` is non-NULL for the project whose rows `read_for_context`
+returns; 5.1 uses it to tell a never-refreshed project from a refreshed one with no
+communities), and `pub(crate) const MISSING_PARTITION_HINT` (the text 4.2, 4.3, and 5.1
+show when no partition is stored). `read_for_context` is the one place the stale rule
 is applied: when `label_stale` is true it returns the row with `label` set to
-`label_deterministic` and `label_source` set to `Deterministic`, so every reader (4.2
+`label_deterministic`, `label_source` set to `Deterministic`, and `label_confidence` and
+`label_model` set to `None` (a stale confidence describes a label no longer shown, and
+5.1's `CommunityEvidence` carries the field), so every reader (4.2
 `ViewCommunity`, 4.4 `GraphReportCommunity`, 5.1 `CommunityEvidence`) shows the
 deterministic label with `label_stale: true` without carrying `label_deterministic` in
 its payload. The stored row is untouched, and the replace path reads raw rows through
 `begin_replace`, never `read_for_context`, so 2.3's carry-forward still sees the stored
 model label. The refresh sequence: load imports through 2.1
-and build through 2.2 outside any transaction; `begin_replace`; when the stored
-`partition_signature` equals the new one, `skip()` and report `skipped_unchanged`; else
+and build through 2.2 outside any transaction; `begin_replace`; when the
+`partition_signature` stored under `ctx.project_id` (never a seeded parent signature; it
+is `NULL` on an overlay's first refresh, so that refresh always commits) equals the new
+one, `skip()` and report `skipped_unchanged`; else
 run 2.3's pure `assign_ids` on the prior rows read inside the transaction, build the
 rows (`representatives` are the top five members by in-degree with ties by path;
 `boundary` folds `directed` into per-pair import counts between distinct communities),
 and `commit`. Overlay projects: when `ctx` resolves to an overlay project that has no
-rows of its own, `begin_replace` seeds the prior rows, the watermark, and the stored
-signature from the parent project (the same parent lookup `read_for_context` uses), so
-`assign_ids` carries the parent's ids and label fields forward by signature match and
-only genuinely new communities take fresh ids above the parent's watermark; the commit
-writes under the overlay project id. Later overlay refreshes remap against the
+rows of its own, `begin_replace` seeds the prior rows and the watermark from the parent
+project (the same parent lookup `read_for_context` uses) inside the same READ COMMITTED
+transaction, taking `FOR UPDATE` on the parent's `code_indexed_project_states` row before
+reading the parent's `code_communities` rows: the parent's run holds a different advisory
+lock, so that row lock is what serializes the seed against the parent's own replace. The
+seed never copies the parent's `partition_signature`; the skip compares against the
+overlay's own stored value. `assign_ids` then carries the parent's ids and label fields
+forward by signature match and only genuinely new communities take fresh ids above the
+parent's watermark; the commit writes under the overlay project id. Later overlay refreshes remap against the
 overlay's own rows, so a worktree shows the main checkout's ids and model labels as of
 its first index, and ids it issues afterwards are overlay-local. The daemon labeler
 skips overlay projects (`_run_maintenance` continues on `decision.kind == "overlay"`,
@@ -769,7 +834,9 @@ against a budget. If the budget is exceeded, the fix is a digest of the deduped
 and compared before the graph is built; it is not added now.
 
 Evidence owned by this leaf: the Q1.4 churn experiment (two `gcode index` runs on unchanged
-input, a three-file rename inside one community, one added file, one deleted plus one
+input, a three-file rename inside one community with that community's row first seeded
+to `label_source='model'` by direct `UPDATE` because no model label exists before 6.2
+runs, one added file, one deleted plus one
 unrelated new community, on the Gobby checkout and the frozen Game Goblins baseline) with
 its row diffs in `docs/evidence/community-labels-2026-09/churn.md`, and the Q1.7
 incremental single-file `gcode index` timing (median of five runs before and after this
@@ -799,13 +866,19 @@ committed between the build and `begin_replace` is present on the committed row;
 issued after `begin_replace` blocks, matches zero rows, and leaves the row queued),
 `overlay_refresh_seeds_prior_rows_from_parent` (an overlay's first refresh keeps the
 parent's ids and model labels for unchanged communities and issues fresh ids above the
-parent's watermark), `edge_change_without_membership_change_rewrites_rows` (adding one
+parent's watermark), `overlay_first_refresh_commits_when_partition_matches_parent` (an
+overlay whose partition equals the parent's commits rows under the overlay id on its
+first refresh and skips on its second), `overlay_seed_locks_parent_state_row` (a seed
+started while a parent replace holds the row lock blocks until the parent commits and
+reads the committed rows), `invalidate_removes_community_rows_with_project_state`
+(after `invalidate` neither table holds a row for the machine and project), `edge_change_without_membership_change_rewrites_rows` (adding one
 import between existing members of one community rewrites its `internal_edges`,
 `cohesion`, `representatives`, and `boundary` with every `member_signature` unchanged),
 `stale_model_label_reads_as_deterministic` (a row with `label_source = 'model'` and a
 `labeled_signature` that differs from `member_signature` comes back from
-`read_for_context` with the deterministic label, `label_source` deterministic, and
-`label_stale` true, while the stored row still holds the model label).
+`read_for_context` with the deterministic label, `label_source` deterministic,
+`label_confidence` and `label_model` `None`, and `label_stale` true, while the stored row
+still holds the model label, confidence, and model).
 
 Verify: `cargo nextest run -p gobby-code -E 'test(communities) | test(index)'`,
 `cargo nextest run -p gobby-code --test contract`, and
@@ -823,9 +896,12 @@ after the coherent-set cutover.
 - 3.2.7 - A label the daemon writes while a refresh is in flight is either carried forward or left queued; it is never discarded. test: `crates/gcode/src/communities/refresh_tests.rs::label_written_during_refresh_is_not_lost`.
 - 3.2.8 - An overlay project's first refresh seeds ids, watermark, and label fields from the parent project. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_refresh_seeds_prior_rows_from_parent`.
 - 3.2.9 - An import added or removed between existing members rewrites the rows with new `internal_edges`, `cohesion`, `representatives`, and `boundary` although no `member_signature` changed. test: `crates/gcode/src/communities/refresh_tests.rs::edge_change_without_membership_change_rewrites_rows`.
-- 3.2.10 - `read_for_context` returns a stale model-labeled row with the deterministic label, `label_source` deterministic, and `label_stale` true, leaving the stored row unchanged. test: `crates/gcode/src/communities/refresh_tests.rs::stale_model_label_reads_as_deterministic`.
-- 3.2.11 - The Q1.4 churn experiment ran on both corpora before close and its row diffs are recorded. behavior: "member_signature" in `docs/evidence/community-labels-2026-09/churn.md`.
+- 3.2.10 - `read_for_context` returns a stale model-labeled row with `label` rewritten to the deterministic label, `label_source` deterministic, `label_confidence` and `label_model` `None`, and `label_stale` true, leaving the stored row unchanged. test: `crates/gcode/src/communities/refresh_tests.rs::stale_model_label_reads_as_deterministic`.
+- 3.2.11 - The Q1.4 churn experiment ran on both corpora before close, with one row seeded to `label_source='model'` by direct `UPDATE` before the rename step so the `label_stale` flip is observable, and its row diffs are recorded. behavior: "member_signature" in `docs/evidence/community-labels-2026-09/churn.md`.
 - 3.2.12 - Incremental single-file index latency before and after this leaf is recorded against the +250 ms p50 budget on both corpora. behavior: "p50" in `docs/evidence/community-labels-2026-09/refresh-latency.md`.
+- 3.2.13 - `invalidate` removes this machine's `code_communities` rows in the same transaction that removes its `code_indexed_project_states` row. test: `crates/gcode/src/communities/refresh_tests.rs::invalidate_removes_community_rows_with_project_state`.
+- 3.2.14 - An overlay's first refresh commits rows under the overlay id even when its partition equals the parent's, because the skip compares against the overlay's own stored signature. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_first_refresh_commits_when_partition_matches_parent`.
+- 3.2.15 - The overlay seed reads the parent's rows under `FOR UPDATE` on the parent's state row in one READ COMMITTED transaction and observes a concurrent parent replace only after it commits. test: `crates/gcode/src/communities/refresh_tests.rs::overlay_seed_locks_parent_state_row`.
 
 ## P4: Surfaces at contract v11
 `kind: framing`
@@ -897,7 +973,8 @@ Per node: `File` looks up the owning stored community by path; `Module` resolves
 `identity.unique_provider` then the file lookup; `Symbol`, `External`, `Unresolved`
 get `None`. `communities[]` lists only communities intersecting the view, with the
 view-scoped node ids and the project-level `size`. Empty `stored` → every node
-`community: None` and `hint = Some(MISSING_PARTITION_HINT)` ("No stored import
+`community: None` and `hint = Some(MISSING_PARTITION_HINT.to_string())`, the constant 3.2
+declares in `crates/gcode/src/communities.rs` ("No stored import
 communities for this project; run `gcode index` to compute them. Node `community` stays
 null until then; this view never computes a partition inline."); the existing
 graph-availability hint outranks it. `crates/gcode/src/commands/graph/view/mcg/fetch.rs::run` reads rows with
@@ -962,6 +1039,7 @@ Targets:
 - `docs/guides/gcode-user-guide.md`
 - `crates/gcode/Cargo.toml`
 - `Cargo.lock`
+- `docs/evidence/community-labels-2026-09/view-latency.md`
 
 Research context: after 4.1 the CLI types live in `crates/gcode/src/cli/graph_view.rs`. `crates/gcode/src/commands/graph/view/mod.rs::run`
 (:384-402) matches `(args.view, &args.seed)` with a `_ => bail!` arm, which hides a
@@ -1009,13 +1087,18 @@ label; inter-community `IMPORTS` edges from stored `boundary` with `count`;
 nodes here, and `build_view_payload` rejects membership outside `nodes[]`; membership
 comes from the detail form or the 5.1 evidence operation);
 `seed = { id: project_id, name: project_root, kind: "project", file: None }`; the
-missing-partition hint from 4.2 when there are no rows. Detail: the selector is an
-integer id, else a case-insensitive exact `label`, else an exact `label_deterministic`,
-else, when it contains a path separator or equals a stored member exactly, the community
-whose `members` contain it (an in-memory scan over the rows `read_for_context` already
-returned; a path belongs to at most one community), else a unique case-insensitive
-substring; ambiguity is a typed exit-2 error listing up to five matches, and a path
-that belongs to no community is a typed exit-2 error naming it. Nodes: the community, up to 50 members as `File` nodes
+missing-partition hint from 4.2 when there are no rows. Detail: the selector is resolved
+by a ladder of rungs, each an in-memory scan over the rows `read_for_context` already
+returned: an integer id; else a case-insensitive exact `label`; else an exact
+`label_deterministic`; else, when it contains a path separator or equals a stored member
+exactly, the community whose `members` contain it (a path belongs to at most one
+community); else a case-insensitive substring of `label` or `label_deterministic`
+(members are never substring-matched). The first rung with at least one match decides.
+At every rung more than one match is a typed exit-2 error listing up to five matches
+(model labels carry no cross-row uniqueness, so even the exact-label rung can tie), and a
+selector that parses as an integer but matches no stored `community_id`, a path that
+belongs to no community, and a selector matching nothing at any rung are each a typed
+exit-2 error naming the selector. Nodes: the community, up to 50 members as `File` nodes
 (representatives first, then path asc), up to 12 neighbors by `import_count` desc;
 edges `CONTAINS` to members and `IMPORTS` with counts to neighbors;
 `outgoing_truncated`/`incoming_truncated` carry the caps. Mermaid renders through
@@ -1047,10 +1130,13 @@ match, including `(Communities, None)`). `crates/gcode/src/commands/graph/view/c
 `min_size_hides_singletons_by_default`, `list_edges_are_between_listed_communities_only`,
 `detail_resolves_id_label_and_unique_substring`, `detail_resolves_member_path`,
 `detail_unknown_path_is_typed_error`, `detail_ambiguous_substring_is_typed_error`,
+`detail_no_match_and_multi_match_are_typed_errors_at_every_rung` (an unknown integer id,
+a selector matching nothing, two rows sharing an exact label, and two deterministic
+labels sharing a substring),
 `detail_truncates_members_and_neighbors_with_flags`, `list_without_rows_hints`,
 `mermaid_validates_for_list_and_detail`.
 
-Granularity: sixteen target files, three of them hand-maintained Rust besides the new
+Granularity: seventeen target files, three of them hand-maintained Rust besides the new
 view module. A contract bump cannot land partially: the five pins, the flags, and the
 view they describe must agree in one commit, so this stays one leaf.
 
@@ -1063,7 +1149,7 @@ after the coherent-set cutover.
 
 - 4.3.1 - `--view=communities` parses without a seed and accepts `--min-size` and `--community`. test: `crates/gcode/src/cli/tests/projection.rs::communities_parses_without_seed`.
 - 4.3.2 - The list view emits one node per listed community, inter-community `IMPORTS` edges with counts, one `communities[]` entry per listed row with empty `nodes`, and valid Mermaid, reading stored rows only. symbol: `run_list`. file: `crates/gcode/src/commands/graph/view/communities.rs`.
-- 4.3.3 - The detail view resolves an integer id, a case-insensitive exact label, an exact deterministic label, or a unique substring. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_resolves_id_label_and_unique_substring`.
+- 4.3.3 - The detail view resolves an integer id, a case-insensitive exact label, an exact deterministic label, or a unique case-insensitive substring of `label` or `label_deterministic`, never of members. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_resolves_id_label_and_unique_substring`.
 - 4.3.4 - Routing covers every view and seed combination including the seedless form. test: `crates/gcode/src/commands/graph/view/tests.rs::run_routes_every_view_and_seed_combination`.
 - 4.3.5 - The contract advertises `communities`, `--min-size`, and `--community` at version 11 in `contract.rs`, both pinned JSON copies, the Rust and Python pins, and `docs/contracts/gcode-cli.md`. file: `tests/contracts/gcode.contract.json`.
 - 4.3.6 - The gcode crate version is 1.9.0. behavior: "1.9.0" in `crates/gcode/Cargo.toml`.
@@ -1075,6 +1161,8 @@ after the coherent-set cutover.
 - 4.3.12 - `--view=communities` rejects other seeds, `--depth`, and row limits with typed clap conflicts. test: `crates/gcode/src/cli/tests/projection.rs::communities_rejects_other_seeds_depth_and_row_limits`.
 - 4.3.13 - `--min-size` is rejected off communities and at zero. test: `crates/gcode/src/cli/tests/projection.rs::min_size_rejected_off_communities_and_at_zero`.
 - 4.3.14 - `docs/contracts/gcode-cli.md` states `contract_version`: 11 at its version line and `docs/guides/gcode-user-guide.md` names the communities view kind with its seedless form. behavior: "--view communities" in `docs/guides/gcode-user-guide.md`.
+- 4.3.15 - `gcode graph view --view communities` on the Gobby checkout completes in under one second from stored rows over five runs. behavior: "under one second" in `docs/evidence/community-labels-2026-09/view-latency.md`.
+- 4.3.16 - At every rung a selector that matches nothing, an unknown integer id included, is a typed exit-2 error naming it, and more than one match, two rows sharing an exact label included, is a typed exit-2 error listing up to five matches. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::detail_no_match_and_multi_match_are_typed_errors_at_every_rung`.
 
 ### 4.4 Add the `## Import communities` section to `gcode graph report` [category: code] (depends: 1.2, 4.3)
 `kind: deliverable`
@@ -1132,7 +1220,7 @@ Targets:
 - `crates/gcode/src/evidence/contracts.rs::*` — scope-reason: add the Communities operation, CommunitiesSelector, CommunityEvidence, and its canonical_key arm
 - `crates/gcode/src/evidence/mod.rs::*` — scope-reason: add project_communities to EvidenceFacts, implement it for CodewikiFacts, and dispatch the operation
 - `crates/gcode/src/evidence/communities.rs`
-- `crates/gcode/src/evidence/tests.rs::*` — scope-reason: extend FakeFacts and cover list, detail, empty, unavailable, and truncation outcomes
+- `crates/gcode/src/evidence/tests.rs::*` — scope-reason: extend FakeFacts and cover list, detail, empty, never-refreshed, ambiguous, and truncation outcomes
 - `crates/gcode/src/codewiki_facts/mod.rs::*` — scope-reason: declare the communities facts module
 - `crates/gcode/src/codewiki_facts/communities.rs`
 - `crates/gcode/src/commands/evidence.rs::*` — scope-reason: accept the new operation where the command matches on it
@@ -1141,6 +1229,7 @@ Targets:
 - `crates/gcode/contract/gcode.contract.json::*` — scope-reason: regenerate the pinned contract snapshot from gcode contract
 - `tests/contracts/gcode.contract.json::*` — scope-reason: regenerate the vendored contract snapshot to match the crate copy
 - `crates/gcode/tests/contract.rs::*` — scope-reason: assert the communities operation and item keys in the evidence contract test
+- `crates/gcode/src/evidence/search.rs::*` — scope-reason: add the Community arm to the search-lane eligibility retain (a community is not a file-scoped item, so it is dropped from search results)
 
 Research context: `EVIDENCE_SCHEMA_VERSION` is 1 (`crates/gcode/src/evidence/contracts.rs:3`);
 `EvidenceOperation` (:99-103) is a three-variant `deny_unknown_fields` enum internally tagged
@@ -1184,6 +1273,7 @@ pub struct CommunityFact {   // crates/gcode/src/codewiki_facts/communities.rs, 
     pub member_signature: String, pub members: Vec<String>, pub representatives: Vec<String>,
     pub boundary: Vec<(i32, usize)>,   // (other_community_id, import_count); the label resolves from the same Vec
 }
+pub struct ProjectCommunities { pub refreshed: bool, pub communities: Vec<CommunityFact> }   // refreshed = 3.2's partition_refreshed for the same project
 ```
 
 The selector field is named `path` so Ask's `_iter_paths` admission check covers it.
@@ -1191,24 +1281,43 @@ The selector field is named `path` so Ask's `_iter_paths` admission check covers
 `StoredCommunity` by `CodewikiFacts::project_communities`; its `label`, `label_source`,
 and `label_stale` come from `read_for_context`, which already applies the stale rule
 (3.2), so a stale row's item carries the deterministic label.
-`canonical_key` encodes size-desc as `usize::MAX - size` then `community_id`. Outcomes:
-zero stored rows → `IndexUnavailable` with the "run gcode index" detail, never
-`CompleteEmpty`; no match or all below `min_size` → `CompleteEmpty`; more than `limit`
-→ `TruncatedIndex`. Detail mode (any of `community_id`, `label`, `path` set) returns one
-item with members bounded by `max_members`; a member missing from the snapshot is dropped
+`canonical_key` follows the existing arms in `crates/gcode/src/evidence/contracts.rs:238-250`: a
+leading variant discriminator (`"2"`, after `Source` `"0"` and `Graph` `"1"`) and every
+numeric component zero-padded as `{:020}`, so the arm is
+`format!("2\0{:020}\0{:020}\0{}", usize::MAX - size, community_id, evidence_id)`; without
+the discriminator community items interleave with source and graph items, and without
+the padding `usize::MAX - size` sorts by digit count. Outcomes: zero stored rows →
+`CompleteEmpty`, with the warning `community_partition_missing` carrying
+`MISSING_PARTITION_HINT` when `refreshed` is false (never refreshed; a refreshed project
+with no internal imports reports plain `CompleteEmpty`), never `IndexUnavailable`, which
+is `EvidenceError::IndexUnavailable` with a fixed connection-recovery text in
+`crates/gcode/src/commands/evidence.rs` that cannot describe an empty partition, and the Constraints
+make zero stored communities a data condition; no match or all below `min_size` →
+`CompleteEmpty`; more than `limit` → `TruncatedIndex`. Detail mode (any of
+`community_id`, `label`, `path` set) resolves the selector with 4.3's ladder over the
+same fields (`label` walks the exact-label, exact-deterministic, and
+`label`/`label_deterministic` substring rungs; members are never substring-matched) and
+returns one item with members bounded by `max_members`; when more than one row matches at
+the deciding rung every match is returned with the warning `community_selector_ambiguous`
+(the evidence layer reports data conditions, it does not error), and no match at any
+rung is `CompleteEmpty`; a member missing from the snapshot is dropped
 with warning `community_member_not_in_snapshot` while `size` still counts it. Add
-`fn project_communities(&self) -> anyhow::Result<Vec<CommunityFact>>` to `EvidenceFacts`
+`fn project_communities(&self) -> anyhow::Result<ProjectCommunities>` to `EvidenceFacts`
 (required; `FakeFacts` supplies a fixture), implement it for `CodewikiFacts` in
-`crates/gcode/src/codewiki_facts/communities.rs` through `communities::read_for_context`, execute in
+`crates/gcode/src/codewiki_facts/communities.rs` through `communities::read_for_context` and
+`communities::partition_refreshed`, execute in
 `crates/gcode/src/evidence/communities.rs`, dispatch from `crates/gcode/src/evidence/mod.rs`, extend `evidence_keys()`
 with the community item keys, and regenerate both pinned JSON copies.
 
 Live: coherent-set cutover after landing, announced per Constraints, for the same
 reason as 3.2: the vendored-contract test compares the installed binary.
 
-Tests: `crates/gcode/src/evidence/tests.rs` — `communities_list_orders_by_size_then_id`,
-`communities_detail_bounds_members_and_flags_truncation`,
-`communities_without_rows_is_index_unavailable`,
+Tests: `crates/gcode/src/evidence/tests.rs` — `communities_list_orders_by_size_then_id`
+(fixture sizes straddle a power of ten, for example 9, 10, 11, and 100, so a digit-count
+ordering fails), `communities_detail_bounds_members_and_flags_truncation`,
+`communities_without_rows_is_complete_empty_with_hint`,
+`communities_refreshed_but_empty_is_complete_empty`,
+`communities_ambiguous_label_returns_every_match_with_warning`,
 `communities_below_min_size_is_complete_empty`,
 `communities_evidence_id_survives_relabel`, `communities_selector_rejects_two_keys`;
 `crates/gcode/tests/evidence.rs` — `evidence_communities_request_json_round_trips`.
@@ -1221,10 +1330,13 @@ after the coherent-set cutover.
 
 - 5.1.1 - `gcode evidence --request-json` accepts the flat internally tagged request `{"schema_version": 1, "binding": …, "operation": "communities", "communities": {…}, "max_bytes": …}`, with the selector as a sibling of `operation`, and returns `Community` items in list and detail modes. symbol: `CommunitiesSelector`. file: `crates/gcode/src/evidence/contracts.rs`.
 - 5.1.2 - `evidence_id` is derived from binding, community id, and member signature so it survives relabeling. test: `crates/gcode/src/evidence/tests.rs::communities_evidence_id_survives_relabel`.
-- 5.1.3 - Zero stored rows report `IndexUnavailable`, below-threshold results report `CompleteEmpty`, and over-limit results report `TruncatedIndex`. test: `crates/gcode/src/evidence/tests.rs::communities_without_rows_is_index_unavailable`.
+- 5.1.3 - Zero stored rows on a never-refreshed project report `CompleteEmpty` with the `community_partition_missing` warning, below-threshold results report `CompleteEmpty`, and over-limit results report `TruncatedIndex`; no community data condition is an error. test: `crates/gcode/src/evidence/tests.rs::communities_without_rows_is_complete_empty_with_hint`.
 - 5.1.4 - `EvidenceFacts::project_communities` is required and implemented for `CodewikiFacts` and `FakeFacts`. symbol: `EvidenceFacts`. file: `crates/gcode/src/evidence/mod.rs`.
 - 5.1.5 - `evidence_keys()`, the evidence contract test, and both pinned JSON copies list the community item keys. file: `crates/gcode/src/contract/schema.rs`.
-- 5.1.6 - `CommunityFact` is the row shape `project_communities` returns and carries the read-path label fields. symbol: `CommunityFact`. file: `crates/gcode/src/codewiki_facts/communities.rs`.
+- 5.1.6 - `CommunityFact` is the row shape `project_communities` returns inside `ProjectCommunities` and carries the read-path label fields. symbol: `CommunityFact`. file: `crates/gcode/src/codewiki_facts/communities.rs`.
+- 5.1.7 - A refreshed project with no stored communities reports `CompleteEmpty` without the missing-partition warning. test: `crates/gcode/src/evidence/tests.rs::communities_refreshed_but_empty_is_complete_empty`.
+- 5.1.8 - Detail mode resolves `label` through 4.3's ladder over `label` and `label_deterministic`, never members, returns every match with the `community_selector_ambiguous` warning when more than one row matches, and reports `CompleteEmpty` for no match. test: `crates/gcode/src/evidence/tests.rs::communities_ambiguous_label_returns_every_match_with_warning`.
+- 5.1.9 - `canonical_key` for a community item leads with its variant discriminator and zero-pads size and id, so community items sort after source and graph items and by size across a power of ten. test: `crates/gcode/src/evidence/tests.rs::communities_list_orders_by_size_then_id`.
 
 ### 5.2 Admit, validate, and describe the `communities` operation in Ask [category: code] (depends: 4.3, 5.1)
 `kind: deliverable`
@@ -1240,6 +1352,8 @@ Targets:
 - `docs/contracts/ask.md`
 - `docs/contracts/gcode-cli.md`
 - `docs/guides/ask.md`
+- `src/gobby/install/shared/skills/gobby/references/code-index/ask.md`
+- `docs/guides/code-index.md`
 
 Research context: `EvidenceAdmission.__init__` (`src/gobby/ask/evidence.py:117-146`)
 validates `permitted_operations` against `{"search", "read", "graph"}` at :129 and
@@ -1273,7 +1387,10 @@ an `isinstance(item, CommunityEvidenceItem)` arm that records the item in the ma
 and rejects any citation that points at it. Docs: `ask.md` gains a paragraph on the
 operation and its non-citability; `gcode-cli.md` gains the `communities` bullet in the
 operations list (the Version 11 paragraph from 4.3 already names it); `docs/guides/ask.md:155`
-gains `communities` in its enumeration.
+gains `communities` in its enumeration; the agent-facing skill reference
+`src/gobby/install/shared/skills/gobby/references/code-index/ask.md` ("Search, read, graph, and
+commit-patch evidence without starting an Ask run") and `docs/guides/code-index.md` each
+gain `communities` in their operation enumeration with the non-citability sentence.
 
 Tests: `tests/ask/test_validation.py` — `test_manifest_accepts_community_item`,
 `test_citation_of_community_item_is_rejected`,
@@ -1289,6 +1406,7 @@ Verify: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_t
 - 5.2.3 - A citation that targets a community item is rejected with a diagnostic naming the operation as non-citable. test: `tests/ask/test_validation.py::test_citation_of_community_item_is_rejected`.
 - 5.2.4 - The MCP tool literals, descriptions, `docs/contracts/ask.md`, and the `gcode evidence` operations list describe the operation. behavior: "communities" in `docs/contracts/ask.md`.
 - 5.2.5 - The user guide's evidence-operation enumeration names `communities`. behavior: "communities" in `docs/guides/ask.md`.
+- 5.2.6 - The code-index ask reference and the code-index guide enumerate `communities` with its non-citability sentence. behavior: "communities" in `src/gobby/install/shared/skills/gobby/references/code-index/ask.md`.
 
 ## P6: Labels in the daemon
 `kind: framing`
@@ -1326,7 +1444,12 @@ vectors) with `uv run python scripts/generate_runtime_config_contract.py`, and
 `docs/audits/configuration-audit.md` carries one row per setting. The registry
 classifies fields whose names end in `api_key` as `$secret:` references automatically.
 Rejected: storing labels in a daemon-owned table (the label is a column on the row gcode
-reads; two tables would need a join and a second lifecycle).
+reads; two tables would need a join and a second lifecycle); rendering the new settings in
+`web/src/components/settings/sections/RuntimeInfrastructureSection.tsx` beside the
+hardcoded `code_index.symbol_summary.*` paths (a recorded scope decision: the settings UI
+is out of scope for this epic and `community_label` is daemon-config-only, edited in the
+runtime config file; the regenerated contract and codec vectors still carry the fields,
+so a later UI leaf needs no schema work).
 
 `CodeIndexCommunityStorageMixin`: `get_unlabeled_communities(project_id, limit,
 failure_cooloff_seconds)` selecting rows where `labeled_signature IS DISTINCT FROM
@@ -1402,12 +1525,19 @@ ascending), all marked as untrusted data, and asks for a 2–5 word purpose name
 `rationale` is never persisted. No symbol read: `code_communities` stores paths, not
 symbols, and whether symbols would label better is exactly what Q1.6's D/G comparison
 measures; a `code_symbols` read is follow-up work only if that comparison says paths
-label poorly. A validated name equal to any deterministic candidate
-skips the gate (6.3) and writes `label_source='deterministic'`. Without a gate
-configured, a validated name is written as `label_source='model'`, confidence `NULL`,
-`label_model` = the generation profile, `labeled_signature` = the member signature.
-Failures stamp `label_attempted_at` (300-second cooloff via the storage default) and
-change nothing else. Every outcome emits one structured log event
+label poorly. Every outcome names its queue-exit field, because the queue is
+`labeled_signature IS DISTINCT FROM member_signature` with a `label_attempted_at` cooloff
+(6.1) and a row that sets neither is regenerated on every pass: a validated name equal to
+any deterministic candidate skips the gate (6.3) and writes `label_source='deterministic'`,
+`label_model` = the generation profile (so Q1.6 can count the arm), `label_confidence`
+`NULL`, and `labeled_signature` = the member signature (`written_deterministic`; the row
+leaves the queue). Without a gate configured, a validated name is written as
+`label_source='model'`, confidence `NULL`, `label_model` = the generation profile,
+`labeled_signature` = the member signature (`written_model`; the row leaves the queue). A
+schema rejection, a sanitation rejection, and a generation failure each stamp
+`label_attempted_at` (300-second cooloff via the storage default) and change nothing else
+(`schema_rejected`, `sanitation_rejected`, `generation_failed`; the row stays queued and
+is retried after the cooloff). Every outcome emits one structured log event
 `code_index.community_label.outcome` with fields `project_id`, `community_id`,
 `member_signature`, and `outcome` in `schema_rejected`, `sanitation_rejected`,
 `generation_failed`, `written_deterministic`, `written_model` (6.3 adds the gate
@@ -1423,7 +1553,8 @@ per Constraints.
 Tests: `tests/code_index/test_community_labeler.py` —
 `test_sanitize_rejects_paths_fences_and_long_names`,
 `test_generated_name_equal_to_candidate_writes_deterministic`,
-`test_generation_failure_stamps_attempt_only`, `test_every_outcome_emits_one_log_event`,
+`test_generation_failure_stamps_attempt_only`, `test_rejections_stamp_attempt_only`,
+`test_every_outcome_emits_one_log_event`,
 `test_ungated_validated_name_writes_model_label`;
 `test_code_index_maintenance.py` — `test_maintenance_labels_unlabeled_communities`.
 
@@ -1433,11 +1564,12 @@ Verify: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_t
 **Acceptance:**
 
 - 6.2.1 - The maintenance pass labels queued communities after symbol summaries with keyword-only wiring that leaves existing call sites untouched. symbol: `_label_unlabeled_communities`. file: `src/gobby/code_index/maintenance.py`.
-- 6.2.2 - Generated names pass schema validation and sanitation before any write, and a name equal to a deterministic candidate is stored as deterministic. test: `tests/code_index/test_community_labeler.py::test_generated_name_equal_to_candidate_writes_deterministic`.
+- 6.2.2 - Generated names pass schema validation and sanitation before any write, and a name equal to a deterministic candidate is stored as deterministic with `label_model` set to the generation profile and `labeled_signature` equal to the member signature, so the row leaves the label queue. test: `tests/code_index/test_community_labeler.py::test_generated_name_equal_to_candidate_writes_deterministic`.
 - 6.2.3 - A generation failure stamps `label_attempted_at` and changes no label field. test: `tests/code_index/test_community_labeler.py::test_generation_failure_stamps_attempt_only`.
 - 6.2.4 - Every labeling outcome emits one `code_index.community_label.outcome` log event with a discriminator value. test: `tests/code_index/test_community_labeler.py::test_every_outcome_emits_one_log_event`.
 - 6.2.5 - With no `decisions_api_base` configured a validated name is written with `label_source='model'`, `label_confidence` NULL, `label_model` set to the generation profile, and `labeled_signature` equal to the member signature. test: `tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`.
 - 6.2.6 - `GeneratedLabel` carries the validated name, the never-persisted rationale, and the generation model. symbol: `GeneratedLabel`. file: `src/gobby/code_index/community_labeler.py`.
+- 6.2.7 - A schema rejection and a sanitation rejection each stamp `label_attempted_at` and change no label field, so the row waits out the cooloff instead of regenerating on the next pass. test: `tests/code_index/test_community_labeler.py::test_rejections_stamp_attempt_only`.
 
 ### 6.3 Gate generated names through a Jev `choice` decision [category: code] (depends: 6.2)
 `kind: deliverable`
@@ -1482,7 +1614,13 @@ decision, reopened only by a membership change, which 2.3 clears; the CHECK perm
 confidence and model on a deterministic row, and keeping them lets Q1.6 recover the
 rejected population's confidences from `code_communities`); transport failure →
 attempt stamped only. That reject/failure split is the anti-hot-loop rule. The 6.2 log
-event gains the outcomes `gate_admitted`, `gate_rejected`, and `transport_failed`.
+event gains the outcomes `gate_admitted`, `gate_rejected`, `transport_failed`, and
+`write_superseded`: every write path (`written_deterministic`, `written_model`,
+`gate_admitted`, `gate_rejected`) reports `write_superseded` instead of its own outcome
+when the signature-guarded `UPDATE` (6.1) affects zero rows because a refresh replaced the
+row between the read and the write; the row is legitimately requeued, so
+`write_superseded` stamps nothing, and the event keeps Q1.6's arm counts honest by never
+reporting a write that did not happen.
 `decisions_api_base` unset skips the gate (6.2 behavior). Record the wire-shape spike
 (1P base versus the OpenRouter alpha base, one keyed request each) in
 `docs/evidence/community-labels-2026-09/decisions-wire-spike.md` before enabling either
@@ -1498,10 +1636,11 @@ per Constraints.
 Tests: `tests/llm/test_decisions_client.py` — `test_choose_posts_state_model_questions`
 (fake transport), `test_unauthorized_does_not_retry`, `test_missing_answer_key_is_error`;
 `tests/code_index/test_community_labeler.py` gains `test_gate_admits_at_threshold_and_rejects_below`
-(added here, file created in 6.2) and extends `test_every_outcome_emits_one_log_event` to
-all eight outcomes (`schema_rejected`, `sanitation_rejected`, `generation_failed`,
-`written_deterministic`, `written_model`, `gate_admitted`, `gate_rejected`,
-`transport_failed`). `llm-features.md`: new row `code_index.community_label`
+(added here, file created in 6.2) and `test_gate_outcomes_extend_the_discriminator_to_nine`,
+which covers all nine outcomes (`schema_rejected`, `sanitation_rejected`,
+`generation_failed`, `written_deterministic`, `written_model`, `gate_admitted`,
+`gate_rejected`, `transport_failed`, `write_superseded`) and leaves 6.2's five-outcome
+test untouched so each leaf's acceptance names its own symbol. `llm-features.md`: new row `code_index.community_label`
 and a paragraph on the decisions gate (no `AICapability`, not a profile route).
 
 Verify: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/llm/test_decisions_client.py tests/code_index/test_community_labeler.py -q`,
@@ -1512,7 +1651,7 @@ Verify: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_t
 - 6.3.1 - `DecisionsClient.choose` posts `{state, model, questions}` with bearer auth, retries only on 429/529, and matches answers by key. test: `tests/llm/test_decisions_client.py::test_choose_posts_state_model_questions`.
 - 6.3.2 - A `generated` choice at or above the threshold writes the model label with confidence and model; anything else writes the deterministic label with confidence, model, and signature stamped; transport failure stamps the attempt only. test: `tests/code_index/test_community_labeler.py::test_gate_admits_at_threshold_and_rejects_below`.
 - 6.3.3 - `docs/guides/llm-features.md` documents `code_index.community_label` and the decisions gate. behavior: "community_label" in `docs/guides/llm-features.md`.
-- 6.3.4 - The outcome event's discriminator admits exactly eight values, the five from 6.2 plus `gate_admitted`, `gate_rejected`, and `transport_failed`, and the exhaustiveness test covers all eight. test: `tests/code_index/test_community_labeler.py::test_every_outcome_emits_one_log_event`.
+- 6.3.4 - The outcome event's discriminator admits exactly nine values, the five from 6.2 plus `gate_admitted`, `gate_rejected`, `transport_failed`, and `write_superseded`, where `write_superseded` stamps no field, and the exhaustiveness test covers all nine. test: `tests/code_index/test_community_labeler.py::test_gate_outcomes_extend_the_discriminator_to_nine`.
 - 6.3.5 - The Q1.6 label-quality study ran with arms D, G, and J and `label-quality.md` records the metrics against every bar and the ship decision the live config follows. behavior: "ship" in `docs/evidence/community-labels-2026-09/label-quality.md`.
 - 6.3.6 - The wire-shape spike records one keyed request against the 1P base and one against the OpenRouter alpha base before either is enabled. behavior: "alpha" in `docs/evidence/community-labels-2026-09/decisions-wire-spike.md`.
 
@@ -1545,7 +1684,8 @@ that `label_stale` means the model label predates the current membership and the
 deterministic label is shown; MCG Mermaid output groups nodes into one subgraph per
 community. `crates/CHANGELOG.md` Unreleased: Added — gcode
 `--view=communities`, `--min-size`, `--community`, the `code_communities` table
-(migration 442), the `communities` evidence operation, the report section; Added —
+(naming the migration number 3.1 actually landed under, provisionally 442, per the
+Constraints substitution), the `communities` evidence operation, the report section; Added —
 gobby-core `graph_analytics::communities`, `centrality`, `GraphInputError`; Changed —
 MCG labels are persisted and content-derived, `community-N` ids removed, Mermaid
 subgraphs per community, contract 11, gcode 1.9.0.
@@ -1561,7 +1701,7 @@ Verify: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_t
 **Acceptance:**
 
 - 7.1.1 - The graphs reference describes the persisted partition, the seedless and detail view forms, and `label_stale`. behavior: "--view communities" in `src/gobby/install/shared/skills/gobby/references/code-index/graphs.md`.
-- 7.1.2 - The changelog records every added and changed surface under Unreleased. behavior: "code_communities" in `crates/CHANGELOG.md`.
+- 7.1.2 - The changelog records every added and changed surface under Unreleased, naming the migration number 3.1 landed under. behavior: "code_communities" in `crates/CHANGELOG.md`.
 - 7.1.3 - The Q1.8 live smoke ran after the cutover and each command's outcome is recorded. behavior: "--view communities" in `docs/evidence/community-labels-2026-09/live-smoke.md`.
 
 ## D1 Memory community detection over memory_crossrefs (depends: 1.1)
@@ -1597,9 +1737,16 @@ At finalization the coordinator creates the deferral task under this plan's epic
 with label `deferred-from:gcode-import-communities:D1`, `needs-planning`, a
 `blocked-by` edge on #21563, and a `blocked-by` edge on the 1.1 leaf.
 
+The deferred obligation `D1.1` named in the block below reads: a Leiden partition over
+`memory_crossrefs` produces memory clusters the memory-curator batch consumes, reached
+in-process through the kernel entry 1.1 exposes. A deferred section carries no
+`**Acceptance:**` block (the validator rejects one); the yaml list is the item's
+definition and this sentence is its prose.
+
 ```yaml
 deferral:
   task_ref: "#TBD"
+  deferred_from: "gcode-import-communities:D1"
   reason: "Memory community detection over memory_crossrefs waits for the gobby-memory crate from the Memory and search family (#21563, Stage 2 of the 1.0.0 epic) so the Rust kernel is reachable in-process; edge-supply and consumer decisions follow that move. This epic delivers only the reusable kernel entry point."
   owner: "memory-and-search family (#21563)"
   original_acceptance_items:
@@ -1617,13 +1764,16 @@ deferral:
    modules named in 5.2, 6.1, 6.2, 6.3 with `DATABASE_URL` pointed at the test hub and
    `GOBBY_TEST_PROTECT=1`.
 3. Install: `cargo build --release -p gobby-code -p gobby-daemon -p gobby-hooks`, announce
-   with a `global` `send_message`, `uv run gobby restart` (applies 442), `uv run gobby cutover`
+   with a `global` `send_message`, `uv run gobby restart` (applies the new migration: 442, or
+   the number 3.1 landed under), `uv run gobby cutover`
    for the coherent set. Read binary hashes from `~/.gobby/bin/`, never `target/release/`.
 4. Determinism and churn (Gobby checkout and the frozen Game Goblins baseline
    `0216f1e33f05…` under `/Users/josh/Projects/wiki-bakeoff-code-2026-09/`): two `gcode index`
    runs on unchanged input produce byte-identical `code_communities` rows and skip the
-   write; renaming three files inside one community keeps its `community_id`, changes only
-   its `member_signature`, and flips exactly one row to `label_stale`; adding one file
+   write; renaming three files inside one community, with that row seeded to
+   `label_source='model'` by direct `UPDATE` before the rename (no model label exists
+   before 6.2 runs), keeps its `community_id`, changes only its `member_signature`, and
+   flips exactly one row to `label_stale`; adding one file
    changes at most one id; deleting a community and adding an unrelated one never reuses
    the retired id. Record row diffs in `docs/evidence/community-labels-2026-09/churn.md`
    (owner: the 3.2 leaf, pinned by acceptance 3.2.11).
@@ -1789,3 +1939,20 @@ deferral:
     outcomes are pinned (6.2.5, 6.3.4).
   - Coordinator addition while folding: task #22572 is landing its own migration 442, so
     the Constraints now state that 3.1's number is the next free one at landing.
+
+Review round 1 of 3 (2026-09-19), reviewer run da5a5190-ae06-4e13-9545-4165f2aefe5e (plan-adversary-taskless on claude/opus/xhigh, child session 6e5645d9-a580-488b-a1c1-79637135cfd0), verdict needs_review: eleven blocking findings and eleven nits, three lanes complete, shadow manifest valid at digest 59c4db2f with the 4.3 backend routing override accepted. The reviewer re-ran the fourteen folds from the protocol-failed attempt and found thirteen genuinely resolved and one (F8) partly resolved, which returns as F-09. Under the user's delegated authority for this round ("use your best judgment on the findings") the coordinator voted on each finding individually: all twenty-two accepted. Coordinator variations: F-02 lands in 3.2, which already owns crates/gcode/src/index/indexer/lifecycle.rs, so invalidate deletes this machine's code_communities rows in the same transaction that removes code_indexed_project_states, rather than adding code to the schema-only 3.1 leaf; F-N11 is resolved as a recorded exclusion (community_label is daemon-config-only, the settings UI is out of scope for this plan); F-N4's new 6.3.4 test symbol counts nine outcomes because F-N6 adds write_superseded. One canonical-payload correction: the reviewer's F-01 typed repair named the wildcard target without the scope-reason the target grammar requires, so the entry carries the scope-reason stated in the same finding's fix text; nothing else in the result is altered. Typed repairs are applied for F-01, F-08, F-09 and F-N10; every other accepted finding is folded as coordinator prose in the commit that follows this checkpoint.
+
+```json plan-review-round
+{"evidence_id":"f66bb9ae-ba7f-401f-9dc1-67d5a5ad4d4d","plan_hash":"5672dab819875aeaae5d9a1ad235dcd33c4e6c41b09458ecab27c9c88bdf3b32","round_number":1,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"026ede0994c85fd87f5c2455edbdeb640cee9e4ff3746a1d202669331490070f","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":4,"emitted_findings":21,"total":25},"evidence_id":"f66bb9ae-ba7f-401f-9dc1-67d5a5ad4d4d","lanes":[{"candidate_count":9,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":5,"lane_id":"repository_blast_radius","status":"delegated-verified"},{"candidate_count":11,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":17,"manifest_digest":"59c4db2f379b77ae7328a8357ca67081357f9f7ec8309ee46900a6f9b3d9fe2a","status":"valid"},"source_digest":"b9ade638535a47c80638cda83389d1577c264438cb35f2e5dc83e7b62a819179","version":1},"cross_lane_interactions":["F-03 and F-04 must land together: today the overlay always skips, so the shredded singleton partition F-04 describes is never written. Correcting the skip predicate makes F-04 manifest.","F-02 and F-03 both concern the overlay/parent watermark path; the F-03 redesign should be written with F-02's lifecycle fix in hand so the seeded watermark and the invalidate path agree.","F-06 and F-N5 both cause redundant model calls from different root causes (no queue-exit stamp vs. a reset cooloff); fixing only one leaves the other.","F-01 and F-05 both land in 5.1 and touch the same evidence surface; fold them in one pass."],"evidence_id":"f66bb9ae-ba7f-401f-9dc1-67d5a5ad4d4d","findings":[{"category":"traceability","check_key":"evidence-item-variant-exhaustive-match-consumers","description":"5.1 adds EvidenceItem::Community, but crates/gcode/src/evidence/search.rs:41-42 matches `EvidenceItem::Source(source) => eligible.contains(&source.path), EvidenceItem::Graph(_) | EvidenceItem::CommitMetadata(_) => false` with no wildcard arm, and search.rs appears in no deliverable's Targets. 5.1 as written is a non-exhaustive-match compile error (E0004) in a file nothing owns. Verified in source by the reviewer.","finding_id":"F-01","fix":"Add `crates/gcode/src/evidence/search.rs::*` to 5.1's Targets with scope-reason 'add the Community arm to the search-lane eligibility retain (a community is not a file-scoped item, so it is dropped from search results)', and extend the Constraints consumer sweep to record the EvidenceItem:: sites beside the EvidenceOperation:: line.","location":"5.1 Targets block","prevention":"When a deliverable adds an enum variant, sweep the variant's own type name, not only the sibling enum, and target every wildcard-free match.","principle":"Adding a variant to an enum obliges every exhaustive match over it; each such site is an owned consumer that must appear in Targets.","repairs":[{"entries":["`crates/gcode/src/evidence/search.rs::*` — scope-reason: add the Community arm to the search-lane eligibility retain (a community is not a file-scoped item, so it is dropped from search results)"],"kind":"add_targets","section_id":"5.1"}],"root_cause":"The Constraints consumer sweep enumerates EvidenceOperation:: sites but never sweeps EvidenceItem:: itself, so the sibling exhaustive match on EvidenceItem was missed while the one on EvidenceOperation was caught.","section_id":"5.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"watermark-outlives-rows-under-invalidate","description":"code_communities.project_id REFERENCES code_indexed_projects(id) ON DELETE CASCADE, but the watermark is community_id_watermark on code_indexed_project_states (NOT NULL DEFAULT 0). indexer::invalidate deletes code_indexed_file_states and code_indexed_project_states without touching code_indexed_projects, so the rows survive while the watermark resets to 0. assign_ids issues max(watermark, max old id) + 1, which protects only ids of SURVIVING communities: any id issued and then retired above the surviving maximum is reissued. That is precisely what the plan says the watermark exists to prevent ('an id that can change meaning cannot be cited; hence the watermark'), and it breaks the Overview guarantee and Q1.4's 'deleting a community and adding an unrelated one never reuses the retired id'. Reachable through the user-facing `gcode invalidate` subcommand and through prune, which calls invalidate_project_locked per project.","finding_id":"F-02","fix":"Add `crates/gcode/src/index/indexer/lifecycle.rs::*` to 3.1's Targets with scope-reason 'delete code_communities rows in the invalidate transaction', so rows and watermark die together; alternatively persist the watermark on a row with the same lifetime as the community rows. Add acceptance 3.1.7 pinning that invalidate removes this machine's code_communities rows in the same transaction that removes code_indexed_project_states, with a test in refresh_tests.rs.","location":"3.1 DDL, community_id_watermark on code_indexed_project_states","prevention":"For every new table, enumerate the existing lifecycle paths (invalidate, prune, cascade) and state what each does to the new rows and to any counter that governs them.","principle":"A monotone counter that guarantees an identifier is never reissued must not live in a row that a reachable path deletes independently of the rows whose identifiers it governs.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"overlay-seed-signature-defeats-skip-predicate","description":"3.2 says 'when the stored partition_signature equals the new one, skip() and report skipped_unchanged' and also that for an overlay with no rows of its own, begin_replace 'seeds the prior rows, the watermark, and the stored signature from the parent project'. For the common worktree case where the overlay's partition equals the parent's, the seeded signature equals the newly computed one, so the refresh skips and never commits. The overlay therefore never acquires rows, its own partition_signature stays NULL, the seed repeats on every run, and the stated two-phase design ('Later overlay refreshes remap against the overlay's own rows') never engages. Acceptance 3.2.8 cannot be satisfied on that input. This finding also carries dismissed candidate ri-04: because project_lock_key hashes only the project id, an overlay run and a parent run hold different advisory locks, so the reworked seed must read the parent's watermark and rows under the parent's row lock in one transaction.","finding_id":"F-03","fix":"State that the skip predicate compares against the partition_signature stored under ctx.project_id, never the seeded parent signature, so an overlay's first refresh always commits. In the same edit, state that the overlay seed takes FOR UPDATE on the parent's code_indexed_project_states row before reading the parent's code_communities rows, in the same transaction, and name the isolation level. Pin both with a concurrency test.","location":"3.2 refresh sequence, skip predicate and the overlay seeding paragraph","prevention":"When two accepted enhancements touch one code path, re-read the path as a whole and state which key every comparand is read from.","principle":"A change-detection signature must describe the state stored under the key being written; seeding it from another key makes 'unchanged' indistinguishable from 'nothing stored', so the write that would create the state never happens.","root_cause":"The E2 fold added the stored-signature skip predicate and the E3 fold added parent seeding of the stored signature; each is sound alone and they contradict in combination.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"node-scope-edge-scope-mismatch-overlay","description":"2.1 specifies load_project_imports as the 'Same body as load_identity'. Verified in source: load_identity derives its node set from visibility::visible_tree(&mut conn, ctx), which under ProjectIndexScope::Overlay unions the overlay's files with every unshadowed parent file, but derives its edges from crate::db::read_active_imports(&mut conn, &ctx.project_id), whose SQL filters WHERE ci.project_id = $2 for a single id. 2.2 then makes nodes identity.visible_files. Under an overlay context every parent-only file becomes an isolated singleton, so the committed overlay partition is a shred of singletons that read_for_context prefers over the parent's real partition, defeating 3.2's stated goal that a worktree shows the main checkout's ids and model labels. This is latent in today's depth-bounded MCG view and becomes a persisted, project-wide artifact once 2.1 moves the body into the partition path.","finding_id":"F-04","fix":"Have load_project_imports read imports for every id in visibility::visible_project_ids(ctx), dropping parent rows the overlay shadows by file_path (mirroring visible_tree's anti-join), and add acceptance 2.1.4 pinning that it returns imports for every visible file under an overlay context, with a test such as overlay_partition_covers_parent_only_files.","location":"2.1 load_project_imports, 'Same body as load_identity'","prevention":"Before reusing a body verbatim, check that each data source it reads is scoped consistently for the new caller's context.","principle":"A graph's node set and edge set must be drawn from the same scope, or every edge incident to a node the narrower scope omits is silently lost.","section_id":"2.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"empty-partition-classified-as-error","description":"5.1 says 'zero stored rows -> IndexUnavailable with the \"run gcode index\" detail, never CompleteEmpty', pinned by acceptance 5.1.3. This directly contradicts the plan's Constraints, which list 'zero stored communities' among ordinary data conditions that 'are never errors'. IndexUnavailable is not a Completeness variant; it is EvidenceError::IndexUnavailable, which commands/evidence.rs maps to exit status 2 with the fixed recovery string 'restore the managed PostgreSQL code-index connection and retry' -- advice that cannot fix an empty partition, and 5.1's Targets do not change that arm. It also diverges from the other three readers of the same state (4.2/4.3 emit a missing-partition hint, 4.4 pushes an optional ReportDegradation) and is unrecoverable for a project that legitimately has no internal imports: gcode index will run, commit an empty partition, and the operation keeps erroring.","finding_id":"F-05","fix":"Make zero stored rows CompleteEmpty carrying the missing-partition hint as a warning, and distinguish 'never refreshed' from 'refreshed and legitimately empty' by consulting partition_signature IS NULL, the column 3.1 already adds. Rewrite 5.1.3 and add 5.1.7 pinning that a refreshed-but-empty project reports CompleteEmpty rather than an error.","location":"5.1 outcomes paragraph and acceptance 5.1.3","prevention":"Check each new reader's outcome classification against the plan's own Constraints and against the sibling readers of the same state.","principle":"One persisted state must produce one consistent classification across all readers, and an ordinary self-healing data condition must not be reported as an infrastructure error.","section_id":"5.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"label-queue-predicate-not-cleared-on-every-path","description":"6.1's queue selects rows where labeled_signature IS DISTINCT FROM member_signature, with idx_cc_label_queue indexing exactly that. 6.2 pins labeled_signature on the ungated path and 6.3 pins it on both gate outcomes, but the third path is stated only as 'A validated name equal to any deterministic candidate skips the gate (6.3) and writes label_source='deterministic'' -- with no labeled_signature. 3.1's CHECK permits a deterministic row with labeled_signature NULL, so nothing catches it: the row stays queued and is regenerated on every pass, burning model calls indefinitely with no cooloff, since label_attempted_at is stamped only on failures. Reviewer adjacent-variant sweep widens this: 6.2 enumerates five outcomes (schema_rejected, sanitation_rejected, generation_failed, written_deterministic, written_model) and only written_model stamps labeled_signature, while only generation_failed is pinned to stamp label_attempted_at (6.2.3); the sentence 'Failures stamp label_attempted_at' does not say whether the two rejection outcomes count as failures, leaving three of five outcomes underdetermined. Independently found by both the requirements and runtime lanes.","finding_id":"F-06","fix":"State the queue-exit field for all five outcomes, not just one path: written_deterministic writes labeled_signature = member_signature (and label_model = the generation profile so Q1.6 can count the arm), and schema_rejected and sanitation_rejected stamp label_attempted_at. Extend acceptance 6.2.2 to '...is stored as deterministic with labeled_signature equal to the member signature, so the row leaves the label queue', and add an acceptance item covering the two rejection outcomes' cooloff stamp.","location":"6.2 write paths, the written_deterministic branch","prevention":"Enumerate the worker's terminal outcomes and state, for each one, which field takes it out of the queue.","principle":"Every terminal write path of a queue-draining worker must clear the predicate that queued the item, or the item is redelivered forever.","section_id":"6.2","severity":"blocking"},{"category":"missing-requirement","check_key":"targeted-file-crosses-decomposition-trigger","description":"crates/gcore/src/graph_analytics.rs is 693 lines with an inline #[cfg(test)] module at :533-693 holding only four tests in 161 lines (~30-40 lines each). 1.1 adds GraphInputError, a validating communities() with four checks, and seven inline tests; 1.2 adds centrality() and a parity test. That lands the file near 880-970, past the 850 decomposition trigger and inside the hook's blocking band, on the 1.1 commit. crates/AGENTS.md is explicit: 'Inline #[cfg(test)] modules count toward the owning production file's 1,000-line ceiling. Keep large unit-test modules out of production Rust files. Place the tests at <module>/tests.rs and declare them from <module>.rs with #[path]'. P1 is the only phase in this plan adding tests inline; 2.1, 2.2 and 2.3 all use the sibling test-file idiom already. Independently found by the requirements and repository lanes.","finding_id":"F-07","fix":"Add `crates/gcore/src/graph_analytics/tests.rs` as a bare-path Target on 1.1 (the crates/gcore/src/graph_analytics/ directory already exists for leiden.rs), move the existing :533-693 module there with the #[path] idiom in the same leaf, and restate acceptance 1.1.3 and 1.2.1 as crates/gcore/src/graph_analytics/tests.rs::communities_without_edges_is_all_singletons and ::centrality_matches_analyze_centrality. Add the projected post-1.2 size to the Constraints table.","location":"1.1 and 1.2 Targets; Constraints size table","prevention":"For each targeted production file, record projected post-change size, not just today's size, and apply the growth-commit rule uniformly.","principle":"A targeted production file whose planned additions cross the decomposition trigger needs an extraction in the same plan, and the size claim must be forward-looking rather than as-of-today.","root_cause":"The Constraints size table asserts only the baseline ('No targeted production file is at or above 850 lines') and gives no growth budget, while 4.1 applies the growth-commit rule to cli.rs at 827.","section_id":"1.1","severity":"blocking"},{"category":"traceability","check_key":"deferral-references-nonexistent-acceptance-item","description":"D1's deferral block declares original_acceptance_items with the single entry D1.1, but D1.1 occurs exactly once in the entire plan -- on line 1606, inside the yaml that references it. D1 carries no Acceptance block at all. The coordinator will create a deferred-from:gcode-import-communities:D1 task citing an acceptance item the plan never wrote. A reviewer sweep of every other id reference in the plan found no second instance of this defect; all N.N.N references resolve.","finding_id":"F-08","fix":"Add a one-item Acceptance block to D1 before the yaml defining D1.1 against the memory-community deliverable it defers, so the reference resolves; and lift the deferred-from provenance out of the surrounding prose into an explicit key on the yaml block so all five typed fields are machine-readable.","location":"D1 deferral yaml, original_acceptance_items","prevention":"Validate every id named in a typed block against the plan's actual item set before finalizing.","principle":"A typed deferral's original_acceptance_items must reference acceptance item IDs that exist in the plan, or the deferred-item audit trail is broken at the moment the deferral task is created.","repairs":[{"items":[{"artifact":"symbol: `communities`","prose":"A Leiden partition over memory_crossrefs produces memory clusters the memory-curator batch consumes."}],"kind":"add_acceptance","section_id":"D1"}],"section_id":"D1","severity":"blocking"},{"category":"traceability","check_key":"gating-verification-bar-without-owner","description":"Q1.7 contains three bars and its ownership parenthetical names only two: refresh latency (owner 3.2, acceptance 3.2.12) and report timing (owner 1.2, acceptance 1.2.3). The middle sentence -- 'gcode graph view --view communities on Gobby completes under one second from stored rows' -- has no owning leaf, no evidence file, and no acceptance item. 4.3's fourteen acceptance items say nothing about latency, and Q1.8/7.1.3 record command outcomes rather than timings. The reviewer re-checked all of Q1: Q1.4, Q1.5, Q1.6 and Q1.8 are correctly owned, so this is the sole survivor.","finding_id":"F-09","fix":"Add acceptance 4.3.15 pinning that gcode graph view --view communities on the Gobby checkout completes in under one second from stored rows over five runs, recorded in docs/evidence/community-labels-2026-09/view-latency.md; add that evidence file to 4.3's Targets; and append '(owner: the 4.3 leaf, acceptance 4.3.15)' to that sentence in Q1.7.","location":"Q1.7, second sentence","prevention":"When folding an ownership finding, enumerate every assertion inside the item, not just the ones the finding quoted.","principle":"Every gating assertion in the verification section must have an owning deliverable and an acceptance item, or it cannot be enforced at close.","repairs":[{"entries":["`docs/evidence/community-labels-2026-09/view-latency.md`"],"kind":"add_targets","section_id":"4.3"},{"items":[{"artifact":"behavior: \"under one second\" in `docs/evidence/community-labels-2026-09/view-latency.md`","prose":"`gcode graph view --view communities` on the Gobby checkout completes in under one second from stored rows over five runs."}],"kind":"add_acceptance","section_id":"4.3"}],"root_cause":"UNRESOLVED-PRIOR:F8. The V1 changelog records 'F8 accept (6.3, traceability): every gating Q1 item now has an owning leaf and an acceptance item', but the fold covered only two of Q1.7's three bars.","section_id":"4.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"close-experiment-needs-later-phase-artifact","description":"Q1.4 requires that renaming three files inside one community 'keeps its community_id, changes only its member_signature, and flips exactly one row to label_stale', and acceptance 3.2.11 requires the experiment to run on both corpora before 3.2 closes. But 3.2 defines label_stale as label_source == Model && labeled_signature != Some(member_signature), and the only producers of label_source='model' are the daemon labeler in 6.2/6.3, which depends on 3.2. At 3.2's close no model-labeled row exists on either corpus, so label_stale is identically false and the flip cannot be observed. 3.2's unit test stale_model_label_reads_as_deterministic is unaffected because it constructs the model row in a fixture; only the corpus experiment is blocked. No add_dependency repair is offered because the real edge already runs 6.2 -> 3.2, so reversing it would create a cycle.","finding_id":"F-10","fix":"Amend the Q1.4 sentence to name the seeding step the experiment needs -- 'with one row seeded to label_source='model' by direct UPDATE before the rename, exactly one row flips to label_stale' -- and mirror that wording into 3.2.11; or move only the label_stale clause into a Q1.6 sub-item owned by 6.3, where model labels exist.","location":"Q1.4 churn experiment and acceptance 3.2.11","prevention":"For each experiment, check that every field it asserts on can be non-trivially populated by the phase that owns it.","principle":"A deliverable's close-gating experiment must be observable in the state that exists at its close; it must not require an artifact only a later deliverable can produce.","section_id":"3.2","severity":"blocking"},{"category":"missing-requirement","check_key":"selector-ladder-underdetermined","description":"Three gaps, merged from both lanes. (a) The final rung is 'else a unique case-insensitive substring' and never says substring of what, while every preceding rung names its field; acceptance 4.3.3 and 4.3.10 inherit the ambiguity, so two implementations can both pass, and Q1.8's `--community memory` lands on exactly this rung. (b) The exact-label rung assumes `label` is unique, but 2.2's dedupe_labels appends ordinal suffixes only to deterministic labels within one partition, and 6.2/6.3 write a model `label` with no cross-row uniqueness check, so two rows can share a label; the ambiguity sentence is attached only to the substring rung, leaving the exact-label rung with no tie rule and a silently arbitrary result. (c) A selector that parses as an integer but matches no stored community has no stated outcome; 4.3.9 covers only the unknown-path case.","finding_id":"F-11","fix":"State the last rung as 'a unique case-insensitive substring of label or label_deterministic (members are not substring-matched)'; state that the ambiguity rule (typed exit-2 error listing up to five matches) applies at every rung, not only the substring rung; state that an integer selector matching no community is the same typed exit-2 error as an unknown path. Extend 4.3.3 to name both substring fields and add an acceptance item covering no-match and multi-match at every rung. Mirror the same rule in 5.1's CommunitiesSelector, which today states only the no-match and below-min_size outcomes.","location":"4.3 --community resolution ladder","prevention":"For each resolution rung, write the field, the no-match outcome and the multi-match outcome explicitly; check uniqueness claims against the writer, not the reader.","principle":"A plan must be decision-complete: a selector ladder must name the field each rung searches and define the no-match and multiple-match outcome at every rung, and must not assume uniqueness of a field the write path never makes unique.","section_id":"4.3","severity":"blocking"},{"category":"over-engineering","check_key":"stored-index-without-named-consumer","description":"Same class as the already-folded F-N1, which removed the GIN index over members on the ground that membership lookups are in-memory scans. CREATE INDEX idx_cc_project_size ON code_communities (machine_id, project_id, member_count DESC, community_id) has no query in the plan that uses it: 3.2's read_project_communities reads every row for the pair, which the PRIMARY KEY (machine_id, project_id, community_id) already serves as a prefix scan; 4.3's list view, 4.4's top/thin_count and 5.1's canonical_key all order in memory; and 6.1's queue is served by the partial idx_cc_label_queue. Acceptance 3.1.1 pins it only via 'indexes ... above', so removing it changes no acceptance item.","finding_id":"F-N1","fix":"Delete the idx_cc_project_size line from the migration DDL and from the mirrored baseline.sql DDL, keeping idx_cc_label_queue. If a future SQL-side ordering is intended, name that query in 3.2 and keep the index.","location":"3.1 DDL, idx_cc_project_size","prevention":"For each index, name the query that uses it in the same sentence that creates it.","principle":"A stored mechanism pinned by acceptance must have a named consumer; an index no specified query uses is unearned weight.","section_id":"3.1","severity":"nit"},{"category":"traceability","check_key":"provisional-value-escapes-substitution-scope","description":"The Constraints scope the landing-time migration-number substitution to 'the file name, MIGRATIONS, latest_version, cli_contract.rs, and every \"442\" in 3.1'. Two occurrences fall outside 3.1: 7.1's Research context writes the literal '(migration 442)' into the crates/CHANGELOG.md Unreleased text, and Q1 step 3 says restart 'applies 442'. Acceptance 7.1.2 pins only the string 'code_communities' in the changelog, so nothing catches a stale number. Since task #22572 is landing its own 442 concurrently, 7.1 can ship a wrong migration number into a released changelog. Additionally, no deliverable owns the Constraints obligation that 'V1 records the substitution', and 3.1.1/3.1.2 hard-code the literal.","finding_id":"F-N2","fix":"Broaden the Constraints substitution sentence to cover every occurrence of the provisional number in the plan, naming 7.1's changelog text and Q1 step 3 explicitly; reword 3.1.1 and 3.1.2 to 'the new migration (442, or the next free number at landing)'; and give 3.1 an acceptance item that the number actually used is recorded in V1 and resolved everywhere in the same commit.","location":"7.1 Research context, crates/CHANGELOG.md Unreleased text","prevention":"After declaring a value provisional, grep the whole plan for the literal and confirm each occurrence is inside the stated substitution scope.","principle":"When a framing section declares a value provisional and names the substitution scope, that scope must cover every place the literal is written, including into shipped artifacts.","section_id":"7.1","severity":"nit"},{"category":"gobby-format","check_key":"stated-constraint-violated-by-own-targets","description":"Constraints says 'Hand-maintained .rs/.py files stay under 1,000 lines' with no production qualifier, then qualifies the very next sentence ('No targeted production file is at or above 850 lines'). Measured at HEAD, five files this plan targets and adds to already exceed 1,000: crates/gcore/src/schema/runner_tests.rs 2500 (3.1), tests/code_index/test_code_index_storage.py 1516 (6.1), crates/gcode/src/evidence/tests.rs 1216 (5.1), crates/gcode/tests/evidence.rs 1192 (5.1), tests/code_index/test_code_index_maintenance.py 1117 (6.2). The repository rule excludes tests, so the plan's sentence is mis-stated rather than the plan being non-compliant. Every other size figure in the Constraints table was verified exact at HEAD.","finding_id":"F-N3","fix":"Insert one word: 'Hand-maintained production .rs/.py files stay under 1,000 lines', matching the following sentence and the governing repository rule.","location":"Constraints, the 1,000-line sentence","prevention":"Qualify size constraints the same way the governing repository rule does, and check the qualified rule against the plan's own Targets.","principle":"A constraint the plan states must be one the plan's own deliverables satisfy.","section_id":"Constraints","severity":"nit"},{"category":"weak-testability","check_key":"acceptance-artifact-shared-across-leaves","description":"Found by the reviewer's adjacent-variant sweep, not by a lane. 6.2.4 and 6.3.4 both name tests/code_index/test_community_labeler.py::test_every_outcome_emits_one_log_event. A test symbol is a complete artifact with no further discriminator, so the coverage labels covers:...:6.2:6.2.4 and covers:...:6.3:6.3.4 resolve to one symbol and cannot tell which leaf's obligation a pass proves. This is the only complete-artifact collision in the plan -- every other repeated artifact is discriminated by a distinct symbol or distinct prose -- and it is exactly the property the accepted F-N2 fold established for 3.1.5 and 4.1.2.","finding_id":"F-N4","fix":"Give 6.3.4 its own test symbol, for example tests/code_index/test_community_labeler.py::test_gate_outcomes_extend_the_discriminator_to_eight, leaving 6.2.4 on the five-outcome test.","location":"acceptance 6.3.4 and 6.2.4","prevention":"Before reusing a test symbol, check no other leaf's acceptance already names it.","principle":"An acceptance artifact should be one that only its own obligation satisfies, so a passing artifact discriminates which leaf's obligation it proves.","section_id":"6.3","severity":"nit"},{"category":"unhandled-edge","check_key":"cooloff-reset-by-unrelated-subsystem","description":"The E7 fold made 2.3 clear five fields on a matched-with-changed-signature deterministic row, including label_attempted_at. That field is the daemon's failure cooloff: 6.1 selects rows where label_attempted_at is null or older than the cooloff, and 6.2 stamps it with a 300-second cooloff on failure. Since a never-successfully-labeled row has label_source='deterministic', every membership change clears its cooloff, and 3.2 runs the refresh on hook-triggered single-file runs, so an actively edited repository resets the backoff repeatedly for exactly the communities whose generation keeps failing. Bounded by membership-change frequency rather than per-tick, hence nit rather than blocking alongside F-06.","finding_id":"F-N5","fix":"Exclude label_attempted_at from the set 2.3 clears, clearing only the four gate-decision fields, and amend acceptance 2.3.4 to name four fields; or add an explicit attempt counter with a retry cap so the cooloff is not the only bound.","location":"2.3 carry-forward, the cleared field set","prevention":"When clearing a field set, check which fields another subsystem owns as retry state.","principle":"A failure cooloff owned by one subsystem must not be resettable as a side effect of another subsystem's routine write.","section_id":"2.3","severity":"nit"},{"category":"unhandled-edge","check_key":"outcome-enum-missing-reachable-state","description":"3.2 states the intended race outcome -- a label issued after the read 'matches zero rows once the replace commits, and leaves the row in the label queue for the next pass' -- and 6.1 makes update_community_label guarded by AND member_signature = %s. But 6.3.4 pins the discriminator to exactly eight values, none of which is 'the guarded UPDATE matched zero rows'. The labeler therefore logs written_model or gate_admitted for a write that did not happen, inflating the arm counts Q1.6 derives from those events.","finding_id":"F-N6","fix":"Add a ninth value write_superseded, emitted when the guarded UPDATE affects zero rows, state that it does not stamp label_attempted_at because the row is legitimately requeued, and change 6.3.4 to nine values with the exhaustiveness test extended.","location":"6.3.4 outcome discriminator","prevention":"Cross-check the outcome enumeration against every guarded write the design describes.","principle":"An exhaustively enumerated outcome discriminator must include every reachable terminal state, including one the design deliberately creates.","section_id":"6.3","severity":"nit"},{"category":"unhandled-edge","check_key":"stale-rewrite-leaves-stale-provenance-fields","description":"The F4 fold made read_for_context the single place the stale rule is applied, returning the row with label set to label_deterministic and label_source set to Deterministic. It says nothing about label_confidence or label_model. 5.1's CommunityEvidence and CommunityFact both carry label_confidence, so a stale row yields label_source 'deterministic' together with the superseded model's confidence; and because 6.3 deliberately persists confidence on genuinely rejected deterministic rows, a consumer cannot distinguish 'confidence of the shown label' from 'confidence of a label no longer shown'. 4.2's ViewCommunity and 4.4's GraphReportCommunity do not carry the field and are unaffected.","finding_id":"F-N7","fix":"State in 3.2 that the stale rewrite also sets label_confidence and label_model to None in the returned StoredCommunity, leaving the stored row untouched, and extend acceptance 3.2.10 to name all four rewritten fields.","location":"3.2 read_for_context stale rule","prevention":"List every field that describes the substituted value and rewrite all of them together.","principle":"When a read path substitutes one label for another it must substitute every field describing that label, or the payload asserts provenance for a value it is not showing.","section_id":"3.2","severity":"nit"},{"category":"weak-testability","check_key":"canonical-key-encoding-underspecified","description":"5.1 specifies only that canonical_key 'encodes size-desc as usize::MAX - size then community_id'. canonical_key returns a String and every existing arm in crates/gcode/src/evidence/contracts.rs leads with a variant discriminator and zero-pads each numeric component as {:020}. Without both, community items interleave with source and graph items in a mixed response, and usize::MAX - size sorts by digit count rather than magnitude. The named test communities_list_orders_by_size_then_id catches the padding bug only if its fixture straddles a power-of-ten boundary.","finding_id":"F-N8","fix":"State the encoding explicitly with a leading variant discriminator and {:020} padding on each numeric component, matching the existing arms, and require the ordering test fixture to include community sizes that straddle a power-of-ten boundary.","location":"5.1 canonical_key sentence","prevention":"Specify a new sort-key arm against the existing arms' encoding, and make the ordering fixture straddle a digit boundary.","principle":"A string sort key encoding numeric order must be zero-padded and namespaced by variant, or lexicographic comparison silently disagrees with the intended order.","section_id":"5.1","severity":"nit"},{"category":"traceability","check_key":"target-scope-reason-contradicts-consumer-sweep","description":"2.1 targets crates/gcode/src/commands/graph/view/mcg.rs with scope-reason 'import ImportIdentity from its new module', but mcg.rs contains no McgIdentity or ImportIdentity reference today -- its only identity-related lines are `mod identity;` and `pub(crate) use identity::McgSeedSelector;`. The plan's own Constraints consumer sweep correctly lists McgIdentity in exactly identity.rs, fetch.rs and tests.rs, not mcg.rs, so the Targets block and the sweep contradict each other. The ImportIdentity import mcg.rs genuinely needs arrives with 4.2's label_communities, not 2.1. Consequence: the shared-target chain entry 'mcg.rs ... 2.1 -> 4.2 (via 3.2)' rests on a target 2.1 may never touch. No build impact, so nit.","finding_id":"F-N9","fix":"Either drop the mcg.rs entry from 2.1's Targets and re-derive the shared-target chain so mcg.rs is solely owned by 4.2, or correct the scope-reason to the change 2.1 actually makes there so the executor does not invent an import.","location":"2.1 Targets, mcg.rs entry","prevention":"Reconcile each Targets entry against the consumer sweep before finalizing.","principle":"A Target's scope-reason must describe a change the deliverable actually makes in that file, and must agree with the plan's own consumer sweep.","section_id":"2.1","severity":"nit"},{"category":"traceability","check_key":"operation-set-enumerations-untargeted","description":"Two owned surfaces enumerate the gcode evidence operation set and no deliverable targets either: src/gobby/install/shared/skills/gobby/references/code-index/ask.md ('Search, read, graph, and commit-patch evidence without starting an Ask run') is live bundled skill text -- the same artifact class 7.1 updates for the sibling references/code-index/graphs.md -- and docs/guides/code-index.md repeats the enumeration. 5.2 already targets docs/contracts/ask.md, docs/guides/ask.md and docs/contracts/gcode-cli.md for exactly this reason, so the omission leaves the agent-facing skill and the code-index guide describing a three-operation surface after it becomes four.","finding_id":"F-N10","fix":"Add src/gobby/install/shared/skills/gobby/references/code-index/ask.md and docs/guides/code-index.md as bare-path Targets on 5.2 (or fold the skill file into 7.1 beside graphs.md), and extend acceptance 5.2.4 to name the skill reference the way 7.1.1 pins graphs.md.","location":"5.2 Targets","prevention":"Sweep bundled skill text and guides for the enumeration, not only contracts and code.","principle":"Every owned surface that enumerates a set being extended is a consumer and must be targeted.","repairs":[{"entries":["`src/gobby/install/shared/skills/gobby/references/code-index/ask.md`","`docs/guides/code-index.md`"],"kind":"add_targets","section_id":"5.2"}],"section_id":"5.2","severity":"nit"},{"category":"traceability","check_key":"new-config-without-settings-surface-or-recorded-exclusion","description":"6.1 adds CodeIndexCommunityLabelConfig under CodeIndexConfig.community_label and targets the generated runtime_config_contract.json and runtimeConfigCodecVectors.gen.ts plus the configuration audit, but not web/src/components/settings/sections/RuntimeInfrastructureSection.tsx, which hardcodes the six code_index.symbol_summary.* paths and renders them. The new settings -- including decisions_api_base, decisions_min_confidence and the secret-classified decisions_api_key that 6.1.2 calls out -- would have no UI. No test forces the coverage, so this is an owned coverage gap rather than a build break. Note for routing: this is the plan's only genuine hand-maintained web/ production surface, and it sits in 6.1, not 4.3.","finding_id":"F-N11","fix":"Either add web/src/components/settings/sections/RuntimeInfrastructureSection.tsx and its test to 6.1's Targets with a scope-reason to render the community_label settings beside symbol_summary, or state explicitly in 6.1 that the settings UI is deliberately out of scope and community_label is daemon-config-only, so the omission is a recorded decision.","location":"6.1 Targets","prevention":"When adding a config group, check the hand-maintained settings surface that renders the sibling group, not only the generated artifacts.","principle":"A new user-facing config group should either reach the surface that renders its sibling group, or the exclusion should be a recorded decision.","section_id":"6.1","severity":"nit"}],"notes":"Blocking findings prevent approval, so no manifest_entries are returned this round. The shadow manifest derived valid with 17 entries (1:1 with the 17 kind: deliverable sections), digest 59c4db2f379b77ae7328a8357ca67081357f9f7ec8309ee46900a6f9b3d9fe2a, and the 4.3 -> backend routing override was accepted by the server. Three lanes ran as read-only provider-native internal subagents; none edited, mutated or emitted findings. The runtime lane emitted absolute paths and one sha256 containing a stray space (lifecycle.rs); the reviewer recomputed and corrected every cited hash before validation.","plan_hash":"5672dab819875aeaae5d9a1ad235dcd33c4e6c41b09458ecab27c9c88bdf3b32","plan_id":"gcode-import-communities","plan_identity_precondition":"pass: **Plan ID:** gcode-import-communities at line 5, outside all fenced blocks; no covers:unknown label anywhere","reviewer_session":"6e5645d9-a580-488b-a1c1-79637135cfd0","round":1,"routing_decisions":{"4.3":{"implementation_domain":"backend"}},"routing_rationale":"Verified independently against the snapshot: all sixteen of 4.3's Targets are under crates/, tests/, docs/ and Cargo files, with zero web/ or frontend surface. The server's derived 'frontend' is a false positive. NOTE for the next round: 6.1 does target a real web/ surface (web/src/api/runtimeConfigCodecVectors.gen.ts, generated) and F-N11 proposes adding the hand-maintained RuntimeInfrastructureSection.tsx; confirm 6.1's derived domain at approval.","verdict":"needs_review","verified_clean":{"deterministic_sweep_spot_check":"Agrees. Reviewer independently verified: migration 441 is the highest on disk so 442 is free; all five contract_version 10 pins exist at the exact cited locations; McgIdentity, load_identity and assign_leiden_communities resolve at the cited spans; every Constraints file-size figure is exact at HEAD; no bare test-file acceptance artifacts; all N.N.N references resolve; test seam directories exist or are created by the plan's own deliverables.","evidence_integrity":"The canonical file at .gobby/plans/gcode-import-communities.md hashes to 5672dab8...bdf3b32, byte-identical to the snapshot plan_hash, so lane reads of the file were reads of the immutable bytes.","prior_findings_genuinely_resolved":["F1 (3.2 reads prior rows FOR UPDATE inside begin_replace; race closed)","F2 (2.2.7 is a measured-and-recorded outcome)","F3 (LabelSource, LabelCarry, CommunityFact, GeneratedLabel each have a distinct home file, distinct consumer layer and acceptance item)","F4 (stale rule applied once in read_for_context and inherited consistently by 4.2, 4.3, 4.4 and 5.1 -- but see F-N7 for the two unrewritten provenance fields)","F5 (item_type mirrors the Rust serde tag that validation_models.py:94-97 keys on)","F6 (5.1.1 states the flat internally tagged request; verified no field-name collision against the existing EvidenceRequest)","F7 (3.1.6 targets the privilege-manifest test with its exact-set assertion)","F-N1 (the unearned GIN index is gone -- but see F-N1 above for the same class on idx_cc_project_size)","F-N3 (the shared-target chain reproduces the Targets blocks exactly: all 16 multi-owner paths listed, every one carrying a real dependency edge)","F-N4, F-N5, F-N6 (docs targeted, research spans corrected, gate outcomes pinned)"],"prior_findings_only_partly_resolved":["F8 -- see F-09: Q1.7's one-second communities-view bar still has no owning leaf or acceptance item"],"proportionality":"No structural over-engineering beyond F-N1. The four new label types, the centrality() facade, the graph_view.rs extraction, the partition signature and the Jev gate each have a named consumer or a stated requirement. Plan ambition and size are not findings."}},"session_id":"7e1958df-7aa2-47c2-b32e-783a0061e0ef"}
+```
+
+Coordinator fold of round 1 (2026-09-19), under the user's delegation: all twenty-two
+findings accepted; F-01, F-09, and F-N10 landed as typed repairs and the rest by hand.
+Variations from the reviewer's fix text: F-02 lands in 3.2, which already owns
+`lifecycle.rs`, as 3.2.13 rather than in 3.1; F-05 adds `partition_refreshed` and
+`MISSING_PARTITION_HINT` to 3.2 so 5.1 can tell never-refreshed from empty; F-11's mirror
+in 5.1 keeps the evidence layer's no-error posture (ambiguity returns every match with a
+warning, no match is `CompleteEmpty`); F-N4 and F-N6 together make 6.3.4 a nine-value test
+on its own symbol; F-N11 is recorded as a scope decision rather than a new target; F-08 is folded as
+prose defining `D1.1` plus a `deferred_from` key, because the validator rejects an
+`**Acceptance:**` block on a deferred section and the yaml list is the item's definition.
