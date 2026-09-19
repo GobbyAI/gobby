@@ -11,6 +11,10 @@ from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
+from gobby.storage.tasks._transitions import (
+    clear_closure_in_txn,
+    reopen_closed_ancestors_in_txn,
+)
 from gobby.tasks.expansion._common import _manifest_stage_names
 from gobby.tasks.expansion._deferrals import create_placeholder_deferral_tasks
 
@@ -141,6 +145,13 @@ def apply_run(
                 "Expansion output already exists for this task. "
                 "Reset expansion output before applying a new run."
             )
+
+        # A closed target takes no new children (#22570). An expansion applied to
+        # a task whose previous children were obsoleted -- which auto-closed it on
+        # its last child -- is work resuming, so reopen it and any closed ancestor
+        # here rather than letting the create guard refuse the whole apply.
+        clear_closure_in_txn(conn, task.id)
+        reopen_closed_ancestors_in_txn(conn, task.id)
 
         self.run_manager.mark_applying(run_id)
         self.run_manager.append_log(run_id, level="info", message="Applying compiled expansion")

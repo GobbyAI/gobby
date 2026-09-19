@@ -11,6 +11,7 @@ from gobby.storage.tasks._models import (
     UNSET,
     Isolation,
     MaybeUnset,
+    ParentTaskClosedError,
     validate_category,
     validate_implementation_domain,
     validate_task_type,
@@ -29,6 +30,28 @@ def _locked_parent_task_id(conn: Any, task_id: str) -> str | None:
     return cast(str | None, row["parent_task_id"])
 
 
+def _reject_closed_parent(conn: Any, proposed_parent_task_id: str) -> None:
+    """Refuse to reparent onto a closed task, holding that row for the check.
+
+    Same invariant as creation (#22570): a closed task takes no new children.
+    FOR UPDATE here matches the lock creation and closing take on the parent row,
+    so the three serialize; the cycle walk below re-locks this same row, which is
+    free because row locks are re-entrant within the transaction.
+    """
+    row = conn.execute(
+        "SELECT seq_num, closed_at FROM tasks WHERE id = %s FOR UPDATE",
+        (proposed_parent_task_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Task {proposed_parent_task_id} not found")
+    if row["closed_at"] is not None:
+        seq_num = row["seq_num"]
+        raise ParentTaskClosedError(
+            proposed_parent_task_id,
+            f"#{seq_num}" if seq_num else None,
+        )
+
+
 def _validate_parent_task_id_update(
     conn: Any, task_id: str, proposed_parent_task_id: str | None
 ) -> None:
@@ -37,6 +60,7 @@ def _validate_parent_task_id_update(
         return
     if proposed_parent_task_id == task_id:
         raise ValueError("Cannot set a task as its own parent")
+    _reject_closed_parent(conn, proposed_parent_task_id)
 
     ancestor_id: str | None = proposed_parent_task_id
     visited: set[str] = set()

@@ -294,3 +294,47 @@ async def test_initialize_task_manifest_rejects_unknown_stage(
             "initialize_task_manifest",
             {"task_id": task.id, "stage_names": ["planning", "missing"]},
         )
+
+
+@pytest.mark.parametrize("claim", [False, True])
+async def test_create_task_refuses_a_closed_parent_with_an_actionable_error(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    claim: bool,
+) -> None:
+    """Both create paths name the closed parent and point at the way forward (#22570)."""
+    session = SessionManager(temp_db).register(
+        external_id=f"closed-parent-mcp-{claim}",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    parent = manager.create_task(
+        sample_project["id"],
+        "Finished epic",
+        task_type="epic",
+        validation_criteria="The epic is done.",
+    )
+    manager.close_task(parent.id, reason="completed")
+
+    with session_context_for_test(session.id):
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "Late child",
+                "category": "research",
+                "validation_criteria": "The child is observable.",
+                "parent_task_id": f"#{parent.seq_num}",
+                "claim": claim,
+            },
+        )
+
+    assert result["error_code"] == "PARENT_TASK_CLOSED"
+    assert result["parent_task_id"] == parent.id
+    assert result["parent_task_ref"] == f"#{parent.seq_num}"
+    assert f"#{parent.seq_num}" in result["error"]
+    assert "Task was not created." in result["message"]
+    assert f'reopen_task(task_id="#{parent.seq_num}")' in result["message"]
+    assert temp_db.fetchall("SELECT id FROM tasks WHERE parent_task_id = %s", (parent.id,)) == []

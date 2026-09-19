@@ -28,6 +28,7 @@ from gobby.storage.tasks import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
     AgentTaskClaimConflictError,
+    ParentTaskClosedError,
     TaskNotFoundError,
 )
 from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
@@ -254,6 +255,18 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 claimed_task_id=e.claimed_task_id,
                 claimed_task_ref=e.claimed_task_ref,
                 message=f"Task was not created. {e}",
+            )
+        except ParentTaskClosedError as e:
+            return task_error(
+                str(e),
+                TaskToolErrorCode.PARENT_TASK_CLOSED,
+                parent_task_id=e.parent_task_id,
+                parent_task_ref=e.parent_ref,
+                message=(
+                    f"Task was not created. {e} "
+                    f'Use reopen_task(task_id="{e.parent_ref}") if this work belongs '
+                    "under it, or create it under an open parent."
+                ),
             )
 
         if affected_files:

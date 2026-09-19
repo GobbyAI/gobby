@@ -373,6 +373,15 @@ tasks that own no work can close when all children are closed. Closing the last
 child auto-closes eligible ancestors. A claimed parent or one with linked
 commits retains its own work gates, even if its type is `epic`.
 
+A closed task takes no new children. `create_task` and
+`update_task(parent_task_id=...)` refuse a closed parent, naming it and
+returning `PARENT_TASK_CLOSED` on the MCP surface; reopen that parent or pick an
+open one. Reopening runs the mirror of the auto-close: `reopen_task` on a leaf
+also reopens its closed ancestors, so nothing is left open underneath a closed
+parent. Creation holds the parent row and closing holds its own, so a child
+created while its parent is closing resolves one way or the other rather than
+landing under a task that has already closed.
+
 For `get_task_diff`, follow `byte_end` and both metadata `cursor_end` values.
 Carry `snapshot_hash` and `view_hash` on every subsequent page and restart on a
 stale snapshot/view error. Do not treat a complete diff-text page as a complete

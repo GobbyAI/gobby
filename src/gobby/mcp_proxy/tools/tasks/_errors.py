@@ -8,6 +8,7 @@ class TaskToolErrorCode(str, Enum):
     """Stable task tool error codes for workflow branching."""
 
     TASK_CLOSED = "TASK_CLOSED"
+    PARENT_TASK_CLOSED = "PARENT_TASK_CLOSED"
     TASK_INVALID_STATUS = "TASK_INVALID_STATUS"
     TASK_NOT_FOUND = "TASK_NOT_FOUND"
     SESSION_REQUIRED = "SESSION_REQUIRED"

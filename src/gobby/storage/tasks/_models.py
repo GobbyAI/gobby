@@ -185,6 +185,25 @@ class TaskClosedError(ValueError):
     pass
 
 
+class ParentTaskClosedError(TaskClosedError):
+    """Raised when a child would be attached to an already-closed parent.
+
+    A subclass of TaskClosedError so callers that already treat a closed task as
+    ordinary validation keep working, and its own type so create and reparent can
+    name which task is closed: the parent, not the one being written. Epic #22527
+    took twelve children after it closed because nothing checked this direction
+    (#22570); the close direction has been gated since #20871.
+    """
+
+    def __init__(self, parent_task_id: str, parent_ref: str | None = None) -> None:
+        self.parent_task_id = parent_task_id
+        self.parent_ref = parent_ref or parent_task_id
+        super().__init__(
+            f"Parent task {self.parent_ref} is closed. "
+            "Reopen it, or choose an open parent, before attaching work to it."
+        )
+
+
 class TaskAlreadyClaimedError(ValueError):
     """Raised when a task is already claimed by another session."""
 

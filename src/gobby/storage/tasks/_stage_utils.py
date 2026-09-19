@@ -54,6 +54,12 @@ def _close_task_in_txn(
     """Close a task inside the caller's already-open transaction."""
 
     if not force and not cascade_descendants:
+        # Hold this row before counting children. Creation takes the same lock on
+        # the parent it is attaching to, so the two serialize here; without it the
+        # count runs before the UPDATE acquires any lock, and a child inserted in
+        # that window survives its parent's close (#22570). _close_eligible_ancestors
+        # already locks an ancestor this way before its own open-child probe.
+        conn.execute("SELECT 1 FROM tasks WHERE id = %s FOR UPDATE", (task_id,))
         open_children = conn.execute(
             "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
             (task_id,),

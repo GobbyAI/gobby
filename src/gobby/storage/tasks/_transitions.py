@@ -25,9 +25,72 @@ from gobby.storage.tasks._updates import update_task
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
+_MAX_ANCESTOR_DEPTH = 100
+
 
 def _task_ref(task: Task, fallback: str) -> str:
     return f"#{task.seq_num}" if task.seq_num else fallback
+
+
+def clear_closure_in_txn(conn: Any, task_id: str) -> bool:
+    """Clear one row's closure fields if it is closed. Returns whether it was."""
+    row = conn.execute(
+        "SELECT closed_at FROM tasks WHERE id = %s FOR UPDATE",
+        (task_id,),
+    ).fetchone()
+    if row is None or row["closed_at"] is None:
+        return False
+    conn.execute(
+        """
+        UPDATE tasks
+           SET closed_at = NULL,
+               closed_reason = NULL,
+               closed_in_session_id = NULL,
+               closed_commit_sha = NULL,
+               updated_at = %s
+         WHERE id = %s
+        """,
+        (utc_now(), task_id),
+    )
+    return True
+
+
+def reopen_closed_ancestors_in_txn(conn: Any, task_id: str) -> list[str]:
+    """Reopen every closed ancestor of a task, inside the caller's transaction.
+
+    The mirror of _close_eligible_ancestors, which closes a parent once its last
+    child closes. Without this, reopening a leaf of a finished epic — or adding
+    children to it, as expansion apply does — leaves an open task under a closed
+    parent, the state #22570 stops create and reparent from reaching. The walk
+    continues past an already-open ancestor because legacy rows can have a closed
+    grandparent above an open parent. An open ancestor is left untouched, so its
+    updated_at does not move.
+    """
+    reopened: list[str] = []
+    row = conn.execute(
+        "SELECT parent_task_id FROM tasks WHERE id = %s",
+        (task_id,),
+    ).fetchone()
+    parent_id = row["parent_task_id"] if row else None
+    for _ in range(_MAX_ANCESTOR_DEPTH):
+        if not parent_id:
+            break
+        parent = conn.execute(
+            "SELECT parent_task_id FROM tasks WHERE id = %s",
+            (parent_id,),
+        ).fetchone()
+        if parent is None:
+            break
+        if clear_closure_in_txn(conn, parent_id):
+            reopened.append(parent_id)
+        parent_id = parent["parent_task_id"]
+    return reopened
+
+
+def _reopen_closed_ancestors(db: HubDatabase, task_id: str) -> list[str]:
+    """Reopen every closed ancestor of a task being reopened."""
+    with db.transaction() as conn:
+        return reopen_closed_ancestors_in_txn(conn, task_id)
 
 
 def _has_active_dispatch_mutex(db: HubDatabase, task_id: str) -> bool:
@@ -292,6 +355,7 @@ def reopen_task(
         reason="reopen_task",
         by_actor="system",
     )
+    _reopen_closed_ancestors(db, task_id)
     return get_task(db, task_id)
 
 

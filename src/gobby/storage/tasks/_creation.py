@@ -15,6 +15,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.tasks._agent_claims import ensure_agent_claim_available
 from gobby.storage.tasks._id import generate_task_id
 from gobby.storage.tasks._models import (
+    ParentTaskClosedError,
     SeqNumCollisionError,
     TaskIDCollisionError,
     validate_category,
@@ -109,6 +110,30 @@ def create_task_for_agent(
         )
 
 
+def _lock_open_parent(conn: Transaction, parent_task_id: str) -> None:
+    """Hold the parent row and refuse to attach a child to a closed parent.
+
+    FOR UPDATE is what makes the refusal a guarantee rather than a narrowing.
+    _close_task_in_txn takes the same lock on that row before counting open
+    children, so a create racing a close serializes on it: whichever waits sees
+    the other's committed outcome instead of a stale read (#22570).
+    """
+    row = conn.execute(
+        "SELECT seq_num, closed_at FROM tasks WHERE id = %s FOR UPDATE",
+        (parent_task_id,),
+    ).fetchone()
+    if row is None:
+        # The parent_task_id foreign key rejects a missing parent at INSERT with
+        # its own error; leave that boundary alone.
+        return
+    if row["closed_at"] is not None:
+        seq_num = row["seq_num"]
+        raise ParentTaskClosedError(
+            parent_task_id,
+            f"#{seq_num}" if seq_num else None,
+        )
+
+
 def _create_task_in_transaction(
     db: HubDatabase,
     conn: Transaction,
@@ -142,6 +167,9 @@ def _create_task_in_transaction(
     category = validate_category(category)
     implementation_domain = validate_implementation_domain(implementation_domain)
     validation_status = "pending" if validation_criteria else None
+
+    if parent_task_id:
+        _lock_open_parent(conn, parent_task_id)
 
     for attempt in range(max_retries + 1):
         savepoint = conn.savepoint(f"task_create_attempt_{attempt}")
