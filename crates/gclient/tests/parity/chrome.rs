@@ -1169,6 +1169,15 @@ switch_project = "ctrl+1..9"
                     ws.select_project("characterization");
                     let left = ws.pane_for_terminal("left").expect("left pane");
                     let right = ws.pane_for_terminal("right").expect("right pane");
+                    // A scripted terminal is opened under a name, so both panes
+                    // would sit on rung 1 of the label ladder and this frame
+                    // would say nothing about the rest of it. The right pane
+                    // gives its name up and is left with what the daemon saw in
+                    // its foreground, which puts rungs 1 and 3 in the one frame
+                    // this suite characterizes.
+                    let pane = ws.pane_mut(right);
+                    pane.label = None;
+                    pane.command = Some("nvim".to_string());
                     let mut chrome = chrome_for(&ws, "left");
                     add_tab(&mut chrome, "logs");
                     chrome.activate_tab(0);
@@ -1223,12 +1232,14 @@ switch_project = "ctrl+1..9"
                     // cards with the runs nested under their sessions and
                     // the hub row took the pinned test host name (#22203),
                     // and again when the sessions band traded its scope and
-                    // sort controls for one `[view]` menu (#22209):
+                    // sort controls for one `[view]` menu (#22209), and again
+                    // when the right pane gave up its name so the label ladder
+                    // reaches this frame (#22536):
                     // 4.1.3 requires a glyph change to fail here, so this
                     // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "00d4a1e971192191c56d7b7652b775f2f0852c84f563593d64872ebc1f7caa02"
+                        "7b7583f4d19d29c2605376bd56d43e814cfd63e350831a8ba8b116ad2044e52e"
                     );
                 });
         }
