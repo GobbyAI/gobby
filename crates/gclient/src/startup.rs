@@ -258,7 +258,7 @@ where
         if let Some(value) = arg.strip_prefix("--project=") {
             if value.is_empty() {
                 return Err(StartupError::Usage {
-                    message: "--project requires a workspace".into(),
+                    message: "--project requires a project".into(),
                 });
             }
             project = Some(value.to_string());
@@ -266,12 +266,12 @@ where
         }
         if arg == "--project" {
             let value = iter.next().ok_or_else(|| StartupError::Usage {
-                message: "--project requires a workspace".into(),
+                message: "--project requires a project".into(),
             })?;
             let value = value.as_ref();
             if value.is_empty() || value.starts_with('-') {
                 return Err(StartupError::Usage {
-                    message: "--project requires a workspace".into(),
+                    message: "--project requires a project".into(),
                 });
             }
             project = Some(value.to_string());

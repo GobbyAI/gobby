@@ -272,6 +272,20 @@ fn help_text_lists_frame_delivery() {
     );
 }
 
+#[test]
+fn rejects_missing_project_values() {
+    for argv in [
+        vec!["gclient", "--project"],
+        vec!["gclient", "--project="],
+        vec!["gclient", "--project", "--no-mouse"],
+    ] {
+        let message = parse_args(argv.iter().copied())
+            .expect_err(&format!("{argv:?} parsed"))
+            .to_string();
+        assert_eq!(message, "--project requires a project", "{argv:?}");
+    }
+}
+
 /// 4.3.1: `--node` and `--workspace` parse, both absent leaves the attach
 /// target empty so the daemon picks the local `default`, and a full
 /// `n#:w#` ref carries its own node over `--node`.
