@@ -21,6 +21,9 @@ from gobby.config.validation_detection import (
     ValidationDetectionConfig,
     classify_validation_segments,
 )
+from gobby.hooks.normalization import (
+    _normalize_shell_tool_metadata as _shell_tool_metadata,
+)
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import _iter_archive_lines
@@ -844,6 +847,26 @@ def _record_validation_run(
     )
 
 
+def _shell_write_paths(command: str, repo_path: str) -> set[str]:
+    """Resolve the repository files one shell command writes.
+
+    The canonical classifier here is the one `enforce-tdd-block` gates on, so a
+    heredoc-written test is close-time edit evidence exactly when enforcement
+    already saw it as a repo mutation. Commands that only read, move or delete a
+    path carry no write path and stay uncredited.
+    """
+    if not command.strip():
+        return set()
+    write_paths = _shell_tool_metadata(command).get("canonical_write_file_paths")
+    if not isinstance(write_paths, list):
+        return set()
+    return {
+        _normalize_known_path(path, repo_path)
+        for path in write_paths
+        if isinstance(path, str) and path
+    }
+
+
 def _record_edit(
     state: _DerivationState,
     tool_name: str,
@@ -852,9 +875,12 @@ def _record_edit(
     order: int,
 ) -> None:
     basename = _tool_basename(tool_name)
-    if basename not in _EDIT_TOOLS:
+    if basename in _EDIT_TOOLS:
+        paths = _extract_edit_paths(basename, arguments, state.repo_path)
+    elif basename in _SHELL_TOOLS:
+        paths = _shell_write_paths(_extract_command(arguments), state.repo_path)
+    else:
         return
-    paths = _extract_edit_paths(basename, arguments, state.repo_path)
     for path in paths:
         task_file = _match_task_file(path, state.task_edited_files)
         if task_file is None:

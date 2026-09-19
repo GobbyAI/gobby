@@ -1214,6 +1214,179 @@ FAILED tests/hooks/test_session_coordinator.py::test_target
     assert result.red_runs == (command,)
 
 
+def _heredoc_write(path: str) -> str:
+    """A Bash python heredoc that writes one repository file."""
+    return f"python3 - <<'PY'\nfrom pathlib import Path\nPath({path!r}).write_text('x')\nPY"
+
+
+async def _derive_claude_heredoc_tdd_cycle(
+    tmp_path: Path,
+    *,
+    test_path: str,
+    source_path: str,
+    command: str,
+    red_output: str,
+) -> TranscriptEvidence:
+    transcript = tmp_path / "claude-heredoc-tdd.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            *_claude_tool_pair(
+                command=_heredoc_write(test_path),
+                call_id="test-write",
+                start=BASE_TIME,
+                result={"exit_code": 0, "stdout": ""},
+            ),
+            *_claude_tool_pair(
+                command=command,
+                call_id="red-run",
+                start=BASE_TIME + timedelta(seconds=2),
+                result={"exit_code": 1, "stdout": red_output},
+                is_error=True,
+            ),
+            *_claude_tool_pair(
+                command=_heredoc_write(source_path),
+                call_id="source-write",
+                start=BASE_TIME + timedelta(seconds=4),
+                result={"exit_code": 0, "stdout": ""},
+            ),
+            *_claude_tool_pair(
+                command=command,
+                call_id="green-run",
+                start=BASE_TIME + timedelta(seconds=6),
+                result={"exit_code": 0, "stdout": "Pytest: 1 passed"},
+            ),
+        ],
+    )
+    return await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, source_path},
+        str(tmp_path),
+    )
+
+
+async def test_tdd_gate_credits_heredoc_written_test_and_production_edits(
+    tmp_path: Path,
+) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    source_path = "src/gobby/hooks/session_coordinator.py"
+    command = f"uv run pytest {test_path}::test_target -q"
+    red_output = """\
+______________________________ test_target ______________________________
+    def test_target() -> None:
+>       raise TypeError("target")
+E       TypeError: target
+/deleted/worktree/tests/hooks/test_session_coordinator.py:12: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::test_target
+"""
+    evidence = await _derive_claude_heredoc_tdd_cycle(
+        tmp_path,
+        test_path=test_path,
+        source_path=source_path,
+        command=command,
+        red_output=red_output,
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_target",
+        path=test_path,
+        symbol="test_target",
+        body="def test_target(): ...",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+    red = next(run for run in evidence.validation_runs if run.outcome == "failure")
+    green = next(run for run in evidence.validation_runs if run.outcome == "success")
+
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        (test_path, "Bash"),
+        (source_path, "Bash"),
+    ]
+    test_edit, source_edit = evidence.edits
+    assert test_edit.order < red.order < source_edit.order < green.order
+    assert result.passed is True, result
+    assert result.red_runs == (command,)
+
+
+async def test_shell_commands_without_attributed_write_paths_are_not_edits(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "claude-shell.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            *_claude_tool_pair(
+                command=_heredoc_write("scratch/notes.py"),
+                call_id="unattributed-write",
+                start=BASE_TIME,
+                result={"exit_code": 0, "stdout": ""},
+            ),
+            *_claude_tool_pair(
+                command="rm src/changed.py",
+                call_id="removal",
+                start=BASE_TIME + timedelta(seconds=2),
+                result={"exit_code": 0, "stdout": ""},
+            ),
+            *_claude_tool_pair(
+                command="cat src/changed.py",
+                call_id="read",
+                start=BASE_TIME + timedelta(seconds=4),
+                result={"exit_code": 0, "stdout": "x"},
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(tmp_path),
+    )
+
+    assert evidence.edits == ()
+
+
+async def test_search_replace_target_file_remains_a_transcript_edit(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "claude-search-replace.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            {
+                "type": "assistant",
+                "timestamp": BASE_TIME.isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "grok-edit",
+                            "name": "search_replace",
+                            "input": {"target_file": str(tmp_path / "src" / "changed.py")},
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(tmp_path),
+    )
+
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        ("src/changed.py", "search_replace")
+    ]
+
+
 @pytest.mark.asyncio
 async def test_codex_compound_timeout_preserves_completed_segment_outcomes(
     tmp_path: Path,
