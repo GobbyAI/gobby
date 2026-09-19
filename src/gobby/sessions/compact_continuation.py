@@ -242,7 +242,8 @@ def _continuation_pane(
 def _composer_reader(db: HubDatabase | None, cli_source: str | None) -> ComposerReader | None:
     if db is None or not cli_source:
         return None
-    return IdleDetector(DetectionManifestRegistry(db), cli_source).composer_read
+    detector = IdleDetector(DetectionManifestRegistry(db), cli_source)
+    return detector.composer_read if detector.reads_composer() else None
 
 
 def persist_pull_prompt_message(

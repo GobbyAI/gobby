@@ -60,19 +60,24 @@ class _ComposerPane:
 
 
 class _ConfirmModalPane(_ComposerPane):
-    """Pane that redraws Droid's confirm modal over the screen once a command is submitted."""
+    """Pane that redraws Droid's confirm modal over the screen once a command is submitted.
+
+    The command submits on its own write, so the modal follows the typed text
+    rather than a separate Enter key.
+    """
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
-        if self.typed and self.keys[-1:] == ["enter"]:
+        if self.typed:
             return "Confirm /compress\nEnter to confirm, ESC to cancel"
         return "output\n> "
 
 
 class _UnsubmittedPane(_ComposerPane):
-    """Claude pane that keeps the typed command after Enter, as a busy composer does.
+    """Claude pane that keeps the typed command, as a busy composer does.
 
-    The composer empties once ``recovers_after`` Enters have been sent, which models
-    a CLI that was waiting for one more Enter; ``None`` never submits.
+    The composer empties once ``recovers_after`` recovery Enters have been sent, so
+    zero models a CLI that took the write's own newline and one models a CLI that
+    held it behind a paste review gate; ``None`` never submits.
     """
 
     def __init__(self, recovers_after: int | None = None) -> None:
@@ -131,7 +136,7 @@ async def test_confirmed_interrupt_drains_then_submits_once() -> None:
 
     assert result == (True, None, True, None)
     assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
-    assert pane.typed == ["/clear"]
+    assert pane.typed == ["/clear\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -144,11 +149,11 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
 
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
-    assert pane.typed == ["/clear"]
+    assert pane.typed == ["/clear\n"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("command", "enters"), [("/compress", 2), ("/clear", 1)])
+@pytest.mark.parametrize(("command", "enters"), [("/compress", 1), ("/clear", 0)])
 async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
     command: str, enters: int
 ) -> None:
@@ -157,13 +162,13 @@ async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
     result, _mark, _clear = await _send(pane, lambda: True, cli_source="droid", command=command)
 
     assert result == (True, None, True, None)
-    assert pane.keys == ["escape", *composer_clear_sequence("droid"), *["enter"] * enters]
-    assert pane.typed == [command]
+    assert pane.keys == ["escape", *composer_clear_sequence("droid"), "enter", *["enter"] * enters]
+    assert pane.typed == [f"{command}\n"]
 
 
 @pytest.mark.asyncio
-async def test_composer_emptying_after_enter_submits_once() -> None:
-    pane = _UnsubmittedPane(recovers_after=1)
+async def test_a_composer_the_enter_empties_is_submitted_once() -> None:
+    pane = _UnsubmittedPane(recovers_after=0)
 
     result, _mark, _clear = await _send(
         pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
@@ -171,24 +176,24 @@ async def test_composer_emptying_after_enter_submits_once() -> None:
 
     assert result == (True, None, True, None)
     assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
-    assert pane.typed == ["/compact"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio
-async def test_command_left_in_the_composer_gets_a_second_enter() -> None:
-    pane = _UnsubmittedPane(recovers_after=2)
+async def test_a_command_the_paste_kept_is_submitted_by_the_enter() -> None:
+    pane = _UnsubmittedPane(recovers_after=1)
 
     result, _mark, clear = await _send(
         pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
     )
 
     assert result == (True, None, True, None)
-    assert pane.typed == ["/compact"]
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter", "enter"]
+    assert pane.typed == ["/compact\n"]
+    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
     clear.assert_not_called()
 
 
-async def test_command_the_second_enter_cannot_submit_is_retyped() -> None:
+async def test_command_the_recovery_enter_cannot_submit_is_retyped() -> None:
     pane = _RetypeOnlyPane()
 
     result, _mark, clear = await _send(
@@ -196,11 +201,10 @@ async def test_command_the_second_enter_cannot_submit_is_retyped() -> None:
     )
 
     assert result == (True, None, True, None)
-    assert pane.typed == ["/compact", "/compact"]
+    assert pane.typed == ["/compact\n", "/compact\n"]
     assert pane.keys == [
         "escape",
         *composer_clear_sequence("claude"),
-        "enter",
         "enter",
         *composer_clear_sequence("claude"),
         "enter",
@@ -224,7 +228,7 @@ async def test_command_that_never_leaves_the_composer_fails_typed() -> None:
         "continuation_pending": False,
     }
     assert reason is not None and "/compact" in reason
-    assert pane.typed == ["/compact", "/compact"]
+    assert pane.typed == ["/compact\n", "/compact\n"]
     clear.assert_called_once()
 
 

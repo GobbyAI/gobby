@@ -587,12 +587,13 @@ class _RejectingGrokPane:
             with self._events_path.open("ab") as stream:
                 stream.write(json.dumps({"type": "turn_ended", "outcome": "cancelled"}).encode())
                 stream.write(b"\n")
-        elif key == "enter":
-            self.screen += f"\n{GROK_REJECTION}\n> "
         return True, None
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
+        # The write carries its own newline, so the command submits -- and is
+        # rejected -- on the write rather than on a later Enter key.
+        self.screen += f"\n{GROK_REJECTION}\n> "
         return True, None
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
@@ -657,7 +658,7 @@ async def test_rejected_grok_compaction_settles_as_delivery_failed(
     # Grok is interrupted with Ctrl+C (never Esc) and the rejected /compact is retried once.
     assert pane.keys[0] == "ctrl_c"
     assert "escape" not in pane.keys
-    assert pane.typed == ["/compact", "/compact"]
+    assert pane.typed == ["/compact\n", "/compact\n"]
     clear_pending.assert_called_once()
     restore.assert_called_once()
     assert restore.call_args.args[1:] == (SESSION_ID, ATTEMPT_ID)
@@ -911,7 +912,7 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
             terminal_runtime_registry=registry,
         )
     compact_writes = len(runtime.write_log)
-    assert ("text", "/compact") in runtime.write_log
+    assert ("text", "/compact\n") in runtime.write_log
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE in SessionVariableManager(hub_db).get_variables(
         SESSION_ID
     )
@@ -934,7 +935,10 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
     assert scheduled is True
     # FakeRuntime records submit=True as a trailing newline; RuntimePaneIO strips the
     # newline it was given, so this entry is the prompt written and submitted natively.
-    assert ("text", build_handoff_continue_prompt()) in runtime.write_log[compact_writes:]
+    assert (
+        "text",
+        f"{build_handoff_continue_prompt()}\n",
+    ) in runtime.write_log[compact_writes:]
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(hub_db).get_variables(
         SESSION_ID
     )
@@ -968,4 +972,4 @@ async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
         await _await_continuations()
 
     assert scheduled is True
-    tmux.dispatch_keys.assert_any_await("%12", build_handoff_continue_prompt(), literal=True)
+    tmux.dispatch_keys.assert_any_await("%12", f"{build_handoff_continue_prompt()}\n", literal=True)

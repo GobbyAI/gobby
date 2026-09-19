@@ -48,12 +48,14 @@ class _GrokPane:
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
-        if key == "enter" and self._outputs:
-            self.screen += self._outputs.pop(0)
         return True, None
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
+        # The write carries its own newline, so the command submits here and the
+        # CLI's answer to it lands on the next frame.
+        if self._outputs:
+            self.screen += self._outputs.pop(0)
         return True, None
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
@@ -95,7 +97,7 @@ async def test_grok_compaction_interrupt_uses_ctrl_c(
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert "escape" not in pane.keys
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -111,7 +113,7 @@ async def test_grok_compaction_retries_after_interrupt(
 
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [_COMMAND, _COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -128,7 +130,7 @@ async def test_grok_retry_resubmits_only_after_the_interrupt_is_confirmed() -> N
     result, _mark, _clear = await _send(pane, observe)
 
     assert result == (True, None, True, None)
-    assert pane.typed == [_COMMAND, _COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
     # The first confirmation precedes both submissions; the second precedes the retry.
     assert typed_at_confirmation == [0, 1]
 
@@ -149,7 +151,7 @@ async def test_grok_retry_types_nothing_when_the_second_interrupt_is_unconfirmed
         "continuation_pending": False,
     }
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter", *(["ctrl_c"] * _INTERRUPT_ATTEMPTS)]
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_called_once()
 
@@ -171,7 +173,7 @@ async def test_grok_compaction_rejected_twice_fails_the_delivery() -> None:
         },
     )
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [_COMMAND, _COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_called_once()
 
@@ -188,7 +190,7 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
     assert result == (True, None, True, {"interrupted": False})
     assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -208,7 +210,7 @@ async def test_compaction_waits_for_a_live_turn_to_settle_before_submitting() ->
     assert result == (True, None, True, {"interrupted": False})
     assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -227,7 +229,7 @@ async def test_compaction_interrupts_after_the_turn_settle_wait_times_out() -> N
     assert polls["n"] >= 2
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -243,7 +245,7 @@ async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
 
     assert result == (True, None, True, None)
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -257,7 +259,7 @@ async def test_grok_rejection_after_a_settled_submission_interrupts_before_resub
 
     assert result == (True, None, True, None)
     assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [_COMMAND, _COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n", f"{_COMMAND}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -291,7 +293,10 @@ async def test_compaction_refuses_occupied_composer_before_interrupt() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["empty", "unknown"])
-async def test_non_draft_reads_compact_as_before(state: ComposerState) -> None:
+async def test_non_draft_reads_after_enter_compact(state: ComposerState) -> None:
+    """An empty composer after the Enter proves the command went in. A frame nobody
+    can read is not a failure either: the write and the Enter were delivered, and
+    retyping into a composer that may have taken them would compact twice."""
     pane = _GrokPane()
     mark = MagicMock(return_value=True)
     ok, _reason, _pending, _detail = await _send_terminal_compaction_command(
@@ -305,4 +310,4 @@ async def test_non_draft_reads_compact_as_before(state: ComposerState) -> None:
         composer_read=lambda _text: ComposerRead(state),
     )
     assert ok is True
-    assert pane.typed == [_COMMAND]
+    assert pane.typed == [f"{_COMMAND}\n"]

@@ -126,3 +126,9 @@ def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
         manager._health_monitor.get_cached_status.return_value = (True, "ready", "ready", None)
         manager._health_monitor.check_now.return_value = True
         yield manager
+
+
+@pytest.fixture(autouse=True)
+def _no_enter_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gap before the submitting Enter is live-CLI timing, not something to wait on."""
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)

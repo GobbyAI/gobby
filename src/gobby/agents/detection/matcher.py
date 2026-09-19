@@ -25,8 +25,16 @@ from gobby.agents.detection.schema import (
 
 IssueCode = Literal["invalid_pattern", "pattern_timeout"]
 
-# A horizontal rule the provider draws above and below its composer.
-_COMPOSER_RULE_RE = re.compile(r"^\s*[─━]{8,}\s*$")
+# A horizontal rule the provider draws above and below its composer. The top rule
+# may carry a label -- Claude Code draws the terminal's name into it, as in
+# ``──────── epic-22508-feedback-triage ─`` -- so only the leading run of rule
+# characters is required and the line merely has to end on one. A labelled rule that
+# stopped delimiting the frame cost the whole composer region, and a region nobody
+# can find reads as ``unknown``: no draft is seen and no Enter is ever verified.
+_COMPOSER_RULE_RE = re.compile(r"^\s*[─━]{8,}(?:[^\n]*[─━])?\s*$")
+
+# The rules a manifest needs before any composer probe of it can mean anything.
+_COMPOSER_RULE_IDS = frozenset({"composer_draft", "composer_empty"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +113,15 @@ class CompiledManifest:
             if match is not None:
                 return MatchEvaluation(match=match, issues=tuple(issues))
         return MatchEvaluation(match=None, issues=tuple(issues))
+
+    def reads_composer(self) -> bool:
+        """Whether this manifest can classify the provider's composer at all.
+
+        Grok's manifest carries no composer rules, so every probe of a Grok pane is
+        ``unknown``. That is the provider's steady state, not a frame that went
+        missing, and a caller must not read a verdict into it.
+        """
+        return any(compiled_rule.rule.id in _COMPOSER_RULE_IDS for compiled_rule in self.rules)
 
     def match_rule(self, rule_id: str, pane_snapshot: str) -> MatchEvaluation:
         """Evaluate one named rule through the compiled matcher."""
