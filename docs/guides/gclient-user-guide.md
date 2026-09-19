@@ -140,6 +140,37 @@ shifted when the client runs inside tmux, `daemon unreachable` during an
 outage, and the latest status message. Clicking the control indicator takes, releases, or takes
 back control.
 
+### What a terminal is called
+
+Every surface that names a terminal — pane borders, sidebar rows, the status
+line, the goto list — asks the same four questions in order and stops at the
+first answer:
+
+1. **The name you gave the pane.** Rename it from the pane's context menu or
+   the rename key; the name is stored on the workspace row, so it survives a
+   restart and every other viewer sees it too.
+2. **The provider of the session bound to it** — `claude`, `codex`, `droid`.
+   This is why a terminal running an agent reads `codex` rather than whatever
+   that agent happens to be executing this second.
+3. **The command in its foreground** — `zsh` at an idle prompt, `nvim` or
+   `cargo` while a job holds the terminal. The daemon reads this when it serves
+   the terminal list, so it follows what you are actually running.
+4. **The literal `shell`**, when none of the above answered.
+
+The last rung is a word rather than an identifier on purpose: a terminal id is
+a UUID, and several of them truncated into a sidebar are several identical
+rows. No surface falls back to one.
+
+Where two terminals share a name — most panes on a machine are running a shell
+— the tmux address is what tells them apart, so those rows read `zsh %0` and
+`zsh %7`. A terminal's tmux address is shown wherever it could be confused with
+another, and you can type it straight into tmux.
+
+The daemon also reports a `title` for each terminal, which you will see as
+secondary text on a bare terminal row. It is not used as a name: tmux fills it
+from the window name, the pane title or the session name, so it is `zsh` for
+one pane and `75`, `[tmux]` or a whole session banner for the next.
+
 ## Workspaces
 
 A workspace is the daemon's record of a layout: its tabs, the panes in them, and
