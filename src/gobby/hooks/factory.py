@@ -39,7 +39,6 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.pipeline_loader import PipelineLoader
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import Callable
 
     from gobby.config.values import ConfigRuntimeReader

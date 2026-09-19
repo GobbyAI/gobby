@@ -242,6 +242,7 @@ select = [
     "B",      # flake8-bugbear
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
+    "TC004",  # a TYPE_CHECKING-only import used at runtime raises NameError
     "TID252", # ban relative imports from parent packages (from .. import)
     "G001",   # logging string format
     "G002",   # logging percent format

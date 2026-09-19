@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.servers.http import HTTPServer
-    from gobby.storage.mcp import LocalMCPManager
 
 __all__ = [
     "get_server",
@@ -29,7 +28,6 @@ __all__ = [
     "get_internal_manager",
     "get_tools_handler",
     "get_config",
-    "get_mcp_db_manager",
     "get_llm_service",
     "get_metrics_manager",
     "resolve_project_id",
@@ -77,12 +75,6 @@ async def get_config(request: Request) -> DaemonConfig | None:
     """Get the application configuration."""
     server = await get_server(request)
     return server.config
-
-
-async def get_mcp_db_manager(request: Request) -> LocalMCPManager | None:
-    """Get the MCP database manager."""
-    server = await get_server(request)
-    return cast(LocalMCPManager | None, server._mcp_db_manager)
 
 
 async def get_llm_service(request: Request) -> LLMService | None:

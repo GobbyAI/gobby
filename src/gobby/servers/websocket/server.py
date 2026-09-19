@@ -43,6 +43,7 @@ from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
@@ -63,7 +64,6 @@ if TYPE_CHECKING:
     from gobby.hooks.webhooks import WebhookDispatcher
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.inter_session_messages import InterSessionMessageManager
-    from gobby.storage.workspaces import WorkspaceManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 
